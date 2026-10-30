@@ -179,7 +179,8 @@ std::string contentHash(const Json& value) {
 void validateAnalysisGraph(const Json& graph) {
     (void)parseGraph(graph);
 }
-Json freezeEvidence(evidence::LiveEvidence& owner, const std::string& scope) {
+Json freezeEvidence(evidence::LiveEvidence& owner, const std::string& scope,
+                    EvidenceLeaseRead read) {
     auto initial = owner.snapshot();
     if (!initial) throw std::invalid_argument(owner.reason());
     auto held = owner.acquireSnapshot(initial->identity);
@@ -226,6 +227,9 @@ Json freezeEvidence(evidence::LiveEvidence& owner, const std::string& scope) {
                  {"imageRetentionGuaranteed", false}};
     auto result = adaptEvidenceArchive(archive);
     result["scope"] = scope;
+    if (read) read(metadata->identity, held.lease, result);
+    if (!owner.metadata(metadata->identity, held.lease))
+        throw std::invalid_argument("Evidence source changed during leased read");
     return result;
 }
 Json adaptEvidenceArchive(const Json& archive) {
@@ -266,15 +270,16 @@ Json adaptEvidenceArchive(const Json& archive) {
             values[id] = r.at("values")[i].at("value");
             missing[id] = r.at("values")[i].at("missingReason");
         }
-        rows.push_back(
-            {{"key", key},
-             {"set", set},
-             {"ordinal", ordinal},
-             {"measurements", values},
-             {"missingReasons", missing},
-             {"scientificQc", "unknown"},
-             {"image",
-              {{"available", false}, {"reason", "E provider has no retained-image locator"}}}});
+        rows.push_back({{"key", key},
+                        {"set", set},
+                        {"ordinal", ordinal},
+                        {"measurements", values},
+                        {"missingReasons", missing},
+                        {"scientificQc", "unknown"},
+                        {"image",
+                         {{"available", false},
+                          {"reason", "Use a fresh fenced run/archive gallery lookup; snapshots do "
+                                     "not retain pixels"}}}});
     }
     const auto& coverage = archive.at("coverage");
     if (coverage.at("unit") != "batch_sequence" || coverage.at("interval") != "half_open")
@@ -284,6 +289,11 @@ Json adaptEvidenceArchive(const Json& archive) {
                     {"parameters", units},
                     {"rows", rows},
                     {"gaps", archive.at("gaps")}};
+    // F-source/1 historically hashed this scalar-only presentation field. Keep its
+    // canonical value so enabling a fresh image lookup does not invalidate saved
+    // scientific bindings. The returned row explanation is current, not hash input.
+    for (auto& row : scientific["rows"])
+        row["image"]["reason"] = "E provider has no retained-image locator";
     const auto fingerprint = contentHash(scientific);
     return {{"schema", "F-source/1"},
             {"sourceKey", sourceKey},

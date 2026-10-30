@@ -3562,6 +3562,95 @@ namespace backend::services {
         return ok;
     }
 
+    backend::evidence::RetainedImage Hdf5Service::readRunEvidenceImage(const std::string& sourceKey,
+                                                                       const std::string& set,
+                                                                       const std::string& ordinal,
+                                                                       bool mask) {
+        using namespace backend::evidence;
+        RetainedImage result;
+        result.sourceKey = sourceKey;
+        result.set = set;
+        result.ordinal = ordinal;
+        auto refuse = [&](const char* why) {
+            result.status = "refused";
+            result.reason = why;
+            return result;
+        };
+        uint64_t number = 0;
+        if ((set != "valid" && set != "invalid") || !canonicalOrdinal(ordinal, number))
+            return refuse("invalid event key");
+        if (!isFileOpen()) return refuse("recording is not open");
+        auto encoded = readScalarStringAttribute("/monitoring", "run_evidence_json");
+        if (!encoded) return result;
+        if (encoded->size() > 4 * 1024 * 1024) return refuse("archive exceeds image lookup limit");
+        try {
+            auto archive = nlohmann::json::parse(*encoded);
+            if (archive.at("schema") != "E-run-events/1" || !archive.at("available").get<bool>() ||
+                !archive.at("finalized").get<bool>() || archive.at("sourceKey") != sourceKey)
+                return refuse("archive source identity mismatch or unfinalized");
+            const auto& rows = archive.at("rows");
+            if (!rows.is_array() || rows.size() > 10000) return refuse("archive row limit");
+            const nlohmann::json* event = nullptr;
+            for (const auto& row : rows) {
+                if (row.at("sourceKey") != sourceKey) return refuse("row source mismatch");
+                if (row.at("set") == set && row.at("ordinal") == ordinal) {
+                    if (event) return refuse("duplicate event key");
+                    event = &row;
+                }
+            }
+            if (!event || !event->at("frame").is_string() || !event->at("object").is_string())
+                return result;
+            uint64_t frameIndex = 0, object = 0;
+            if (!canonicalOrdinal(event->at("frame").get<std::string>(), frameIndex) ||
+                !canonicalOrdinal(event->at("object").get<std::string>(), object))
+                return refuse("invalid lineage");
+            const std::string root = set == "valid" ? "/valid_frames" : "/invalid_frames";
+            auto present = metadataDatasetPresent(set == "valid");
+            if (!present) return refuse("metadata query failed");
+            if (!*present) return result;
+            // Bound allocation before the legacy metadata reader materializes rows.
+            hid_t dataset = H5Dopen2(impl_->fileId_, (root + "/metadata").c_str(), H5P_DEFAULT);
+            if (dataset < 0) return refuse("metadata unavailable");
+            hid_t space = H5Dget_space(dataset);
+            auto count = space < 0 ? -1 : H5Sget_simple_extent_npoints(space);
+            if (space >= 0) H5Sclose(space);
+            H5Dclose(dataset);
+            if (count < 0 || count > 10000) return refuse("metadata row limit");
+            std::vector<std::string> fields;
+            if (!readMetadataFieldNames(set == "valid", fields) ||
+                std::find(fields.begin(), fields.end(), "index") == fields.end() ||
+                std::find(fields.begin(), fields.end(), "objectId") == fields.end())
+                return refuse("recording lacks exact lineage fields");
+            std::vector<ProcessedFrame> metadata;
+            if (!(set == "valid" ? readValidMetadata(metadata) : readInvalidMetadata(metadata)))
+                return refuse("metadata read failed");
+            std::optional<size_t> index;
+            for (size_t i = 0; i < metadata.size(); ++i) {
+                const auto& frame = metadata[i];
+                if (frame.index != frameIndex || frame.validation.objectId < 0 ||
+                    static_cast<uint64_t>(frame.validation.objectId) != object)
+                    continue;
+                if (index) return refuse("ambiguous recorded lineage");
+                index = i;
+            }
+            if (!index) return result;
+            const auto path = root + (mask ? "/masks" : "/images");
+            size_t images = 0;
+            int height = 0, width = 0, channels = 0;
+            if (!getDatasetInfo(path, images, height, width, channels)) return result;
+            if (images != metadata.size()) return refuse("image/metadata cardinality mismatch");
+            if (height <= 0 || width <= 0 || channels <= 0 ||
+                static_cast<uint64_t>(height) * width * channels > 32 * 1024 * 1024)
+                return refuse("image payload limit");
+            if (!readImageByIndex(path, *index, result.pixels)) return refuse("image read failed");
+            result.status = "available";
+            result.reason.clear();
+            return result;
+        } catch (const nlohmann::json::exception&) {
+            return refuse("malformed archive");
+        }
+    }
+
     bool Hdf5Service::readValidMetadata(std::vector<ProcessedFrame>& frames)
     {
         if (!isFileOpen())

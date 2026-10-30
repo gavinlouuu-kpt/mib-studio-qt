@@ -527,3 +527,37 @@ Reproduce real-app create/progress/cancel/run-reopen checks with
 `tools/flowjo_acceptance/report-batch-app-parity.mjs <wss-url> <reportId> <revision>`
 against an idle QA app with an existing layout using retained sources. The script
 creates uniquely named metadata artifacts and does not start acquisition.
+
+### Exact retained evidence gallery (2026-10-30)
+
+The existing `analysis_read` gallery command accepts `mask: false|true` for
+`live-run` and `run-archive` sources. Keys remain selected native graph EventRefs.
+The E provider is pinned at `7e344c68034c4d8333be2302af67f77ce92fb0a7`, with
+`65406f15` run-fencing prerequisites imported selectively. No ordinal is treated
+as an HDF image position: E resolves exact source/set/ordinal to unique frame/object
+and metadata position. Images are owned copies; F emits at most twelve 64×64
+grayscale letterboxed display copies (nearest-neighbour masks). Original dimensions
+and channels are included; unsupported pixel depths/channels explicitly refuse.
+
+Live images use `freezeEvidence`'s lease callback, verify the evaluated projection
+fingerprint, read through `ProcessingService::readRunEvidenceImage`, and fence the
+lease again before release. Advancing sources can require refresh. Archive images
+use the normally opened Review reader under its mutex and additionally pin the full
+file SHA256 before/after reading (64 MiB file cap). A scalar archive fingerprint is
+not an image-content fingerprint. Gallery results expose `fileFingerprint`.
+
+Per-image statuses preserve available/missing/evicted/refused. Epoch-only and
+retained scalar snapshots do not imply retained pixels; availability is not a
+retention guarantee. Legacy stored galleries remain supported, but masks there
+are explicitly unsupported. No hardware/calibration/long-term retention claim.
+
+Reproduce the actual app archive path using
+`tools/flowjo_acceptance/evidence-gallery-app-parity.mjs <wss-url> <E-archive.h5> [restore.h5]`.
+Native `backend.live_evidence` independently compares production live pixels and
+masks to HDF reload and F display copies with exact keys, mutation isolation,
+released leases, foreign source and fingerprint refusal.
+
+Compatibility: `F-source/1` keeps its historical scalar fingerprint canonicalization
+(including the old image-reason token in hash input only). Returned explanations
+now direct callers to fresh gallery lookup. Enabling pixels does not invalidate
+existing scientific strategy bindings; gallery file/lease fencing is independent.

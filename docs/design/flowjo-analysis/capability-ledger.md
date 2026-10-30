@@ -240,3 +240,11 @@ compensation/Logicle/qualified automatic QC, fitted/rotated gates, additional pl
 and inferential models, other embeddings, arbitrary report layout, and platform/
 scientific qualification. These are not all external blockers. E retained-image
 API and I next-run linkage remain peer-owned integrations. No F01–F16 acceptance.
+
+### Exact E image consumer continuation (2026-10-30)
+
+The historical "E locator absent" gap is superseded by selective provider pin
+`7e344c68`: F now routes live-run and run-archive selected keys to exact retained
+images/masks. Live lease fencing and separate archive full-file fingerprints guard
+pixel reads; epoch/retained scalar snapshots remain explicitly unavailable. This
+narrows F06/F13, not complete retention, hardware or full scientific qualification.

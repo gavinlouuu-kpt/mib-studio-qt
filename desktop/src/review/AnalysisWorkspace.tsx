@@ -49,6 +49,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [batchPins,setBatchPins]=useState("[]");
   const [observations,setObservations]=useState<Record<string,any>|null>(null);
   const [manifestText, setManifestText] = useState("");
+  const [galleryMask,setGalleryMask]=useState(false);
   const [gallery, setGallery] = useState<Record<string, any> | null>(null);
   const [restoreRevision, setRestoreRevision] = useState("");
   const [history, setHistory] = useState<string[]>([]);
@@ -165,9 +166,10 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         await reconcile(command, token);
       })}>Restore as new backend revision</button>
       <button disabled={!revision} onClick={() => void run(async token => {
-        const reply = checked(await read({action: "gallery", planId: graph().id, revision, source: source(), offset: 0}));
+        const reply = checked(await read({action: "gallery", planId: graph().id, revision, source: source(), offset: 0, mask: (kind==="live-run"||kind==="run-archive")&&galleryMask}));
         if (token === generation.current) setGallery(reply);
       })}>Load pinned gallery</button>
+      {(kind==="live-run"||kind==="run-archive")&&<label><input type="checkbox" checked={galleryMask} onChange={e=>{setGalleryMask(e.target.checked);setGallery(null);}}/>Show exact retained masks (where available)</label>}
     </fieldset>
     <details><summary>Apply or resynchronize a pinned template</summary>
       <p>The destination is the graph editor’s plan ID. An exact upstream revision and explicit interval overrides create a new source-bound backend revision. Resynchronizing never moves a saved revision. Event-specific QC assertions are cleared, not copied between sources.</p>
@@ -287,10 +289,10 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       <p>Import checks the complete content hash and source fingerprint. A copied recording can relink by identical bytes; a different recording is refused. The hash detects changes, but is not a signature.</p>
     </details>
     {gallery && <section aria-label="Pinned strategy gallery">
-      <p>{gallery.selected} selected · plan {gallery.planId} revision {gallery.revision}. Source: {gallery.sourceFingerprint}</p>
-      <div style={{display:"flex",flexWrap:"wrap"}}>{gallery.images.map((item: {key: string; pixels: number[] | null; reason?: string}) => <figure key={item.key}>
+      <p>{gallery.selected} selected · plan {gallery.planId} revision {gallery.revision}. Source: {gallery.sourceFingerprint}. {gallery.mask?"Mask":"Image"} display copy; availability is not a retention guarantee. {gallery.fileFingerprint&&`File: ${gallery.fileFingerprint}`}</p>
+      <div style={{display:"flex",flexWrap:"wrap"}}>{gallery.images.map((item: {key: string; pixels: number[] | null; reason?: string;status?:string}) => <figure key={item.key}>
         {item.pixels ? <PopulationThumbnail pixels={item.pixels} /> : <span>{item.reason || "Image unavailable"}</span>}
-        <figcaption style={{maxWidth:200,overflowWrap:"anywhere"}}>{item.key}</figcaption>
+        <figcaption style={{maxWidth:200,overflowWrap:"anywhere"}}>{item.key} {item.status&&`· ${item.status}`}</figcaption>
         {["good","bad","unknown"].map(status=><button key={status} disabled={busy || !qcActor.trim() || !qcReason.trim()} onClick={()=>{
           try {
             const decisions = JSON.parse(qcText) as Array<{key:string}>;
@@ -301,11 +303,11 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         }}>{status}</button>)}
       </figure>)}</div>
       <button disabled={busy || gallery.offset === 0} onClick={() => void run(async token => {
-        const reply = checked(await read({action:"gallery",planId:graph().id,revision,source:source(),offset:Math.max(0,gallery.offset-12)}));
+        const reply = checked(await read({action:"gallery",planId:graph().id,revision,source:source(),mask:gallery.mask??false,offset:Math.max(0,gallery.offset-12)}));
         if (token === generation.current) setGallery(reply);
       })}>Previous pinned page</button>
       <button disabled={busy || gallery.offset+12 >= Number(gallery.selected)} onClick={() => void run(async token => {
-        const reply = checked(await read({action:"gallery",planId:graph().id,revision,source:source(),offset:gallery.offset+12}));
+        const reply = checked(await read({action:"gallery",planId:graph().id,revision,source:source(),mask:gallery.mask??false,offset:gallery.offset+12}));
         if (token === generation.current) setGallery(reply);
       })}>Next pinned page</button>
     </section>}

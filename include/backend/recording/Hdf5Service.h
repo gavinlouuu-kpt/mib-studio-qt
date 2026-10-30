@@ -75,8 +75,13 @@ public:
     bool initializeDatasets(); // Create datasets with unlimited dimensions
     bool appendFrames(const std::vector<ProcessedFrame>& validFrames,
                       const std::vector<ProcessedFrame>& invalidFrames);
-    
+
     // Frame reading
+    // Caller serializes access to the normally opened recording (Review owns its mutex).
+    backend::evidence::RetainedImage readRunEvidenceImage(const std::string& sourceKey,
+                                                          const std::string& set,
+                                                          const std::string& ordinal,
+                                                          bool mask = false);
     bool readValidFrames(std::vector<ProcessedFrame>& frames);
     bool readInvalidFrames(std::vector<ProcessedFrame>& frames);
     

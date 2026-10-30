@@ -1,3 +1,4 @@
+#include "backend/analysis/EvidenceGallery.h"
 #include "backend/analysis/AnalysisHost.h"
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
@@ -4472,6 +4473,45 @@ std::string backend::bridge::BackendFacade::analysisRequestJson(const std::strin
     using Json = nlohmann::json;
     auto source = [this](const Json& descriptor) -> Json {
         const auto kind = descriptor.at("kind").get<std::string>();
+        if (kind == "run-archive-gallery") {
+            if (descriptor.size() != 6)
+                throw std::invalid_argument("Expected archive path, fingerprints, keys and mask");
+            const auto response = nlohmann::json::parse(analyzePopulationJson(nlohmann::json{
+                {"expectedPath", descriptor.at("path")},
+                {"feature", "area"},
+                {"minimum", nullptr},
+                {"maximum", nullptr},
+                {"snapshot", true},
+                {"sourceKind", "run-archive"},
+                {"galleryKeys", descriptor.at("keys")},
+                {"expectedFingerprint", descriptor.at("fingerprint")},
+                {"expectedFileFingerprint", descriptor.at("fileFingerprint")},
+                {"mask", descriptor.at("mask")}}.dump()));
+            if (!response.value("ok", false))
+                throw std::invalid_argument(response.value("message", "Archive gallery refused"));
+            return response.at("source");
+        }
+        if (kind == "live-run-gallery") {
+            if (descriptor.size() != 4)
+                throw std::invalid_argument("Expected live fingerprint, keys and mask");
+            nlohmann::json gallery;
+            auto& processing = backend_.processing();
+            const bool mask = descriptor.at("mask").get<bool>();
+            backend::analysis::freezeEvidence(
+                processing.runLiveEvidence(), "live-run",
+                [&](const backend::evidence::Identity& identity, uint64_t lease,
+                    const nlohmann::json& frozen) {
+                    if (frozen.at("fingerprint") != descriptor.at("fingerprint"))
+                        throw std::invalid_argument("Live gallery advanced; refresh the source");
+                    gallery = backend::analysis::evidenceGallery(
+                        frozen, descriptor.at("keys"), mask,
+                        [&](const std::string& set, const std::string& ordinal) {
+                            return processing.readRunEvidenceImage(identity, lease, set, ordinal,
+                                                                   mask);
+                        });
+                });
+            return gallery;
+        }
         if (kind == "stored-gallery") {
             if (descriptor.size() != 4) throw std::invalid_argument("Expected gallery path, fingerprint and keys");
             const auto response = nlohmann::json::parse(analyzePopulationJson(nlohmann::json{

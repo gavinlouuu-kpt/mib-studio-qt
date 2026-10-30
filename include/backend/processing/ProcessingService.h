@@ -2,6 +2,7 @@
 
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/evidence/LiveEvidence.h"
+#include "backend/evidence/RetainedImage.h"
 
 #include <algorithm>
 #include <atomic>
@@ -82,6 +83,10 @@ public:
     }
     std::string liveEvidenceJson();
     std::string runEvidenceJson();
+    // Exact run evidence key + existing snapshot lease; owned image copy.
+    backend::evidence::RetainedImage
+    readRunEvidenceImage(const backend::evidence::Identity& expected, uint64_t lease,
+                         const std::string& set, const std::string& ordinal, bool mask = false);
     bool drainAndStopRealtime();
 
 
@@ -956,6 +961,8 @@ private:
     // lock; outcome/validation counting takes it shared, so no outcome can
     // land after the settlement. Reset by startExperiment().
     std::shared_mutex experimentSettleMutex_;
+    // Guarded by experimentSettleMutex_; shared by evidence and legacy recording.
+    uint64_t experimentFirstFrame_{0};
     std::atomic<bool> experimentSettled_{false};
     std::atomic<uint64_t> batchBatchesProcessed_{0};
     std::atomic<uint64_t> batchAlgoMicrosTotal_{0};
@@ -1044,7 +1051,7 @@ private:
     void bgCalObserve(backend::recording::FrameOutcome outcome, const backend::playback::Frame* frame);
     void bgCalFinishLocked(BackgroundCalibrationState state, const std::string& message);
     void noteRealtimeAdmitted(uint64_t idx, const backend::playback::Frame* frame = nullptr);
-    void noteRealtimeLost(uint64_t count);
+    void noteRealtimeLost(uint64_t first, uint64_t endExclusive);
     void noteRealtimeValidation(uint64_t idx, const std::vector<FilterResult>& validations);
     
     // Monitoring frames (always accumulated, separate from experiment)

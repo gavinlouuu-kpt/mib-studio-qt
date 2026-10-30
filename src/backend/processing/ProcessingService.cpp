@@ -233,7 +233,7 @@ void ProcessingService::startRealtime(std::shared_ptr<backend::playback::FrameSt
         {evidenceOwner_ + "-camera-" + std::to_string(evidenceCameraSession_.load()),
          std::to_string(evidenceSession), std::nullopt, std::to_string(evidenceSession),
          *evidenceProvenance.processing, rtStore_ ? rtStore_->storeGeneration() : 0},
-        evidenceProvenance, rtLastProcessed_.load() + 1);
+        evidenceProvenance, 1); // both realtime consumers start at cursor zero for this epoch
     // A (possibly new) store whose frame indices may repeat earlier ones: a new capture for the
     // monitoring rows (#716 A6a), before the loop reads its first frame.
     requestMonitoringCaptureChange("realtime processing started");
@@ -420,6 +420,93 @@ bool ProcessingService::drainAndStopRealtime() {
     }
     stopRealtime();
     return drained;
+}
+
+backend::evidence::RetainedImage
+ProcessingService::readRunEvidenceImage(const backend::evidence::Identity& expected, uint64_t lease,
+                                        const std::string& set, const std::string& ordinal,
+                                        bool mask) {
+    using namespace backend::evidence;
+    RetainedImage result;
+    result.sourceKey = analysisSourceKey(expected);
+    result.set = set;
+    result.ordinal = ordinal;
+    uint64_t number = 0;
+    if ((set != "valid" && set != "invalid") || !canonicalOrdinal(ordinal, number)) {
+        result.status = "refused";
+        result.reason = "invalid event key";
+        return result;
+    }
+    auto metadata = runLiveEvidence_.metadata(expected, lease);
+    if (!metadata) {
+        result.status = "evicted";
+        result.reason = "snapshot lease expired or identity invalidated";
+        return result;
+    }
+    std::optional<EventRow> event;
+    for (size_t cursor = 0;;) {
+        auto page = runLiveEvidence_.page(expected, lease, cursor, 1024);
+        if (page.status != Status::Ok) {
+            result.status = "evicted";
+            result.reason = "snapshot lease unavailable";
+            return result;
+        }
+        for (const auto& row : page.rows)
+            if (row.set == set && row.ordinal == number) {
+                if (event) {
+                    result.status = "refused";
+                    result.reason = "ambiguous event key";
+                    return result;
+                }
+                event = row;
+            }
+        if (page.done) break;
+        cursor = page.next;
+    }
+    if (!event || !event->frame || !event->object) {
+        result.reason = "event or exact frame/object lineage unavailable";
+        return result;
+    }
+    // Run changes and settlement cannot replace the recording buffers during lookup.
+    std::shared_lock settle(experimentSettleMutex_);
+    if (getBufferedFrameCounts().total() > 10000) {
+        result.status = "refused";
+        result.reason = "retained metadata row limit";
+        return result;
+    }
+    const auto frames = set == "valid" ? getValidFrames() : getInvalidFrames();
+    const ProcessedFrame* match = nullptr;
+    for (const auto& frame : frames) {
+        if (frame.index != *event->frame || frame.validation.objectId < 0 ||
+            static_cast<uint64_t>(frame.validation.objectId) != *event->object)
+            continue;
+        if (match) {
+            result.status = "refused";
+            result.reason = "ambiguous retained lineage";
+            return result;
+        }
+        match = &frame;
+    }
+    if (match) {
+        const auto& image = mask ? match->processedImage : match->originalImage;
+        if (image.total() * image.elemSize() > 32 * 1024 * 1024) {
+            result.status = "refused";
+            result.reason = "image payload limit";
+            return result;
+        }
+        result.pixels = image.clone();
+    }
+    if (!runLiveEvidence_.metadata(expected, lease)) {
+        result.pixels.release();
+        result.status = "evicted";
+        result.reason = "source changed during image lookup";
+        return result;
+    }
+    if (!result.pixels.empty()) {
+        result.status = "available";
+        result.reason.clear();
+    }
+    return result;
 }
 
 std::string ProcessingService::runEvidenceJson() {
@@ -805,6 +892,9 @@ void ProcessingService::startExperiment() {
         std::scoped_lock qlk(flushQueueMutex_);
         flushQueue_.reset();
     }
+    // Reset ledgers and the admission floor atomically with respect to late
+    // callbacks from the preceding run. Flush queue teardown stays outside.
+    std::unique_lock settle(experimentSettleMutex_);
     experimentPersistenceFailed_.store(false, std::memory_order_release);
     const size_t flushInterval = flushInterval_.load(std::memory_order_relaxed);
     const size_t maxBuffered = maxBufferedFrames_.load(std::memory_order_relaxed);
@@ -827,7 +917,6 @@ void ProcessingService::startExperiment() {
     // Reset auto-capture counter when experiment starts
     consecutiveEmptyFrames_.store(0, std::memory_order_relaxed);
     {
-        std::unique_lock settle(experimentSettleMutex_);
         backend::evidence::Provenance provenance;
         provenance.sourceKind = "host-camera-processing";
         provenance.eventMode = "object_observation";
@@ -836,18 +925,21 @@ void ProcessingService::startExperiment() {
         provenance.parameters = {{"area", "pixel2"}, {"deformability", "dimensionless"}};
         provenance.processing = "config-" + std::to_string(configVersion_.load());
         const auto epoch = std::to_string(++evidenceRunSerial_);
+        experimentFirstFrame_ = backend::app::hostProcessingAvailable() && rtStore_
+                                    ? std::max<uint64_t>(1, rtStore_->committedCount())
+                                    : 0;
         if (backend::app::hostProcessingAvailable() && rtRunning_.load()) {
-            runLiveEvidence_.begin(
-                {evidenceOwner_, std::to_string(evidenceCameraSession_.load()),
-                 std::to_string(monitoringRunGeneration_.load()), epoch, *provenance.processing,
-                 evidenceStoreGeneration_},
-                provenance, std::max<uint64_t>(1, rtStore_ ? rtStore_->committedCount() : 1));
+            runLiveEvidence_.begin({evidenceOwner_, std::to_string(evidenceCameraSession_.load()),
+                                    std::to_string(monitoringRunGeneration_.load()), epoch,
+                                    *provenance.processing, evidenceStoreGeneration_},
+                                   provenance, experimentFirstFrame_);
         } else {
             runLiveEvidence_.invalidate(
                 "host camera processing is not active; provider evidence is unsupported");
         }
         experimentActive_.store(true);
     }
+    settle.unlock();
     {
         auto& m = backend::diagnostics::CrashStateMirror::instance().processing;
         m.experimentActive.store(true);
@@ -914,10 +1006,10 @@ bool ProcessingService::endExperiment() {
                             "(booked as pendingAtStop)", unsettled);
             }
         }
+        // Seal under the same fence as outcomes: a late callback cannot complete
+        // evidence after its legacy outcome was booked as PendingAtStop.
+        runLiveEvidence_.finish(0);
     }
-    // Admissions are closed and late callbacks cannot append after this seal.
-    // Any work remaining after the bounded drain is an explicit unknown-event loss.
-    runLiveEvidence_.finish(0);
     const BufferedFrameCounts counts = experimentBuffer_.counts();
     SPDLOG_INFO("ProcessingService: experiment ended, valid frames: {}, invalid frames: {}",
                 counts.valid, counts.invalid);
@@ -1552,22 +1644,24 @@ void ProcessingService::noteRealtimeAdmitted(uint64_t idx, const backend::playba
     }
     liveEvidence_.admit(idx);
     std::shared_lock settle(experimentSettleMutex_);
-    if (experimentActive_.load(std::memory_order_relaxed)) {
+    if (experimentActive_.load(std::memory_order_relaxed) && idx >= experimentFirstFrame_) {
         runLiveEvidence_.admit(idx);
         experimentAccounting_.admit(idx);
     }
 }
 
-void ProcessingService::noteRealtimeLost(uint64_t count) {
-    if (count > 0 && experimentActive_.load(std::memory_order_relaxed)) {
-        experimentAccounting_.admitLost(count, backend::recording::FrameOutcome::StoreOverwritten);
+void ProcessingService::noteRealtimeLost(uint64_t first, uint64_t endExclusive) {
+    std::shared_lock settle(experimentSettleMutex_);
+    const uint64_t runFirst = std::max(first, experimentFirstFrame_);
+    if (endExclusive > runFirst && experimentActive_.load(std::memory_order_relaxed)) {
+        experimentAccounting_.admitLost(endExclusive - runFirst,
+                                        backend::recording::FrameOutcome::StoreOverwritten);
     }
 }
 
 void ProcessingService::noteRealtimeOutcome(uint64_t idx, backend::recording::FrameOutcome outcome,
                                             const backend::playback::Frame* frame) {
     liveEvidence_.complete(idx, {}, outcome != backend::recording::FrameOutcome::Empty);
-    runLiveEvidence_.complete(idx, {}, outcome != backend::recording::FrameOutcome::Empty);
     if (outcome == backend::recording::FrameOutcome::ProcessingFailed) {
         processingFailures_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1579,6 +1673,7 @@ void ProcessingService::noteRealtimeOutcome(uint64_t idx, backend::recording::Fr
     {
         std::shared_lock settle(experimentSettleMutex_);
         if (!experimentSettled_.load(std::memory_order_relaxed) && experimentAccounting_.wasAdmitted(idx)) {
+            runLiveEvidence_.complete(idx, {}, outcome != backend::recording::FrameOutcome::Empty);
             experimentAccounting_.count(outcome);
         }
     }
@@ -1899,7 +1994,6 @@ void ProcessingService::noteRealtimeValidation(uint64_t idx, const std::vector<F
         evidenceRows.push_back(std::move(row));
     }
     liveEvidence_.complete(idx, evidenceRows);
-    runLiveEvidence_.complete(idx, std::move(evidenceRows));
     const bool anyValid = std::any_of(validations.begin(), validations.end(),
                                       [](const FilterResult& r) { return r.isValid; });
     const auto outcome = anyValid ? backend::recording::FrameOutcome::Processed
@@ -1909,6 +2003,7 @@ void ProcessingService::noteRealtimeValidation(uint64_t idx, const std::vector<F
     if (bgCalActive_.load(std::memory_order_acquire)) bgCalObserve(outcome, nullptr);
     std::shared_lock settle(experimentSettleMutex_);
     if (experimentSettled_.load(std::memory_order_relaxed) || !experimentAccounting_.wasAdmitted(idx)) return;
+    runLiveEvidence_.complete(idx, std::move(evidenceRows));
     experimentAccounting_.count(outcome);
     uint64_t objects = 0;
     for (const auto& r : validations) if (r.isValid) ++objects;
@@ -2658,7 +2753,8 @@ void ProcessingService::logDroppedExperimentFrames(const DroppedFrameCounts& dro
 
 bool ProcessingService::appendExperimentFrame(ProcessedFrame&& frame, bool isValid) {
     std::shared_lock settle(experimentSettleMutex_);
-    if (experimentSettled_.load(std::memory_order_acquire)) return false;
+    if (experimentSettled_.load(std::memory_order_acquire) || frame.index < experimentFirstFrame_)
+        return false;
     // Issue #370: the bounded buffer owns the retention policy (frame cap AND
     // byte budget; sampled invalid evicted first, a valid frame is refused
     // only when the backlog is entirely valid and still over the bound).
@@ -3504,7 +3600,7 @@ void ProcessingService::realtimeBatchLoop() {
             skippedSinceSummary += skipped;
             backend::diagnostics::PipelineTimingRecorder::instance().countSkipped(
                 backend::diagnostics::PipelineSkipReason::RingBehind, skipped);
-            noteRealtimeLost(skipped); // experiment accounting: StoreOverwritten
+            noteRealtimeLost(last + 1, earliest); // experiment accounting: StoreOverwritten
             last = earliest - 1;
             rtLastProcessed_.store(last, std::memory_order_relaxed);
             SPDLOG_DEBUG(
@@ -3808,7 +3904,7 @@ void ProcessingService::realtimeInlineLoop() {
             framesSkippedSinceSummary += skipped;
             rtTimingRecorder.countSkipped(backend::diagnostics::PipelineSkipReason::RingBehind,
                                           skipped);
-            noteRealtimeLost(skipped);
+            noteRealtimeLost(last + 1, earliest);
             last = earliest - 1;
             // Publish the advance immediately: if the frame fetch below fails
             // (slot mid-write / evicted) the loop retries with `last` already

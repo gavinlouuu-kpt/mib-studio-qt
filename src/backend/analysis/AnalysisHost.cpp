@@ -567,10 +567,10 @@ std::string analysisRequest(services::SqliteService& database, const std::string
         }
         if (action == "evaluate" || action == "jobInput" || action == "gallery" ||
             action == "report" || action == "plot" || action == "observations") {
-            fields(q,
-                   action == "gallery"
-                       ? std::set<std::string>{"action", "planId", "revision", "source", "offset"}
-                       : std::set<std::string>{"action", "planId", "revision", "source"});
+            fields(q, action == "gallery"
+                          ? std::set<std::string>{"action", "planId", "revision", "source",
+                                                  "offset", "mask"}
+                          : std::set<std::string>{"action", "planId", "revision", "source"});
             if (q.at("revision").is_null())
                 throw std::invalid_argument("Evaluation requires pinned revision");
             const auto saved = unwrap(
@@ -771,7 +771,30 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     images.push_back(
                         {{"key", row.at("key")},
                          {"pixels", nullptr},
-                         {"reason", "Provider does not supply exact retained-image locators"}});
+                         {"status", "unavailable"},
+                         {"reason",
+                          "Exact pixels require a current run lease or a bounded file-pinned run "
+                          "archive; retained scalar and epoch snapshots do not retain pixels"}});
+                }
+                const bool mask = q.value("mask", false);
+                if (mask && current.at("scope") == "stored")
+                    throw std::invalid_argument(
+                        "Stored legacy gallery mask selection is unsupported");
+                if (current.at("scope") == "run-archive" &&
+                    !current.value("fileFingerprint", Json(nullptr)).is_null()) {
+                    images = source(Json{{"kind", "run-archive-gallery"},
+                                         {"path", current.at("path")},
+                                         {"fingerprint", current.at("fingerprint")},
+                                         {"fileFingerprint", current.at("fileFingerprint")},
+                                         {"keys", keys},
+                                         {"mask", mask}})
+                                 .at("images");
+                } else if (current.at("scope") == "live-run") {
+                    images = source(Json{{"kind", "live-run-gallery"},
+                                         {"fingerprint", current.at("fingerprint")},
+                                         {"keys", keys},
+                                         {"mask", mask}})
+                                 .at("images");
                 }
                 if (current.at("scope") == "stored") {
                     const auto gallery = source(Json{{"kind", "stored-gallery"},
@@ -786,6 +809,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                             {"planId", q.at("planId")},
                             {"revision", saved.at("revision")},
                             {"offset", offset},
+                            {"mask", mask},
+                            {"fileFingerprint", current.value("fileFingerprint", Json(nullptr))},
                             {"selected", result.at("selected")},
                             {"images", images}}
                     .dump();

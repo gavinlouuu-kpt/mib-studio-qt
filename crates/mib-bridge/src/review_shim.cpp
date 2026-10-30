@@ -1,3 +1,4 @@
+#include "backend/analysis/EvidenceGallery.h"
 #include "backend/analysis/AnalysisHost.h"
 #include "backend/database/SqliteService.h"
 // C++ side of the review bridge (ADR 0014). See review_shim.h.
@@ -1036,6 +1037,25 @@ rust::String mib_review_bridge::ReviewBridge::review_analysis_write(rust::Str re
 rust::String mib_review_bridge::ReviewBridge::review_analysis_request(rust::Str request, bool write) {
     auto source = [this](const nlohmann::json& descriptor) -> nlohmann::json {
         const auto kind = descriptor.at("kind").get<std::string>();
+        if (kind == "run-archive-gallery") {
+            if (descriptor.size() != 6)
+                throw std::invalid_argument("Expected archive path, fingerprints, keys and mask");
+            const auto response =
+                nlohmann::json::parse(impl_->jobs->analyzePopulation(nlohmann::json{
+                    {"expectedPath", descriptor.at("path")},
+                    {"feature", "area"},
+                    {"minimum", nullptr},
+                    {"maximum", nullptr},
+                    {"snapshot", true},
+                    {"sourceKind", "run-archive"},
+                    {"galleryKeys", descriptor.at("keys")},
+                    {"expectedFingerprint", descriptor.at("fingerprint")},
+                    {"expectedFileFingerprint", descriptor.at("fileFingerprint")},
+                    {"mask", descriptor.at("mask")}}.dump()));
+            if (!response.value("ok", false))
+                throw std::invalid_argument(response.value("message", "Archive gallery refused"));
+            return response.at("source");
+        }
         if (kind == "stored-gallery") {
             if (descriptor.size() != 4) throw std::invalid_argument("Expected gallery path, fingerprint and keys");
             const auto response = nlohmann::json::parse(impl_->jobs->analyzePopulation(nlohmann::json{

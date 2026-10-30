@@ -306,3 +306,23 @@ Observation export14 rows/10 selected; strategy batch2 pins, missing third refus
 whole artifact. Report batch report-batch-1793364471847 cancelled1/2 with pending
 run absent; suffix -complete finished2/2. Repro scripts are in tools/flowjo_acceptance.
 No peer branch/service, Tailscale handler or main/develop merge changed.
+
+## Exact E archive gallery continuation — 2026-10-30
+
+Production HTTPS/WSS on port18808 verifies actual E archives, not fixture UI:
+clean run plan `evidence-images-1793365464777` revision1 returns3/3 exact images
+and3/3 masks, full file pin
+`sha256:dd9e96ed7c59b5de03ce9d7abc7dbfea5790f0af6a2d1e613cb489e4f065eb1c`.
+The fault archive also returns its eight exact retained images/masks without
+upgrading its unknown denominator. Script:
+`tools/flowjo_acceptance/evidence-gallery-app-parity.mjs`.
+
+In the real Review analysis workspace, open an E experiment archive, select
+**Archived E run events**, save/select an exact backend strategy revision, then
+**Load pinned gallery**. Toggle **Show exact retained masks** and reload for masks.
+The source selector exposes current-run lookup only in Studio. Epoch/scalar-retained
+sources explicitly lack retained pixels. The app is left idle with mock camera and
+the original synthetic recording; no acquisition was started. Browser navigation
+policy still blocks rendered click-through; DOM and native WSS evidence are separate.
+
+Final compatibility-preserving build also verifies fault plan `evidence-images-1793365464978` revision1 (8 image + 8 mask keys). Native11/11, Review8/8, UI30/30 and ASan/UBSan4/4 pass; TSan and rendered browser qualification remain open.

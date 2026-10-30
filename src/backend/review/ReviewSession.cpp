@@ -1,3 +1,4 @@
+#include "backend/analysis/EvidenceGallery.h"
 #include "backend/review/ReviewSession.h"
 #include "backend/analysis/PopulationStatistics.h"
 #include "backend/analysis/PopulationGraph.h"
@@ -753,7 +754,7 @@ namespace backend::review
             if (requestJson.size() > 65536) return refuse("Analysis request exceeds 65536 bytes");
             const auto request = Json::parse(requestJson);
             if (!request.is_object() ||
-                (request.size() != 4 + request.count("graph") + request.count("galleryOffset") + request.count("snapshot") + request.count("sourceKind") + request.count("galleryKeys") + request.count("expectedFingerprint")) ||
+                (request.size() != 4 + request.count("graph") + request.count("galleryOffset") + request.count("snapshot") + request.count("sourceKind") + request.count("galleryKeys") + request.count("expectedFingerprint") + request.count("expectedFileFingerprint") + request.count("mask")) ||
                 !request.contains("feature") || !request.contains("minimum") ||
                 !request.contains("maximum") || !request.contains("expectedPath"))
                 return refuse("Expected feature, minimum, maximum and expectedPath");
@@ -826,15 +827,51 @@ namespace backend::review
             if (request.at("expectedPath").get<std::string>() != impl_->path)
                 return refuse("The open source changed; refresh before analyzing");
             if (request.value("sourceKind", std::string("stored")) == "run-archive") {
-                const auto archive = impl_->reader.readScalarStringAttribute("/monitoring", "run_evidence_json");
-                if (!archive || archive->size() > 4 * 1024 * 1024)
-                    return refuse("Run event archive absent or exceeds 4 MiB budget");
-                auto source = adaptEvidenceArchive(Json::parse(*archive));
-                source["scope"] = "run-archive";
-                source["path"] = impl_->path;
-                return Json{{"ok", true}, {"source", source}}.dump();
+            const auto archive =
+                impl_->reader.readScalarStringAttribute("/monitoring", "run_evidence_json");
+            if (!archive || archive->size() > 4 * 1024 * 1024)
+                return refuse("Run event archive absent or exceeds 4 MiB budget");
+            auto source = adaptEvidenceArchive(Json::parse(*archive));
+            source["scope"] = "run-archive";
+            source["path"] = impl_->path;
+            const auto fileFingerprint = [&]() {
+                if (impl_->openedSize > 64 * 1024 * 1024)
+                    throw std::invalid_argument(
+                        "Archive gallery supports full fingerprints up to 64 MiB");
+                if (std::filesystem::file_size(impl_->path) != impl_->openedSize ||
+                    std::filesystem::last_write_time(impl_->path) != impl_->openedWriteTime)
+                    throw std::invalid_argument("Archive file changed since open");
+                std::string error;
+                const auto hash = processing::processingCoreFileSha256(impl_->path, &error);
+                if (hash.empty())
+                    throw std::invalid_argument("Archive fingerprint failed: " + error);
+                if (std::filesystem::file_size(impl_->path) != impl_->openedSize ||
+                    std::filesystem::last_write_time(impl_->path) != impl_->openedWriteTime)
+                    throw std::invalid_argument("Archive file changed while fingerprinting");
+                return "sha256:" + hash;
+            };
+            source["fileFingerprint"] =
+                impl_->openedSize <= 64 * 1024 * 1024 ? Json(fileFingerprint()) : Json(nullptr);
+            if (request.contains("galleryKeys")) {
+                if (request.at("expectedFingerprint") != source.at("fingerprint") ||
+                    source.at("fileFingerprint").is_null() ||
+                    request.at("expectedFileFingerprint") != source.at("fileFingerprint"))
+                    return refuse("Archive gallery source/file fingerprint changed");
+                const bool mask = request.value("mask", false);
+                auto gallery =
+                    evidenceGallery(source, request.at("galleryKeys"), mask,
+                                    [&](const std::string& set, const std::string& ordinal) {
+                                        return impl_->reader.readRunEvidenceImage(
+                                            source.at("sourceKey"), set, ordinal, mask);
+                                    });
+                if (fileFingerprint() != source.at("fileFingerprint"))
+                    return refuse("Archive changed during gallery read");
+                gallery["fileFingerprint"] = source.at("fileFingerprint");
+                return Json{{"ok", true}, {"source", gallery}}.dump();
             }
-            if (request.value("sourceKind", std::string("stored")) != "stored")
+            return Json{{"ok", true}, {"source", source}}.dump();
+        }
+        if (request.value("sourceKind", std::string("stored")) != "stored")
                 return refuse("Unknown source kind");
             if (impl_->recording) return refuse("Open an experiment file with object metadata");
             if (!impl_->validMetaReadable || !impl_->invalidMetaReadable)

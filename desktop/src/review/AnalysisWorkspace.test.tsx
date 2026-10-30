@@ -75,3 +75,16 @@ it("does not download a partial native batch failure",async()=>{
  expect(read).toHaveBeenLastCalledWith({action:"manifestBatch",plans:[]});
  expect(host.textContent).toContain("no partial artifact");expect(write).not.toHaveBeenCalled();
 });
+
+it("requests exact run-archive masks and displays unavailable provider evidence",async()=>{
+ const select=host.querySelector<HTMLSelectElement>('[aria-label="Strategy source"]')!;
+ await act(async()=>{select.value="run-archive";select.dispatchEvent(new Event("change",{bubbles:true}));});
+ await click("Save backend revision");
+ const checkbox=Array.from(host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(e=>e.parentElement?.textContent?.includes("retained masks"))!;
+ await act(async()=>checkbox.click());
+ read.mockResolvedValue({status:"ok",planId:"plan",revision:"1",selected:"1",offset:0,mask:true,sourceFingerprint:"source",images:[{key:"exact",pixels:null,status:"evicted",reason:"lease expired"}]});
+ await click("Load pinned gallery");
+ expect(read).toHaveBeenLastCalledWith({action:"gallery",planId:"plan",revision:"1",source:{kind:"run-archive",path:"a.h5"},offset:0,mask:true});
+ expect(host.textContent).toContain("evicted");expect(host.textContent).toContain("lease expired");
+ expect(host.textContent).toContain("Mask display copy");
+});
