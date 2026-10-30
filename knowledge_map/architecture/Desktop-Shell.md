@@ -1177,3 +1177,12 @@ Issue #570: Review keeps unreadable run accounting as Unknown, displaying the
 existing `completion_reason` field rather than promoting `reconciled=false` to
 Failed when the outcome is Unknown. Known outcomes with unreconciled counters
 still show Failed. No bridge ABI or JSON field changes.
+
+## Shared stored-population controls (#808)
+
+Studio App.tsx and ReviewPanel mount the same `PopulationAnalysis` component.
+Studio routes through `analyze_population` (app-commands, WebSocket and Tauri)
+and BackendFacade's idle/recording fence; Review uses `review_analyze_population`
+and the review-only bridge. Both end at ReviewJobs/ReviewSession and the same
+native interval/statistics core. Backend 46 / Review 8 are additive, leaving
+reserved 45/7 untouched. See [[../services/AnalysisWorker]].

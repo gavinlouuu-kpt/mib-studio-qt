@@ -585,3 +585,13 @@ signing or notarisation. How-tos: `docs/howto/macos-build.md`,
 Metric labels and frame-viewer summaries use the shared `metricFormat.ts` finite
 number formatter (em dash for absent/non-finite values). The shell wraps its main
 review panel in `PanelErrorBoundary` with a Reload view action (#540).
+
+## Native population analysis (#808)
+
+ReviewPanel mounts `PopulationAnalysis.tsx`, shared with Studio's review tab.
+Expand **Population analysis · stored observations** after opening an experiment;
+choose stored area/deformability and inclusive optional bounds. The real backend
+returns both-set membership counts and exact raw-value reductions. Results clear
+on source/gate changes; late replies cannot replace a new source. Limits and
+legacy missingness are explicit; no saved strategy or live/polygon UI claim.
+See [[../services/AnalysisWorker]].

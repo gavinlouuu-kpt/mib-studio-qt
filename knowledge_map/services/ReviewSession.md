@@ -699,3 +699,13 @@ Issue #570: `hasAccounting` remains true for schema-bearing files whose required
 attributes cannot be read. Their snapshot has `readError`, Unknown completion
 and an explanatory `completionReason`; `accountingSummary()` shows that reason
 instead of partial counts. Legacy files still have `hasAccounting == false`.
+
+## Bounded population analysis (#808)
+
+`analyzePopulation(requestJson)` reads both cached metadata sets and source path
+under the existing session mutex. It delegates inclusive interval membership and
+reductions to the portable analysis core, refuses unreadable/count-incomplete or
+>10,000-row sources, and returns decimal counts/ordinals. No HDF5 reads/writes
+inside this operation. Call through ReviewJobs' lane fence and (Studio) facade's
+idle/recording fence. Fingerprint is null, evaluation keys ephemeral; this is not
+a durable EventSnapshot provider. See [[AnalysisWorker]].

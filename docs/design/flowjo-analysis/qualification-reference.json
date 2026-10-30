@@ -1,0 +1,28 @@
+{
+  "schema": "mib-flowjo-reference-check/v1",
+  "status": "passed",
+  "source_sha256": "6687290a19cfcd2a86e8fe5af7c2077c4db10302af45b71eb6b95f6272706ada",
+  "events": 229585,
+  "selected": 190705,
+  "boundary_events": 0,
+  "channels": {
+    "FSC-A": {
+      "bins": 4096,
+      "count": 190705,
+      "mismatches": 0
+    },
+    "SSC-A": {
+      "bins": 4096,
+      "count": 190705,
+      "mismatches": 0
+    }
+  },
+  "evidence_kind": "recomputed historical v10.8.1 reference",
+  "limits": [
+    "not a fresh FlowJo run",
+    "not FlowJo 11 parity",
+    "not MIB module acceptance",
+    "does not prove gate-edge semantics",
+    "does not establish saved statistic estimators or workspace reopen"
+  ]
+}

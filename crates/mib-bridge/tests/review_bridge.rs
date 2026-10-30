@@ -338,8 +338,8 @@ fn run_identity_in_info_and_the_probe() {
         serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
     assert_eq!(
         ffi::review_bridge_abi_version(),
-        6,
-        "review ABI 6 (#716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
+        9,
+        "review ABI 9 (source-bound strategies; 8 population analysis; 7 reserved for #804); previous ABI 6 (#716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
     );
     let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
     assert_eq!(max_paths, 256);
@@ -700,4 +700,146 @@ fn run_statistics_twin_over_the_parity_fixture() {
     assert_eq!(refused["ok"], false, "{refused}");
     assert_eq!(std::fs::read(&v3).unwrap(), before, "nothing written");
     bridge.pin_mut().shutdown();
+}
+
+#[test]
+#[serial]
+fn review_population_native_both_set_integration() {
+    let path = fixture_path("population");
+    let _ = std::fs::remove_file(&path);
+    assert!(ffi::review_fixture_write_experiment(&path.to_string_lossy()));
+    let before = std::fs::read(&path).unwrap();
+    let mut bridge = ffi::new_review_bridge();
+    assert!(bridge.pin_mut().initialize(""));
+    let mut request = serde_json::json!({"expectedPath":path.to_string_lossy(),"feature":"area","minimum":null,"maximum":null});
+    let call = |bridge: &mut cxx::UniquePtr<ffi::ReviewBridge>, request: &serde_json::Value| -> serde_json::Value {
+        serde_json::from_str(&bridge.pin_mut().review_analyze_population(&request.to_string())).unwrap()
+    };
+    assert_eq!(call(&mut bridge, &request)["ok"], false);
+    assert!(bridge.pin_mut().review_open(&path.to_string_lossy()).ok);
+    let result = call(&mut bridge, &request);
+    assert_eq!(result["ok"], true, "{result}");
+    assert_eq!(result["valid"], "10");
+    assert_eq!(result["invalid"], "4");
+    assert_eq!(result["selected"], "14");
+    assert_eq!(result["unknown"], "0");
+    assert_eq!(result["durable"], false);
+    assert!(result["sourceFingerprint"].is_null());
+    assert_eq!(result["rows"][0]["ordinal"], "0");
+    assert_eq!(result["rows"][10]["ordinal"], "0");
+    assert_ne!(result["rows"][0]["key"], result["rows"][10]["key"]);
+    assert_ne!(result["snapshot"], call(&mut bridge, &request)["snapshot"]);
+    // Native exact reduction agrees with independently summed bridge metadata.
+    let valid = bridge.pin_mut().fetch_review_rows(true, 0, 100);
+    let invalid = bridge.pin_mut().fetch_review_rows(false, 0, 100);
+    let mean = valid.rows.iter().chain(invalid.rows.iter()).map(|r| r.area).sum::<f64>() / 14.;
+    assert!((result["mean"].as_f64().unwrap() - mean).abs() < 1e-12);
+    let mut graph_request = request.clone();
+    graph_request["graph"] = serde_json::json!({"id":"test", "revision":"1", "output":"outside", "nodes":[
+        {"id":"inside", "parent":"", "kind":"interval", "feature":"area", "minimum":100, "maximum":110},
+        {"id":"outside", "parent":"", "kind":"not", "operands":["inside"]}
+    ]});
+    graph_request["galleryOffset"] = serde_json::json!(0);
+    let graph = call(&mut bridge, &graph_request);
+    assert_eq!(graph["ok"], true, "{graph}");
+    let outside: Vec<_> = valid.rows.iter().chain(invalid.rows.iter()).filter(|r| r.area > 110. || r.area < 100.).collect();
+    assert_eq!(graph["selected"], outside.len().to_string());
+    assert!(graph["mean"].as_f64().unwrap() > 110.);
+    assert_eq!(graph["gallery"].as_array().unwrap().len(), outside.len().min(12));
+    for image in graph["gallery"].as_array().unwrap() {
+        let row = graph["rows"].as_array().unwrap().iter().find(|r| r["key"] == image["key"]).unwrap();
+        assert_eq!(row["membership"], "selected");
+        assert_eq!(row["ordinal"], image["ordinal"]);
+        assert_eq!(row["set"], image["set"]);
+        assert!(image["pixels"].is_null() || image["pixels"].as_array().unwrap().len() == 4096);
+    }
+    graph_request["galleryOffset"] = serde_json::json!(-1);
+    assert_eq!(call(&mut bridge, &graph_request)["ok"], false);
+    graph_request["galleryOffset"] = serde_json::json!(10000);
+    assert!(call(&mut bridge, &graph_request)["gallery"].as_array().unwrap().is_empty());
+    graph_request["graph"]["nodes"][0]["parent"] = serde_json::json!("outside");
+    assert_eq!(call(&mut bridge, &graph_request)["ok"], false, "parent/operand cycle refused");
+    graph_request["graph"]["nodes"][0]["parent"] = serde_json::json!("");
+    graph_request["graph"]["output"] = serde_json::json!("missing");
+    assert_eq!(call(&mut bridge, &graph_request)["ok"], false, "missing output refused");
+    request["minimum"] = serde_json::json!(1e90);
+    let empty = call(&mut bridge, &request);
+    assert_eq!(empty["selected"], "0");
+    assert!(empty["mean"].is_null());
+    request["maximum"] = serde_json::json!(0.);
+    assert_eq!(call(&mut bridge, &request)["ok"], false);
+    request["minimum"] = serde_json::Value::Null;
+    request["maximum"] = serde_json::Value::Null;
+    request["expectedPath"] = serde_json::json!("a different source");
+    assert_eq!(call(&mut bridge, &request)["ok"], false);
+    bridge.pin_mut().review_close();
+    assert_eq!(before, std::fs::read(&path).unwrap(), "analysis must never write the source");
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+#[serial]
+fn source_bound_strategy_survives_bridge_reopen_and_rejects_source_switch() {
+    use serde_json::{json, Value};
+    let root = std::env::temp_dir().join(format!("f_strategy_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("source.h5").to_string_lossy().into_owned();
+    assert!(ffi::review_fixture_write_experiment(&path));
+    let mut b = ffi::new_review_bridge();
+    let bad_data = root.join("not-a-directory"); std::fs::write(&bad_data,b"file").unwrap();
+    assert!(!b.pin_mut().initialize(&bad_data.to_string_lossy()), "metadata failure must not escape the FFI");
+    assert!(b.pin_mut().initialize(&root.to_string_lossy()));
+    assert!(!b.pin_mut().initialize(&root.join("another-authority").to_string_lossy()), "cannot silently retarget metadata authority");
+    assert!(b.pin_mut().review_open(&path).ok);
+    let descriptor = json!({"kind":"stored","path":path});
+    let snapshot: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"snapshot","source":descriptor}).to_string())).unwrap();
+    assert_eq!(snapshot["status"],"ok", "{snapshot}");
+    assert_eq!(snapshot["source"]["rows"].as_array().unwrap().len(),14);
+    let mut binding = json!({});
+    for k in ["fingerprint","sourceKey","parameters","scope"] { binding[k]=snapshot["source"][k].clone(); }
+    let save = json!({"action":"save","planId":"plan","expectedRevision":null,"commandId":"first","feature":"area","source":descriptor,"sourceBinding":binding,
+        "graph":{"id":"plan","revision":"1","output":"gate","nodes":[{"id":"gate","parent":"","kind":"interval","feature":"area","minimum":100,"maximum":110}]}});
+    let saved: Value = serde_json::from_str(&b.pin_mut().review_analysis_write(&save.to_string())).unwrap();
+    assert_eq!(saved["revision"],"1", "{saved}");
+    drop(b);
+    let mut b = ffi::new_review_bridge();
+    assert!(b.pin_mut().initialize(&root.to_string_lossy()));
+    // Receipt replay does not require reopening the old recording.
+    let replay: Value = serde_json::from_str(&b.pin_mut().review_analysis_write(&save.to_string())).unwrap();
+    assert_eq!(replay,saved);
+    assert!(b.pin_mut().review_open(&path).ok);
+    let evaluation = json!({"action":"evaluate","planId":"plan","revision":"1","source":descriptor});
+    let result: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&evaluation.to_string())).unwrap();
+    assert_eq!(result["evaluation"]["selected"],"10", "{result}");
+    assert_eq!(result["evaluation"]["mean"],104.6);
+    assert_eq!(result["evaluation"]["sourceFingerprint"],binding["fingerprint"]);
+    let gallery: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"gallery","planId":"plan","revision":"1","source":descriptor,"offset":0}).to_string())).unwrap();
+    assert_eq!(gallery["status"],"ok", "{gallery}");
+    assert_eq!(gallery["images"].as_array().unwrap().len(),10);
+    let selected: Vec<_> = result["evaluation"]["rows"].as_array().unwrap().iter().filter(|r| r["membership"]=="selected").map(|r| r["key"].clone()).collect();
+    let image_keys: Vec<_> = gallery["images"].as_array().unwrap().iter().map(|r| r["key"].clone()).collect();
+    assert_eq!(selected,image_keys);
+    assert!(gallery["images"].as_array().unwrap().iter().all(|r| r["pixels"].as_array().unwrap().len()==4096));
+    let mut polygon_save=save.clone();
+    polygon_save["planId"]=json!("polygon"); polygon_save["commandId"]=json!("polygon-first");
+    polygon_save["graph"]=json!({"id":"polygon","revision":"draft","output":"gate","nodes":[{"id":"gate","parent":"","kind":"polygon","x":"area","y":"deformability","vertices":[[100,0],[110,0],[110,1],[100,1]]}]});
+    let polygon_saved:Value=serde_json::from_str(&b.pin_mut().review_analysis_write(&polygon_save.to_string())).unwrap();
+    assert_eq!(polygon_saved["revision"],"1","{polygon_saved}");
+    drop(b);
+    let mut b=ffi::new_review_bridge();
+    assert!(b.pin_mut().initialize(&root.to_string_lossy()));
+    assert!(b.pin_mut().review_open(&path).ok);
+    let polygon_read:Value=serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"read","planId":"polygon","revision":"1"}).to_string())).unwrap();
+    assert_eq!(polygon_read["document"]["graph"],polygon_save["graph"]);
+    let polygon_result:Value=serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"evaluate","planId":"polygon","revision":"1","source":descriptor}).to_string())).unwrap();
+    assert_eq!(polygon_result["evaluation"]["rows"],result["evaluation"]["rows"]);
+    let polygon_gallery:Value=serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"gallery","planId":"polygon","revision":"1","source":descriptor,"offset":0}).to_string())).unwrap();
+    assert_eq!(polygon_gallery["images"],gallery["images"]);
+    let other = root.join("other.h5").to_string_lossy().into_owned();
+    assert!(ffi::review_fixture_write_experiment(&other));
+    assert!(b.pin_mut().review_open(&other).ok);
+    let wrong: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&evaluation.to_string())).unwrap();
+    assert_eq!(wrong["status"],"invalid", "{wrong}");
+    drop(b);
+    std::fs::remove_dir_all(root).unwrap();
 }

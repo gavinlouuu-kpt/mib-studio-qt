@@ -195,3 +195,18 @@ contours match. The visible differences:
 - **Check for updates fails**: the computer needs internet access to
   `updates.yofo.bio`. You can always install a newer version by hand from
   the GitHub Release.
+
+## Stored-population interval analysis
+
+Open an experiment HDF5, then expand **Population analysis · stored observations**.
+Choose stored area (px²) or deformability, enter optional inclusive lower/upper
+bounds, and select **Analyze population**. Blank bounds are unbounded. Both valid
+and invalid stored observations participate; processing validity is not a
+scientific QC filter. Selected/excluded/unknown counts and selected-value
+min/max/mean/median come from the native backend. Empty results show dashes.
+
+This first slice supports at most 10,000 observations and refuses oversized or
+unreadable/incomplete sources without sampling. Absent measurement columns and nonfinite values remain unknown, never default zero. Results are local
+evaluations, not saved strategies or fingerprint-verified artifacts. Changing
+the source or gate clears the previous result. Studio offers the same controls
+in its Review tab, while acquisition and review jobs remain excluded.

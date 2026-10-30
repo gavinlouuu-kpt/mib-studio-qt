@@ -16,6 +16,7 @@ mib-bridge = { path = "../../crates/mib-bridge", features = ["contract-fixtures"
 serial_test = "3"
 
 [dependencies]
+mib-analysis-worker = { path = "../../crates/mib-analysis-worker" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 # Capability-scoped native open-folder / external-URL actions (BE-9, #279).

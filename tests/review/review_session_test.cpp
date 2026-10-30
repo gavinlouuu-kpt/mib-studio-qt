@@ -36,6 +36,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <hdf5.h>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <filesystem>
@@ -511,6 +512,15 @@ int main()
         MIB_EXPECT(s.validSet().metadataReadable == !unreadable,
                    unreadable ? "unreadable valid metadata reported readable" : "absent valid set reported unreadable");
         MIB_EXPECT(s.validSet().frames.empty(), "faulty valid set has no rows in the snapshot");
+        const auto analysisRequest = nlohmann::json{{"expectedPath", path.string()},
+                                                    {"feature", "area"},
+                                                    {"minimum", nullptr},
+                                                    {"maximum", nullptr}};
+        MIB_EXPECT(!nlohmann::json::parse(s.analyzePopulation(analysisRequest.dump()))
+                        .at("ok")
+                        .get<bool>(),
+                   "analysis refuses unreadable or count-incomplete metadata instead of reducing a "
+                   "partial population");
         std::vector<ProcessedFrame> frames;
         uint64_t ftotal = 9;
         MIB_REQUIRE(s.framesPage(true, 0, 5, frames, ftotal), "valid page of a faulty set");
@@ -521,6 +531,32 @@ int main()
         MIB_EXPECT(!s.validSet().metadataReadable && !s.validSet().open, "closed session not readable");
     }
     wd.mark("valid set faults");
+    // Missing columns are unknown, never the legacy reader's default zero.
+    {
+        const auto path = td.path() / "missing_area.h5";
+        writeExperiment(path, false, false, false);
+        const hid_t file = H5Fopen(path.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        MIB_REQUIRE(file >= 0, "open missing-column fixture");
+        MIB_REQUIRE(H5Ldelete(file, "/valid_frames/metadata", H5P_DEFAULT) >= 0, "remove metadata");
+        const hsize_t count = 10;
+        const hid_t space = H5Screate_simple(1, &count, nullptr);
+        const hid_t type = H5Tcreate(H5T_COMPOUND, sizeof(double));
+        MIB_REQUIRE(H5Tinsert(type, "deformability", 0, H5T_NATIVE_DOUBLE) >= 0, "create partial schema");
+        const hid_t ds = H5Dcreate2(file, "/valid_frames/metadata", type, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        double values[10] = {};
+        MIB_REQUIRE(ds >= 0 && H5Dwrite(ds, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, values) >= 0, "write partial schema");
+        H5Dclose(ds); H5Tclose(type); H5Sclose(space); H5Fclose(file);
+        ReviewSession s;
+        MIB_REQUIRE(s.open(path.string()), "open partial-schema source");
+        const auto request = nlohmann::json{{"expectedPath", path.string()}, {"feature", "area"},
+            {"minimum", nullptr}, {"maximum", nullptr}};
+        const auto result = nlohmann::json::parse(s.analyzePopulation(request.dump()));
+        MIB_REQUIRE(result.at("ok").get<bool>(), "partial schema has readable counts");
+        MIB_EXPECT(result.at("unknown") == "10" && result.at("selected") == "4",
+                   "missing valid area is unknown while invalid recorded areas remain selected");
+    }
+    wd.mark("population missing column");
+
 
     // ---- open() is all or nothing (#512 S5) -----------------------------------
     // A malformed background (a dataset whose height does not fit an int)
@@ -670,5 +706,34 @@ int main()
         MIB_EXPECT(green && blue, "classification colours");
     }
 
+    // One session mutex fences analysis against reopen/close across sources.
+    // The existing watchdog bounds both joins (a lock-order regression exits 99).
+    {
+        ReviewSession s;
+        std::atomic<bool> start{false};
+        std::atomic<int> failures{0};
+        const auto request = nlohmann::json{{"expectedPath", experiment.string()}, {"feature", "area"},
+            {"minimum", nullptr}, {"maximum", nullptr}, {"galleryOffset", 0u}}.dump();
+        std::thread reader([&] {
+            while (!start.load()) std::this_thread::yield();
+            for (int i = 0; i < 200; ++i) {
+                const auto result = nlohmann::json::parse(s.analyzePopulation(request));
+                if (result.at("ok").get<bool>() &&
+                    (result.at("path") != experiment.string() || result.at("selected") != "14" ||
+                     result.at("valid") != "10" || result.at("invalid") != "4" ||
+                     result.at("gallery").size() != 12)) ++failures;
+            }
+        });
+        std::thread writer([&] {
+            start.store(true);
+            for (int i = 0; i < 20; ++i) {
+                if (!s.open(i % 2 ? experiment.string() : legacy.string())) ++failures;
+                if (i % 3 == 0) s.close();
+            }
+        });
+        reader.join(); writer.join();
+        MIB_EXPECT(failures.load() == 0, "analysis must not mix sources during reopen/close");
+    }
+    wd.mark("population source concurrency");
     return mib::test::exitCode();
 }

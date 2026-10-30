@@ -1,4 +1,10 @@
+#include "backend/analysis/EvidenceGallery.h"
 #include "backend/review/ReviewSession.h"
+#include "backend/analysis/PopulationStatistics.h"
+#include "backend/analysis/PopulationGraph.h"
+#include "backend/analysis/SourceAnalysis.h"
+#include "backend/processing/ProcessingCoreSha256.h"
+#include <atomic>
 
 #include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingTypes.h"
@@ -197,9 +203,14 @@ namespace backend::review
         bool open{false};
         std::string path;
         bool recording{false};
+        std::filesystem::file_time_type openedWriteTime{};
+        std::uintmax_t openedSize{0};
         std::vector<services::ProcessedFrame> validMeta;
         std::vector<services::ProcessedFrame> invalidMeta;
         bool validMetaReadable{false};
+        bool invalidMetaReadable{false};
+        std::vector<std::string> validFields, invalidFields;
+        bool validFieldsReadable{false}, invalidFieldsReadable{false};
         ReviewMetadata meta;
         double fallbackFactor{0.4886};
 
@@ -239,7 +250,13 @@ namespace backend::review
                 // charts rule before #512 S5, when they opened their own reader).
                 const auto validPresent = reader.metadataDatasetPresent(true);
                 validMetaReadable = validPresent.has_value() && (!*validPresent || validRead);
-                reader.readInvalidMetadata(invalidMeta);
+                const bool invalidRead = reader.readInvalidMetadata(invalidMeta);
+                const auto invalidPresent = reader.metadataDatasetPresent(false);
+                invalidMetaReadable =
+                    invalidPresent.has_value() && (!*invalidPresent || invalidRead);
+                validFields.clear(); invalidFields.clear();
+                validFieldsReadable = reader.readMetadataFieldNames(true, validFields);
+                invalidFieldsReadable = reader.readMetadataFieldNames(false, invalidFields);
                 std::size_t seriesFrames = 0;
                 std::size_t seriesCount = 0;
                 int h = 0;
@@ -466,6 +483,8 @@ namespace backend::review
         {
             try
             {
+                const auto sizeBefore = std::filesystem::file_size(filePath);
+                const auto timeBefore = std::filesystem::last_write_time(filePath);
                 if (!reader.loadFile(filePath))
                 {
                     if (error) *error = "File not found or not an HDF5 review file: " + filePath;
@@ -475,6 +494,10 @@ namespace backend::review
                 path = filePath;
                 recording = reader.isRecordingFile();
                 readMetadataLocked();
+                openedSize = std::filesystem::file_size(filePath);
+                openedWriteTime = std::filesystem::last_write_time(filePath);
+                if (openedSize != sizeBefore || openedWriteTime != timeBefore)
+                    throw std::runtime_error("Source changed while opening");
                 return true;
             }
             catch (const std::exception &e)
@@ -721,26 +744,361 @@ namespace backend::review
         return impl_->set(valid).size();
     }
 
+    std::string ReviewSession::analyzePopulation(const std::string& requestJson) const {
+        using namespace backend::analysis;
+        using Json = nlohmann::json;
+        const auto refuse = [](const std::string& message) {
+            return Json{{"ok", false}, {"message", message}}.dump();
+        };
+        try {
+            if (requestJson.size() > 65536) return refuse("Analysis request exceeds 65536 bytes");
+            const auto request = Json::parse(requestJson);
+            if (!request.is_object() ||
+                (request.size() != 4 + request.count("graph") + request.count("galleryOffset") + request.count("snapshot") + request.count("sourceKind") + request.count("galleryKeys") + request.count("expectedFingerprint") + request.count("expectedFileFingerprint") + request.count("mask")) ||
+                !request.contains("feature") || !request.contains("minimum") ||
+                !request.contains("maximum") || !request.contains("expectedPath"))
+                return refuse("Expected feature, minimum, maximum and expectedPath");
+            const auto feature = request.at("feature").get<std::string>();
+            if (feature != "area" && feature != "deformability")
+                return refuse("Supported features: stored area (px²) and deformability");
+            Interval interval;
+            if (!request.at("minimum").is_null())
+                interval.minimum = request.at("minimum").get<double>();
+            if (!request.at("maximum").is_null())
+                interval.maximum = request.at("maximum").get<double>();
+            validateInterval(interval);
+            std::optional<std::size_t> galleryOffset;
+            if (request.contains("galleryOffset")) {
+                if (!request.at("galleryOffset").is_number_unsigned())
+                    return refuse("Invalid gallery offset");
+                galleryOffset = request.at("galleryOffset").get<std::size_t>();
+                if (*galleryOffset > 10000) return refuse("Gallery offset exceeds event budget");
+            }
+            PopulationPlan plan;
+            std::string output;
+            std::map<std::string, std::pair<std::string, Interval>> gates;
+            if (request.contains("graph")) {
+                const auto& graph = request.at("graph");
+                if (!graph.is_object() || graph.size() != 4 || !graph.at("nodes").is_array())
+                    return refuse("Expected graph id, revision, output and nodes");
+                plan.id = graph.at("id").get<std::string>();
+                plan.revision = graph.at("revision").get<std::string>();
+                output = graph.at("output").get<std::string>();
+                for (const auto& item : graph.at("nodes")) {
+                    PopulationNode node;
+                    node.id = item.at("id").get<std::string>();
+                    node.parent = item.at("parent").get<std::string>();
+                    const auto kind = item.at("kind").get<std::string>();
+                    if (kind == "interval") {
+                        if (item.size() != 6) return refuse("Invalid interval node fields");
+                        node.predicate = node.id;
+                        const auto f = item.at("feature").get<std::string>();
+                        if (f != "area" && f != "deformability")
+                            return refuse("Unsupported graph feature");
+                        Interval bounds;
+                        if (!item.at("minimum").is_null())
+                            bounds.minimum = item.at("minimum").get<double>();
+                        if (!item.at("maximum").is_null())
+                            bounds.maximum = item.at("maximum").get<double>();
+                        validateInterval(bounds);
+                        gates.emplace(node.id, std::make_pair(f, bounds));
+                    } else {
+                        if (item.size() != 4) return refuse("Invalid Boolean node fields");
+                        if (kind == "and")
+                            node.kind = NodeKind::And;
+                        else if (kind == "or")
+                            node.kind = NodeKind::Or;
+                        else if (kind == "not")
+                            node.kind = NodeKind::Not;
+                        else
+                            return refuse("Unknown graph node kind");
+                        node.operands = item.at("operands").get<std::vector<std::string>>();
+                    }
+                    plan.nodes.push_back(std::move(node));
+                }
+                const auto order = validatePlan(plan);
+                if (std::find(order.begin(), order.end(), output) == order.end())
+                    return refuse("Graph output must name a population");
+            }
+            // One lock covers source identity, both sets, reduction and optional
+            // image copies through the existing reader. No acquisition calls.
+            std::scoped_lock lock(impl_->mutex);
+            if (!impl_->open) return refuse("Open a recording before analysis");
+            if (request.at("expectedPath").get<std::string>() != impl_->path)
+                return refuse("The open source changed; refresh before analyzing");
+            if (request.value("sourceKind", std::string("stored")) == "run-archive") {
+            const auto archive =
+                impl_->reader.readScalarStringAttribute("/monitoring", "run_evidence_json");
+            if (!archive || archive->size() > 4 * 1024 * 1024)
+                return refuse("Run event archive absent or exceeds 4 MiB budget");
+            auto source = adaptEvidenceArchive(Json::parse(*archive));
+            source["scope"] = "run-archive";
+            source["path"] = impl_->path;
+            const auto fileFingerprint = [&]() {
+                if (impl_->openedSize > 64 * 1024 * 1024)
+                    throw std::invalid_argument(
+                        "Archive gallery supports full fingerprints up to 64 MiB");
+                if (std::filesystem::file_size(impl_->path) != impl_->openedSize ||
+                    std::filesystem::last_write_time(impl_->path) != impl_->openedWriteTime)
+                    throw std::invalid_argument("Archive file changed since open");
+                std::string error;
+                const auto hash = processing::processingCoreFileSha256(impl_->path, &error);
+                if (hash.empty())
+                    throw std::invalid_argument("Archive fingerprint failed: " + error);
+                if (std::filesystem::file_size(impl_->path) != impl_->openedSize ||
+                    std::filesystem::last_write_time(impl_->path) != impl_->openedWriteTime)
+                    throw std::invalid_argument("Archive file changed while fingerprinting");
+                return "sha256:" + hash;
+            };
+            source["fileFingerprint"] =
+                impl_->openedSize <= 64 * 1024 * 1024 ? Json(fileFingerprint()) : Json(nullptr);
+            if (request.contains("galleryKeys")) {
+                if (request.at("expectedFingerprint") != source.at("fingerprint") ||
+                    source.at("fileFingerprint").is_null() ||
+                    request.at("expectedFileFingerprint") != source.at("fileFingerprint"))
+                    return refuse("Archive gallery source/file fingerprint changed");
+                const bool mask = request.value("mask", false);
+                auto gallery =
+                    evidenceGallery(source, request.at("galleryKeys"), mask,
+                                    [&](const std::string& set, const std::string& ordinal) {
+                                        return impl_->reader.readRunEvidenceImage(
+                                            source.at("sourceKey"), set, ordinal, mask);
+                                    });
+                if (fileFingerprint() != source.at("fileFingerprint"))
+                    return refuse("Archive changed during gallery read");
+                gallery["fileFingerprint"] = source.at("fileFingerprint");
+                return Json{{"ok", true}, {"source", gallery}}.dump();
+            }
+            return Json{{"ok", true}, {"source", source}}.dump();
+        }
+        if (request.value("sourceKind", std::string("stored")) != "stored")
+                return refuse("Unknown source kind");
+            if (impl_->recording) return refuse("Open an experiment file with object metadata");
+            if (!impl_->validMetaReadable || !impl_->invalidMetaReadable)
+                return refuse(
+                    "Object metadata is unreadable; incomplete populations are not analyzed");
+            if (impl_->validMeta.size() > 10000 ||
+                impl_->invalidMeta.size() > 10000 - impl_->validMeta.size())
+                return refuse("Analysis supports at most 10000 stored observations; no sampling "
+                              "was performed");
+            // Never certify missing observations as a complete file population.
+            if (impl_->meta.totalValid != impl_->validMeta.size() ||
+                impl_->meta.totalInvalid != impl_->invalidMeta.size())
+                return refuse(
+                    "Stored counts and readable rows disagree; source coverage is incomplete");
+            const bool freeze = request.value("snapshot", false);
+            std::string fileHash;
+            if (freeze) {
+                if (impl_->openedSize > 64 * 1024 * 1024)
+                    return refuse("Source-bound analysis supports files up to 64 MiB; no partial fingerprint");
+                if (std::filesystem::file_size(impl_->path) != impl_->openedSize ||
+                    std::filesystem::last_write_time(impl_->path) != impl_->openedWriteTime)
+                    return refuse("Source changed since open; reopen before source-bound analysis");
+                std::string error;
+                fileHash = processing::processingCoreFileSha256(impl_->path, &error);
+                if (fileHash.empty()) return refuse("Source fingerprint failed: " + error);
+                if (std::filesystem::file_size(impl_->path) != impl_->openedSize ||
+                    std::filesystem::last_write_time(impl_->path) != impl_->openedWriteTime)
+                    return refuse("Source changed while fingerprinting");
+            }
+            if (request.contains("galleryKeys")) {
+                if (!freeze || request.at("expectedFingerprint") != "sha256:" + fileHash)
+                    return refuse("Gallery source fingerprint changed");
+                const auto& keys = request.at("galleryKeys");
+                if (!keys.is_array() || keys.size() > 12) return refuse("Gallery requires at most 12 exact keys");
+                Json images = Json::array();
+                for (const auto& value : keys) {
+                    const auto key = value.get<std::string>();
+                    const auto ref = Json::parse(key);
+                    if (!ref.is_array() || ref.size() != 3 || ref.at(0) != "sha256:" + fileHash ||
+                        (ref.at(1) != "valid" && ref.at(1) != "invalid")) return refuse("Foreign gallery event key");
+                    const auto ordinalText = ref.at(2).get<std::string>();
+                    const auto ordinal = std::stoull(ordinalText);
+                    if (std::to_string(ordinal) != ordinalText) return refuse("Invalid gallery ordinal");
+                    const bool valid = ref.at(1) == "valid";
+                    if (ordinal >= impl_->set(valid).size()) return refuse("Gallery ordinal outside source");
+                    Json item{{"key", key}, {"set", ref.at(1)}, {"ordinal", ordinalText}, {"pixels", nullptr}};
+                    cv::Mat image;
+                    if (impl_->composeFrameLocked(valid, ordinal, OverlayMode::None, false, image) && !image.empty()) {
+                        const auto tile = letterbox(image, 64, 1);
+                        item["pixels"] = std::vector<unsigned char>(tile.data, tile.data + tile.total());
+                    }
+                    images.push_back(std::move(item));
+                }
+                return Json{{"ok", true}, {"source", {{"schema", "F-gallery/1"},
+                    {"fingerprint", "sha256:" + fileHash}, {"images", images}}}}.dump();
+            }
+            Json sourceRows = Json::array();
+            static std::atomic<std::uint64_t> next{0};
+            const auto snapshot = std::string("local-evaluation:") + std::to_string(++next);
+            RevisionKey revision{snapshot,
+                                 "unavailable",
+                                 request.contains("graph") ? plan.revision : request.dump(),
+                                 "single-file",
+                                 "none",
+                                 "stored-metadata/1",
+                                 "none",
+                                 "not-used",
+                                 "native-interval/1"};
+            Membership membership{revision, {}};
+            MeasurementColumn column{
+                revision, feature, feature == "area" ? "px²" : "dimensionless", {}};
+            Membership universe{revision, {}};
+            std::map<std::string, Membership> predicates;
+            for (const auto& gate : gates)
+                predicates.emplace(gate.first, Membership{revision, {}});
+            Json rows = Json::array();
+            for (const bool valid : {true, false}) {
+                const auto& source = impl_->set(valid);
+                const auto& fields = valid ? impl_->validFields : impl_->invalidFields;
+                if (!source.empty() &&
+                    !(valid ? impl_->validFieldsReadable : impl_->invalidFieldsReadable))
+                    return refuse("Measurement schema is unreadable");
+                const bool recorded =
+                    std::find(fields.begin(), fields.end(), feature) != fields.end();
+                for (std::size_t i = 0; i < source.size(); ++i) {
+                    const auto& v = source[i].validation;
+                    const double raw = feature == "area" ? v.area : v.deformability;
+                    const std::optional<double> value =
+                        recorded && std::isfinite(raw) ? std::optional<double>(raw) : std::nullopt;
+                    const auto ordinal = std::to_string(i);
+                    const auto set = valid ? "valid" : "invalid";
+                    const auto key = snapshot + ":" + set + ":" + ordinal;
+                    const auto truth = evaluateInterval(value, interval);
+                    if (freeze) {
+                        Json measures = Json::object();
+                        for (const auto& entry : std::vector<std::pair<std::string, double>>{
+                            {"area", v.area}, {"deformability", v.deformability}, {"youngsModulus", v.youngsModulus}}) {
+                            const bool present = std::find(fields.begin(), fields.end(), entry.first) != fields.end();
+                            measures[entry.first] = present && std::isfinite(entry.second) &&
+                                (entry.first != "youngsModulus" || entry.second > 0)
+                                ? Json(entry.second) : Json(nullptr);
+                        }
+                        const auto exact = Json::array({"sha256:" + fileHash, set, ordinal}).dump();
+                        sourceRows.push_back({{"key", exact}, {"set", set}, {"ordinal", ordinal},
+                            {"measurements", measures}, {"scientificQc", "unknown"},
+                            {"image", {{"available", nullptr}, {"sourceFingerprint", "sha256:" + fileHash}, {"set", set}, {"ordinal", ordinal}}}});
+                    }
+                    membership.rows.push_back({key, truth});
+                    universe.rows.push_back({key, Truth::True});
+                    for (const auto& [id, gate] : gates) {
+                        const bool present =
+                            std::find(fields.begin(), fields.end(), gate.first) != fields.end();
+                        const double measurement = gate.first == "area" ? v.area : v.deformability;
+                        const auto value = present && std::isfinite(measurement)
+                                               ? std::optional<double>(measurement)
+                                               : std::nullopt;
+                        predicates.at(id).rows.push_back(
+                            {key, evaluateInterval(value, gate.second)});
+                    }
+                    column.rows.push_back({key, value});
+                    rows.push_back({{"key", key},
+                                    {"set", set},
+                                    {"ordinal", ordinal},
+                                    {"membership", truth == Truth::True    ? "selected"
+                                                   : truth == Truth::False ? "excluded"
+                                                                           : "unknown"}});
+                }
+            }
+            if (freeze) {
+                Json source{{"schema", "F-source/1"}, {"sourceKey", "sha256:" + fileHash},
+                    {"fingerprint", "sha256:" + fileHash}, {"fingerprintKind", "full-file-sha256"},
+                    {"scope", "stored"}, {"path", impl_->path},
+                    {"parameters", {{"area", "pixel2"}, {"deformability", "dimensionless"}, {"youngsModulus", "kPa"}}},
+                    {"rows", sourceRows}, {"populationComplete", true}, {"finalized", true},
+                    {"provenance", {{"processing", nullptr}, {"calibration", nullptr}, {"mechanics", nullptr},
+                        {"semantics", "stored measurements; no recomputation or compatibility inferred from missing provenance"}}}};
+                return Json{{"ok", true}, {"source", source}}.dump();
+            }
+            if (request.contains("graph")) {
+                membership = evaluatePlan(plan, universe, universe, predicates).at(output);
+                for (std::size_t i = 0; i < membership.rows.size(); ++i) {
+                    const auto truth = membership.rows[i].value;
+                    rows[i]["membership"] = truth == Truth::True    ? "selected"
+                                            : truth == Truth::False ? "excluded"
+                                                                    : "unknown";
+                }
+            }
+            const auto statistics = populationStatistics(membership, column);
+            Json gallery = Json::array();
+            if (galleryOffset) {
+                std::size_t selectedIndex = 0;
+                for (std::size_t i = 0; i < membership.rows.size(); ++i) {
+                    if (membership.rows[i].value != Truth::True) continue;
+                    if (selectedIndex++ < *galleryOffset) continue;
+                    if (gallery.size() == 12) break;
+                    const bool valid = rows[i]["set"] == "valid";
+                    const auto ordinal = std::stoull(rows[i]["ordinal"].get<std::string>());
+                    Json item{{"key", membership.rows[i].key},
+                              {"set", rows[i]["set"]},
+                              {"ordinal", rows[i]["ordinal"]},
+                              {"pixels", nullptr}};
+                    cv::Mat image;
+                    if (impl_->composeFrameLocked(valid, ordinal, OverlayMode::None, false,
+                                                  image) &&
+                        !image.empty()) {
+                        const auto tile = letterbox(image, 64, 1);
+                        item["pixels"] =
+                            std::vector<unsigned char>(tile.data, tile.data + tile.total());
+                    }
+                    gallery.push_back(std::move(item));
+                }
+            }
+            const auto number = [](const std::optional<double>& v) -> Json {
+                return v ? Json(*v) : Json(nullptr);
+            };
+            return Json{
+                {"ok", true},
+                {"schema", "review-population/1"},
+                {"snapshot", snapshot},
+                {"path", impl_->path},
+                {"sourceFingerprint", nullptr},
+                {"durable", false},
+                {"feature", feature},
+                {"unit", column.unit},
+                {"qcPolicy", "none"},
+                {"valid", std::to_string(impl_->validMeta.size())},
+                {"invalid", std::to_string(impl_->invalidMeta.size())},
+                {"selected", std::to_string(statistics.selected)},
+                {"excluded", std::to_string(statistics.excluded)},
+                {"unknown", std::to_string(statistics.unknownMembership)},
+                {"measured", std::to_string(statistics.measured)},
+                {"missing", std::to_string(statistics.missing)},
+                {"minimum", number(statistics.minimum)},
+                {"maximum", number(statistics.maximum)},
+                {"mean", number(statistics.mean)},
+                {"median", number(statistics.median)},
+                {"rows", rows},
+                {"gallery", gallery},
+                {"galleryOffset", galleryOffset ? Json(*galleryOffset) : Json(nullptr)},
+                {"measurementSemantics",
+                 "Stored metadata values; absent fields and nonfinite measurements are unknown. "
+                 "Processing validity is not scientific QC."}}
+                .dump();
+        } catch (const std::exception& e) {
+            return refuse(e.what());
+        }
+    }
+
     bool ReviewSession::metricsPage(bool valid, std::uint64_t offset, std::uint64_t count,
-                                    std::vector<MetricRow> &rows, std::uint64_t &totalOut) const
-    {
+                                    std::vector<MetricRow>& rows, std::uint64_t& totalOut) const {
         std::scoped_lock lock(impl_->mutex);
         rows.clear();
         totalOut = 0;
         if (!impl_->open) return false;
-        const auto &source = impl_->set(valid);
+        const auto& source = impl_->set(valid);
         totalOut = source.size();
         if (offset >= source.size()) return true;
         const std::uint64_t end = std::min<std::uint64_t>(source.size(), offset + count);
         rows.reserve(static_cast<std::size_t>(end - offset));
         const double f = impl_->factor();
-        for (std::uint64_t i = offset; i < end; ++i) rows.push_back(rowFromFrame(source[i], i, f));
+        for (std::uint64_t i = offset; i < end; ++i)
+            rows.push_back(rowFromFrame(source[i], i, f));
         return true;
     }
 
-    bool ReviewSession::trackRows(bool valid, int trackId, std::size_t max, TrackRows &out,
-                                  std::string *error) const
-    {
+    bool ReviewSession::trackRows(bool valid, int trackId, std::size_t max, TrackRows& out,
+                                  std::string* error) const {
         out = TrackRows{};
         auto refuse = [error](std::string message) {
             if (error) *error = std::move(message);
@@ -753,10 +1111,9 @@ namespace backend::review
         std::scoped_lock lock(impl_->mutex);
         if (!impl_->open) return refuse("No review file is open");
         if (impl_->recording) return refuse("A raw recording has no records");
-        const auto &source = impl_->set(valid);
+        const auto& source = impl_->set(valid);
         const double f = impl_->factor();
-        for (std::uint64_t i = 0; i < source.size(); ++i)
-        {
+        for (std::uint64_t i = 0; i < source.size(); ++i) {
             if (source[i].validation.trackId != trackId) continue;
             ++out.total;
             if (out.rows.size() >= max) continue;
@@ -768,8 +1125,7 @@ namespace backend::review
     }
 
     bool ReviewSession::reprocessInputs(bool valid, std::uint64_t index, ReprocessSettings settings,
-                                        ReprocessInputs &out, std::string *error) const
-    {
+                                        ReprocessInputs& out, std::string* error) const {
         out = ReprocessInputs{};
         auto refuse = [error](std::string message) {
             if (error) *error = std::move(message);

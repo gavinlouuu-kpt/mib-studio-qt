@@ -1,3 +1,7 @@
+#include "backend/analysis/EvidenceGallery.h"
+#include "backend/analysis/AnalysisHost.h"
+#include "backend/analysis/SourceAnalysis.h"
+#include "backend/database/SqliteService.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/app/CalibrationStore.h"
 #include "backend/processing/IExecutionProvider.h"
@@ -857,6 +861,7 @@ namespace backend::bridge
                 return {false, BackendCommandType::Camera, message};
             }
             backend_.capture().stop();
+            backend_.processing().drainAndStopRealtime();
             emitEvent(makeCameraStatus(CameraState::Stopped));
             return {true, BackendCommandType::Camera, "Capture stopped"};
         }
@@ -1491,6 +1496,17 @@ namespace backend::bridge
                     {"known", id.known()}};
         }
     } // namespace
+
+    std::string BackendFacade::analyzePopulationJson(const std::string& requestJson) {
+        if (!initialized_) return R"({"ok":false,"message":"Backend not initialized"})";
+        std::string result =
+            R"({"ok":false,"message":"Stop acquisition and recording before offline analysis"})";
+        backend_.experiment().withIdleConfiguration([&] {
+            if (backend_.isFrameRecording()) return;
+            result = reviewJobs_->analyzePopulation(requestJson);
+        });
+        return result;
+    }
 
     std::string BackendFacade::runQuickLookJson(const std::string &requestJson)
     {
@@ -4447,3 +4463,90 @@ std::string BackendFacade::fetchCaptureLifecycleJson() const {
         .dump();
 }
 } // namespace backend::bridge
+
+std::string backend::bridge::BackendFacade::fetchLiveEvidenceJson() {
+    if (!isInitialized()) return R"({"available":false,"reason":"Backend is not initialized"})";
+    return backend_.processing().liveEvidenceJson();
+}
+std::string backend::bridge::BackendFacade::analysisRequestJson(const std::string& request, bool write) {
+    if (!isInitialized()) return R"({"status":"unavailable","message":"Backend is not initialized"})";
+    using Json = nlohmann::json;
+    auto source = [this](const Json& descriptor) -> Json {
+        const auto kind = descriptor.at("kind").get<std::string>();
+        if (kind == "run-archive-gallery") {
+            if (descriptor.size() != 6)
+                throw std::invalid_argument("Expected archive path, fingerprints, keys and mask");
+            const auto response = nlohmann::json::parse(analyzePopulationJson(nlohmann::json{
+                {"expectedPath", descriptor.at("path")},
+                {"feature", "area"},
+                {"minimum", nullptr},
+                {"maximum", nullptr},
+                {"snapshot", true},
+                {"sourceKind", "run-archive"},
+                {"galleryKeys", descriptor.at("keys")},
+                {"expectedFingerprint", descriptor.at("fingerprint")},
+                {"expectedFileFingerprint", descriptor.at("fileFingerprint")},
+                {"mask", descriptor.at("mask")}}.dump()));
+            if (!response.value("ok", false))
+                throw std::invalid_argument(response.value("message", "Archive gallery refused"));
+            return response.at("source");
+        }
+        if (kind == "live-run-gallery") {
+            if (descriptor.size() != 4)
+                throw std::invalid_argument("Expected live fingerprint, keys and mask");
+            nlohmann::json gallery;
+            auto& processing = backend_.processing();
+            const bool mask = descriptor.at("mask").get<bool>();
+            backend::analysis::freezeEvidence(
+                processing.runLiveEvidence(), "live-run",
+                [&](const backend::evidence::Identity& identity, uint64_t lease,
+                    const nlohmann::json& frozen) {
+                    if (frozen.at("fingerprint") != descriptor.at("fingerprint"))
+                        throw std::invalid_argument("Live gallery advanced; refresh the source");
+                    gallery = backend::analysis::evidenceGallery(
+                        frozen, descriptor.at("keys"), mask,
+                        [&](const std::string& set, const std::string& ordinal) {
+                            return processing.readRunEvidenceImage(identity, lease, set, ordinal,
+                                                                   mask);
+                        });
+                });
+            return gallery;
+        }
+        if (kind == "stored-gallery") {
+            if (descriptor.size() != 4) throw std::invalid_argument("Expected gallery path, fingerprint and keys");
+            const auto response = nlohmann::json::parse(analyzePopulationJson(nlohmann::json{
+                {"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr}, {"maximum", nullptr},
+                {"snapshot", true}, {"galleryKeys", descriptor.at("keys")}, {"expectedFingerprint", descriptor.at("fingerprint")}}.dump()));
+            if (!response.value("ok", false)) throw std::invalid_argument(response.value("message", "Gallery refused"));
+            return response.at("source");
+        }
+
+        if (kind == "live-run" || kind == "live-epoch") {
+            if (descriptor.size() != 1) throw std::invalid_argument("Unexpected live source fields");
+            return backend::analysis::freezeEvidence(kind == "live-run" ? backend_.processing().runLiveEvidence() : backend_.processing().liveEvidence(), kind);
+        }
+        if (kind != "stored" && kind != "run-archive") throw std::invalid_argument("Unsupported source kind");
+        if (descriptor.size() != 2) throw std::invalid_argument("Expected source kind and path");
+        const auto response = Json::parse(analyzePopulationJson(Json{{"expectedPath", descriptor.at("path")},
+            {"feature", "area"}, {"minimum", nullptr}, {"maximum", nullptr}, {"snapshot", true}, {"sourceKind", kind}}.dump()));
+        if (!response.value("ok", false)) throw std::invalid_argument(response.value("message", "Source refused"));
+        return response.at("source");
+    };
+    auto method = [this](const Json& ref) -> Json {
+        if (!ref.is_object() || ref.size() != 3) throw std::invalid_argument("Expected method_id, revision_id and content_hash");
+        const auto methodId = ref.at("method_id").get<std::string>();
+        const auto revisionId = ref.at("revision_id").get<std::string>();
+        const auto hash = ref.at("content_hash").get<std::string>();
+        if (methodId.empty() || revisionId.empty() || hash.empty()) throw std::invalid_argument("Method references must be pinned");
+        const auto snapshot = backend_.profileRegistry().snapshot();
+        for (const auto& item : snapshot.revisions) {
+            if (item.revisionId != revisionId) continue;
+            if (item.methodId != methodId || item.contentHash != hash)
+                return Json{{"status", "reference_mismatch"}, {"message", "Pinned method identity/hash mismatch"}};
+            return Json{{"status", "ok"}, {"method", ref}, {"config_sha256", item.configSha256},
+                {"scientificCompatibility", "unknown"}, {"hardwareReadiness", "not_evaluated"}, {"applied", false}};
+        }
+        return Json{{"status", "unavailable"}, {"message", "Exact method revision is not in the verified registry cache"}};
+    };
+    return backend::analysis::analysisRequest(backend_.sqlite(), request, write, source, method);
+}
