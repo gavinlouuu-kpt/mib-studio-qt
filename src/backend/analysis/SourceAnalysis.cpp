@@ -7,15 +7,85 @@
 #include <charconv>
 #include <algorithm>
 #include <set>
+#include <array>
 
 namespace backend::analysis {
 using Json = nlohmann::json;
 namespace {
+using Point = std::array<double, 2>;
+double cross(const Point& a, const Point& b, const Point& c) {
+    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+}
+bool onSegment(const Point& a, const Point& b, const Point& p) {
+    return cross(a, b, p) == 0 && p[0] >= std::min(a[0], b[0]) && p[0] <= std::max(a[0], b[0]) &&
+           p[1] >= std::min(a[1], b[1]) && p[1] <= std::max(a[1], b[1]);
+}
+std::vector<Point> polygonPoints(const Json& vertices) {
+    if (!vertices.is_array() || vertices.size() < 3 || vertices.size() > 129)
+        throw std::invalid_argument("Polygon requires 3..128 vertices, optionally closed");
+    std::vector<Point> points;
+    for (const auto& v : vertices) {
+        if (!v.is_array() || v.size() != 2) throw std::invalid_argument("Invalid polygon vertex");
+        Point p;
+        for (size_t i = 0; i < 2; ++i) {
+            if (!v[i].is_number())
+                throw std::invalid_argument("Polygon coordinates must be numeric");
+            p[i] = v[i].get<double>();
+            if (!std::isfinite(p[i]) || std::abs(p[i]) > 1e100)
+                throw std::invalid_argument("Polygon coordinate outside bounded domain");
+        }
+        points.push_back(p);
+    }
+    if (points.front() == points.back()) points.pop_back();
+    const auto n = points.size();
+    if (n < 3 || n > 128 || std::set<Point>(points.begin(), points.end()).size() != n)
+        throw std::invalid_argument("Duplicate polygon vertex");
+    long double area = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const auto& a = points[(i + n - 1) % n];
+        const auto& b = points[i];
+        const auto& c = points[(i + 1) % n];
+        if (cross(a, b, c) == 0 &&
+            (a[0] - b[0]) * (c[0] - b[0]) + (a[1] - b[1]) * (c[1] - b[1]) > 0)
+            throw std::invalid_argument("Overlapping polygon edges");
+        area += static_cast<long double>(b[0]) * c[1] - static_cast<long double>(c[0]) * b[1];
+        for (size_t j = i + 1; j < n; ++j) {
+            if (j == i + 1 || (i == 0 && j == n - 1)) continue;
+            const auto& d = points[j];
+            const auto& e = points[(j + 1) % n];
+            const auto x = cross(b, c, d), y = cross(b, c, e), z = cross(d, e, b),
+                       w = cross(d, e, c);
+            if (((x > 0 && y < 0) || (x < 0 && y > 0)) && ((z > 0 && w < 0) || (z < 0 && w > 0)) ||
+                onSegment(b, c, d) || onSegment(b, c, e) || onSegment(d, e, b) ||
+                onSegment(d, e, c))
+                throw std::invalid_argument("Self-intersecting polygon");
+        }
+    }
+    if (area == 0) throw std::invalid_argument("Zero-area polygon");
+    return points;
+}
+Truth polygonMembership(const std::vector<Point>& points, double x, double y) {
+    // Match the worker's bounded numeric domain; out-of-domain measurements are unknown.
+    if (std::abs(x) > 1e100 || std::abs(y) > 1e100) return Truth::Unknown;
+    const Point p{x, y};
+    bool inside = false;
+    for (size_t i = 0, j = points.size() - 1; i < points.size(); j = i++) {
+        const auto& a = points[j];
+        const auto& b = points[i];
+        if (onSegment(a, b, p)) return Truth::True; // all edges and vertices are inclusive
+        if ((a[1] > y) != (b[1] > y)) {
+            const auto orientation = cross(a, b, p);
+            if ((orientation > 0) == (b[1] > a[1])) inside = !inside;
+        }
+    }
+    return inside ? Truth::True : Truth::False;
+}
 struct Graph {
     PopulationPlan plan;
     std::string output;
     std::map<std::string, std::pair<std::string, Interval>> gates;
     std::map<std::string, Json> geometries;
+    std::map<std::string, std::vector<Point>> polygons;
 };
 Graph parseGraph(const Json& q) {
     if (!q.is_object() || q.size() != 4 || !q.at("nodes").is_array())
@@ -43,24 +113,35 @@ Graph parseGraph(const Json& q) {
                     std::string::npos)
                 throw std::invalid_argument("Unsupported graph feature");
             g.gates.emplace(node.id, std::make_pair(feature, bounds));
-        } else if (kind == "ellipse" || kind == "quadrant") {
-            if (v.size() != (kind == "ellipse" ? 9 : 8)) throw std::invalid_argument("Invalid geometry node fields");
+        } else if (kind == "ellipse" || kind == "quadrant" || kind == "polygon") {
+            if (v.size() != (kind == "ellipse" ? 9 : kind == "polygon" ? 6 : 8))
+                throw std::invalid_argument("Invalid geometry node fields");
             for (const char* key : {"x", "y"}) {
                 const auto feature = v.at(key).get<std::string>();
-                if (feature.empty() || feature.size() > 64 || feature.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != std::string::npos)
+                if (feature.empty() || feature.size() > 64 ||
+                    feature.find_first_not_of(
+                        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
+                        std::string::npos)
                     throw std::invalid_argument("Unsupported geometry parameter");
             }
-            if (v.at("x") == v.at("y")) throw std::invalid_argument("Geometry requires distinct parameters");
-            if (kind == "ellipse") {
+            if (v.at("x") == v.at("y"))
+                throw std::invalid_argument("Geometry requires distinct parameters");
+            if (kind == "polygon") {
+                g.polygons.emplace(node.id, polygonPoints(v.at("vertices")));
+            } else if (kind == "ellipse") {
                 for (const char* key : {"centerX", "centerY", "radiusX", "radiusY"})
-                    if (!std::isfinite(v.at(key).get<double>())) throw std::invalid_argument("Ellipse geometry must be finite");
+                    if (!std::isfinite(v.at(key).get<double>()))
+                        throw std::invalid_argument("Ellipse geometry must be finite");
                 if (v.at("radiusX").get<double>() <= 0 || v.at("radiusY").get<double>() <= 0)
                     throw std::invalid_argument("Ellipse radii must be positive");
             } else {
-                if (!std::isfinite(v.at("thresholdX").get<double>()) || !std::isfinite(v.at("thresholdY").get<double>()))
+                if (!std::isfinite(v.at("thresholdX").get<double>()) ||
+                    !std::isfinite(v.at("thresholdY").get<double>()))
                     throw std::invalid_argument("Quadrant thresholds must be finite");
-                const std::set<std::string> choices{"lower-left", "lower-right", "upper-left", "upper-right"};
-                if (!choices.count(v.at("quadrant").get<std::string>())) throw std::invalid_argument("Unknown quadrant");
+                const std::set<std::string> choices{"lower-left", "lower-right", "upper-left",
+                                                    "upper-right"};
+                if (!choices.count(v.at("quadrant").get<std::string>()))
+                    throw std::invalid_argument("Unknown quadrant");
             }
             node.predicate = node.id;
             g.geometries.emplace(node.id, v);
@@ -305,16 +386,24 @@ Json evaluateSource(const Json& rawSource, const Json& request) {
             const auto x = measurement(row, gate.at("x")), y = measurement(row, gate.at("y"));
             Truth truth = Truth::Unknown;
             if (x && y) {
-                if (gate.at("kind") == "quadrant") {
+                if (gate.at("kind") == "polygon") {
+                    truth = polygonMembership(graph.polygons.at(id), *x, *y);
+                } else if (gate.at("kind") == "quadrant") {
                     const bool right = *x >= gate.at("thresholdX").get<double>();
                     const bool upper = *y >= gate.at("thresholdY").get<double>();
                     const auto name = gate.at("quadrant").get<std::string>();
                     truth = (right == (name == "lower-right" || name == "upper-right") &&
-                             upper == (name == "upper-left" || name == "upper-right")) ? Truth::True : Truth::False;
+                             upper == (name == "upper-left" || name == "upper-right"))
+                                ? Truth::True
+                                : Truth::False;
                 } else {
-                const long double dx = (static_cast<long double>(*x) - gate.at("centerX").get<double>()) / gate.at("radiusX").get<double>();
-                const long double dy = (static_cast<long double>(*y) - gate.at("centerY").get<double>()) / gate.at("radiusY").get<double>();
-                truth = std::hypot(dx, dy) <= 1 ? Truth::True : Truth::False;
+                    const long double dx =
+                        (static_cast<long double>(*x) - gate.at("centerX").get<double>()) /
+                        gate.at("radiusX").get<double>();
+                    const long double dy =
+                        (static_cast<long double>(*y) - gate.at("centerY").get<double>()) /
+                        gate.at("radiusY").get<double>();
+                    truth = std::hypot(dx, dy) <= 1 ? Truth::True : Truth::False;
                 }
             }
             predicates.at(id).rows.push_back({key, truth});

@@ -42,44 +42,129 @@ int main() {
                    "edited bounds evaluate against their own content revision");
     }
     {
+        auto polygonSource = source;
+        polygonSource["parameters"] = {{"x", "dimensionless"}, {"y", "dimensionless"}};
+        polygonSource["rows"] = json::array();
+        for (const auto& xy : json::array({{0, 0}, {1, 0}, {2, 1}, {1, 1}, {3, 1}, {nullptr, 1}}))
+            polygonSource["rows"].push_back({{"key", std::to_string(polygonSource["rows"].size())},
+                                             {"measurements", {{"x", xy[0]}, {"y", xy[1]}}}});
+        auto polygonGraph = graph;
+        polygonGraph["nodes"] = {{{"id", "gate"},
+                                  {"parent", ""},
+                                  {"kind", "polygon"},
+                                  {"x", "x"},
+                                  {"y", "y"},
+                                  {"vertices", {{0, 0}, {2, 0}, {2, 2}, {0, 2}}}}};
+        auto result = backend::analysis::evaluateSource(
+            polygonSource, {{"graph", polygonGraph}, {"feature", "x"}});
+        MIB_EXPECT(result["selected"] == "4" && result["excluded"] == "1" &&
+                       result["unknown"] == "1",
+                   "polygon includes edges/vertices and preserves missingness");
+        auto& vertices = polygonGraph["nodes"][0]["vertices"];
+        std::reverse(vertices.begin(), vertices.end());
+        vertices.push_back(vertices[0]);
+        MIB_EXPECT(backend::analysis::evaluateSource(
+                       polygonSource, {{"graph", polygonGraph}, {"feature", "x"}})["rows"] ==
+                       result["rows"],
+                   "polygon orientation and optional closing vertex preserve membership");
+        for (const auto& invalid : json::array({{{0, 0}, {2, 2}, {0, 2}, {2, 0}},
+                                                {{0, 0}, {1, 0}, {2, 0}},
+                                                {{0, 0}, {2, 0}, {1, 0}, {1, 2}},
+                                                {{0, 0}, {2, 0}, {2, 2}, {2, 0}},
+                                                {{0, 0}, {1e101, 0}, {0, 1}}})) {
+            vertices = invalid;
+            bool refused = false;
+            try {
+                backend::analysis::validateAnalysisGraph(polygonGraph);
+            } catch (const std::exception&) {
+                refused = true;
+            }
+            MIB_EXPECT(refused,
+                       "degenerate/intersecting/overlapping/duplicate/unbounded polygons refused");
+        }
+        vertices = {{0, 0}, {2, 0}, {2, 2}, {1, 1}, {0, 2}};
+        polygonSource["rows"] = {{{"key", "notch"}, {"measurements", {{"x", 1}, {"y", 1.5}}}},
+                                 {{"key", "inside"}, {"measurements", {{"x", 1}, {"y", .5}}}}};
+        result = backend::analysis::evaluateSource(polygonSource,
+                                                   {{"graph", polygonGraph}, {"feature", "x"}});
+        MIB_EXPECT(result["selected"] == "1" && result["excluded"] == "1",
+                   "concave polygon uses interior not convex hull");
+    }
+    {
         auto ellipseSource = source;
         ellipseSource["parameters"] = {{"x", "dimensionless"}, {"y", "dimensionless"}};
         ellipseSource["rows"] = json::array();
-        for (const auto& xy : json::array({json::array({0, 0}), json::array({2, 0}), json::array({0, 1}), json::array({2, 1}), json::array({nullptr, 0}), json::array({1e300, 1e300})}))
-            ellipseSource["rows"].push_back({{"key", std::to_string(ellipseSource["rows"].size())}, {"measurements", {{"x", xy[0]}, {"y", xy[1]}}}});
+        for (const auto& xy : json::array({json::array({0, 0}), json::array({2, 0}),
+                                           json::array({0, 1}), json::array({2, 1}),
+                                           json::array({nullptr, 0}), json::array({1e300, 1e300})}))
+            ellipseSource["rows"].push_back({{"key", std::to_string(ellipseSource["rows"].size())},
+                                             {"measurements", {{"x", xy[0]}, {"y", xy[1]}}}});
         auto ellipseGraph = graph;
-        ellipseGraph["nodes"] = {{{"id", "gate"}, {"parent", ""}, {"kind", "ellipse"}, {"x", "x"}, {"y", "y"}, {"centerX", 0}, {"centerY", 0}, {"radiusX", 2}, {"radiusY", 1}}};
-        const auto result = backend::analysis::evaluateSource(ellipseSource, {{"graph", ellipseGraph}, {"feature", "x"}});
-        MIB_EXPECT(result["selected"] == "3" && result["unknown"] == "1" && result["excluded"] == "2",
-                   "ellipse includes axis boundaries, excludes outside and preserves missing coordinates");
+        ellipseGraph["nodes"] = {{{"id", "gate"},
+                                  {"parent", ""},
+                                  {"kind", "ellipse"},
+                                  {"x", "x"},
+                                  {"y", "y"},
+                                  {"centerX", 0},
+                                  {"centerY", 0},
+                                  {"radiusX", 2},
+                                  {"radiusY", 1}}};
+        const auto result = backend::analysis::evaluateSource(
+            ellipseSource, {{"graph", ellipseGraph}, {"feature", "x"}});
+        MIB_EXPECT(
+            result["selected"] == "3" && result["unknown"] == "1" && result["excluded"] == "2",
+            "ellipse includes axis boundaries, excludes outside and preserves missing coordinates");
         ellipseGraph["nodes"][0]["radiusX"] = 0;
         bool refused = false;
-        try { backend::analysis::validateAnalysisGraph(ellipseGraph); } catch (const std::exception&) { refused = true; }
+        try {
+            backend::analysis::validateAnalysisGraph(ellipseGraph);
+        } catch (const std::exception&) {
+            refused = true;
+        }
         MIB_EXPECT(refused, "zero ellipse radius refused before publication");
     }
     {
         auto quadrants = source;
         quadrants["parameters"] = {{"x", "dimensionless"}, {"y", "dimensionless"}};
         quadrants["rows"] = json::array();
-        for (int x = -1; x <= 1; ++x) for (int y = -1; y <= 1; ++y)
-            quadrants["rows"].push_back({{"key", std::to_string(quadrants["rows"].size())}, {"measurements", {{"x", x}, {"y", y}}}});
-        quadrants["rows"].push_back({{"key", "missing"}, {"measurements", {{"x", nullptr}, {"y", 0}}}});
+        for (int x = -1; x <= 1; ++x)
+            for (int y = -1; y <= 1; ++y)
+                quadrants["rows"].push_back({{"key", std::to_string(quadrants["rows"].size())},
+                                             {"measurements", {{"x", x}, {"y", y}}}});
+        quadrants["rows"].push_back(
+            {{"key", "missing"}, {"measurements", {{"x", nullptr}, {"y", 0}}}});
         auto partition = graph;
         partition["nodes"] = json::array();
-        const std::vector<std::string> regions{"lower-left", "lower-right", "upper-left", "upper-right"};
+        const std::vector<std::string> regions{"lower-left", "lower-right", "upper-left",
+                                               "upper-right"};
         for (const auto& region : regions)
-            partition["nodes"].push_back({{"id", region}, {"parent", ""}, {"kind", "quadrant"}, {"x", "x"}, {"y", "y"}, {"thresholdX", 0}, {"thresholdY", 0}, {"quadrant", region}});
+            partition["nodes"].push_back({{"id", region},
+                                          {"parent", ""},
+                                          {"kind", "quadrant"},
+                                          {"x", "x"},
+                                          {"y", "y"},
+                                          {"thresholdX", 0},
+                                          {"thresholdY", 0},
+                                          {"quadrant", region}});
         std::map<std::string, int> memberships;
         std::vector<std::string> counts;
         for (const auto& region : regions) {
             partition["output"] = region;
-            const auto evaluated = backend::analysis::evaluateSource(quadrants, {{"graph", partition}, {"feature", "x"}});
+            const auto evaluated = backend::analysis::evaluateSource(
+                quadrants, {{"graph", partition}, {"feature", "x"}});
             counts.push_back(evaluated.at("selected"));
-            MIB_EXPECT(evaluated["unknown"] == "1", "each quadrant preserves missing coordinate uncertainty");
-            for (const auto& row : evaluated.at("rows")) if (row.at("membership") == "selected") ++memberships[row.at("key").get<std::string>()];
+            MIB_EXPECT(evaluated["unknown"] == "1",
+                       "each quadrant preserves missing coordinate uncertainty");
+            for (const auto& row : evaluated.at("rows"))
+                if (row.at("membership") == "selected")
+                    ++memberships[row.at("key").get<std::string>()];
         }
-        MIB_EXPECT(counts == std::vector<std::string>({"1", "2", "2", "4"}), "threshold ties belong right and upper");
-        MIB_EXPECT(memberships.size() == 9 && std::all_of(memberships.begin(), memberships.end(), [](const auto& item){return item.second == 1;}), "quadrants partition known events without duplicate threshold ownership");
+        MIB_EXPECT(counts == std::vector<std::string>({"1", "2", "2", "4"}),
+                   "threshold ties belong right and upper");
+        MIB_EXPECT(memberships.size() == 9 &&
+                       std::all_of(memberships.begin(), memberships.end(),
+                                   [](const auto& item) { return item.second == 1; }),
+                   "quadrants partition known events without duplicate threshold ownership");
     }
     json binding;
     for (const char* k : {"fingerprint", "sourceKey", "parameters", "scope"})
@@ -290,14 +375,19 @@ int main() {
         auto customTable = save;
         customTable["planId"] = customTable["graph"]["id"] = "custom-table";
         customTable["commandId"] = "custom-table-save";
-        customTable["table"] = {{"populations", {"gate"}}, {"columns", {"population", "feature", "unit", "median", "unknown"}}};
+        customTable["table"] = {
+            {"populations", {"gate"}},
+            {"columns", {"population", "feature", "unit", "median", "unknown"}}};
         MIB_EXPECT(call(customTable)["status"] == "ok", "save reusable native table definition");
         auto customQuery = reportQuery;
         customQuery["planId"] = "custom-table";
         const auto customReport = call(customQuery, false);
-        MIB_EXPECT(customReport["report"]["columns"] == customTable["table"]["columns"] && customReport["report"]["table"][0].size() == 5 && customReport["report"]["table"][0]["median"] == 5,
+        MIB_EXPECT(customReport["report"]["columns"] == customTable["table"]["columns"] &&
+                       customReport["report"]["table"][0].size() == 5 &&
+                       customReport["report"]["table"][0]["median"] == 5,
                    "custom table projects exact native values and ordered columns");
-        MIB_EXPECT(customReport["csv"].get<std::string>().find("population,feature,unit,median,unknown\r\n") == 0,
+        MIB_EXPECT(customReport["csv"].get<std::string>().find(
+                       "population,feature,unit,median,unknown\r\n") == 0,
                    "CSV follows persisted column order");
         customTable["commandId"] = "custom-table-invalid";
         customTable["expectedRevision"] = "1";
@@ -305,16 +395,26 @@ int main() {
         MIB_EXPECT(call(customTable)["status"] == "invalid", "table refuses removed population");
         customTable["table"]["populations"] = {"gate"};
         customTable["table"]["columns"] = {"population", "median"};
-        MIB_EXPECT(call(customTable)["status"] == "invalid", "table cannot silently omit feature and units");
-        const auto catalog = call(json{{"action", "catalog"}, {"kind", "strategy"}, {"limit", 1}}, false);
-        MIB_EXPECT(catalog["status"] == "ok" && catalog["entries"].size() == 1 && !catalog["next"].is_null(),
+        MIB_EXPECT(call(customTable)["status"] == "invalid",
+                   "table cannot silently omit feature and units");
+        const auto catalog =
+            call(json{{"action", "catalog"}, {"kind", "strategy"}, {"limit", 1}}, false);
+        MIB_EXPECT(catalog["status"] == "ok" && catalog["entries"].size() == 1 &&
+                       !catalog["next"].is_null(),
                    "bounded discovery returns exact head revision and continuation");
-        const auto page2 = call(json{{"action", "catalog"}, {"kind", "strategy"}, {"limit", 1}, {"after", catalog["next"]}}, false);
-        MIB_EXPECT(page2["entries"].size() == 1 && page2["entries"][0]["id"] != catalog["entries"][0]["id"],
+        const auto page2 = call(json{{"action", "catalog"},
+                                     {"kind", "strategy"},
+                                     {"limit", 1},
+                                     {"after", catalog["next"]}},
+                                false);
+        MIB_EXPECT(page2["entries"].size() == 1 &&
+                       page2["entries"][0]["id"] != catalog["entries"][0]["id"],
                    "catalog keyset cursor does not repeat records");
         MIB_EXPECT(call(json{{"action", "catalog"}, {"kind", "library"}}, false)["entries"].empty(),
                    "catalog isolates literal namespaces");
-        MIB_EXPECT(json::parse(db.workspaceRequest(json{{"action", "catalog"}, {"workspace_id", "analysis/"}}.dump(), false))["status"] == "invalid",
+        MIB_EXPECT(json::parse(db.workspaceRequest(
+                       json{{"action", "catalog"}, {"workspace_id", "analysis/"}}.dump(),
+                       false))["status"] == "invalid",
                    "generic endpoint cannot invoke internal discovery authority");
         const auto manifest =
             call(json{{"action", "manifest"}, {"planId", "plan"}, {"revision", "1"}}, false);

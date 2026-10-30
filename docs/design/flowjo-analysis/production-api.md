@@ -445,3 +445,28 @@ belong upper (`y>=thresholdY`); lower/left comparisons are strict. The four pred
 therefore partition all known coordinate pairs without boundary double-counting.
 Missing either coordinate remains unknown, never assigned to a quadrant. Geometry is
 in the explicit raw/derived domain; thresholds are not automatically fitted.
+
+## Native polygon graph node (2026-10-30)
+
+`{id,parent,kind:"polygon",x,y,vertices:[[x0,y0],...]}` has exactly six fields.
+The two parameters must be distinct and available in the evaluated raw/derived
+source. Accept 3–128 distinct vertices, optionally repeating the first once to
+close the polygon. Coordinates are finite binary64 numbers bounded by absolute
+1e100. Refuse zero area, duplicate vertices, adjacent backtracking/overlap and
+non-adjacent intersections/touches. Concave simple polygons and either winding
+are supported. Edges and vertices are inclusive; missing/nonfinite or out-of-domain
+measurement coordinates yield unknown, never zero or an invented coordinate.
+Predicates share parent, Boolean, manual-QC, fingerprint and exact-key semantics.
+No epsilon expansion, curve fitting, rotation inference or calibration is applied.
+Extremely ill-conditioned binary64 geometry is not exact-arithmetic qualification.
+
+Studio and Review use the existing save/read/evaluate/gallery/job commands and
+backend immutable revisions; no ABI increment or browser-owned scientific store.
+The production graph form offers polygon coordinate-pair editing. Native save
+validation is authoritative. A Cytoflow job can use the same polygon and pinned
+strategy; native eligibility and worker membership remain separately computed.
+
+Reproduction: `tools/flowjo_acceptance/polygon-app-parity.mjs <wss-url> <fixture>`
+uses the standard 14-observation Review fixture in an idle mock QA app. It verifies
+save/read/retry, invalid-save refusal, exact gallery keys and row-for-row real
+worker/native parity. It does not start acquisition.

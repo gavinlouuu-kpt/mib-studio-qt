@@ -196,3 +196,11 @@ Cytoflow polygon execution, live evidence consumption or verified relinking.
 See [app QA handoff](../../design/flowjo-analysis/app-qa.md) for real runtime and
 synthetic fixture distinction. Scope remains the original capability ledger, not
 a reduced interval-only replacement.
+
+
+## 2026-10-30 continuation
+
+Native polygon vertical slice implemented and tested through persisted strategy,
+React form events, Review reopen/gallery and real Studio/Cytoflow WSS parity.
+Current evidence and remaining scope are in capability-ledger.md. Continue
+interchange/workspace-batch work; this checkpoint does not complete F01–F16.

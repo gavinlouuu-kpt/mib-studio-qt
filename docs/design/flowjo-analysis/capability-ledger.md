@@ -120,7 +120,7 @@ its absent-feature wording. No aggregate F01–F16 acceptance is claimed.
 | F01 | Verified SHA256 relink (10 gates/images unchanged), retained-source labels/tags/groups library, duplicate detection, unit provenance | Fingerprinting beyond 64MiB; broader metadata workflow |
 | F02 | Durable attributed manual tri-state QC, native eligibility/job propagation | Qualified automated scientific QC and biological validation |
 | F03 | Ordered linear/asinh/log10 derived columns, exact units/domain/null semantics, shared worker/native fingerprint | Compensation controls/estimation, Logicle, applicable fluorescence channels |
-| F04 | Persisted interval/ellipse/quadrant/Boolean DAG, rectangles, forms/scatter gestures, revisions and overrides | Native polygon/rotated/fitted gates and full rendered interaction qualification |
+| F04 | Persisted interval/polygon/ellipse/quadrant/Boolean DAG, rectangles, forms/scatter gestures, revisions and overrides | Rotated/fitted gates and full rendered interaction qualification |
 | F05/F11 | Saved native histogram/scatter, sampled display, multi-source overlays, immutable report plotting | Other plot families and graphical layout controls |
 | F06 | Fingerprint-fenced stored gallery, exact keys, real thumbnails and relink parity | E retained-image locators absent; live image retention cannot be fabricated |
 | F07 | Supervised 2–16-feature seeded t-SNE, explicit sampling, exact map, same-runtime reorder/reopen tests | Other embedding engines, cross-platform qualification |
@@ -193,3 +193,19 @@ ownership and preserve missing-coordinate unknown. Tests prove all9 known cut-gr
 points belong to exactly one of four populations. Native polygon authoring and
 rotated/fitted geometry remain separate; the existing supervised Cytoflow polygon
 job is not mislabeled a persisted native polygon DAG node.
+
+### 2026-10-30 native polygon continuation
+
+Native simple polygons now persist/evaluate through the existing graph authority;
+forms edit axes/vertices, with backend rejection of invalid geometry. Tests cover
+edges/vertices, winding/closure, concavity, missingness and degenerate geometry.
+Review bridge proves SQLite reopen and exact gallery parity. Real Studio WSS
+polygon-e2e-1793363829418 selects10, mean104.6, returns10 thumbnails; real Cytoflow
+job884046f815e4e2b1495080ea13b6e720cc0f8d299d02d6b7e10dd06b6d7110cb
+matches all14 membership rows. Invalid save leaves revision1 unchanged.
+Native6, Review8, ASan/UBSan4, real worker8 pass. UI graph/workspace13 pass.
+Browser navigation is currently policy-blocked; DOM interaction is not claimed as
+rendered browser acceptance. Physical Windows availability is now documented by
+E fd32a99e / E-windows-validation-20261024.md; it is NOT full app qualification.
+Retained E images remain unavailable pending exact producer locators. Remaining
+interchange/workspace/report-batch work is implementation work, not a shared-owner gate.

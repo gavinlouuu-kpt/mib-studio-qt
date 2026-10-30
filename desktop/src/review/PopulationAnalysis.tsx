@@ -8,6 +8,7 @@ export interface PopulationGraph {
   id: string; revision: string; output: string;
   nodes: Array<
     { id: string; parent: string; kind: "interval"; feature: string; minimum: number | null; maximum: number | null } |
+    { id:string; parent:string; kind:"polygon"; x:string; y:string; vertices:[number,number][] } |
     { id: string; parent: string; kind: "ellipse"; x: string; y: string; centerX:number; centerY:number; radiusX:number; radiusY:number } |
     { id:string; parent:string; kind:"quadrant"; x:string; y:string; thresholdX:number; thresholdY:number; quadrant:"lower-left"|"lower-right"|"upper-left"|"upper-right" } |
     { id: string; parent: string; kind: "and" | "or" | "not"; operands: string[] }
