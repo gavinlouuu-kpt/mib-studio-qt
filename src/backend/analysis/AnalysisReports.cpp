@@ -63,6 +63,107 @@ Json analysisReportRequest(services::SqliteService& db, const Json& q, bool writ
     const auto store = [&](const Json& request, bool mutate = false) {
         return Json::parse(db.analysisWorkspaceRequest(request.dump(), mutate));
     };
+    if (action.rfind("reportBatch", 0) == 0) {
+        const auto id = identifier(q.at("batchId"));
+        const auto workspace = "analysis-report-batch/" + id;
+        const auto current =
+            store(Json{{"action", "read"}, {"workspace_id", workspace}, {"revision", nullptr}});
+        if (action == "reportBatchRead") {
+            fields(q, {"action", "batchId"});
+            return current;
+        }
+        if (!write) throw std::invalid_argument("Report batch mutation requires write endpoint");
+        if (action == "reportBatchCreate") {
+            fields(q, {"action", "batchId", "commandId", "reports"});
+            if (current.value("status", std::string{}) == "ok") {
+                if (current.at("document").at("request") != q)
+                    throw std::invalid_argument("Batch ID collision");
+                return current;
+            }
+            if (current.value("status", std::string{}) != "not_found") return current;
+            const auto& reports = q.at("reports");
+            if (!reports.is_array() || reports.empty() || reports.size() > 16)
+                throw std::invalid_argument("Batch requires 1..16 pinned reports");
+            Json runs = Json::array();
+            std::set<std::string> seen;
+            for (const auto& pin : reports) {
+                fields(pin, {"reportId", "revision"});
+                if (!seen.insert(pin.dump()).second)
+                    throw std::invalid_argument("Duplicate report pin");
+                auto query = pin;
+                query["action"] = "reportRead";
+                auto resolved = analysisReportRequest(db, query, false, evaluate);
+                if (resolved.value("status", std::string{}) != "ok") return resolved;
+                auto run = pin;
+                // Stable ownership from complete creation request; retry never invents another run.
+                run["runId"] =
+                    "batch-" + contentHash(Json{{"request", q}, {"index", runs.size()}}).substr(7);
+                runs.push_back(run);
+            }
+            Json doc{{"schema_version", 1},
+                     {"type", "F-report-batch/1"},
+                     {"request", q},
+                     {"state", "ready"},
+                     {"runs", runs},
+                     {"next", 0u},
+                     {"results", Json::array()},
+                     {"failure", nullptr}};
+            return store(Json{{"action", "commit"},
+                              {"workspace_id", workspace},
+                              {"expected_revision", nullptr},
+                              {"command_id", q.at("commandId")},
+                              {"document", doc}},
+                         true);
+        }
+        fields(q, {"action", "batchId", "revision"});
+        if (action != "reportBatchAdvance" && action != "reportBatchCancel")
+            throw std::invalid_argument("Unknown batch action");
+        if (current.value("status", std::string{}) != "ok") return current;
+        auto doc = current.at("document");
+        if (doc.at("type") != "F-report-batch/1")
+            throw std::invalid_argument("Report batch type mismatch");
+        if (doc.at("state") == "cancelled" || doc.at("state") == "completed") return current;
+        if (current.at("revision") != q.at("revision"))
+            return Json{{"status", "conflict"},
+                        {"message", "Refresh batch revision before advancing or cancelling"}};
+        const auto command = "batch-step-" + contentHash(q).substr(7);
+        if (action == "reportBatchCancel")
+            doc["state"] = "cancelled";
+        else {
+            const auto next = doc.at("next").get<size_t>();
+            auto build = doc.at("runs").at(next);
+            build["action"] = "reportBuild";
+            build["commandId"] =
+                "batch-run-" +
+                contentHash(Json{{"batch", doc.at("request")}, {"index", next}}).substr(7);
+            Json result;
+            try {
+                result = analysisReportRequest(db, build, true, evaluate);
+            } catch (const std::exception& error) {
+                result = {{"status", "invalid"}, {"message", error.what()}};
+            }
+            if (result.value("status", std::string{}) == "ok") {
+                doc["results"].push_back(
+                    {{"runId", build.at("runId")},
+                     {"revision", "1"},
+                     {"contentHash", result.at("document").at("contentHash")}});
+                doc["next"] = next + 1;
+                doc["state"] = next + 1 == doc.at("runs").size() ? "completed" : "ready";
+                doc["failure"] = nullptr;
+            } else {
+                doc["state"] = "failed";
+                doc["failure"] = result;
+            }
+        }
+        // A concurrent cancellation wins its CAS. An already-built immutable run may remain,
+        // but no stale advance can overwrite the cancellation or schedule another report.
+        return store(Json{{"action", "commit"},
+                          {"workspace_id", workspace},
+                          {"expected_revision", q.at("revision")},
+                          {"command_id", command},
+                          {"document", doc}},
+                     true);
+    }
     if (action == "reportSave") {
         if (!write) throw std::invalid_argument("Saving report layout requires write endpoint");
         fields(q, {"action", "reportId", "expectedRevision", "commandId", "layout"});

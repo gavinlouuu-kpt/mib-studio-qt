@@ -204,3 +204,9 @@ Native polygon vertical slice implemented and tested through persisted strategy,
 React form events, Review reopen/gallery and real Studio/Cytoflow WSS parity.
 Current evidence and remaining scope are in capability-ledger.md. Continue
 interchange/workspace-batch work; this checkpoint does not complete F01–F16.
+
+Continuation also implements source-bound observation JSON/CSV, all-or-nothing
+exact strategy batch export, and native durable cooperative report batches.
+Fault/restart/cancellation tests and real app WSS outcomes are recorded in the
+capability ledger. Full F scope remains open; peer APIs and qualification gaps
+are separated from remaining implementation work.

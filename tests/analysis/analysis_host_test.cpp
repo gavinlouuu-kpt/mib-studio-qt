@@ -1,4 +1,5 @@
 #include "backend/analysis/AnalysisHost.h"
+#include "backend/analysis/AnalysisReports.h"
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
 #include "support/assert.h"
@@ -743,6 +744,109 @@ int main() {
         reportSave["layout"]["title"] = "New title";
         MIB_EXPECT(call(reportSave)["revision"] == "2", "append layout revision");
         MIB_EXPECT(call(buildReport) == reportRun, "saved report run never follows layout head");
+        json batchCreate{{"action", "reportBatchCreate"},
+                         {"batchId", "batch-one"},
+                         {"commandId", "batch-create"},
+                         {"reports",
+                          {{{"reportId", "report-one"}, {"revision", "1"}},
+                           {{"reportId", "report-one"}, {"revision", "2"}}}}};
+        const auto batchStart = call(batchCreate);
+        MIB_EXPECT(batchStart["status"] == "ok" && batchStart["document"]["state"] == "ready",
+                   "durable report queue created from exact pins");
+        MIB_EXPECT(call(batchCreate) == batchStart,
+                   "lost create reply reconciles without another queue");
+        json advance{{"action", "reportBatchAdvance"}, {"batchId", "batch-one"}, {"revision", "1"}};
+        const auto progressed = call(advance);
+        MIB_EXPECT(progressed["document"]["next"] == 1 &&
+                       progressed["document"]["results"].size() == 1,
+                   "one step builds one immutable report");
+        MIB_EXPECT(call(advance)["status"] == "conflict", "stale advance cannot duplicate work");
+        auto cancelBatch = advance;
+        cancelBatch["action"] = "reportBatchCancel";
+        cancelBatch["revision"] = progressed["revision"];
+        const auto cancelled = call(cancelBatch);
+        MIB_EXPECT(cancelled["document"]["state"] == "cancelled" &&
+                       cancelled["document"]["next"] == 1,
+                   "cancellation retains completed report count");
+        MIB_EXPECT(call(advance) == cancelled,
+                   "cancelled batch never advances even with stale request");
+        MIB_EXPECT(call(json{{"action", "reportRunRead"},
+                             {"reportId", batchStart["document"]["runs"][1]["runId"]},
+                             {"revision", "1"}},
+                        false)["status"] == "not_found",
+                   "cancelled pending report was not built");
+        batchCreate["batchId"] = "batch-complete";
+        batchCreate["commandId"] = "batch-create-complete";
+        const auto ready = call(batchCreate);
+        advance["batchId"] = "batch-complete";
+        advance["revision"] = ready["revision"];
+        const auto firstReport = call(advance);
+        advance["revision"] = firstReport["revision"];
+        const auto completed = call(advance);
+        MIB_EXPECT(completed["document"]["state"] == "completed" &&
+                       completed["document"]["results"].size() == 2,
+                   "multi-report completion is explicit and durable");
+        MIB_EXPECT(call(advance) == completed, "terminal advance idempotent");
+        auto faultBatch = batchCreate;
+        faultBatch["batchId"] = "batch-fault";
+        faultBatch["commandId"] = "batch-fault-create";
+        faultBatch["reports"].erase(1);
+        const auto faultReady = call(faultBatch);
+        MIB_REQUIRE(db.execute("CREATE TRIGGER fail_batch_step BEFORE INSERT ON workspace_commands "
+                               "WHEN NEW.workspace_id='analysis-report-batch/batch-fault' BEGIN "
+                               "SELECT RAISE(ABORT,'fault'); END"),
+                    "inject batch progress fault only");
+        auto faultAdvance = advance;
+        faultAdvance["batchId"] = "batch-fault";
+        faultAdvance["revision"] = "1";
+        MIB_EXPECT(call(faultAdvance)["status"] == "storage",
+                   "built report survives failed progress commit");
+        const auto builtBeforeRetry =
+            call(json{{"action", "reportRunRead"},
+                      {"reportId", faultReady["document"]["runs"][0]["runId"]},
+                      {"revision", "1"}},
+                 false);
+        MIB_EXPECT(builtBeforeRetry["status"] == "ok",
+                   "immutable run published before progress fault");
+        MIB_REQUIRE(db.execute("DROP TRIGGER fail_batch_step"), "clear batch progress fault");
+        MIB_EXPECT(call(faultAdvance)["document"]["state"] == "completed",
+                   "retry reconciles exact existing run");
+        MIB_EXPECT(call(json{{"action", "reportRunRead"},
+                             {"reportId", faultReady["document"]["runs"][0]["runId"]},
+                             {"revision", "1"}},
+                        false) == builtBeforeRetry,
+                   "retry never duplicates or overwrites report");
+        auto raceBatch = batchCreate;
+        raceBatch["batchId"] = "batch-race";
+        raceBatch["commandId"] = "batch-race-create";
+        call(raceBatch);
+        auto raceAdvance = advance;
+        raceAdvance["batchId"] = "batch-race";
+        raceAdvance["revision"] = "1";
+        bool cancelDuringBuild = true;
+        const auto raced = backend::analysis::analysisReportRequest(
+            db, raceAdvance, true, [&](const json& request) {
+                if (cancelDuringBuild) {
+                    cancelDuringBuild = false;
+                    call(json{{"action", "reportBatchCancel"},
+                              {"batchId", "batch-race"},
+                              {"revision", "1"}});
+                }
+                return call(request, false);
+            });
+        MIB_EXPECT(raced["status"] == "conflict",
+                   "in-flight build cannot overwrite concurrent cancellation");
+        MIB_EXPECT(call(json{{"action", "reportBatchRead"}, {"batchId", "batch-race"}},
+                        false)["document"]["state"] == "cancelled",
+                   "cancellation remains authoritative after in-flight report");
+        auto missingReportBatch = batchCreate;
+        missingReportBatch["batchId"] = "batch-missing";
+        missingReportBatch["reports"][1]["revision"] = "999";
+        MIB_EXPECT(call(missingReportBatch)["status"] == "not_found",
+                   "unresolvable report pin refused before queue creation");
+        MIB_EXPECT(call(json{{"action", "reportBatchRead"}, {"batchId", "batch-missing"}},
+                        false)["status"] == "not_found",
+                   "failed queue creation publishes nothing");
         auto invalidReport = reportSave;
         invalidReport["commandId"] = "report-invalid";
         invalidReport["layout"]["blocks"][0]["reference"]["source"] = save.at("source");
@@ -786,6 +890,12 @@ int main() {
             false, resolver));
         MIB_EXPECT(library["document"]["library"]["samples"][0]["label"] == "Before",
                    "sample library metadata survives authority reopen");
+        const auto reopenedBatch = json::parse(backend::analysis::analysisRequest(
+            db, json{{"action", "reportBatchRead"}, {"batchId", "batch-one"}}.dump(), false,
+            resolver));
+        MIB_EXPECT(reopenedBatch["document"]["state"] == "cancelled" &&
+                       reopenedBatch["document"]["next"] == 1,
+                   "cancelled progress survives SQLite reopen without scheduling");
         const auto reportRun = json::parse(backend::analysis::analysisRequest(
             db,
             json{{"action", "reportRunRead"}, {"reportId", "run-one"}, {"revision", "1"}}.dump(),

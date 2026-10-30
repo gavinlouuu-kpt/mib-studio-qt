@@ -286,3 +286,23 @@ selects the same9 with exact source/parameter pins. Save replay passes.
 Post-quadrant shared regression: all6 native E/source/metadata/Review integration
 tests and all8 Review bridge tests pass. UI24 pass; all4 native ASan/UBSan suites
 pass. Current app remains mock/offline; these are not hardware or browser acceptance.
+
+
+## 2026-10-30 continuation
+
+Real app tailnet endpoint remains https://gavin-p5-ubuntu.himalayan-coho.ts.net:18808/.
+Mock camera, synthetic stored fixture, no acquisition; E image locators unavailable.
+Review → Population analysis → graph editor → Gate type → Inclusive polygon;
+edit axes/vertices, then Save backend revision and evaluate/gallery/job.
+Population tables and portable strategy exposes observation JSON/CSV and pinned
+strategy-batch export. Saved report layouts → Durable report batches exposes
+native queue/progress/cancel controls. Browser tool navigation is policy-blocked:
+DOM control tests and backend WSS proof are not labeled rendered click-through.
+
+Polygon plan polygon-e2e-1793363829418 revision1:10 selected, mean104.6,10 matching
+thumbnails; all14 native memberships equal real Cytoflow job
+884046f815e4e2b1495080ea13b6e720cc0f8d299d02d6b7e10dd06b6d7110cb.
+Observation export14 rows/10 selected; strategy batch2 pins, missing third refuses
+whole artifact. Report batch report-batch-1793364471847 cancelled1/2 with pending
+run absent; suffix -complete finished2/2. Repro scripts are in tools/flowjo_acceptance.
+No peer branch/service, Tailscale handler or main/develop merge changed.

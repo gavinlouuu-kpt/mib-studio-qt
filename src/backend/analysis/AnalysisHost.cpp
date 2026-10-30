@@ -187,8 +187,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 .dump();
         if (action == "librarySave" || action == "libraryRead")
             return analysisLibraryRequest(database, q, write, source).dump();
-        if (action == "reportSave" || action == "reportRead" || action == "reportBuild" ||
-            action == "reportRunRead")
+        if (action.rfind("reportBatch", 0) == 0 || action == "reportSave" ||
+            action == "reportRead" || action == "reportBuild" || action == "reportRunRead")
             return analysisReportRequest(database, q, write,
                                          [&](const Json& request) {
                                              return Json::parse(analysisRequest(
@@ -666,13 +666,13 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     {"rows", rows}};
                 if (artifact.dump().size() + csv.size() > 4194304)
                     throw std::invalid_argument("Observation export exceeds 4 MiB");
-                return Json{
-                    {"status", "ok"},
-                    {"artifact", artifact},
-                    {"contentHash", contentHash(artifact)},
-                    {"csv", csv},
-                    {"csvSemantics", "All rows; blank is unavailable. JSON preserves exact "
-                                     "strings; CSV prefixes formula-like strings with apostrophe."}}
+                return Json{{"status", "ok"},
+                            {"artifact", artifact},
+                            {"contentHash", contentHash(artifact)},
+                            {"csv", csv},
+                            {"csvSemantics",
+                             "All rows; blank is unavailable. JSON preserves exact "
+                             "strings; CSV prefixes formula-like strings with apostrophe."}}
                     .dump();
             }
             if (action == "plot") {

@@ -1,3 +1,4 @@
+import {AnalysisReportBatch} from "./AnalysisReportBatch";
 import { useRef, useState } from "react";
 import type { AnalysisCall } from "./AnalysisWorkspace";
 import { AnalysisPlot } from "./AnalysisPlot";
@@ -36,6 +37,7 @@ export function AnalysisReport({read,write,disabled}:{read:AnalysisCall;write:An
       <button disabled={!runId} onClick={()=>void run(async()=>{const reply=checked(await read({action:"reportRunRead",reportId:runId,revision:"1"}));setDocument(reply.document);})}>Reopen report run</button>
       <button onClick={()=>void run(async()=>{const pending=window.localStorage.getItem(journal);if(!pending)throw new Error("No pending report command");await submit(JSON.parse(pending));})}>Reconcile pending report</button>
     </fieldset>
+    <AnalysisReportBatch read={read} write={write} disabled={disabled||busy}/>
     <p role="status">{message}</p>
     {document && <>
       <article ref={article} aria-label="Immutable analysis report">

@@ -126,7 +126,7 @@ its absent-feature wording. No aggregate F01–F16 acceptance is claimed.
 | F07 | Supervised 2–16-feature seeded t-SNE, explicit sampling, exact map, same-runtime reorder/reopen tests | Other embedding engines, cross-platform qualification |
 | F08 | Native raw/derived quantiles/SD/CV/geometric mean and population tables/CSV | Graphical table designer and advanced statistics |
 | F09 | Explicit experimental units, paired/independent descriptive comparisons, duplicate-source rejection | Scientific compatibility qualification, inferential fits/models |
-| F10 | Saved ordered-block layouts and immutable report runs, JSON/standalone HTML | Arbitrary layout designer and cancellable multi-report batch orchestration |
+| F10 | Saved ordered-block layouts, immutable runs, durable cancellable bounded batches, JSON/standalone HTML | Arbitrary layout designer; preemptive cancellation/platform qualification |
 | F12 | Source-bound CAS/restore, checksummed portable strategies, pending receipts, retained sources, library/sample display preference precedence | Full portable workspace lifecycle/global preferences and scalable relink |
 | F13 | Pinned E producer live/archive parity, source fencing, immutable retention, coverage semantics | Actual hardware acquisition-budget qualification, TSan host startup failure |
 | F14 | Exact plan/method APIs, immutable findings and pinned report evidence; API sent to I | Final I-owned next-run linkage/composition and scientific applicability qualification |
@@ -218,3 +218,25 @@ source-bound raw pixel2; two exact strategy revisions export together, and a
 missing third refuses the whole artifact. Native6, Review8, sanitizer4, UI15 pass.
 Batch export is not portable dependency provisioning/import, report scheduling,
 FCS import or GatingML. Those remain implementation scope, not generic blockers.
+
+### 2026-10-30 durable report batches
+
+Backend metadata now owns bounded exact-layout queues, immutable results, per-step
+CAS progress, failed-state retry and cooperative cancellation. Native fault injection
+proves report-success/progress-failure reconciliation without duplicate artifacts;
+interleaving proves cancellation cannot be overwritten by a stale advance. SQLite
+reopen does not schedule work. UI cancellation waits for the current bounded report
+and stops subsequent steps; it is not preemptive interruption.
+
+Real WSS report-batch-1793364471847 cancels after1/2, second run absent;
+report-batch-1793364471847-complete finishes2/2 with pinned artifact hashes.
+Final regression native6, Review8, ASan/UBSan4, UI29 pass; worker8 passed for the
+polygon slice and no worker changes followed. Production builds and docs pass.
+The whole batch is not atomic; completed reports survive cancellation.
+
+Remaining full scope includes FCS import/GatingML, full dependency-aware workspace
+import/lifecycle and global preferences, large-file asynchronous fingerprinting,
+compensation/Logicle/qualified automatic QC, fitted/rotated gates, additional plots
+and inferential models, other embeddings, arbitrary report layout, and platform/
+scientific qualification. These are not all external blockers. E retained-image
+API and I next-run linkage remain peer-owned integrations. No F01–F16 acceptance.

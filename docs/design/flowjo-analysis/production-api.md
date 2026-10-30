@@ -493,3 +493,37 @@ or a complete workspace backup. Source/method/application dependencies remain
 references and require native provisioning/verification on import; exported
 browser JSON never becomes scientific authority merely by being embedded.
 Both controls are in the real source-bound analysis workspace.
+
+## Durable bounded report batches (2026-10-30)
+
+Write `{action:"reportBatchCreate",batchId,commandId,reports:[{reportId,revision},...]}`
+validates 1–16 unique exact layout revisions and persists `F-report-batch/1` in the
+same native SQLite owner (`analysis-report-batch/<id>`). Stable run IDs derive
+from the full creation request and index. Exact create replay returns current
+progress; another creation request using the same batch ID is refused.
+
+Read `{action:"reportBatchRead",batchId}` returns current metadata revision and
+document: state ready/failed/completed/cancelled, next (completed count), runs,
+results (immutable run ID/revision/hash) and failure. This moving progress head is
+not a moving scientific strategy lookup: each report reference is pinned.
+
+Write `{action:"reportBatchAdvance",batchId,revision}` builds at most one report,
+then CAS-publishes progress. Write `{action:"reportBatchCancel",batchId,revision}`
+cancels remaining work. Terminal states are idempotent; stale nonterminal revisions
+return conflict and require refresh. Failed steps may be retried after their
+concrete dependency is repaired, using refreshed progress; no automatic retry.
+
+Each report is atomic, the whole batch is NOT. Completed immutable artifacts are
+retained on cancellation. Cancellation is cooperative between bounded report builds,
+not preemptive interruption of the current native call. A concurrent cancellation
+wins its metadata CAS; an already-built run may remain outside the cancelled
+progress list, addressable by its deterministic ID. A failed progress commit can
+be retried without rebuilding/overwriting that immutable run. Native tests inject
+this exact failure and the cancellation interleaving. No new worker/thread/SQLite
+owner; restarting never schedules work. Real UI offers create/reconcile, refresh,
+one-step, run-remaining and stop-after-current controls.
+
+Reproduce real-app create/progress/cancel/run-reopen checks with
+`tools/flowjo_acceptance/report-batch-app-parity.mjs <wss-url> <reportId> <revision>`
+against an idle QA app with an existing layout using retained sources. The script
+creates uniquely named metadata artifacts and does not start acquisition.
