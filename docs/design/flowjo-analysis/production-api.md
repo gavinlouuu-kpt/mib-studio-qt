@@ -470,3 +470,26 @@ Reproduction: `tools/flowjo_acceptance/polygon-app-parity.mjs <wss-url> <fixture
 uses the standard 14-observation Review fixture in an idle mock QA app. It verifies
 save/read/retry, invalid-save refusal, exact gallery keys and row-for-row real
 worker/native parity. It does not start acquisition.
+
+## Observation interchange and pinned batch export (2026-10-30)
+
+Read `{action:"observations",planId,revision,source}` resolves the exact persisted
+strategy and verifies the source/method as evaluation does. Returns checksummed
+`artifact` (`F-observations/1`) and `csv`. All observations are included, with exact
+key, optional set/ordinal, selected/excluded/unknown membership, selected feature
+value and missing reason. Raw/derived units, graph/parameter fingerprints, source
+binding, completeness and unknown denominator remain explicit. This exports
+stored detections/events, NOT asserted biological cells; no FCS/GatingML claim.
+Null is unavailable; CSV blank means unavailable. JSON is the exact-string
+interchange authority (spreadsheets may coerce long decimal IDs); formula-like CSV
+strings get an apostrophe prefix. Response budget 4 MiB, existing 10k-row limit.
+
+Read `{action:"manifestBatch",plans:[{planId,revision},...]}` accepts 1–16 unique
+exact pins and returns a checksummed `F-strategy-batch/1` artifact containing each
+existing strategy manifest/checksum in input order. No moving-head lookup. Missing
+pins or over-budget results refuse the entire artifact, never a partial success.
+2 MiB embedded-manifest budget. This is a read-only batch export, not batch import
+or a complete workspace backup. Source/method/application dependencies remain
+references and require native provisioning/verification on import; exported
+browser JSON never becomes scientific authority merely by being embedded.
+Both controls are in the real source-bound analysis workspace.

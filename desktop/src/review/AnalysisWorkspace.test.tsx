@@ -60,3 +60,18 @@ it("refuses to overwrite a selected but unloaded revision",async()=>{
   await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!.call(input,"9");input.dispatchEvent(new Event("input",{bubbles:true}));});
   await click("Save backend revision");expect(write).not.toHaveBeenCalled();expect(host.textContent).toContain("Load the selected saved graph");
 });
+
+it("requests observation export from exact native revision and renders null semantics",async()=>{
+ await click("Save backend revision");
+ read.mockResolvedValue({status:"ok",artifact:{planId:"plan",revision:"1",rows:[{key:"exact",value:null}]},csv:"key,value\r\nexact,\r\n",csvSemantics:"blank is unavailable"});
+ await click("Build pinned observation export");
+ expect(read).toHaveBeenLastCalledWith({action:"observations",planId:"plan",revision:"1",source:{kind:"stored",path:"a.h5"}});
+ expect(host.textContent).toContain("1 stored events/detections");expect(host.textContent).toContain("blank is unavailable");
+ expect(write).toHaveBeenCalledTimes(1);
+});
+it("does not download a partial native batch failure",async()=>{
+ read.mockResolvedValue({status:"not_found",message:"Batch export refused; no partial artifact"});
+ await click("Export pinned strategy batch");
+ expect(read).toHaveBeenLastCalledWith({action:"manifestBatch",plans:[]});
+ expect(host.textContent).toContain("no partial artifact");expect(write).not.toHaveBeenCalled();
+});

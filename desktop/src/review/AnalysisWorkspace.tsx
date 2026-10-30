@@ -46,6 +46,8 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [plotText, setPlotText] = useState(JSON.stringify({kind:"histogram",feature:"area",minimum:0,maximum:200,bins:40,normalization:"count",layers:[{population:"area-gate",displayOffset:0}]},null,2));
   const [plot, setPlot] = useState<PlotArtifact | null>(null);
   const [report, setReport] = useState<Record<string, any> | null>(null);
+  const [batchPins,setBatchPins]=useState("[]");
+  const [observations,setObservations]=useState<Record<string,any>|null>(null);
   const [manifestText, setManifestText] = useState("");
   const [gallery, setGallery] = useState<Record<string, any> | null>(null);
   const [restoreRevision, setRestoreRevision] = useState("");
@@ -60,7 +62,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [jobResult, setJobResult] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState(false);
   const generation = useRef(0);
-  useEffect(() => { ++generation.current; setPlot(null); setReport(null); setGallery(null); setResult(null); setMessage(""); }, [path, kind, retainedId, graphText, feature]);
+  useEffect(() => { ++generation.current; setPlot(null); setReport(null); setObservations(null); setGallery(null); setResult(null); setMessage(""); }, [path, kind, retainedId, graphText, feature]);
   useEffect(() => {
     let id: unknown; try { id = JSON.parse(graphText).id; } catch { return; }
     if (typeof id !== "string") return;
@@ -260,6 +262,19 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         const text = JSON.stringify({manifest:reply.manifest,contentHash:reply.contentHash},null,2);
         setManifestText(text); download("analysis-strategy.json",text,"application/json");
       })}>Export exact strategy manifest</button>
+      <button disabled={busy||!revision} onClick={()=>void run(async token=>{
+        const reply=checked(await read({action:"observations",planId:graph().id,revision,source:source()}));
+        if(token===generation.current)setObservations(reply);
+      })}>Build pinned observation export</button>
+      {observations&&<><p>Plan {observations.artifact.planId}, revision {observations.artifact.revision}: {observations.artifact.rows.length} stored events/detections, not asserted biological cells. Unknown and excluded rows remain present. {observations.csvSemantics}</p>
+        <button onClick={()=>download("analysis-observations.json",JSON.stringify(observations,null,2),"application/json")}>Download exact observation JSON</button>
+        <button onClick={()=>download("analysis-observations.csv",observations.csv,"text/csv")}>Download observation CSV</button></>}
+      <label>Batch strategy pins<textarea aria-label="Batch strategy pins" rows={4} value={batchPins} onChange={e=>setBatchPins(e.target.value)}/></label>
+      <p>List 1–16 exact planId/revision pairs. Export fails as a whole if any pin is unavailable. Source and method dependencies remain references requiring native verification, not embedded authority.</p>
+      <button disabled={busy} onClick={()=>void run(async token=>{
+        const reply=checked(await read({action:"manifestBatch",plans:JSON.parse(batchPins)}));
+        if(token===generation.current)download("analysis-strategy-batch.json",JSON.stringify(reply,null,2),"application/json");
+      })}>Export pinned strategy batch</button>
       <label>Portable manifest JSON<textarea aria-label="Strategy manifest JSON" rows={5} value={manifestText} onChange={e => setManifestText(e.target.value)} /></label>
       <button disabled={busy || disabled || !manifestText} onClick={() => void run(async token => {
         if (window.localStorage.getItem(pendingKey)) throw new Error("Reconcile the pending command first.");

@@ -289,6 +289,36 @@ int main() {
         };
         MIB_EXPECT(call(save, false)["status"] == "invalid", "read endpoint cannot save");
         MIB_EXPECT(call(save)["revision"] == "1", "create strategy");
+        json observationQuery{{"action", "observations"},
+                              {"planId", "plan"},
+                              {"revision", "1"},
+                              {"source", save.at("source")}};
+        const auto exported = call(observationQuery, false);
+        MIB_EXPECT(exported["status"] == "ok" && exported["artifact"]["rows"].size() == 2,
+                   "observation interchange includes missing/unknown rows");
+        MIB_EXPECT(exported["artifact"]["rows"][0]["value"] == 5 &&
+                       exported["artifact"]["rows"][1]["value"].is_null(),
+                   "export preserves values and nulls");
+        MIB_EXPECT(exported["artifact"]["rows"][1]["membership"] == "unknown" &&
+                       exported["artifact"]["scientificCompatibility"] == "unknown",
+                   "no false certainty in interchange");
+        MIB_EXPECT(exported["contentHash"] == backend::analysis::contentHash(exported["artifact"]),
+                   "observation artifact checksum");
+        json batch{{"action", "manifestBatch"},
+                   {"plans", {{{"planId", "plan"}, {"revision", "1"}}}}};
+        const auto bundled = call(batch, false);
+        MIB_EXPECT(bundled["status"] == "ok" && bundled["artifact"]["strategies"].size() == 1,
+                   "batch exports exact immutable strategy");
+        MIB_EXPECT(bundled["contentHash"] == backend::analysis::contentHash(bundled["artifact"]),
+                   "batch pins content");
+        batch["plans"].push_back({{"planId", "missing"}, {"revision", "1"}});
+        const auto missingBatch = call(batch, false);
+        MIB_EXPECT(missingBatch["status"] != "ok" && !missingBatch.contains("artifact"),
+                   "missing pin refuses entire batch without partial artifact");
+        batch["plans"][1] = batch["plans"][0];
+        MIB_EXPECT(call(batch, false)["status"] == "invalid", "duplicate batch pins refused");
+        batch["plans"] = json::array();
+        MIB_EXPECT(call(batch, false)["status"] == "invalid", "empty batch refused");
         auto transformedPlan = save;
         transformedPlan["planId"] = "transformed";
         transformedPlan["graph"]["id"] = "transformed";
@@ -319,6 +349,14 @@ int main() {
         MIB_EXPECT(jobInput["evaluation"]["parameterFingerprint"] ==
                        jobInput["source"]["parameterFingerprint"],
                    "worker and native preprocessing identity match");
+        transformedQuery["action"] = "observations";
+        const auto derivedExport = call(transformedQuery, false);
+        MIB_EXPECT(derivedExport["artifact"]["rows"][0]["value"] == 1 &&
+                       derivedExport["artifact"]["unit"] == "dimensionless",
+                   "interchange preserves selected derived domain and units");
+        MIB_EXPECT(derivedExport["artifact"]["parameterFingerprint"] ==
+                       jobInput["source"]["parameterFingerprint"],
+                   "interchange uses native parameter fingerprint");
         transformedQuery["action"] = "plot";
         MIB_EXPECT(call(transformedQuery, false)["plot"]["layers"][0]["counts"] ==
                        json::array({"0", "1"}),

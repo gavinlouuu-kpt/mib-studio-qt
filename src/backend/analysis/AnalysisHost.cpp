@@ -6,6 +6,7 @@
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
 #include <set>
+#include <cmath>
 #include <algorithm>
 namespace backend::analysis {
 using Json = nlohmann::json;
@@ -16,29 +17,49 @@ void fields(const Json& q, const std::set<std::string>& allowed) {
         if (!allowed.count(i.key()))
             throw std::invalid_argument("Unknown analysis request field: " + i.key());
 }
-const std::vector<std::string> tableColumns{
-    "population", "feature", "unit", "selected", "excluded", "unknown", "measured",
-    "missing", "minimum", "maximum", "mean", "median", "p05", "p25", "p75", "p95",
-    "sampleStandardDeviation", "cvPercent", "geometricMean", "denominator"};
+const std::vector<std::string> tableColumns{"population",
+                                            "feature",
+                                            "unit",
+                                            "selected",
+                                            "excluded",
+                                            "unknown",
+                                            "measured",
+                                            "missing",
+                                            "minimum",
+                                            "maximum",
+                                            "mean",
+                                            "median",
+                                            "p05",
+                                            "p25",
+                                            "p75",
+                                            "p95",
+                                            "sampleStandardDeviation",
+                                            "cvPercent",
+                                            "geometricMean",
+                                            "denominator"};
 void validateTable(const Json& doc) {
     if (!doc.contains("table")) return;
     const auto& spec = doc.at("table");
     fields(spec, {"populations", "columns"});
     const auto populations = spec.at("populations").get<std::vector<std::string>>();
     const auto columns = spec.at("columns").get<std::vector<std::string>>();
-    if (populations.empty() || populations.size() > 32 || columns.empty() || columns.size() > tableColumns.size())
+    if (populations.empty() || populations.size() > 32 || columns.empty() ||
+        columns.size() > tableColumns.size())
         throw std::invalid_argument("Table selection budget exceeded");
     std::set<std::string> nodes, seen;
-    for (const auto& node : doc.at("graph").at("nodes")) nodes.insert(node.at("id"));
+    for (const auto& node : doc.at("graph").at("nodes"))
+        nodes.insert(node.at("id"));
     for (const auto& population : populations)
         if (!nodes.count(population) || !seen.insert(population).second)
             throw std::invalid_argument("Table population is missing or duplicated");
     seen.clear();
     for (const auto& column : columns)
-        if (std::find(tableColumns.begin(), tableColumns.end(), column) == tableColumns.end() || !seen.insert(column).second)
+        if (std::find(tableColumns.begin(), tableColumns.end(), column) == tableColumns.end() ||
+            !seen.insert(column).second)
             throw std::invalid_argument("Table column is unsupported or duplicated");
     for (const char* required : {"population", "feature", "unit"})
-        if (!seen.count(required)) throw std::invalid_argument("Table requires population, feature and unit columns");
+        if (!seen.count(required))
+            throw std::invalid_argument("Table requires population, feature and unit columns");
 }
 std::string identity(const Json& q) {
     auto id = q.at("planId").get<std::string>();
@@ -96,20 +117,41 @@ std::string analysisRequest(services::SqliteService& database, const std::string
         const auto action = q.at("action").get<std::string>();
         if (action == "catalog") {
             fields(q, {"action", "kind", "after", "limit"});
-            const std::map<std::string, std::string> prefixes{{"strategy", "analysis/"}, {"library", "analysis-library/"}, {"source", "analysis-source/"}, {"report", "analysis-report/"}, {"finding", "analysis-finding/"}, {"overlay", "analysis-overlay/"}};
+            const std::map<std::string, std::string> prefixes{
+                {"strategy", "analysis/"},        {"library", "analysis-library/"},
+                {"source", "analysis-source/"},   {"report", "analysis-report/"},
+                {"finding", "analysis-finding/"}, {"overlay", "analysis-overlay/"}};
             const auto kind = q.at("kind").get<std::string>();
-            if (!prefixes.count(kind)) throw std::invalid_argument("Unsupported analysis catalog kind");
+            if (!prefixes.count(kind))
+                throw std::invalid_argument("Unsupported analysis catalog kind");
             const auto prefix = prefixes.at(kind);
             const auto after = q.value("after", std::string{});
             const auto limit = q.value("limit", 50);
-            if (limit < 1 || limit > 100) throw std::invalid_argument("Catalog limit must be 1..100");
-            auto result = Json::parse(database.analysisWorkspaceRequest(Json{{"action", "catalog"}, {"workspace_id", prefix}, {"after", after.empty() ? "" : prefix + after}, {"limit", limit + 1}}.dump(), false));
+            if (limit < 1 || limit > 100)
+                throw std::invalid_argument("Catalog limit must be 1..100");
+            auto result = Json::parse(database.analysisWorkspaceRequest(
+                Json{{"action", "catalog"},
+                     {"workspace_id", prefix},
+                     {"after", after.empty() ? "" : prefix + after},
+                     {"limit", limit + 1}}
+                    .dump(),
+                false));
             if (result.value("status", std::string{}) != "ok") return result.dump();
             auto entries = result.at("entries");
             const bool more = entries.size() > static_cast<std::size_t>(limit);
             if (more) entries.erase(entries.end() - 1);
-            for (auto& entry : entries) { entry["id"] = entry.at("workspace_id").get<std::string>().substr(prefix.size()); entry.erase("workspace_id"); }
-            return Json{{"status", "ok"}, {"kind", kind}, {"entries", entries}, {"next", more ? entries.back().at("id") : Json(nullptr)}, {"semantics", "Discovery heads only; open an exact revision. Pages are not a frozen inventory."}}.dump();
+            for (auto& entry : entries) {
+                entry["id"] = entry.at("workspace_id").get<std::string>().substr(prefix.size());
+                entry.erase("workspace_id");
+            }
+            return Json{
+                {"status", "ok"},
+                {"kind", kind},
+                {"entries", entries},
+                {"next", more ? entries.back().at("id") : Json(nullptr)},
+                {"semantics",
+                 "Discovery heads only; open an exact revision. Pages are not a frozen inventory."}}
+                .dump();
         }
         const auto nativeSource = source;
         source = [&](const Json& descriptor) -> Json {
@@ -306,6 +348,40 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             return unwrap(Json::parse(database.analysisWorkspaceRequest(request.dump(), false)))
                 .dump();
         }
+        if (action == "manifestBatch") {
+            fields(q, {"action", "plans"});
+            const auto& plans = q.at("plans");
+            if (!plans.is_array() || plans.empty() || plans.size() > 16)
+                throw std::invalid_argument("Batch export requires 1..16 exact plan revisions");
+            Json manifests = Json::array();
+            std::set<std::string> seen;
+            size_t bytes = 0;
+            for (const auto& pin : plans) {
+                fields(pin, {"planId", "revision"});
+                if (pin.size() != 2 || !seen.insert(pin.dump()).second)
+                    throw std::invalid_argument("Duplicate or incomplete plan pin");
+                auto request = pin;
+                request["action"] = "manifest";
+                const auto item =
+                    Json::parse(analysisRequest(database, request.dump(), false, source, method));
+                if (item.value("status", std::string{}) != "ok")
+                    return Json{{"status", item.value("status", std::string("invalid"))},
+                                {"failedPin", pin},
+                                {"message", "Batch export refused; no partial artifact"}}
+                        .dump();
+                bytes += item.dump().size();
+                if (bytes > 2097152) throw std::invalid_argument("Batch export exceeds 2 MiB");
+                manifests.push_back(
+                    {{"manifest", item.at("manifest")}, {"contentHash", item.at("contentHash")}});
+            }
+            Json artifact{{"schema", "F-strategy-batch/1"},
+                          {"strategies", manifests},
+                          {"dependencyPolicy", "references-only; source and method dependencies "
+                                               "require native verification on import"}};
+            return Json{
+                {"status", "ok"}, {"artifact", artifact}, {"contentHash", contentHash(artifact)}}
+                .dump();
+        }
         if (action == "manifest") {
             fields(q, {"action", "planId", "revision"});
             if (q.at("revision").is_null())
@@ -490,7 +566,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 .dump();
         }
         if (action == "evaluate" || action == "jobInput" || action == "gallery" ||
-            action == "report" || action == "plot") {
+            action == "report" || action == "plot" || action == "observations") {
             fields(q,
                    action == "gallery"
                        ? std::set<std::string>{"action", "planId", "revision", "source", "offset"}
@@ -526,6 +602,79 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             auto result = evaluateSource(current, doc);
             result["planId"] = q.at("planId");
             result["revision"] = saved.at("revision");
+            if (action == "observations") {
+                const auto prepared = prepareAnalysisSource(current, doc);
+                const auto feature = doc.at("feature").get<std::string>();
+                Json rows = Json::array();
+                std::map<std::string, Json> memberships;
+                for (const auto& row : result.at("rows"))
+                    memberships.emplace(row.at("key").get<std::string>(), row.at("membership"));
+                auto cell = [](const Json& value) {
+                    if (value.is_null()) return std::string{};
+                    if (!value.is_string()) return value.dump();
+                    auto raw = value.get<std::string>();
+                    const auto first = raw.find_first_not_of(" \t\r\n");
+                    if (first != std::string::npos &&
+                        std::string("=+-@").find(raw[first]) != std::string::npos)
+                        raw.insert(raw.begin(), '\'');
+                    std::string escaped = "\"";
+                    for (char c : raw) {
+                        if (c == '"') escaped += '"';
+                        escaped += c;
+                    }
+                    return escaped + "\"";
+                };
+                std::string csv = "key,set,ordinal,membership,value,missingReason\r\n";
+                for (const auto& row : prepared.at("rows")) {
+                    Json value = row.at("measurements").value(feature, Json(nullptr));
+                    if (!value.is_number() || !std::isfinite(value.get<double>())) value = nullptr;
+                    Json reason = nullptr;
+                    if (value.is_null())
+                        reason = row.value("missingReasons", Json::object())
+                                     .value(feature,
+                                            Json("measurement or transform domain unavailable"));
+                    Json exported{{"key", row.at("key")},
+                                  {"set", row.value("set", Json(nullptr))},
+                                  {"ordinal", row.value("ordinal", Json(nullptr))},
+                                  {"membership", memberships.at(row.at("key").get<std::string>())},
+                                  {"value", value},
+                                  {"missingReason", reason}};
+                    bool first = true;
+                    for (const char* key :
+                         {"key", "set", "ordinal", "membership", "value", "missingReason"}) {
+                        if (!first) csv += ',';
+                        first = false;
+                        csv += cell(exported.at(key));
+                    }
+                    csv += "\r\n";
+                    rows.push_back(std::move(exported));
+                }
+                Json artifact{
+                    {"schema", "F-observations/1"},
+                    {"observationUnit", "stored detection/event; not asserted biological cell"},
+                    {"planId", q.at("planId")},
+                    {"revision", saved.at("revision")},
+                    {"sourceBinding", doc.at("sourceBinding")},
+                    {"parameterFingerprint", result.at("parameterFingerprint")},
+                    {"graphFingerprint", result.at("graphFingerprint")},
+                    {"feature", feature},
+                    {"unit", result.at("unit")},
+                    {"transforms", prepared.at("transforms")},
+                    {"populationComplete", result.at("populationComplete")},
+                    {"denominator", result.at("denominator")},
+                    {"scientificCompatibility", "unknown"},
+                    {"rows", rows}};
+                if (artifact.dump().size() + csv.size() > 4194304)
+                    throw std::invalid_argument("Observation export exceeds 4 MiB");
+                return Json{
+                    {"status", "ok"},
+                    {"artifact", artifact},
+                    {"contentHash", contentHash(artifact)},
+                    {"csv", csv},
+                    {"csvSemantics", "All rows; blank is unavailable. JSON preserves exact "
+                                     "strings; CSV prefixes formula-like strings with apostrophe."}}
+                    .dump();
+            }
             if (action == "plot") {
                 if (doc.value("plot", Json(nullptr)).is_null())
                     return Json{{"status", "unavailable"},
@@ -539,11 +688,18 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             }
             if (action == "report") {
                 validateTable(doc);
-                const auto columns = doc.contains("table") ? doc.at("table").at("columns").get<std::vector<std::string>>() : tableColumns;
+                const auto columns =
+                    doc.contains("table")
+                        ? doc.at("table").at("columns").get<std::vector<std::string>>()
+                        : tableColumns;
                 std::vector<std::string> populations;
-                if (doc.contains("table")) populations = doc.at("table").at("populations").get<std::vector<std::string>>();
-                else for (const auto& node : doc.at("graph").at("nodes")) populations.push_back(node.at("id"));
-                if (populations.size() > 32) throw std::invalid_argument("Report supports at most 32 populations");
+                if (doc.contains("table"))
+                    populations = doc.at("table").at("populations").get<std::vector<std::string>>();
+                else
+                    for (const auto& node : doc.at("graph").at("nodes"))
+                        populations.push_back(node.at("id"));
+                if (populations.size() > 32)
+                    throw std::invalid_argument("Report supports at most 32 populations");
                 Json table = Json::array();
                 auto csvCell = [](const Json& cell) {
                     if (cell.is_null()) return std::string{};

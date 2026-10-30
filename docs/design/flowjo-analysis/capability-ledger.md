@@ -130,7 +130,7 @@ its absent-feature wording. No aggregate F01–F16 acceptance is claimed.
 | F12 | Source-bound CAS/restore, checksummed portable strategies, pending receipts, retained sources, library/sample display preference precedence | Full portable workspace lifecycle/global preferences and scalable relink |
 | F13 | Pinned E producer live/archive parity, source fencing, immutable retention, coverage semantics | Actual hardware acquisition-budget qualification, TSan host startup failure |
 | F14 | Exact plan/method APIs, immutable findings and pinned report evidence; API sent to I | Final I-owned next-run linkage/composition and scientific applicability qualification |
-| F15 | Existing native detection FCS export preserved | FCS import, GatingML and qualified per-cell interchange |
+| F15 | Existing native detection FCS export; pinned observation JSON/CSV with exact keys/nulls | FCS import, GatingML and qualified per-cell interchange |
 | F16 | Durable real app Cytoflow+t-SNE jobs, cancellation/reap/restart, exact parameter/QC pins | Windows supervision and distribution/license decision |
 
 Library and display defaults are non-scientific metadata only. Browser connector
@@ -209,3 +209,12 @@ rendered browser acceptance. Physical Windows availability is now documented by
 E fd32a99e / E-windows-validation-20261024.md; it is NOT full app qualification.
 Retained E images remain unavailable pending exact producer locators. Remaining
 interchange/workspace/report-batch work is implementation work, not a shared-owner gate.
+
+### 2026-10-30 interchange/batch continuation
+
+Native observation export and exact-revision strategy batch export are implemented
+in both application shells. WSS observation artifact includes14 rows/10 selected,
+source-bound raw pixel2; two exact strategy revisions export together, and a
+missing third refuses the whole artifact. Native6, Review8, sanitizer4, UI15 pass.
+Batch export is not portable dependency provisioning/import, report scheduling,
+FCS import or GatingML. Those remain implementation scope, not generic blockers.
