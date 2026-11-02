@@ -987,6 +987,8 @@ namespace backend
                 // previous one are never served again, and its frames still in processing never
                 // become cells (the session floor). A close is reported twice (stop() and the
                 // capture thread) for the same session: one capture change.
+                if (cam && processingService_)
+                    processingService_->setEvidenceCameraSession(generation);
                 if (monitoringCells_) {
                     if (cam)
                         monitoringCells_->advanceCapture("the camera started a new capture session", generation);
@@ -3579,6 +3581,10 @@ namespace backend
                 !hdf5Service_->writeAcquisitionProvenance(captureService_->timestampDescriptor(),
                                                           captureService_->telemetrySnapshot())) {
                 SPDLOG_ERROR("Frame recording: failed to persist acquisition provenance");
+            }
+            if (!hdf5Service_->writeLiveEvidenceJson(processingService_->liveEvidenceJson())) {
+                SPDLOG_ERROR("Frame recording: live evidence summary could not be stored");
+                reportFatalSaveError("Live evidence summary could not be stored");
             }
             hdf5Service_->closeFile();
 

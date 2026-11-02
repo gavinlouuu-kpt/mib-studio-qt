@@ -665,3 +665,11 @@ The offscreen `experiment_fault_recovery_test` target /
 `frontend.experiment_fault_recovery` CTest checks Qt readiness and banner
 acknowledgement after failed backend runs, including ROI/background unlocking
 (#589). It uses a mock camera, isolated settings and no hardware discovery.
+
+### Isolated FlowJo analysis module (#808)
+
+The native population core and bounded real Cytoflow worker can be built without
+the application shell. See [module commands](../../tools/flowjo_acceptance/README.md)
+and [[../services/AnalysisWorker]]. Python dependency constraints live only in
+`env/analysis-worker/`; this is development qualification, not a distribution
+installer. The standalone demo does not open recordings or command hardware.

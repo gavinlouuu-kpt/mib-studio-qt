@@ -1,3 +1,4 @@
+import { PopulationAnalysis } from "./PopulationAnalysis";
 import { noImagesNotice } from "./noImages";
 // The HDF5 review module (UI-4, #269; plan 2026-10-01-standalone-review-app).
 //
@@ -750,6 +751,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
         </span>
       </div>
+      {isExperiment && info && <PopulationAnalysis key={fileKey} path={info.file_path} disabled={jobs.busy} />}
       {noImagesNotice(info) && (
         <Notice tone="unknown" title="Images not recorded" data-testid="review-no-images">
           {noImagesNotice(info)}

@@ -20,6 +20,9 @@
 
 ## Step 3 — Pick the relevant cluster
 
+For the shared scientific analysis module, start with [[services/AnalysisWorker]];
+its internal worker protocol is not a new public Studio/Review ABI.
+
 Jump to the notes that match your task:
 
 | If you're touching... | Start here |

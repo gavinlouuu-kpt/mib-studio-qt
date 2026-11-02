@@ -126,7 +126,7 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    assert_eq!(ffi::bridge_abi_version(), 44);
+    assert_eq!(ffi::bridge_abi_version(), 47);
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.
@@ -2181,4 +2181,37 @@ fn recovery_refuses_unconfirmed_or_absent_fault_and_reports_capture_lifecycle() 
     assert_eq!(status["state"], "idle");
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+#[serial]
+fn population_analysis_matches_review_native_core() {
+    use mib_bridge::review_ffi;
+    let dir = std::env::temp_dir().join(format!("mib_population_parity_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("source.h5").to_string_lossy().into_owned();
+    assert!(review_ffi::review_fixture_write_experiment(&path));
+    let before = std::fs::read(&path).unwrap();
+    let mut backend = ffi::new_backend_bridge();
+    let request = serde_json::json!({"expectedPath":path,"feature":"area","minimum":null,"maximum":null}).to_string();
+    let parse = |s: String| -> serde_json::Value { serde_json::from_str(&s).unwrap() };
+    assert_eq!(parse(backend.pin_mut().analyze_population(&request))["ok"], false);
+    assert!(backend.pin_mut().initialize(&dir.join("data").to_string_lossy()));
+    assert!(backend.pin_mut().load_recording(&path).ok);
+    let mut review = review_ffi::new_review_bridge();
+    assert!(review.pin_mut().initialize(""));
+    assert!(review.pin_mut().review_open(&path).ok);
+    let a = parse(backend.pin_mut().analyze_population(&request));
+    let b = parse(review.pin_mut().review_analyze_population(&request));
+    assert_eq!(a["ok"], true, "{a}");
+    for key in ["valid", "invalid", "selected", "excluded", "unknown", "measured", "missing", "minimum", "maximum", "mean", "median", "unit", "feature"] {
+        assert_eq!(a[key], b[key], "Studio/Review parity: {key}");
+    }
+    assert_eq!(a["selected"], "14");
+    assert!(backend.pin_mut().close_review().ok);
+    assert_eq!(parse(backend.pin_mut().analyze_population(&request))["ok"], false);
+    review.pin_mut().shutdown();
+    backend.pin_mut().shutdown();
+    assert_eq!(before, std::fs::read(&path).unwrap());
+    std::fs::remove_dir_all(dir).unwrap();
 }
