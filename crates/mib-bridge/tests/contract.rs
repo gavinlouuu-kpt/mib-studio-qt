@@ -126,7 +126,30 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    assert_eq!(ffi::bridge_abi_version(), 48);
+    // v48 (#807 I) workspace_read/workspace_write; v49 is allocated to #806 E feature control.
+    // v50 (#807 I02) recipe_list/get/create/derive/diff/apply_preview (the native recipe provider).
+    assert_eq!(ffi::bridge_abi_version(), 50);
+}
+
+// ABI 50 (#807 I02): the contract describes the recipe provider, its diff vocabulary and the rule
+// that apply preview never applies.
+#[test]
+fn recipes_are_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["recipes"];
+    assert_eq!(c["dimensions"], serde_json::json!(["method", "profile", "core", "calibration"]));
+    assert_eq!(c["item_statuses"], serde_json::json!(["equal", "different", "unknown"]));
+    assert_eq!(c["namespace"], "recipe/");
+    for (key, needle) in [("commands", "recipe_apply_preview"), ("commands", "hardware_actuated: false"),
+                          ("commands", "control-only"), ("rules", "create-only"),
+                          ("rules", "never changed by it"), ("rules", "unknown only with a reason"),
+                          // #825 review: verified findings and lineage, no partial writes, content hash.
+                          ("recipe", "adoption_notes"), ("rules", "known to F's analysis authority"),
+                          ("rules", "a refused derive writes nothing"),
+                          ("rules", "method content changed for this revision")] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "recipes.{key} mentions {needle}");
+    }
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.

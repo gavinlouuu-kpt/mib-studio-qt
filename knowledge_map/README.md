@@ -106,3 +106,4 @@ verifies wikilink integrity (enforced in CI).
 - [[services/ProfileRegistryService]] — central registry/cache foundation (#398); desktop integration pending.
 
 Workspace persistence core (#807): [[services/WorkspaceStore]] (isolated; host integration pending).
+Recipe authority (#807 I02): [[services/RecipeProvider]] (immutable recipes, backend diff, apply preview only).

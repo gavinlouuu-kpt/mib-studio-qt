@@ -661,6 +661,20 @@ fn workspace_read(state: State<AppState>, request: String) -> Result<serde_json:
 fn workspace_write(state: State<AppState>, request: String) -> Result<serde_json::Value, String> {
     cmds::workspace_write(&state, request)
 }
+// ABI 50 (#807 I02): the native recipe provider. Reads (list, get, diff, apply preview) and the
+// explicit writes (create, derive); none applies a method or actuates hardware.
+#[tauri::command]
+fn recipe_list(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_list", request) }
+#[tauri::command]
+fn recipe_get(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_get", request) }
+#[tauri::command]
+fn recipe_create(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_create", request) }
+#[tauri::command]
+fn recipe_derive(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_derive", request) }
+#[tauri::command]
+fn recipe_diff(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_diff", request) }
+#[tauri::command]
+fn recipe_apply_preview(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_apply_preview", request) }
 #[tauri::command]
 fn calibration_records_list(state: State<AppState>) -> Result<serde_json::Value, String> {
     cmds::calibration_records_list(&state)
@@ -967,6 +981,12 @@ pub fn run() {
             fetch_monitoring_cell_packet,
             workspace_read,
             workspace_write,
+            recipe_list,
+            recipe_get,
+            recipe_create,
+            recipe_derive,
+            recipe_diff,
+            recipe_apply_preview,
             calibration_records_list,
             calibration_record_get,
             calibration_apply,

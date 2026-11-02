@@ -3,6 +3,7 @@
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
 #include "backend/workspace/NextRunPlanning.h"
+#include "backend/workspace/RecipeProvider.h"
 #include "support/assert.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
@@ -677,11 +678,36 @@ int main() {
                            {"content_sha256", "method-sha"},
                            {"id", "method"},
                            {"revision", "method-sha"}}}};
+        // #807 I02: next-run drafts derive their recipe through the native recipe provider.
+        backend::workspace::RecipeHost recipeHost;
+        recipeHost.store = [&](const json& q, bool write) {
+            return json::parse(db.recipeStoreRequest(q.dump(), write));
+        };
+        recipeHost.method = [&](const json& ref, const std::string&) {
+            backend::workspace::RecipeMethodFacts f;
+            f.resolved = methodReply["method"]["status"] == "resolved" && ref.at("id") == "method";
+            f.reason = f.resolved ? "" : "stub method unavailable";
+            f.provider = "local-profile";
+            f.contentSha256 = "method-sha";
+            f.configSha256 = "config-sha";
+            f.calibrationPolicy = std::string("none");
+            return f;
+        };
+        recipeHost.plan = [&](const std::string& id, const std::string& revision) {
+            return call(json{{"action", "read"}, {"planId", id}, {"revision", revision}}, false);
+        };
+        recipeHost.finding = [&](const std::string& id, const std::string& revision) {
+            return call(json{{"action", "readFinding"}, {"findingId", id}, {"revision", revision}}, false);
+        };
+        recipeHost.instrument = [] { return backend::workspace::RecipeInstrumentState{}; };
+        recipeHost.now = [] { return std::string("2026-11-02T00:00:00.000Z"); };
+        const backend::workspace::RecipeProvider recipes(recipeHost);
         auto planning = [&](const json& q, bool write = true) {
             return json::parse(backend::workspace::nextRunPlanning(
                 db, q.dump(), write, [&](const json& req) { return call(req, false); },
-                [&](const json&) { return methodReply; }));
+                [&](const json&) { return methodReply; }, &recipes));
         };
+
         json draft{{"action", "draft_from_finding"},
                    {"workspace_id", "next-run"},
                    {"command_id", "next-command"},
@@ -696,6 +722,17 @@ int main() {
                    {"experiment_id", "33333333-3333-3333-3333-333333333333"},
                    {"recipe_id", "44444444-4444-4444-4444-444444444444"}};
         MIB_EXPECT(planning(draft, false)["status"] == "invalid", "viewer cannot derive");
+        {
+            auto noProvider = draft;
+            noProvider["workspace_id"] = "no-provider";
+            noProvider["command_id"] = "no-provider";
+            const auto refused = json::parse(backend::workspace::nextRunPlanning(
+                db, noProvider.dump(), true, [&](const json& req) { return call(req, false); },
+                [&](const json&) { return methodReply; }));
+            MIB_EXPECT(refused["status"] == "invalid" &&
+                           refused["message"].get<std::string>().find("recipe provider") != std::string::npos,
+                       "planning without the recipe provider refuses: " + refused.dump());
+        }
         auto bad = draft;
         bad["finding"]["contentHash"] = "sha256:wrong";
         MIB_EXPECT(planning(bad)["status"] == "invalid", "finding hash mismatch refuses");
@@ -721,6 +758,28 @@ int main() {
                    "new draft does not copy execution/results");
         MIB_EXPECT(created["document"]["next_run_evidence"]["applied"] == false,
                    "planning never applies");
+        { // finding -> draft lineage lives in the recipe provider (I02 / I12 / F14).
+            const auto derived = recipes.handle(json{{"action", "recipe_get"},
+                                                     {"recipe_id", "44444444-4444-4444-4444-444444444444"},
+                                                     {"revision", "1"}},
+                                                false, false);
+            MIB_REQUIRE(derived["status"] == "ok", derived.dump());
+            MIB_EXPECT(derived["recipe"]["lineage"]["recipe"] ==
+                           json({{"id", "22222222-2222-2222-2222-222222222222"}, {"revision", "1"}}),
+                       "next-run recipe links its parent recipe");
+            MIB_EXPECT(derived["recipe"]["lineage"]["finding"] ==
+                           json({{"id", "finding-one"}, {"revision", "1"}}),
+                       "next-run recipe links its finding");
+            MIB_EXPECT(created["document"]["recipe"]["lineage"] == derived["recipe"]["lineage"],
+                       "the draft workspace pins the provider recipe");
+            const auto parent = recipes.handle(json{{"action", "recipe_get"},
+                                                    {"recipe_id", "22222222-2222-2222-2222-222222222222"},
+                                                    {"revision", "1"}},
+                                               false, false);
+            MIB_EXPECT(parent["status"] == "ok" && parent["recipe"]["method"]["revision"] == "method-sha" &&
+                           parent["recipe"]["basis"]["calibration_known"] == false,
+                       "the workspace recipe is adopted once, with an honest unknown basis");
+        }
         json verify{{"action", "verify_next_run"},
                     {"workspace_id", "next-run"},
                     {"revision", "1"},

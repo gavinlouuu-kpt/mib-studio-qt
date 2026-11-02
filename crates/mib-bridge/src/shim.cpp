@@ -2404,6 +2404,12 @@ rust::String BackendBridge::monitoring_cell_pin(std::uint64_t expected_start_gen
 }
 
 // ABI 42 (#716 A4a): calibration records. JSON documents (bridge-contract.json calibration_records).
+// ABI 50 (#807 I02): the native recipe provider (bridge-contract.json recipes).
+rust::String BackendBridge::recipe_request(rust::Str request, bool write) {
+    try { return rust::String(impl_->facade.recipeRequestJson(std::string(request), write)); }
+    catch (...) { return rust::String(R"({"status":"storage","message":"Recipe reply failed; retry the same command"})"); }
+}
+
 rust::String BackendBridge::workspace_request(rust::Str request, bool write) {
     try { return rust::String(impl_->facade.workspaceRequestJson(std::string(request), write)); }
     catch (...) { return rust::String(R"({"status":"storage","message":"Workspace reply failed; retry the same command"})"); }
@@ -2731,7 +2737,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
 std::uint32_t bridge_abi_version() {
-    return 48;
+    return 50;
 }
 
 } // namespace mib_bridge

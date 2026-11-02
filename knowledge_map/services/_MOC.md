@@ -71,3 +71,4 @@
 
 - [[ProfileRegistryService]] — central registry/cache foundation (#398).
 - [[WorkspaceStore]] — isolated versioned metadata document CAS/history core (#807); host integration pending.
+- [[RecipeProvider]] — immutable method + analysis-plan recipes, backend compatibility diff and apply preview (#807 I02, ABI 50).

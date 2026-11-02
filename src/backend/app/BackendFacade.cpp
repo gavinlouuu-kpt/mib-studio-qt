@@ -1,5 +1,10 @@
 #include "backend/analysis/EvidenceGallery.h"
 #include "backend/workspace/NextRunPlanning.h"
+#include "backend/workspace/RecipeProvider.h"
+#include "backend/app/CalibrationRecord.h"
+#include "backend/profiles/ProfileRegistry.h"
+#include <fstream>
+#include <sstream>
 #include "backend/analysis/AnalysisHost.h"
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
@@ -1573,15 +1578,169 @@ namespace backend::bridge
         return review::runQuickLookReplyJson(runs, request.reference, reference);
     }
 
+    // #807 I02: the recipe provider's host: the metadata store, the method authority (registry
+    // cache and local profile store), F's analysis authority, and the instrument's state as the
+    // coordinator, processing service and calibration store report it. All reads.
+    static workspace::RecipeHost recipeHost(AppBackend& backend,
+                                            std::function<std::string(const std::string&)> analysisRead)
+    {
+        using J = nlohmann::json;
+        workspace::RecipeHost host;
+        host.store = [&backend](const J& q, bool write) {
+            return J::parse(backend.sqlite().recipeStoreRequest(q.dump(), write));
+        };
+        host.plan = [analysisRead](const std::string& id, const std::string& revision) {
+            return J::parse(analysisRead(J{{"action", "read"}, {"planId", id}, {"revision", revision}}.dump()));
+        };
+        // A finding reference (derive, adopted lineage) must be known to F's analysis authority.
+        host.finding = [analysisRead](const std::string& id, const std::string& revision) {
+            return J::parse(
+                analysisRead(J{{"action", "readFinding"}, {"findingId", id}, {"revision", revision}}.dump()));
+        };
+        host.now = [] { return app::utcIsoFromUnixMs(app::WallClock::nowNs() / 1'000'000ull); };
+        auto policy = [](workspace::RecipeMethodFacts& f, const std::string& config) {
+            app::CalibrationMethodSpec spec;
+            std::string why;
+            if (app::parseCalibrationMethodSpec(config, spec, &why)) f.calibrationPolicy = std::string(app::toString(spec.policy));
+            else f.calibrationReason = "the method's calibration declarations are malformed: " + why;
+        };
+        host.method = [&backend, policy](const J& ref, const std::string& base) {
+            workspace::RecipeMethodFacts f;
+            const auto id = ref.at("id").get<std::string>();
+            const auto revision = ref.at("revision").get<std::string>();
+            if (ref.at("source") == "registry") {
+                f.reason = "Revision is not in the verified registry cache";
+                for (const auto& r : backend.profileRegistry().snapshot().revisions) {
+                    if (r.methodId != id || r.revisionId != revision) continue;
+                    f.resolved = true;
+                    f.reason.clear();
+                    f.provider = "registry-cache";
+                    f.contentSha256 = r.contentHash;
+                    f.configSha256 = r.configSha256;
+                    f.coreReason = "the revision is not materialized in the local method cache; materialize it to read its declarations";
+                    f.calibrationReason = f.coreReason;
+                    if (r.materializedDir.empty()) break;
+                    std::ifstream in(std::filesystem::path(r.materializedDir) / "method.canonical.json", std::ios::binary);
+                    std::stringstream bytes;
+                    bytes << in.rdbuf();
+                    if (!in || profiles::contentHash(bytes.str()) != r.contentHash) {
+                        f.coreReason = "the materialized method files do not match the revision hash";
+                        f.calibrationReason = f.coreReason;
+                        break;
+                    }
+                    const auto envelope = J::parse(bytes.str());
+                    f.coreVersion = envelope.at("processing_core_id").get<std::string>();
+                    f.contractVersion = envelope.at("processing_contract_version").get<int>();
+                    f.coreReason.clear();
+                    f.calibrationReason.clear();
+                    policy(f, envelope.at("config").dump());
+                    break;
+                }
+                return f;
+            }
+            if (base.empty()) {
+                f.reason = "No local profile directory was given";
+                return f;
+            }
+            const auto catalog = J::parse(app::profileStoreCommand(backend, base, R"({"operation":"list"})"));
+            if (!catalog.value("ok", false)) {
+                f.reason = catalog.value("error", std::string{"Local profile lookup failed"});
+                return f;
+            }
+            std::string name;
+            int matches = 0;
+            for (const auto& p : catalog.at("profiles"))
+                if (p.at("profile_id") == id && p.at("revision") == revision) {
+                    ++matches;
+                    name = p.at("name").get<std::string>();
+                }
+            if (matches != 1) {
+                f.reason = matches ? "Ambiguous local method identity" : "No local profile has this id and revision";
+                return f;
+            }
+            const auto read = J::parse(app::profileStoreCommand(backend, base, J{{"operation", "read"}, {"name", name}}.dump()));
+            if (!read.value("ok", false) || read.at("profile").at("revision") != revision) {
+                f.reason = "The local profile changed while it was read";
+                return f;
+            }
+            const auto& profile = read.at("profile");
+            const auto config = profile.at("document_json").get<std::string>();
+            f.resolved = true;
+            f.provider = "local-profile";
+            f.localName = name;
+            f.contentSha256 = revision;
+            f.configSha256 = profiles::canonicalConfigSha256(config);
+            policy(f, config);
+            const auto meta = profile.contains("metadata") ? profile.at("metadata") : J::object();
+            if (meta.is_object() && meta.contains("processing_contract_version") &&
+                meta.at("processing_contract_version").is_number_integer() &&
+                meta.at("processing_contract_version").get<int>() > 0)
+                f.contractVersion = meta.at("processing_contract_version").get<int>();
+            if (!f.contractVersion)
+                f.coreReason = "the local profile declares no processing contract and pins no core build";
+            return f;
+        };
+        host.instrument = [&backend] {
+            workspace::RecipeInstrumentState s;
+            const auto r = backend.experiment().evaluateReadiness();
+            const auto& c = r.candidate;
+            s.generation = std::to_string(r.generation);
+            s.methodSource = c.method.source;
+            if (c.method.source == "central") {
+                s.methodId = c.method.methodId;
+                s.methodRevision = c.method.revisionId;
+                s.methodNamed = !c.method.methodId.empty() && !c.method.revisionId.empty();
+            } else if (c.method.source == "local") {
+                s.methodId = c.method.localProfileId;
+                s.methodRevision = c.method.localProfileRevision;
+                s.methodNamed = !s.methodId.empty() && !s.methodRevision.empty();
+                s.methodModified = c.method.localProfileModified;
+            }
+            s.configSha256 = c.method.configCanonicalSha256;
+            s.coreVersion = c.processingCore.version;
+            s.contractVersion = static_cast<int>(c.processingCore.contractVersion);
+            s.coreSha256 = c.processingCore.artifactSha256;
+            auto* store = backend.calibrationStore();
+            if (!store) {
+                s.calibrationKnown = false;
+                s.calibrationReason = "this instrument has no calibration record store";
+            } else if (!store->error().empty()) {
+                s.calibrationKnown = false;
+                s.calibrationReason = "the calibration record store is unreadable: " + store->error();
+            } else {
+                s.calibrationRecordId = r.calibrationRecordId;
+            }
+            const auto lut = backend.processing().eModulusLutIdentity();
+            s.lutLoaded = lut.loaded;
+            s.lutSha256 = lut.loaded ? lut.sha256 : std::string{};
+            return s;
+        };
+        return host;
+    }
+
+    std::string BackendFacade::recipeRequestJson(const std::string& request, bool write)
+    {
+        if (!initialized_) return R"({"status":"unavailable","message":"Backend not initialized"})";
+        const workspace::RecipeProvider provider(recipeHost(backend_, [this](const std::string& q) {
+            return analysisRequestJson(q, false);
+        }));
+        return provider.request(request, write);
+    }
+
     std::string BackendFacade::workspaceRequestJson(const std::string& request, bool write)
     {
         if (!initialized_) return R"({"status":"unavailable","message":"Backend not initialized"})";
         try {
             const auto action=nlohmann::json::parse(request).value("action",std::string{});
-            if(action=="resolve_finding" || action=="draft_from_finding"||action=="verify_next_run")
+            if(action=="resolve_finding" || action=="draft_from_finding"||action=="verify_next_run") {
+                const workspace::RecipeProvider recipes(recipeHost(backend_, [this](const std::string& q) {
+                    return analysisRequestJson(q, false);
+                }));
                 return workspace::nextRunPlanning(backend_.sqlite(),request,write,
                     [&](const nlohmann::json& q){return nlohmann::json::parse(analysisRequestJson(q.dump(),false));},
-                    [&](const nlohmann::json& q){return nlohmann::json::parse(workspaceRequestJson(q.dump(),false));});
+                    [&](const nlohmann::json& q){return nlohmann::json::parse(workspaceRequestJson(q.dump(),false));},
+                    &recipes);
+            }
             if (action=="evaluate_recipe") {
                 using J=nlohmann::json;
                 const auto q=J::parse(request);

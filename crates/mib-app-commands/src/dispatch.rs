@@ -149,6 +149,12 @@ pub const COMMANDS: &[&str] = &[
     "fetch_monitoring_cell_packet",
     "workspace_read",
     "workspace_write",
+    "recipe_list",
+    "recipe_get",
+    "recipe_create",
+    "recipe_derive",
+    "recipe_diff",
+    "recipe_apply_preview",
     "calibration_records_list",
     "calibration_record_get",
     "calibration_apply",
@@ -805,6 +811,14 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             if name == "workspace_write" { crate::workspace_write(state, a.request).and_then(json) }
             else { crate::workspace_read(state, a.request).and_then(json) }
+        }
+        // ABI 50 (#807 I02): the native recipe provider. One argument, the request object.
+        "recipe_list" | "recipe_get" | "recipe_create" | "recipe_derive" | "recipe_diff" | "recipe_apply_preview" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: Value }
+            let a: A = args(value)?;
+            crate::recipe_command(state, name, a.request).and_then(json)
         }
         "calibration_records_list" => crate::calibration_records_list(state).and_then(json),
         "calibration_record_get" => {
@@ -1572,7 +1586,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(48)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(50)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

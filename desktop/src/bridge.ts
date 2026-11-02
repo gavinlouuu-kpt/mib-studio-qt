@@ -766,6 +766,16 @@ export const bridge = {
   analysisJob: (request: Record<string, unknown>) => invoke<Record<string, any>>("analysis_job", { request }),
   analysisRead: (request: Record<string, unknown>) => invoke<Record<string, any>>("analysis_read", { request }),
   analysisWrite: (request: Record<string, unknown>) => invoke<Record<string, any>>("analysis_write", { request }),
+  // ABI 50 (#807 I02): the native recipe provider (bridge-contract.json `recipes`). The backend
+  // computes the compatibility diff and the apply preview; nothing here applies a method.
+  recipeList: (request: { after?: string; limit?: number } = {}) => invoke<unknown>("recipe_list", { request }),
+  recipeGet: (request: { recipe_id: string; revision: string }) => invoke<unknown>("recipe_get", { request }),
+  recipeCreate: (request: Record<string, unknown>) => invoke<unknown>("recipe_create", { request }),
+  recipeDerive: (request: Record<string, unknown>) => invoke<unknown>("recipe_derive", { request }),
+  recipeDiff: (request: { recipe_id: string; revision: string; against: "instrument" | { recipe_id: string; revision: string }; profile_base?: string }) =>
+    invoke<unknown>("recipe_diff", { request }),
+  recipeApplyPreview: (request: { recipe_id: string; revision: string; profile_base?: string }) =>
+    invoke<unknown>("recipe_apply_preview", { request }),
   analyzePopulation: (request: import("./review/PopulationAnalysis").PopulationRequest) =>
     invoke<import("./review/PopulationAnalysis").PopulationResult>("analyze_population", { request }),
   abiVersion: () => invoke<number>("abi_version"),

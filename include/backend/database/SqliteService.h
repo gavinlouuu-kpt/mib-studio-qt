@@ -17,9 +17,13 @@ public:
     std::string workspaceRequest(const std::string& request, bool write);
     // Native analysis host only; never expose this as a generic workspace RPC.
     std::string analysisWorkspaceRequest(const std::string& request, bool write);
+    // Native recipe provider only (#807 I02): read, catalog and create-only commit in the
+    // reserved "recipe/" namespace. No other caller may write there.
+    std::string recipeStoreRequest(const std::string& request, bool write);
 
 private:
-    std::string request(const std::string& request, bool write, bool analysisAuthority);
+    enum class Authority { Public, Analysis, Recipe };
+    std::string request(const std::string& request, bool write, Authority authority);
     std::mutex mutex_;
     sqlite3* db_{nullptr};
     std::unique_ptr<workspace::WorkspaceStore> workspace_;
