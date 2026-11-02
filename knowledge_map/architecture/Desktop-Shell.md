@@ -2014,7 +2014,7 @@ and scientific validation awaits #808. Design proposal:
 `docs/design/ique-workflow/WORKSPACE-CONTRACT.md`.
 
 
-## Saved workspace plan (#807, ABI 45)
+## Saved workspace plan (#807, ABI 48; first written as 45)
 
 Experiment → Plan includes `SavedPlan`: explicit native metadata save/new revision
 and reopen of a sample sheet (annotations and selected operator). It uses the same

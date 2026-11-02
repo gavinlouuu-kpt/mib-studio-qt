@@ -1,7 +1,7 @@
 # WorkspaceStore
 
 Native metadata persistence core for #807 / #393 / #395. Mounted in AppBackend
-through [[SqliteService]] and BackendFacade (bridge ABI 45); not mounted in
+through [[SqliteService]] and BackendFacade (bridge ABI 48; first written as 45 on #815); not mounted in
 ReviewSession. The host owns connection lifetime and serialization; transport
 controller authorization is not operator authentication.
 

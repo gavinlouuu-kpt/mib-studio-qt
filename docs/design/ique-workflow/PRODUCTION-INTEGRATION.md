@@ -11,7 +11,8 @@ No main/develop merge, reset, #722 change, or edits to other worktrees.
 
 AppBackend → SqliteService (app.sqlite3) → WorkspaceStore; BackendFacade → cxx
 bridge → shared mib-app-commands → Tauri / WebSocket → Experiment / Plan /
-**Saved workspace plan**. ABI 45 is additive over this branch's ABI 44, with
+**Saved workspace plan**. First written as ABI 45 over the workspace branch's 44; after
+fold-in slice U-2 it is ABI 48, additive over F's 47 (#810, decision D2), with
 regenerated TypeScript version and updated contract assertions. There are no new
 package dependencies or alternate persistence authorities.
 

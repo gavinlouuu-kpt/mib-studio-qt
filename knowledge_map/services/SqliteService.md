@@ -23,7 +23,7 @@ first integration, not an asynchronous metadata-worker performance qualification
 
 ## Contract and evidence
 
-Bridge ABI 45 has `workspace_read` and `workspace_write`. The WebSocket host
+Bridge ABI 48 (first written as 45 on #815, renumbered after F's 46/47) has `workspace_read` and `workspace_write`. The WebSocket host
 requires the controller for writes; this is transport control, not authenticated
 operator attribution. Store errors map to explicit statuses. Successful command
 replay returns its original revision; unknown writes must retry exactly.

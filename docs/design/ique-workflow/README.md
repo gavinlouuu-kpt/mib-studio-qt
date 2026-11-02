@@ -61,9 +61,9 @@ Existing tests are evidence anchors, not claims that they ran in this audit.
 | I04 | RG Run; C Run; O3/O4 | `queueModel.ts`, `usePlan.ts`, `QueuePlan.tsx`, `experimentStart.ts`; #739/#744/#750; queue model/view tests | Reuse/extend #807; #741 closed | Manual one-file-per-sample queue and explicitly saved historical run observations exist. Automatic restart resumption is not supported; live fault qualification outstanding. |
 | I05 | RG Run + linked selection; C Run; O4 | `LiveView.tsx`, `useLiveCells.ts`, `liveImages.ts`; #749; `LiveView.test.tsx`, `liveModel.test.ts` | Reuse/extend #807, image authority #806 | Strip/pins/lifecycle exist; full revision-qualified live answers, reconnect and hardware proof outstanding. Develop #793 must be incorporated before qualification. |
 | I06 | RG analysis propagation; C Review; O5/O6/R2 | `QuickLookView.tsx`, `useQuickLook.ts`, `runQuickLook.ts`, backend `RunStatistics.cpp`; `run_quick_look_test.cpp`, `review_run_statistics_test.cpp`, `summaryViews.test.tsx` | Extend #807; science #808/#523 | Existing results are closed-run descriptive answers, not population/live analysis. Keep their backend authority. Native immutable F finding → next-run planning linkage is implemented at `90dd17cc`; live population integration remains separate. |
-| I07 | RG Metrics; V metric builder; C Review; R4 | `review/metricsColumns.ts`, `components/ResultMetricCells.tsx`; #523 FJ08 | Restore/missing #807 UX; #808 evaluator | Pinned F native reductions and report/table backend are now present through the bounded finding provider; the complete I metric-builder UI and typed-expression workflow remain implementation work. |
+| I07 | RG Metrics; V metric builder; C Review; R4 | `review/metricsColumns.ts`, `components/ResultMetricCells.tsx`; #523 FJ08 | Restore/missing #807 UX; #808 evaluator | **Not started on the I side.** The native reductions, report/table backend and finding provider are F (#810, `src/backend/analysis`, decision D2); I has no metric-definition store, expression grammar or metric-builder view (plan slice I-3). Earlier text credited F's code to I because #815 carried a squash copy of #808 (`6fc2f926`), dropped in the U-2 realignment. |
 | I08 | RG Profile Map; V criteria; F criteria/R4 | Analysis criteria UI and common evaluator absent; existing acquisition target is NOT a substitute | Restore #807 UX; #808/#523 FJ04 evaluation | Polygon AND E AND ranges, declared missing policy, linked selected values and exact hit denominator all required. Never deploy sort gates. |
-| I09 | RG Panorama; V multi-plate; C Compare; F Compare/R5 | Single-file review and batch exports; no refreshable ComparisonSpec authority | Restore #807/#314 UX; #808 science | Pinned F native comparison/finding authority is integrated and used by next-run planning; compatible-run picker, refresh, small multiples/heatmaps and scale choice remain implementation work. |
+| I09 | RG Panorama; V multi-plate; C Compare; F Compare/R5 | Single-file review and batch exports; no refreshable ComparisonSpec authority | Restore #807/#314 UX; #808 science | **I consumes, F owns.** The ComparisonSpec/finding authority is F's (#810, D2), not I work; I's own contribution is `NextRunPlanning` reading an immutable F finding (I06/I12). No I comparison view, run picker, refresh, small multiples/heatmaps or scale choice exists (plan slice I-6). |
 | I10 | RG curve fitting; V dose response; C Compare/R5 | No qualified fit result API; #523 FJ09 | Missing #807 presentation; #808 fit authority | Unit/pairing/weighting/model and suspect-fit reasons required; no frontend fit or invented curve. |
 | I11 | RG QC history; C Preflight; O1 | `CalibrationCard.tsx`, `calibrationRecords.ts`, backend `CalibrationRecord.cpp`; #716 A4; calibration model/view and backend tests | Extend/restore #807 history UX; backend owner #716/#806 | Recorded history/setup-filter/selection implemented in #813; existing explicit CAS apply reused. Versioned trend thresholds/reversible exclusions missing; focus remains not-recorded when absent. |
 | I12 | RG experiment export/templates; C Review; O6/R6 | `usePlan.ts` deliberately holds plan/reference in memory; #393/#395 store not implemented here | Missing #807 continuity; shared persistence #393/#395 and #808 | Native SQLite lifecycle, production save/reopen/CAS restore, full-document preservation, findings/run observations, native-dependency-validated export/import, source relink and pending-write reload recovery implemented; see CONTINUATION-LEDGER.md. Rendered browser/Tauri qualification remains open. No replacement localStorage authority. |
@@ -194,8 +194,22 @@ The isolated [WorkspaceStore qualification](WORKSPACE-EVIDENCE.md) now implement
 real SQLite snapshot CAS/history/restore/idempotency on an injected host connection.
 Round-trip, rollback, restart, concurrent CAS and ASan/UBSan pass. TSan cannot start
 on this host (mapping failure); host binding, export/relink, schema validation and
-full I12 acceptance remain open. The cross-track coordinator owns shared facade
-allocation; no shared host/build/ABI files were edited.
+full I12 acceptance remain open. (Superseded: later I commits did edit shared host,
+build and ABI files, see the next section.)
+
+## Shared files and ABI (corrected 2026-11-02, fold-in slice U-2)
+
+The statement above was true only for the isolated store milestone. The I work that
+followed edits shared files: `SqliteService` (app.sqlite3 host), `BackendFacade`
+(`workspaceRequestJson`, `evaluate_recipe`, next-run actions), `src/backend/CMakeLists.txt`,
+the bridge shim and contract, `mib-app-commands`, `mib-bridge-server` and the Tauri
+command list. On `feat/807-ique-workspace-core` (#815) the bridge ABI went 44 -> 47 and
+the review ABI 6 -> 9, but 46/47 and review 7-9 there came from a squash copy of F's
+analysis stack (`6fc2f926`). Per decision D2 F (#810) owns `src/backend/analysis`,
+`crates/mib-analysis-worker`, the review analysis bridge and ABI 47 / review ABI 9.
+On `claude/815-ique-on-810` the copy is dropped and I's own contract addition,
+`workspace_metadata` (`workspace_read` / `workspace_write`, first written as ABI 45),
+is **bridge ABI 48** on top of F's 47. I adds no review-contract change of its own.
 
 
 ## Current continuation checkpoint (2026-10-30)
@@ -204,7 +218,8 @@ allocation; no shared host/build/ABI files were edited.
 production UI, source-head CAS, receipt/reload/restart recovery and lossless numeric
 manifest transfer. See CONTINUATION-LEDGER.md for exact tests and limitations. Earlier
 missing basic-provider/shared-ownership blockers are superseded: the provider is
-integrated and branch-local shared files are owned here. Remaining I03 forecasts,
+integrated. (Corrected 2026-11-02: the analysis provider is F's, #810, not branch-local
+I code; see "Shared files and ABI" above.) Remaining I03 forecasts,
 I05 full live continuity, I07–I10 presentation/advanced science and I11 trend/exclusion
 work are implementation obligations, not a generic peer handoff blocker. E now
 reports Windows hardware access; physical full-pipeline qualification is still a
