@@ -4,9 +4,10 @@
 #include <cmath>
 #include <exception>
 #include <limits>
+#include <stdexcept>
 #include <type_traits>
 
-namespace backend::camera::features {
+namespace camera::features {
 
 bool SessionToken::operator==(const SessionToken& other) const {
     return source == other.source && generation == other.generation &&
@@ -67,6 +68,7 @@ template <class T> std::optional<std::string> numeric(const Descriptor& d, T val
 Result base(const CurrentSession& current, const Request& request) {
     Result r;
     r.session = current.token;
+    r.evidence = current.evidence;
     r.address = request.address;
     return r;
 }
@@ -85,6 +87,18 @@ bool precheck(Result& r, const CurrentSession& current, const Request& request) 
     return true;
 }
 } // namespace
+
+namespace {
+[[noreturn]] void noEnumeration() {
+    throw std::logic_error("This port does not enumerate its node map.");
+}
+} // namespace
+
+std::vector<std::string> Port::categories(Module, bool) { noEnumeration(); }
+std::vector<std::string> Port::categoriesOf(Module, const std::string&, bool) { noEnumeration(); }
+std::vector<std::string> Port::featuresOf(Module, const std::string&, bool) { noEnumeration(); }
+std::vector<std::string> Port::features(Module, bool) { noEnumeration(); }
+NodeInfo Port::info(Module, const std::string&) { noEnumeration(); }
 
 std::optional<std::string> validateAddress(const Address& address) {
     switch (address.module) {
@@ -197,4 +211,4 @@ Result write(Port& port, const CurrentSession& current, const Request& request,
     return r;
 }
 
-} // namespace backend::camera::features
+} // namespace camera::features

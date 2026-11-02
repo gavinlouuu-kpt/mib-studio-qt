@@ -18,10 +18,18 @@ readback discrepancy and unknown write outcomes. Adapter checks exercise all fiv
 module dispatches, SDK selector-query composition and refusal when rollback or
 range checks are disabled. No fake result implies physical selector restoration.
 
-Integration must retain existing CaptureService/camera ownership and serialize
-session-token acquisition through readback with stop, scripts and selector access.
-No bridge ABI or UI entry point is added. Tree enumeration, multi-selectors,
-commands, physical qualification and final E02 acceptance remain outstanding.
+`egrabber.feature_tree` (E-1) checks node-map enumeration and guarded typed
+access over a fake node map with generated names: the returned tree equals the
+node map exactly, a session change mid-walk is stale, SDK failures stay per node,
+writes advance the capability revision and access is re-read. With the SDK
+headers the adapter test also checks the composed enumeration query strings.
+
+Integration (E-2) lives in the main build: `CaptureService::withCameraFeatures`
+serializes token acquisition through readback with stop and the trigger thread,
+and bridge ABI 49 exposes `camera_feature_tree/read/write` (see
+`knowledge_map/camera/FeatureControl.md`). Multi-selectors, commands, physical
+qualification and final E02 acceptance (rig tree equals the vendor tool's tree)
+remain outstanding.
 
 The path-filtered `egrabber-feature-control.yml` workflow runs the SDK-free core
 with UBSan on pull requests. SDK adapter checks remain explicitly local because

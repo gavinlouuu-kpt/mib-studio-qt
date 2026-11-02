@@ -126,7 +126,43 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    assert_eq!(ffi::bridge_abi_version(), 44);
+    // v49 (#806 E-1/E-2; 47 is the F track's, 48 the I track's) camera_feature_tree /
+    // camera_feature_read / camera_feature_write: the camera's GenApi node map enumerated from the
+    // device, typed access by name under the capture session token.
+    assert_eq!(ffi::bridge_abi_version(), 49);
+}
+
+// ABI 49 (#806 E-1/E-2): the contract describes the camera feature commands, bounds and outcomes.
+#[test]
+fn camera_features_are_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["camera_features"];
+    for (key, value) in [("request_max_bytes", 16384), ("schema_version", 1),
+                         ("max_categories_per_module", 2048), ("max_features_per_module", 8192)] {
+        assert_eq!(c[key], serde_json::json!(value), "camera_features.{key} (pinned in shim.cpp)");
+    }
+    for (key, needle) in [("$comment", "No hand-kept list"), ("commands", "camera_feature_tree"),
+                          ("commands", "camera_feature_write (control"), ("session", "stale"),
+                          ("session", "capability_revision"), ("guard", "one node per guarded step"),
+                          ("access", "re-read"), ("access", "@rollbackSelectors"),
+                          ("outcomes", "unknown_write_outcome"), ("outcomes", "requested"),
+                          ("outcomes", "never an empty tree"), ("tree", "uncategorized"),
+                          ("descriptor", "absent is never a default")] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "camera_features.{key} mentions {needle}");
+    }
+}
+
+// ABI 49: before a camera session exists the commands answer, never fail the transport.
+#[test]
+#[serial]
+fn camera_features_without_a_session() {
+    let mut backend = ffi::new_backend_bridge();
+    let parse = |s: String| -> serde_json::Value { serde_json::from_str(&s).unwrap() };
+    let tree = parse(backend.pin_mut().camera_feature_tree("{}").to_string());
+    assert_eq!(tree["outcome"], "refused", "{tree}");
+    let read = parse(backend.pin_mut().camera_feature_read("{\"bad\":1}").to_string());
+    assert_eq!(read["outcome"], "refused", "{read}");
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.

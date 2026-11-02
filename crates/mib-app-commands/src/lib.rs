@@ -1889,6 +1889,44 @@ pub fn run_quick_look(
     serde_json::from_str(&guard.pin_mut().run_quick_look(&request.to_string())).map_err(|e| e.to_string())
 }
 
+/// ABI 49 (#806 E-1/E-2): the camera feature commands (bridge-contract.json `camera_features`).
+/// `request` is the JSON object the contract describes (null = `{}`); a non-object or a request over
+/// `request_max_bytes` is an error reply and nothing reaches the backend, which checks the rest.
+pub const CAMERA_FEATURE_REQUEST_MAX_BYTES: usize = 16384;
+
+fn camera_feature_request(request: &serde_json::Value) -> Result<String, String> {
+    let text = match request {
+        serde_json::Value::Null => "{}".to_string(),
+        serde_json::Value::Object(_) => request.to_string(),
+        _ => return Err("INVALID_ARGUMENTS: request must be a JSON object".into()),
+    };
+    if text.len() > CAMERA_FEATURE_REQUEST_MAX_BYTES {
+        return Err(format!("INVALID_ARGUMENTS: request exceeds {CAMERA_FEATURE_REQUEST_MAX_BYTES} bytes"));
+    }
+    Ok(text)
+}
+
+/// ABI 49: the active camera's GenApi node map, enumerated from the device (a read).
+pub fn camera_feature_tree(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let text = camera_feature_request(&request)?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().camera_feature_tree(&text)).map_err(|e| e.to_string())
+}
+
+/// ABI 49: one feature's descriptor by name under the session token (a read).
+pub fn camera_feature_read(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let text = camera_feature_request(&request)?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().camera_feature_read(&text)).map_err(|e| e.to_string())
+}
+
+/// ABI 49: a typed write by name with readback (a control command on the WebSocket server).
+pub fn camera_feature_write(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let text = camera_feature_request(&request)?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().camera_feature_write(&text)).map_err(|e| e.to_string())
+}
+
 /// The owned crop (`layer` "image", pull kind 5) or its mask ("mask", pull kind 6) of a pinned
 /// or strip cell as a frame packet; an empty packet (flags 0) when the cell or the layer is not
 /// held (the listing carries the reason). An identity of another capture than the current one is

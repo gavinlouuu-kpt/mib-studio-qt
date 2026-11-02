@@ -1,6 +1,8 @@
 #pragma once
 
 #include "backend/camera/common/ICamera.h"
+#include "backend/camera/features/FakeNodeMap.h"
+#include "backend/camera/features/FeatureSession.h"
 
 #include <atomic>
 #include <chrono>
@@ -18,7 +20,12 @@ struct MockCameraOptions {
     bool loopFiles{true};
 };
 
-class MockCamera : public camera::common::ICamera {
+// E02 (E-2): MockCamera owns a small fake GenApi node map (fixture data, see
+// MockCamera.cpp makeMockNodeMap) behind the same Port interface as the eGrabber
+// adapter, so feature enumeration/read/write run headless end to end. Its
+// evidence class is "fixture/mock", never "device". The port is open only while
+// the camera runs, like a real grabber's node map.
+class MockCamera : public camera::common::ICamera, private ::camera::features::FeatureSession {
 public:
     explicit MockCamera(MockCameraOptions options);
     ~MockCamera() override = default;
@@ -70,10 +77,18 @@ public:
     // input. Lets the trigger→frame alignment path run headless.
     bool setLineEventCallback(camera::common::LineEventCallback callback) override;
 
+    ::camera::features::FeatureSession* featureSession() override { return this; }
+
     void setFrameInterval(std::chrono::microseconds interval);
     void setLooping(bool loop);
 
 private:
+    // FeatureSession (guard: featureMutex_).
+    std::string source() const override;
+    std::string evidence() const override { return "fixture/mock"; }
+    bool withPort(const std::function<void(::camera::features::Port&)>& fn,
+                  std::string& reason) override;
+
     void refreshFileList();
     bool loadFrameFromPath(const std::filesystem::path& path, camera::common::Frame& frame);
     bool preloadFrames();
@@ -95,6 +110,9 @@ private:
     std::string triggerLineName_{"MockTTL"};
     mutable std::mutex lineEventMutex_;
     camera::common::LineEventCallback lineEventCallback_;
+
+    std::mutex featureMutex_;
+    ::camera::features::FakeNodeMap nodeMap_;
 };
 
 } // namespace camera::mock

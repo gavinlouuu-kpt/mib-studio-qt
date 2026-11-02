@@ -68,7 +68,16 @@ CaptureLifecycleSnapshot lifecycleSnapshot();   // authoritative state/generatio
 CaptureLifecycleState waitForState({...}, timeout);
 bool softTriggerActiveCamera();  // one software ACQUISITION trigger on the
                                  // live camera (not the sort pulse)
+// E02 (#806): GenApi access to the active camera under cameraMutex_.
+camera::features::Access withCameraFeatures(fn(Port&, CurrentSession&), reason, writeBlockReason);
 ```
+
+`withCameraFeatures` is the feature commands' session guard
+([[../camera/FeatureControl]]): `cameraMutex_` pins `activeCamera_`, the token is
+`{camera source, activeCameraGeneration_ (the capture generation that set the
+camera), featureRevision_}`; the revision restarts at 1 per generation and only
+advances (after a write that may have reached the device). `NoSession` without
+an active camera or an open port; `Unsupported` when `featureSession()` is null.
 
 **`start()` returning true is request acceptance, not hardware readiness.**
 `lifecycleSnapshot().cameraReady` (true only between a successful

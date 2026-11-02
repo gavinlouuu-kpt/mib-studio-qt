@@ -1069,6 +1069,15 @@ namespace backend::bridge
         // Camera & Alignment geometry: mode, sensor size, saved experiment window, steps and
         // the last camera read-back (ABI 20).
         std::string fetchCameraGeometryJson() const;
+        // E02 (#806, bridge ABI 49; bridge-contract.json camera_features): the active
+        // camera's GenApi node map, enumerated from the device at call time, and typed
+        // read/write by name under CaptureService's camera guard. Every reply carries
+        // the session token {source, generation, capability_revision}; a request from
+        // an older token is refused as stale. Writes are refused while an experiment
+        // or a frame recording is running. A camera without GenApi is "unsupported".
+        std::string cameraFeatureTreeJson(const std::string &requestJson);
+        std::string cameraFeatureReadJson(const std::string &requestJson);
+        std::string cameraFeatureWriteJson(const std::string &requestJson);
         // Where the science runs and what this build has (ABI 21): {science: host|pl,
         // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
         // `capabilities` (#501) says which surfaces exist on this instrument.

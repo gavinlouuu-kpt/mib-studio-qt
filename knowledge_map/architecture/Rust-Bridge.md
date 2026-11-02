@@ -520,6 +520,36 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 49: the camera's GenApi node map (#806 E-1/E-2, goal E02)
+
+Additive over ABI 44 (47 is the F track's, 48 the I track's, allocated provisionally).
+`camera_feature_tree {request: {modules?, descriptors?, available_only?}}`,
+`camera_feature_read {request: {session, module, feature, selector?}}` and
+`camera_feature_write {request: {..., value: {type, value}}}` enumerate and drive the active
+camera's node map ([[../camera/FeatureControl]]). Contract: `camera_features` (bounds,
+`commands`, `session`, `guard`, `access`, `outcomes`, `descriptor`, `tree`).
+
+- **Path:** C++ `BackendFacade::cameraFeature{Tree,Read,Write}Json` -> `CaptureService::withCameraFeatures`
+  (capture guard) -> `ICamera::featureSession()->withPort` (camera port guard) -> cxx
+  `camera_feature_*(request_json) -> String` -> `mib-app-commands` `camera_feature_*(state, request)`
+  (a JSON object; non-object or over 16384 bytes is `INVALID_ARGUMENTS` before the backend) ->
+  dispatch (WebSocket server). No Tauri command or desktop view yet (E-3).
+- **Session:** the token `{source, generation, capability_revision}` (decimal strings) of an
+  earlier reply; any difference is `stale`. A capture restart opens a new generation; a write that
+  may have reached the device advances the revision.
+- **Control:** `camera_feature_write` is in the server's `CONTROL_COMMANDS`; tree and read are open
+  to viewers.
+- **ABI touch points:** `bridge-contract.json` `abi_version` 49 and `camera_features`; `shim.cpp`
+  `bridge_abi_version()` and static_asserts on `FeatureJson.h` / `FeatureTree.h`; `contract.rs`
+  `abi_version_is_stable`; `dispatch.rs` abi pin; the generated `bridgeContract.ts`
+  (`CAMERA_FEATURES`); `gen_bridge_contract.py` checks the numbers against the headers; the
+  `eventAdapter.test.ts` / `runQuickLook.test.ts` pins.
+- **Tests:** `contract.rs` `camera_features_are_described`, `camera_features_without_a_session`;
+  the server's `camera_feature_write_is_control_and_reads_are_open`; real server
+  `tests/camera_features.rs` (mock node map: enumerate, read, write with readback, stale old
+  revision, refused read-only and out-of-range writes, viewer denied, stale generation after a
+  capture restart); C++ `camera.feature_tree`, `camera.capture_features`.
+
 ## ABI 44: the run quick look (#716 A7a)
 
 Additive over ABI 43. `run_quick_look {paths: 1..32, reference?: {path, run_id, start_generation?}}`

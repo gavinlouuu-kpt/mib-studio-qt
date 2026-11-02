@@ -146,6 +146,9 @@ pub const COMMANDS: &[&str] = &[
     "calibration_record_get",
     "calibration_apply",
     "run_quick_look",
+    "camera_feature_tree",
+    "camera_feature_read",
+    "camera_feature_write",
     "trigger_set_pulse_duration",
     "trigger_manual_pulse",
     "trigger_periodic_start",
@@ -793,6 +796,23 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             }
             let a: A = args(value)?;
             crate::run_quick_look(state, a.paths, a.reference).and_then(json)
+        }
+        // ABI 49 (#806 E-1/E-2): the camera's GenApi node map. `request` is the contract's JSON
+        // object; tree and read are reads, write is a control command on the server.
+        "camera_feature_tree" | "camera_feature_read" | "camera_feature_write" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A {
+                #[serde(default)]
+                request: Value,
+            }
+            let a: A = args(value)?;
+            match name {
+                "camera_feature_tree" => crate::camera_feature_tree(state, a.request),
+                "camera_feature_read" => crate::camera_feature_read(state, a.request),
+                _ => crate::camera_feature_write(state, a.request),
+            }
+            .and_then(json)
         }
         "monitoring_cell_unpin" => {
             #[derive(Deserialize)]
@@ -1529,7 +1549,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(49)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

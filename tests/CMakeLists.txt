@@ -423,6 +423,19 @@ mib_add_backend_test_executable(mindvision_config_test backend/mindvision_config
 add_test(NAME backend.mindvision_config COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_config_test)
 set_tests_properties(backend.mindvision_config PROPERTIES LABELS "backend;camera" TIMEOUT 30)
 
+# E02 (#806): GenApi typed feature control and node-map enumeration over fake
+# ports, and the capture-guarded path with MockCamera's fake node map.
+mib_add_backend_test_executable(feature_control_test camera/features/feature_control_test.cpp)
+add_test(NAME camera.feature_control COMMAND $<TARGET_FILE:mib_backend_tests> feature_control_test)
+set_tests_properties(camera.feature_control PROPERTIES LABELS "camera;genapi" TIMEOUT 30)
+mib_add_backend_test_executable(feature_tree_test camera/features/feature_tree_test.cpp)
+add_test(NAME camera.feature_tree COMMAND $<TARGET_FILE:mib_backend_tests> feature_tree_test)
+set_tests_properties(camera.feature_tree PROPERTIES LABELS "camera;genapi" TIMEOUT 30)
+mib_add_backend_test_executable(capture_camera_features_test camera/features/capture_camera_features_test.cpp)
+mib_backend_test_link(capture_camera_features_test PRIVATE Threads::Threads)
+add_test(NAME camera.capture_features COMMAND $<TARGET_FILE:mib_backend_tests> capture_camera_features_test)
+set_tests_properties(camera.capture_features PROPERTIES LABELS "camera;genapi;concurrency;stress" TIMEOUT 90)
+
 # Issue #366: MindVision Mono8/geometry fail-closed conversion, driven through
 # the injectable SDK seam (no hardware, no vendor headers).
 mib_add_backend_test_executable(illuminated_live_test backend/illuminated_live_test.cpp)

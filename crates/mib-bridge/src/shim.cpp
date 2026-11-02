@@ -10,6 +10,8 @@
 #include "backend/app/BackendFacade.h"
 #include "backend/app/CalibrationStore.h"
 #include "backend/app/MethodApply.h"
+#include "backend/camera/features/FeatureJson.h"
+#include "backend/camera/features/FeatureTree.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/recording/RunStartIdentity.h"
 #include "backend/review/RunStatistics.h"
@@ -265,6 +267,11 @@ static_assert(backend::review::kRunStatisticsOverlayMaxPoints == 2000);
 static_assert(backend::review::kRunStatisticsLowN == 200);
 static_assert(backend::review::kRunStatisticsCacheEntries == 64);
 static_assert(backend::review::kRunStatisticsSchemaVersion == 1);
+// ABI 49 (#806 E-1/E-2): camera_features (bridge-contract.json; camera/features/FeatureJson.h, FeatureTree.h).
+static_assert(::camera::features::kFeatureRequestMaxBytes == 16384);
+static_assert(::camera::features::kFeatureSchemaVersion == 1);
+static_assert(::camera::features::TreeLimits{}.maxCategoriesPerModule == 2048);
+static_assert(::camera::features::TreeLimits{}.maxFeaturesPerModule == 8192);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Complete) == 0);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IntentionallyPartial) == 1);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IncompleteLoss) == 2);
@@ -2425,6 +2432,39 @@ rust::String BackendBridge::run_quick_look(rust::Str request_json) {
     }
 }
 
+// ABI 49 (#806 E-1/E-2): the camera's GenApi node map (bridge-contract.json camera_features).
+// JSON documents; tree and read are reads, write is a control command on the server.
+rust::String BackendBridge::camera_feature_tree(rust::Str request_json) {
+    try {
+        return rust::String(impl_->facade.cameraFeatureTreeJson(std::string(request_json)));
+    } catch (const std::exception& e) {
+        return rust::String(::camera::features::featureRefusedJson(std::string("camera_feature_tree failed: ") + e.what()));
+    } catch (...) {
+        return rust::String(::camera::features::featureRefusedJson("camera_feature_tree failed"));
+    }
+}
+
+rust::String BackendBridge::camera_feature_read(rust::Str request_json) {
+    try {
+        return rust::String(impl_->facade.cameraFeatureReadJson(std::string(request_json)));
+    } catch (const std::exception& e) {
+        return rust::String(::camera::features::featureRefusedJson(std::string("camera_feature_read failed: ") + e.what()));
+    } catch (...) {
+        return rust::String(::camera::features::featureRefusedJson("camera_feature_read failed"));
+    }
+}
+
+rust::String BackendBridge::camera_feature_write(rust::Str request_json) {
+    try {
+        return rust::String(impl_->facade.cameraFeatureWriteJson(std::string(request_json)));
+    } catch (const std::exception& e) {
+        // The facade catches inside the guarded write; an exception here never follows a submit.
+        return rust::String(::camera::features::featureRefusedJson(std::string("camera_feature_write failed: ") + e.what()));
+    } catch (...) {
+        return rust::String(::camera::features::featureRefusedJson("camera_feature_write failed"));
+    }
+}
+
 BridgeCommandResult BackendBridge::monitoring_cell_unpin(std::uint64_t start_generation, std::uint64_t capture_epoch,
                                                          std::uint64_t frame_index, std::int32_t object_id) {
     try {
@@ -2706,12 +2746,13 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // the command result and experiment_stop's expected start generation (#741, stop
 // outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
 // run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6); v42 calibration records
-// (#716 A4a); v43 the readiness report's method_calibration (#776). All additive over v1 except that removal (ADR
-// 0003/0004). Must match
+// (#716 A4a); v43 the readiness report's method_calibration (#776); v44 run_quick_look (#716 A7a); v49 the
+// camera's GenApi node map, camera_feature_tree / camera_feature_read / camera_feature_write (#806 E-1/E-2; 47 is
+// the F track's, 48 the I track's). All additive over v1 except that removal (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 44; }
+std::uint32_t bridge_abi_version() { return 49; }
 
 } // namespace mib_bridge
 

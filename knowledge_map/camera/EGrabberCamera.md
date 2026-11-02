@@ -20,6 +20,13 @@
 - Expose `configureTriggerOutput` + `setTriggerOutput` for
   [[../services/TriggerService]].
 - Surface `checkDeviceHealth()` to detect camera disappearance.
+- E02 (#806): `featureSession()` exposes the grabber's GenApi node map through
+  `EGrabberFeaturePort` ([[FeatureControl]]) while the camera runs. Guard:
+  `triggerMutex_` (pins `grabber_` against `stop()`, serializes with the trigger
+  thread). After any feature access `triggerLineApplied_` is cleared so the next
+  sort pulse re-selects `LineSelector` (device quirk). Source id
+  `egrabber:<interface>/<device>` or `egrabber:default`; evidence `device`. The
+  SDK-less stub returns nullptr (unsupported). Not run on hardware yet.
 - On non-Windows builds (`MIB_HAS_EGRABBER=0`), compile as a safe stub that
   logs unsupported hardware start and returns `false`/no-op for camera I/O.
 

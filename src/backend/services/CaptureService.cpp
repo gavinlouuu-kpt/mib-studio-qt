@@ -228,6 +228,39 @@ bool CaptureService::softTriggerActiveCamera() {
     return activeCamera_ && activeCamera_->softTrigger();
 }
 
+::camera::features::Access CaptureService::withCameraFeatures(
+    const std::function<void(::camera::features::Port&,
+                             ::camera::features::CurrentSession&)>& fn,
+    std::string& reason, const std::string& writeBlockReason) {
+    using ::camera::features::Access;
+    std::scoped_lock lk(cameraMutex_);
+    if (!activeCamera_) {
+        reason = "No camera session is open; start capture first.";
+        return Access::NoSession;
+    }
+    auto* session = activeCamera_->featureSession();
+    if (!session) {
+        reason = "The active camera has no GenApi node map.";
+        return Access::Unsupported;
+    }
+    if (featureRevisionGeneration_ != activeCameraGeneration_) {
+        featureRevisionGeneration_ = activeCameraGeneration_;
+        featureRevision_ = 1;
+    }
+    ::camera::features::CurrentSession current;
+    current.token = {session->source(), activeCameraGeneration_, featureRevision_};
+    current.writesAuthorized = writeBlockReason.empty();
+    current.writeBlockReason = writeBlockReason;
+    current.evidence = session->evidence();
+    const bool ran = session->withPort(
+        [&](::camera::features::Port& port) { fn(port, current); }, reason);
+    if (!ran) return Access::NoSession;
+    // Only the revision may advance; source and generation are this guard's.
+    if (current.token.capabilityRevision > featureRevision_)
+        featureRevision_ = current.token.capabilityRevision;
+    return Access::Ran;
+}
+
 // ---------------------------------------------------------------------------
 // Telemetry (issue #368)
 // ---------------------------------------------------------------------------
@@ -446,6 +479,7 @@ void CaptureService::run(uint64_t generation) {
         {
             std::scoped_lock lk(cameraMutex_);
             activeCamera_ = camera.get();
+            activeCameraGeneration_ = generation;
         }
 
         // A stop() that landed while we were opening must win: never confirm

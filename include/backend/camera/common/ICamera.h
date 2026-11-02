@@ -2,6 +2,7 @@
 
 #include "backend/camera/common/Frame.h"
 #include "backend/camera/common/TimestampValue.h"
+#include "backend/camera/features/FeatureSession.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -221,6 +222,15 @@ namespace camera::common
          * Default: undeclared/unsupported — consumers must not assume a unit.
          */
         virtual TimestampDescriptor timestampDescriptor() const { return {}; }
+
+        /**
+         * E02 (#806): the camera's GenApi node map, when it has one. nullptr
+         * means this backend has no GenApi port, so callers report
+         * "unsupported" rather than an empty feature tree. The session is
+         * owned by the camera; use it only while holding the owner's camera
+         * guard (CaptureService::withCameraFeatures).
+         */
+        virtual ::camera::features::FeatureSession *featureSession() { return nullptr; }
     };
 
 } // namespace camera::common

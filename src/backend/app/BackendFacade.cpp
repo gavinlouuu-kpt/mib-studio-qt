@@ -40,6 +40,7 @@
 #include "backend/services/AutofocusService.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/CaptureService.h"
+#include "backend/camera/features/FeatureJson.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/TriggerService.h"
 #include "backend/services/PulseGeneratorService.h"
@@ -3956,6 +3957,51 @@ std::string BackendFacade::fetchCameraGeometryJson() const {
         {"min_height", g.minHeight},
         {"session", session},
     }.dump();
+}
+
+namespace {
+// E02: the facade's view of the capture session guard as a GuardedPort.
+class CaptureFeaturePort final : public ::camera::features::GuardedPort {
+public:
+    CaptureFeaturePort(services::CaptureService &capture, std::string writeBlockReason)
+        : capture_(capture), writeBlockReason_(std::move(writeBlockReason)) {}
+    ::camera::features::Access run(
+        const std::function<void(::camera::features::Port &, ::camera::features::CurrentSession &)> &fn,
+        std::string &reason) override {
+        return capture_.withCameraFeatures(fn, reason, writeBlockReason_);
+    }
+
+private:
+    services::CaptureService &capture_;
+    std::string writeBlockReason_;
+};
+} // namespace
+
+std::string BackendFacade::cameraFeatureTreeJson(const std::string &requestJson) {
+    if (!initialized_) return ::camera::features::featureRefusedJson("Backend not initialized");
+    CaptureFeaturePort port(backend_.capture(), {});
+    return ::camera::features::featureTreeJson(port, requestJson);
+}
+
+std::string BackendFacade::cameraFeatureReadJson(const std::string &requestJson) {
+    if (!initialized_) return ::camera::features::featureRefusedJson("Backend not initialized");
+    CaptureFeaturePort port(backend_.capture(), {});
+    return ::camera::features::featureReadJson(port, requestJson);
+}
+
+std::string BackendFacade::cameraFeatureWriteJson(const std::string &requestJson) {
+    if (!initialized_) return ::camera::features::featureRefusedJson("Backend not initialized");
+    // A run records the camera's configuration at start; changing it underneath
+    // would make the record wrong. Reads stay open.
+    std::string block;
+    const auto run = backend_.experiment().state();
+    if (run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
+        run == app::ExperimentRunState::Stopping)
+        block = std::string("Feature writes are refused while the experiment is ") + app::toString(run) + ".";
+    else if (backend_.isFrameRecording())
+        block = "Feature writes are refused while a frame recording is running.";
+    CaptureFeaturePort port(backend_.capture(), block);
+    return ::camera::features::featureWriteJson(port, requestJson);
 }
 
 std::string BackendFacade::fetchPreviewBufferJson() const {

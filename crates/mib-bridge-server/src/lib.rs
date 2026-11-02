@@ -194,6 +194,8 @@ const CONTROL_COMMANDS: &[&str] = &[
     // Calibration apply (#716 A4a, ABI 42): it sets the instrument's pixel-to-micron factor, so
     // only the controlling client may send it. Listing and reading records stay open to viewers.
     "calibration_apply",
+    // Camera feature writes (#806 E-2, ABI 49) change the device; the tree and reads stay open.
+    "camera_feature_write",
 ];
 
 impl Server {
@@ -699,6 +701,16 @@ mod stage_control_tests {
         assert!(CONTROL_COMMANDS.contains(&"calibration_apply"), "calibration_apply must be a CONTROL command");
         for cmd in ["calibration_records_list", "calibration_record_get"] {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
+    }
+
+    // Camera features (#806 E-2, ABI 49): only the controller writes; any client reads.
+    #[test]
+    fn camera_feature_write_is_control_and_reads_are_open() {
+        assert!(CONTROL_COMMANDS.contains(&"camera_feature_write"), "a write changes the device");
+        for cmd in ["camera_feature_tree", "camera_feature_read"] {
+            assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+            assert!(mib_app_commands::dispatch::COMMANDS.contains(&cmd), "the server dispatches {cmd}");
         }
     }
 

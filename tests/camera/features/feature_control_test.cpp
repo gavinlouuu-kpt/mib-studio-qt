@@ -5,7 +5,7 @@
 #include <limits>
 #include <stdexcept>
 
-using namespace backend::camera::features;
+using namespace camera::features;
 namespace {
 int checks = 0;
 void check(bool condition, const char* message) {
@@ -46,7 +46,7 @@ FakePort integerPort() {
     p.descriptor.increment = std::int64_t{4};
     return p;
 }
-CurrentSession session{{"source-A", 9007199254740993ULL, 7}, true, {}};
+CurrentSession session{{"source-A", 9007199254740993ULL, 7}, true, {}, {}};
 Request request{session.token, {Module::Remote, "Width", std::nullopt}};
 } // namespace
 int main() {
@@ -80,7 +80,7 @@ int main() {
               "authorization before port access");
         check(read(p, viewer, request).outcome == Outcome::Read, "viewer can read");
     }
-    for (const Value v : {Value{std::int64_t{12}}, Value{std::int64_t{2}}, Value{std::int64_t{100}},
+    for (const Value& v : {Value{std::int64_t{12}}, Value{std::int64_t{2}}, Value{std::int64_t{100}},
                           Value{11.0}, Value{true}}) {
         auto p = integerPort();
         check(write(p, session, request, v).outcome == Outcome::Refused && p.writes == 0,
@@ -185,4 +185,6 @@ int main() {
         check(validateAddress(a).has_value(), "unknown module refused");
     }
     std::cout << checks << " feature contract checks passed\n";
+    // Explicit: in the consolidated runner main is renamed and loses its implicit return.
+    return 0;
 }

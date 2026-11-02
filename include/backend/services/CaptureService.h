@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/camera/common/ICamera.h"
+#include "backend/camera/features/FeatureTree.h"
 #include "backend/services/CaptureLifecycle.h"
 #include "backend/services/TelemetrySample.h"
 
@@ -125,6 +126,19 @@ public:
     // (Acquisition trigger — not the sort-output pulse.)
     bool softTriggerActiveCamera();
 
+    // E02 (#806): run `fn` against the active camera's GenApi port under the
+    // capture session guard (cameraMutex_, which pins activeCamera_ against
+    // release) and the camera's own port guard. The CurrentSession token is
+    // {camera source, this capture session's generation, capability revision};
+    // the revision starts at 1 per generation and `fn` may advance it (stored
+    // back). Writes are authorized unless `writeBlockReason` is non-empty.
+    // Unsupported: the active camera has no GenApi node map. NoSession: no
+    // camera is active or its port is not open.
+    ::camera::features::Access withCameraFeatures(
+        const std::function<void(::camera::features::Port&,
+                                 ::camera::features::CurrentSession&)>& fn,
+        std::string& reason, const std::string& writeBlockReason = {});
+
     const CaptureStats& stats() const { return stats_; }
 
     // Consistent per-metric telemetry view (issue #368): every metric carries
@@ -168,6 +182,11 @@ private:
     CameraReadyCallback cameraReadyCallback_;
     ::camera::common::ICamera* activeCamera_{nullptr};
     std::mutex cameraMutex_;
+    // Guarded by cameraMutex_: the capture generation activeCamera_ belongs
+    // to, and the GenApi capability revision of that generation (E02).
+    uint64_t activeCameraGeneration_{0};
+    uint64_t featureRevisionGeneration_{0};
+    uint64_t featureRevision_{0};
 
     // Serializes start()/stop() and guards thread_/snapshot_. The worker
     // takes it only for short transitions, never while blocked in grabFrame.

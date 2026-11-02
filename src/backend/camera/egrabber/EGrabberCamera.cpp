@@ -1,6 +1,7 @@
 #include "backend/camera/egrabber/EGrabberCamera.h"
 #if MIB_HAS_EGRABBER
 #include "backend/camera/egrabber/GenTLHolder.h"
+#include "backend/camera/features/EGrabberFeaturePort.h"
 #endif
 
 #include <spdlog/spdlog.h>
@@ -476,6 +477,35 @@ bool EGrabberCamera::setTriggerOutput(bool high) {
     }
 }
 
+::camera::features::FeatureSession* EGrabberCamera::featureSession() { return this; }
+
+std::string EGrabberCamera::source() const {
+    return hasSelection_ ? "egrabber:" + std::to_string(selectedInterfaceIndex_) + "/" +
+                               std::to_string(selectedDeviceIndex_)
+                         : std::string("egrabber:default");
+}
+
+bool EGrabberCamera::withPort(const std::function<void(::camera::features::Port&)>& fn,
+                              std::string& reason) {
+    // triggerMutex_ pins grabber_ (stop() resets it under this lock) and
+    // serializes node-map access with setTriggerOutput(). It is held for one
+    // feature operation only; tree enumeration re-takes it per node so a
+    // pulse is delayed by at most one describe.
+    std::lock_guard<std::mutex> triggerLock(triggerMutex_);
+    if (!running_.load(std::memory_order_acquire) || !grabber_) {
+        reason = "The eGrabber session is not open; start capture first.";
+        return false;
+    }
+    // Device quirk (Coaxlink): the trigger pulse relies on the Interface
+    // module's LineSelector staying where setTriggerOutput() put it. A typed
+    // write may move it, and selector-scoped reads rely on SDK rollback, so the
+    // next pulse re-selects its line.
+    triggerLineApplied_ = false;
+    ::camera::features::EGrabberFeaturePort<EGrabber<CallbackOnDemand>> port(*grabber_);
+    fn(port);
+    return true;
+}
+
 #else
 
 EGrabberCamera::EGrabberCamera() = default;
@@ -545,6 +575,18 @@ void EGrabberCamera::configureTriggerOutput(const std::string& lineSelector) {
 
 bool EGrabberCamera::setTriggerOutput(bool high) {
     (void)high;
+    return false;
+}
+
+// Without the SDK there is no node map: report unsupported, never empty.
+::camera::features::FeatureSession* EGrabberCamera::featureSession() { return nullptr; }
+
+std::string EGrabberCamera::source() const { return "egrabber:unavailable"; }
+
+bool EGrabberCamera::withPort(const std::function<void(::camera::features::Port&)>& fn,
+                              std::string& reason) {
+    (void)fn;
+    reason = "EGrabber SDK is not compiled into this build.";
     return false;
 }
 

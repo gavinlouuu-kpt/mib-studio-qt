@@ -1938,3 +1938,11 @@ Issue #570: Review keeps unreadable run accounting as Unknown, displaying the
 existing `completion_reason` field rather than promoting `reconciled=false` to
 Failed when the outcome is Unknown. Known outcomes with unreconciled counters
 still show Failed. No bridge ABI or JSON field changes.
+
+**Camera GenApi features (ABI 49, #806 E-1/E-2).** `camera_feature_tree`, `camera_feature_read`
+and `camera_feature_write` are in `mib-app-commands` (`dispatch::COMMANDS`) and so on the
+WebSocket server; `camera_feature_write` is a control command. There is no Tauri command,
+`bridge.ts` wrapper or view for them yet: E-3 binds the Align quick controls (exposure, gain,
+FPS, trigger) to SFNC names resolved against the enumerated tree
+([[../camera/FeatureControl]]). Only `bridgeContract.ts` (generated, `CAMERA_FEATURES`) and the
+ABI pins in the desktop tests changed.
