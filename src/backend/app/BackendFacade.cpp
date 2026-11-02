@@ -3,7 +3,6 @@
 #include "backend/workspace/RecipeProvider.h"
 #include "backend/app/CalibrationRecord.h"
 #include "backend/profiles/ProfileRegistry.h"
-#include <chrono>
 #include <fstream>
 #include <sstream>
 #include "backend/analysis/AnalysisHost.h"
@@ -1582,11 +1581,7 @@ namespace backend::bridge
         host.plan = [analysisRead](const std::string& id, const std::string& revision) {
             return J::parse(analysisRead(J{{"action", "read"}, {"planId", id}, {"revision", revision}}.dump()));
         };
-        host.now = [] {
-            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            return app::utcIsoFromUnixMs(static_cast<uint64_t>(ms));
-        };
+        host.now = [] { return app::utcIsoFromUnixMs(app::WallClock::nowNs() / 1'000'000ull); };
         auto policy = [](workspace::RecipeMethodFacts& f, const std::string& config) {
             app::CalibrationMethodSpec spec;
             std::string why;

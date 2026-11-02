@@ -1043,6 +1043,8 @@ async fn recipe_provider_create_derive_diff_apply_preview() {
     assert_eq!(json_ok(send!(&mut controller, "init", json!({ "dataDir": "" }))), json!(true));
 
     // An F analysis plan revision and a local method profile to pair.
+    let opened = json_ok(send!(&mut controller, "load_recording", json!({ "filePath": run })));
+    assert_eq!(opened["ok"], true, "{opened}");
     let source = json!({ "kind": "stored", "path": run });
     let snapshot = json_ok(send!(&mut controller, "analysis_read", json!({ "request": { "action": "snapshot", "source": source } })));
     assert_eq!(snapshot["status"], "ok", "{snapshot}");
