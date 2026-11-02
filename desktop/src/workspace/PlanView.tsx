@@ -24,6 +24,7 @@ import {
 } from "./planModel";
 import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, calibrationFacts, declaredCalibration, startBlocks, type PlanCalibration } from "./planParts";
 import { QueuePlan } from "./QueuePlan";
+import { AnnotationGroups } from "./AnnotationGroups";
 import { startConfirmation, type ConfirmationState, type Verdict } from "./prepareModel";
 import type { PlanController, PlanStartResult } from "./usePlan";
 
@@ -161,6 +162,7 @@ function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCamer
         </Card>
       </div>
 
+      <AnnotationGroups draft={draft} />
       <Card title="Start" subtitle="Start run picks the file, checks readiness with it and starts this plan's run" data-testid="plan-start"
         status={<>
           <StateChip tone={verdict.tone} title={verdict.detail || undefined}>{`Prepare: ${verdict.title}`}</StateChip>

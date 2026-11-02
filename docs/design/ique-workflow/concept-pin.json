@@ -1,0 +1,41 @@
+{
+  "file": "6a808aca-eb00-48c2-a75a-9b5d7058a42b",
+  "revn": 71,
+  "vern": 0,
+  "pages": [
+    {
+      "id": "202e7953-c6e1-8109-8008-c9e9185c8df0",
+      "name": "Page 1",
+      "boards": [
+        {
+          "id": "34ffb616-9773-4611-9dff-f15ac5c1e67c",
+          "name": "01 Setup – sample format & annotation"
+        },
+        {
+          "id": "331ee8e6-521c-41f1-8b51-6bdf9c7e1dea",
+          "name": "04 Segment – split the continuous recording"
+        },
+        {
+          "id": "79fc46b2-dea1-4a1a-9fa1-e2a9d93c82e6",
+          "name": "05 Review – linked analysis"
+        },
+        {
+          "id": "c0bc8351-00cb-416a-9424-b1fc8141ec40",
+          "name": "00 Concept – what we borrow from Forecyt"
+        },
+        {
+          "id": "a45a0a0c-244c-4d19-8a11-8aa659b5e31b",
+          "name": "06 Compare – many runs"
+        },
+        {
+          "id": "9398f8b0-9811-4406-9fbf-6cc795ffcffc",
+          "name": "02 Preflight – plan, checks, QC"
+        },
+        {
+          "id": "2e1f47dc-2bc2-43ed-999f-25492e65f3ee",
+          "name": "03 Run – live acquisition"
+        }
+      ]
+    }
+  ]
+}

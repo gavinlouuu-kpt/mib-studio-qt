@@ -25,6 +25,7 @@ import {
 } from "./planModel";
 import { CONTROL_BLOCK, calibrationFacts, declaredCalibration, FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, startBlocks, type StartBlock } from "./planParts";
 import type { PlanViewProps } from "./PlanView";
+import { AnnotationGroups } from "./AnnotationGroups";
 import { startConfirmation } from "./prepareModel";
 import {
   canEnd,
@@ -326,6 +327,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
         </Card>
       </div>
 
+      <AnnotationGroups draft={draft} />
       {begun ? null : queueCard}
     </div>
   );
