@@ -15,6 +15,11 @@ the drift already visible, and the slices that close each gap.
 Tracking: #806, #807, #808 (coordination overlays); PRs #809, #812 (E),
 #811, #813, #814, #815 (I), #810 (F).
 
+**Anchor:** the per-capability backend goals (E01–E09, I01–I12, F01–F16) live in
+[`docs/architecture/fold-in-backend-goals.md`](../../architecture/fold-in-backend-goals.md).
+That file is the backend counterpart of the Penpot boards. Every slice below names
+the goal IDs it advances and the headless proof it adds.
+
 ## Definition of done: applies to every capability ID
 
 A ledger row (E01–E09, I01–I12, F01–F16) may be marked accepted only when all
@@ -87,6 +92,10 @@ view was found presenting fixture numbers as real data, and every ledger says
      history and a demo-only card.
 
 ## E objective (clarified, binding for #806)
+
+The binding statement is the E track goal and E02 in the
+[backend goals](../../architecture/fold-in-backend-goals.md). The notes below
+expand it.
 
 The purpose of the eGrabber fold-in is to **work with the camera through
 GenApi as the device describes itself**, not to maintain a list of features.
@@ -229,6 +238,11 @@ the bridge. No I slice is TypeScript only.
 
 ## Decision log
 
+- 2026-11-02: Every objective is written as a backend goal with a headless
+  proof, in `docs/architecture/fold-in-backend-goals.md`. A view is built only
+  after its goal is met; anything earlier is a labelled UI probe and counts for
+  nothing. Reason: Penpot anchors the UI, but nothing anchored the backend, so
+  agents drifted into building views.
 - 2026-11-02: Audit of all fold-in branches. Adopted mechanism-first
   definition of done. Clarified the E objective as GenApi-driven node-map work,
   not a feature list. Identified I/F duplication of analysis code and ABI 47.

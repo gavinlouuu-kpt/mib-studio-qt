@@ -10,4 +10,9 @@ authority, a bridge contract, production wiring, a real-backend test and a state
 evidence class. The eGrabber objective is now explicit: the camera is driven
 through its GenApi node map at runtime, not a hand-kept feature list.
 
+Each objective is now a backend goal with a headless proof, in
+`docs/architecture/fold-in-backend-goals.md` (linked from `AGENTS.md`). Penpot anchors
+the UI, and this file anchors the backend. A view built before its goal is met is a
+labelled UI probe.
+
 See `docs/exec-plans/active/2026-11-02-fold-in-mechanism-realignment.md`.
