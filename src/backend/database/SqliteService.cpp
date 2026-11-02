@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <set>
+#include <filesystem>
 
 namespace backend::services {
 using nlohmann::json;
@@ -58,7 +59,7 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
     if (!workspace_)
         return R"({"status":"unavailable","message":"Metadata database is not available"})";
     try {
-        if (request.size() > 1100000)
+        if (request.size() > 2200000)
             throw StoreError(StoreErrorCode::Invalid, "Workspace request too large");
         const auto q = json::parse(request, [](int depth, json::parse_event_t, json&) {
             if (depth > 68)
@@ -68,14 +69,39 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
         });
         if (!q.is_object())
             throw StoreError(StoreErrorCode::Invalid, "Expected workspace request object");
-        const auto workspaceId = q.at("workspace_id").get<std::string>();
+        // `list` (I, #807) names no workspace; every other action requires workspace_id below.
+        const auto workspaceId =
+            q.contains("workspace_id") ? q.at("workspace_id").get<std::string>() : std::string{};
         if (write && !analysisAuthority &&
             (workspaceId.rfind("analysis/", 0) == 0 || workspaceId.rfind("analysis-", 0) == 0))
             throw StoreError(StoreErrorCode::Invalid,
                              "Analysis namespaces require the native analysis authority");
         const auto action = q.at("action").get<std::string>();
         std::set<std::string> keys{"action", "workspace_id"};
-        if (action == "read")
+        if (analysisAuthority && (action == "derived_receipt" || (write && action == "derive"))) {
+            keys.insert("command_id");
+            keys.insert("origin_request");
+            if (action == "derive") keys.insert("document");
+        } else if (action == "list") {
+            keys.insert("after");
+            keys.insert("limit");
+        } else if (action == "export_status") {
+            keys.insert("job_id");
+        } else if (write && action == "export") {
+            keys.insert("job_id");
+            keys.insert("revision");
+        } else if (write && action == "import") {
+            keys.insert("command_id");
+            keys.insert("manifest");
+        } else if (write && (action == "attach_source" || action == "relink")) {
+            keys.insert("command_id");
+            keys.insert("expected_revision");
+            keys.insert("source_id");
+            keys.insert("path");
+        } else if (action == "verify_source") {
+            keys.insert("revision");
+            keys.insert("source_id");
+        } else if (action == "read")
             keys.insert("revision");
         else if (action == "history" || (analysisAuthority && action == "catalog")) {
             keys.insert("after");
@@ -94,7 +120,31 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
         for (auto it = q.begin(); it != q.end(); ++it)
             if (!keys.count(it.key()))
                 throw StoreError(StoreErrorCode::Invalid, "Unknown workspace request field");
-        const auto id = q.at("workspace_id").get<std::string>();
+        const auto id = action == "list" ? std::string{} : q.at("workspace_id").get<std::string>();
+        // Public manifests may reference but cannot mint scientific authority records.
+        if (write && !analysisAuthority && action == "import") {
+            const auto manifest = q.at("manifest").is_string()
+                                      ? json::parse(q.at("manifest").get<std::string>())
+                                      : q.at("manifest");
+            const auto& payload = manifest.at("payload");
+            if (payload.contains("dependencies")) {
+                const auto& deps = payload.at("dependencies");
+                if (!deps.is_array())
+                    throw StoreError(StoreErrorCode::Invalid, "Invalid dependencies");
+                for (const auto& dep : deps) {
+                    const auto existing =
+                        workspace_->read(dep.at("workspace_id").get<std::string>(),
+                                         dep.at("revision").get<std::string>());
+                    if (!existing)
+                        throw StoreError(StoreErrorCode::Invalid,
+                                         "Import exact analysis dependencies through the native "
+                                         "analysis provider first");
+                    if (json::parse(existing->documentJson) != dep.at("document"))
+                        throw StoreError(StoreErrorCode::Conflict,
+                                         "Analysis dependency differs from native provider record");
+                }
+            }
+        }
         const auto optional = [&](const char* key) -> std::optional<std::string> {
             if (!q.contains(key) || q.at(key).is_null()) return std::nullopt;
             return q.at(key).get<std::string>();
@@ -103,8 +153,55 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
             return json{{"status", "ok"},
                         {"workspace_id", s.workspaceId},
                         {"revision", s.revision},
-                        {"document", json::parse(s.documentJson)}};
+                        {"document", json::parse(s.documentJson)},
+                        {"document_json", s.documentJson}};
         };
+        if (action == "list") {
+            auto rows = json::array();
+            for (const auto& s :
+                 workspace_->list(q.value("limit", 100), q.value("after", std::string{}))) {
+                const auto d = json::parse(s.documentJson);
+                rows.push_back(
+                    {{"workspace_id", s.workspaceId},
+                     {"revision", s.revision},
+                     {"title", d.value("title", s.workspaceId)},
+                     {"archived", d.value("archived", false)},
+                     {"kind", d.value("type", d.contains("plan") ? std::string{"workspace"}
+                                                                 : std::string{"document"})}});
+            }
+            return json{{"status", "ok"}, {"workspaces", rows}}.dump();
+        }
+        if (analysisAuthority && action == "derived_receipt") {
+            auto prior = workspace_->derivedReceipt(id, q.at("command_id").get<std::string>(),
+                                                    q.at("origin_request").dump());
+            return prior ? snapshot(*prior).dump() : R"({"status":"not_found"})";
+        }
+        if (analysisAuthority && action == "derive")
+            return snapshot(workspace_->derive(id, q.at("command_id").get<std::string>(),
+                                               q.at("origin_request").dump(),
+                                               q.at("document").dump()))
+                .dump();
+        if (action == "export")
+            return workspace_->exportSnapshot(id, q.at("revision").get<std::string>(),
+                                              q.at("job_id").get<std::string>());
+        if (action == "export_status")
+            return workspace_->exportStatus(id, q.at("job_id").get<std::string>());
+        if (action == "import")
+            return snapshot(workspace_->importSnapshot(id, q.at("command_id").get<std::string>(),
+                                                       q.at("manifest").is_string()
+                                                           ? q.at("manifest").get<std::string>()
+                                                           : q.at("manifest").dump()))
+                .dump();
+        if (action == "attach_source" || action == "relink")
+            return snapshot(workspace_->linkSource(id, q.at("expected_revision").get<std::string>(),
+                                                   q.at("command_id").get<std::string>(),
+                                                   q.at("source_id").get<std::string>(),
+                                                   q.at("path").get<std::string>(),
+                                                   action == "relink"))
+                .dump();
+        if (action == "verify_source")
+            return workspace_->verifySource(id, q.at("revision").get<std::string>(),
+                                            q.at("source_id").get<std::string>());
         if (action == "read") {
             auto s = workspace_->read(id, optional("revision"));
             return s ? snapshot(*s).dump()
@@ -146,6 +243,8 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
                            : e.code == StoreErrorCode::Invalid  ? "invalid"
                                                                 : "storage";
         return json{{"status", code}, {"message", e.what()}}.dump();
+    } catch (const std::filesystem::filesystem_error&) {
+        return R"({"status":"not_found","message":"Source file unavailable; no workspace change was committed"})";
     } catch (const json::exception&) {
         return R"({"status":"invalid","message":"Malformed workspace request"})";
     } catch (...) {

@@ -1879,3 +1879,4 @@ set_property(TEST e2e.recording_403_partial_series_no_frames APPEND PROPERTY ENV
 
 set_property(TEST e2e.recording_403_partial_series_restart APPEND PROPERTY ENVIRONMENT
     "MIB_REPRO_RESTART=1")
+

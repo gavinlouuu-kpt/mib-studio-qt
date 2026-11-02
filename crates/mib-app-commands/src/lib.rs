@@ -977,6 +977,8 @@ pub fn analysis_write(state: &AppState, request: serde_json::Value) -> Result<se
 }
 pub fn fetch_live_evidence(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    // Before init the facade answers {available:false, reason}: the EvidenceResolver contract is
+    // an explicit unavailable reason, not a transport error.
     serde_json::from_str(&guard.pin_mut().fetch_live_evidence()).map_err(|e| e.to_string())
 }
 pub fn analyze_population(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1827,6 +1829,18 @@ fn calibration_record_id(record_id: &str) -> Result<(), String> {
 
 /// ABI 42 (#716 A4a): the instrument's calibration records (bridge-contract.json
 /// `calibration_records.list_reply`). A read: it never applies or changes anything.
+pub fn workspace_read(state: &AppState, request: String) -> Result<serde_json::Value, String> {
+    workspace_request(state, request, false)
+}
+pub fn workspace_write(state: &AppState, request: String) -> Result<serde_json::Value, String> {
+    workspace_request(state, request, true)
+}
+fn workspace_request(state: &AppState, request: String, write: bool) -> Result<serde_json::Value, String> {
+    if request.len() > 2_200_000 { return Err("Workspace request too large".into()); }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().workspace_request(&request, write)).map_err(|e| e.to_string())
+}
+
 pub fn calibration_records_list(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().calibration_records_list()).map_err(|e| e.to_string())

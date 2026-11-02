@@ -1,5 +1,43 @@
 # Desktop Shell (React + Tauri v2)
 
+## Recorded calibration trends (#807 I11)
+
+`workspace/CalibrationTrends.tsx` mounts in the existing CalibrationCard and
+uses that card's live `useCalibration` list and selection path, without a new
+transport or controller. `calibrationTrendModel.ts` reads stored metrics,
+limits and verdicts; no frontend estimator or current-threshold re-evaluation.
+One point per latest record version is positioned at derivation time. Values
+without dates remain in the table, and null focus/flow never becomes zero.
+All-record display asserts no compatibility; setup filters include method
+revision, and incomplete identities remain separate. Keyboard/click selection
+calls existing `calibration_record_get`, never Apply. Invalid/cleared list state
+unmounts the chart so stale measurements are not presented as current.
+
+Tests: model edge cases, component interaction/clearing, and CalibrationCard's
+real controller over mocked IPC (read-only command assertion). Native reuse
+qualification is recorded in `docs/design/ique-workflow/NATIVE-EVIDENCE.md`.
+Persistent reversible exclusions and editable versioned trend policies remain
+open I11 requirements; this view does not create a second store.
+
+## iQue annotation groups (#807 I-A1)
+
+The single and queue Plan views mount `workspace/AnnotationGroups.tsx`, backed
+by the pure `annotationModel.ts`. Existing condition/unit/channel/medium and
+free key/value annotations supply selectable grouping layers. Grouping never
+changes queue order or sends a backend command. Condition colours reuse
+`conditionSlots`; other categories stay textual. Unit labels are deduplicated
+as labels, never asserted to be statistically independent replicates.
+
+The annotation-only JSON projection (`mib.planned-annotations`, version 1)
+validates through `buildStartRequest`, preserving its omission and UTF-8 rules.
+Invalid sheets disable export; a stale open JSON preview disappears immediately.
+No acquisition run index is exported. Group selection is not persisted, and
+copying this JSON does not save/reopen an experiment. Full continuity awaits
+the agreed workspace store, not another localStorage authority. Coverage:
+`annotationModel.test.ts`, `AnnotationGroups.test.tsx` and existing Plan/Queue
+interaction suites. Scope/evidence: `docs/design/ique-workflow/README.md` and
+`DEMO.md`.
+
 > The Phase 3 deliverable of epic #246: the React + Tauri v2 desktop app that
 > replaces the Qt frontend. It drives the Qt-free C++ backend through the
 > [[Rust-Bridge]] (`mib-bridge`, ADR 0003). First vertical slice: **mock camera
@@ -1964,3 +2002,25 @@ and BackendFacade's idle/recording fence; Review uses `review_analyze_population
 and the review-only bridge. Both end at ReviewJobs/ReviewSession and the same
 native interval/statistics core. Backend 46 / Review 8 are additive, leaving
 reserved 45/7 untouched. See [[../services/AnalysisWorker]].
+
+### iQue recipe association boundary (#807)
+
+`workspace/recipeModel.ts` decodes version-1 immutable method/analysis references,
+creates detached unsaved copies with lineage, and rejects stale compatibility by
+exact pair/setup revision. `RecipePairing.tsx` renders these facts and an optional
+copy action only. It does not save or apply; the isolated `ique-demo.html` uses
+labelled fixtures. Live persistence awaits the single #393/#395 workspace authority
+and scientific validation awaits #808. Design proposal:
+`docs/design/ique-workflow/WORKSPACE-CONTRACT.md`.
+
+
+## Saved workspace plan (#807, ABI 48; first written as 45)
+
+Experiment → Plan includes `SavedPlan`: explicit native metadata save/new revision
+and reopen of a sample sheet (annotations and selected operator). It uses the same
+Tauri/WebSocket command layer as the app, never localStorage or demo data. Readback
+shows immutable annotations without replacing the active experiment, applying a
+method or starting acquisition. Unknown saves offer exact-command retry while the
+panel remains mounted; reopening a workspace ID reconciles its stored state after
+navigation/reload. Plan activation, recipe scientific validation and workspace
+listing remain unfinished. See `docs/design/ique-workflow/PRODUCTION-INTEGRATION.md`.
