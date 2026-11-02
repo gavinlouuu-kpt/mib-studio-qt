@@ -48,7 +48,7 @@ void validateTable(const Json& doc) {
         throw std::invalid_argument("Table selection budget exceeded");
     std::set<std::string> nodes, seen;
     for (const auto& node : doc.at("graph").at("nodes"))
-        nodes.insert(node.at("id"));
+        nodes.insert(node.at("id").get<std::string>());
     for (const auto& population : populations)
         if (!nodes.count(population) || !seen.insert(population).second)
             throw std::invalid_argument("Table population is missing or duplicated");
