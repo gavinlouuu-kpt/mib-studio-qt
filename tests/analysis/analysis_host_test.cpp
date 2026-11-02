@@ -635,6 +635,7 @@ int main() {
                      {"note", "descriptive evidence"}};
         const auto savedFinding = call(finding);
         MIB_EXPECT(savedFinding["status"] == "ok", "persist immutable finding");
+        { // I (#807) next-run planning over F's persisted finding (ported from 90dd17cc).
         // I consumer: actual persisted F strategy, retained sources and finding authority.
         auto workspace = [&](const json& q, bool write = true) {
             return json::parse(db.workspaceRequest(q.dump(), write));
@@ -773,6 +774,7 @@ int main() {
                    "command collision cannot alias changed input");
         MIB_EXPECT(planning(verify, false)["status"] == "invalid",
                    "reverification refuses unavailable method");
+        }
         json library{{"title", "Two source study"},
                      {"groups", {"control", "treated"}},
                      {"preferences", {{"decimalDigits", 3}}},

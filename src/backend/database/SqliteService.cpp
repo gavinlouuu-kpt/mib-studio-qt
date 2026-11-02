@@ -69,7 +69,9 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
         });
         if (!q.is_object())
             throw StoreError(StoreErrorCode::Invalid, "Expected workspace request object");
-        const auto workspaceId = q.at("workspace_id").get<std::string>();
+        // `list` (I, #807) names no workspace; every other action requires workspace_id below.
+        const auto workspaceId =
+            q.contains("workspace_id") ? q.at("workspace_id").get<std::string>() : std::string{};
         if (write && !analysisAuthority &&
             (workspaceId.rfind("analysis/", 0) == 0 || workspaceId.rfind("analysis-", 0) == 0))
             throw StoreError(StoreErrorCode::Invalid,
