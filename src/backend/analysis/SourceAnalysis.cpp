@@ -1,6 +1,6 @@
 #include "backend/analysis/SourceAnalysis.h"
-#include "backend/analysis/PopulationGraph.h"
-#include "backend/analysis/PopulationStatistics.h"
+#include "backend/analysis/ColumnarEvaluation.h"
+#include "backend/analysis/PopulationGates.h"
 #include "backend/evidence/AnalysisMapping.h"
 #include "backend/processing/ProcessingCoreSha256.h"
 #include <cmath>
@@ -8,162 +8,11 @@
 #include <algorithm>
 #include <set>
 #include <array>
+#include <limits>
 
 namespace backend::analysis {
 using Json = nlohmann::json;
 namespace {
-using Point = std::array<double, 2>;
-double cross(const Point& a, const Point& b, const Point& c) {
-    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-}
-bool onSegment(const Point& a, const Point& b, const Point& p) {
-    return cross(a, b, p) == 0 && p[0] >= std::min(a[0], b[0]) && p[0] <= std::max(a[0], b[0]) &&
-           p[1] >= std::min(a[1], b[1]) && p[1] <= std::max(a[1], b[1]);
-}
-std::vector<Point> polygonPoints(const Json& vertices) {
-    if (!vertices.is_array() || vertices.size() < 3 || vertices.size() > 129)
-        throw std::invalid_argument("Polygon requires 3..128 vertices, optionally closed");
-    std::vector<Point> points;
-    for (const auto& v : vertices) {
-        if (!v.is_array() || v.size() != 2) throw std::invalid_argument("Invalid polygon vertex");
-        Point p;
-        for (size_t i = 0; i < 2; ++i) {
-            if (!v[i].is_number())
-                throw std::invalid_argument("Polygon coordinates must be numeric");
-            p[i] = v[i].get<double>();
-            if (!std::isfinite(p[i]) || std::abs(p[i]) > 1e100)
-                throw std::invalid_argument("Polygon coordinate outside bounded domain");
-        }
-        points.push_back(p);
-    }
-    if (points.front() == points.back()) points.pop_back();
-    const auto n = points.size();
-    if (n < 3 || n > 128 || std::set<Point>(points.begin(), points.end()).size() != n)
-        throw std::invalid_argument("Duplicate polygon vertex");
-    long double area = 0;
-    for (size_t i = 0; i < n; ++i) {
-        const auto& a = points[(i + n - 1) % n];
-        const auto& b = points[i];
-        const auto& c = points[(i + 1) % n];
-        if (cross(a, b, c) == 0 &&
-            (a[0] - b[0]) * (c[0] - b[0]) + (a[1] - b[1]) * (c[1] - b[1]) > 0)
-            throw std::invalid_argument("Overlapping polygon edges");
-        area += static_cast<long double>(b[0]) * c[1] - static_cast<long double>(c[0]) * b[1];
-        for (size_t j = i + 1; j < n; ++j) {
-            if (j == i + 1 || (i == 0 && j == n - 1)) continue;
-            const auto& d = points[j];
-            const auto& e = points[(j + 1) % n];
-            const auto x = cross(b, c, d), y = cross(b, c, e), z = cross(d, e, b),
-                       w = cross(d, e, c);
-            if (((x > 0 && y < 0) || (x < 0 && y > 0)) && ((z > 0 && w < 0) || (z < 0 && w > 0)) ||
-                onSegment(b, c, d) || onSegment(b, c, e) || onSegment(d, e, b) ||
-                onSegment(d, e, c))
-                throw std::invalid_argument("Self-intersecting polygon");
-        }
-    }
-    if (area == 0) throw std::invalid_argument("Zero-area polygon");
-    return points;
-}
-Truth polygonMembership(const std::vector<Point>& points, double x, double y) {
-    // Match the worker's bounded numeric domain; out-of-domain measurements are unknown.
-    if (std::abs(x) > 1e100 || std::abs(y) > 1e100) return Truth::Unknown;
-    const Point p{x, y};
-    bool inside = false;
-    for (size_t i = 0, j = points.size() - 1; i < points.size(); j = i++) {
-        const auto& a = points[j];
-        const auto& b = points[i];
-        if (onSegment(a, b, p)) return Truth::True; // all edges and vertices are inclusive
-        if ((a[1] > y) != (b[1] > y)) {
-            const auto orientation = cross(a, b, p);
-            if ((orientation > 0) == (b[1] > a[1])) inside = !inside;
-        }
-    }
-    return inside ? Truth::True : Truth::False;
-}
-struct Graph {
-    PopulationPlan plan;
-    std::string output;
-    std::map<std::string, std::pair<std::string, Interval>> gates;
-    std::map<std::string, Json> geometries;
-    std::map<std::string, std::vector<Point>> polygons;
-};
-Graph parseGraph(const Json& q) {
-    if (!q.is_object() || q.size() != 4 || !q.at("nodes").is_array())
-        throw std::invalid_argument("Expected graph id, revision, output and nodes");
-    Graph g;
-    g.plan.id = q.at("id").get<std::string>();
-    g.plan.revision = q.at("revision").get<std::string>();
-    g.output = q.at("output").get<std::string>();
-    for (const auto& v : q.at("nodes")) {
-        PopulationNode node;
-        node.id = v.at("id").get<std::string>();
-        node.parent = v.at("parent").get<std::string>();
-        const auto kind = v.at("kind").get<std::string>();
-        if (kind == "interval") {
-            if (v.size() != 6) throw std::invalid_argument("Invalid interval node fields");
-            node.predicate = node.id;
-            Interval bounds;
-            if (!v.at("minimum").is_null()) bounds.minimum = v.at("minimum").get<double>();
-            if (!v.at("maximum").is_null()) bounds.maximum = v.at("maximum").get<double>();
-            validateInterval(bounds);
-            const auto feature = v.at("feature").get<std::string>();
-            if (feature.empty() || feature.size() > 64 ||
-                feature.find_first_not_of(
-                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
-                    std::string::npos)
-                throw std::invalid_argument("Unsupported graph feature");
-            g.gates.emplace(node.id, std::make_pair(feature, bounds));
-        } else if (kind == "ellipse" || kind == "quadrant" || kind == "polygon") {
-            if (v.size() != (kind == "ellipse" ? 9 : kind == "polygon" ? 6 : 8))
-                throw std::invalid_argument("Invalid geometry node fields");
-            for (const char* key : {"x", "y"}) {
-                const auto feature = v.at(key).get<std::string>();
-                if (feature.empty() || feature.size() > 64 ||
-                    feature.find_first_not_of(
-                        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
-                        std::string::npos)
-                    throw std::invalid_argument("Unsupported geometry parameter");
-            }
-            if (v.at("x") == v.at("y"))
-                throw std::invalid_argument("Geometry requires distinct parameters");
-            if (kind == "polygon") {
-                g.polygons.emplace(node.id, polygonPoints(v.at("vertices")));
-            } else if (kind == "ellipse") {
-                for (const char* key : {"centerX", "centerY", "radiusX", "radiusY"})
-                    if (!std::isfinite(v.at(key).get<double>()))
-                        throw std::invalid_argument("Ellipse geometry must be finite");
-                if (v.at("radiusX").get<double>() <= 0 || v.at("radiusY").get<double>() <= 0)
-                    throw std::invalid_argument("Ellipse radii must be positive");
-            } else {
-                if (!std::isfinite(v.at("thresholdX").get<double>()) ||
-                    !std::isfinite(v.at("thresholdY").get<double>()))
-                    throw std::invalid_argument("Quadrant thresholds must be finite");
-                const std::set<std::string> choices{"lower-left", "lower-right", "upper-left",
-                                                    "upper-right"};
-                if (!choices.count(v.at("quadrant").get<std::string>()))
-                    throw std::invalid_argument("Unknown quadrant");
-            }
-            node.predicate = node.id;
-            g.geometries.emplace(node.id, v);
-        } else {
-            if (v.size() != 4) throw std::invalid_argument("Invalid Boolean node fields");
-            if (kind == "and")
-                node.kind = NodeKind::And;
-            else if (kind == "or")
-                node.kind = NodeKind::Or;
-            else if (kind == "not")
-                node.kind = NodeKind::Not;
-            else
-                throw std::invalid_argument("Unsupported graph node kind");
-            node.operands = v.at("operands").get<std::vector<std::string>>();
-        }
-        g.plan.nodes.push_back(std::move(node));
-    }
-    const auto order = validatePlan(g.plan);
-    if (std::find(order.begin(), order.end(), g.output) == order.end())
-        throw std::invalid_argument("Graph output is not a population");
-    return g;
-}
 std::optional<double> measurement(const Json& row, const std::string& feature) {
     const auto& values = row.at("measurements");
     if (!values.contains(feature) || values.at(feature).is_null()) return {};
@@ -177,7 +26,7 @@ std::string contentHash(const Json& value) {
                            reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
 }
 void validateAnalysisGraph(const Json& graph) {
-    (void)parseGraph(graph);
+    (void)compileGraph(graph);
 }
 Json freezeEvidence(evidence::LiveEvidence& owner, const std::string& scope,
                     EvidenceLeaseRead read) {
@@ -198,8 +47,8 @@ Json freezeEvidence(evidence::LiveEvidence& owner, const std::string& scope,
         auto page = owner.page(metadata->identity, held.lease, cursor, 1024);
         if (page.status != evidence::Status::Ok)
             throw std::invalid_argument("Evidence snapshot invalidated");
-        if (rows.size() + page.rows.size() > 10000)
-            throw std::invalid_argument("Evidence exceeds 10000 event budget");
+        if (rows.size() + page.rows.size() > kMaxJsonSourceEvents)
+            throw std::invalid_argument(jsonSourceBoundMessage());
         for (const auto& row : page.rows)
             rows.push_back(evidence::analysisRow(metadata->identity, row));
         if (page.done) break;
@@ -237,9 +86,10 @@ Json adaptEvidenceArchive(const Json& archive) {
         throw std::invalid_argument("Run event archive unavailable or unsupported");
     const auto sourceKey = archive.at("sourceKey").get<std::string>();
     const auto& parameters = archive.at("parameters");
-    if (!parameters.is_array() || parameters.size() > 32 || !archive.at("rows").is_array() ||
-        archive.at("rows").size() > 10000)
+    if (!parameters.is_array() || parameters.size() > 32 || !archive.at("rows").is_array())
         throw std::invalid_argument("Evidence archive budget exceeded");
+    if (archive.at("rows").size() > kMaxJsonSourceEvents)
+        throw std::invalid_argument(jsonSourceBoundMessage());
     Json units = Json::object(), rows = Json::array();
     for (const auto& p : parameters) {
         auto id = p.at("id").get<std::string>();
@@ -315,32 +165,37 @@ Json adaptEvidenceArchive(const Json& archive) {
 }
 Json evaluateSource(const Json& rawSource, const Json& request) {
     const auto source = prepareAnalysisSource(rawSource, request);
-    if (source.at("schema") != "F-source/1" || source.at("rows").size() > 10000)
-        throw std::invalid_argument("Unsupported analysis source");
-    auto graph = parseGraph(request.at("graph"));
+    if (source.at("schema") != "F-source/1") throw std::invalid_argument("Unsupported analysis source");
+    if (source.at("rows").size() > kMaxJsonSourceEvents)
+        throw std::invalid_argument(jsonSourceBoundMessage());
+    auto graph = compileGraph(request.at("graph"));
     graph.plan.revision = contentHash(request.at("graph"));
     const auto feature = request.at("feature").get<std::string>();
     const auto& units = source.at("parameters");
     if (!units.contains(feature))
         throw std::invalid_argument("Reduction feature unavailable in source");
-    for (const auto& [id, gate] : graph.gates)
-        if (!units.contains(gate.first))
-            throw std::invalid_argument("Gate feature unavailable in source: " + gate.first);
-    for (const auto& [id, gate] : graph.geometries)
-        for (const char* axis : {"x", "y"})
-            if (!units.contains(gate.at(axis).get<std::string>()))
-                throw std::invalid_argument("Geometry parameter unavailable in source");
+    for (const auto& [id, gate] : graph.gates) {
+        if (gate.kind == GateSpec::Kind::Interval) {
+            if (!units.contains(gate.x))
+                throw std::invalid_argument("Gate feature unavailable in source: " + gate.x);
+        } else if (!units.contains(gate.x) || !units.contains(gate.y)) {
+            throw std::invalid_argument("Geometry parameter unavailable in source");
+        }
+    }
     const auto qc = request.value("qc", Json{{"policy", "all"}, {"decisions", Json::array()}});
     if (!qc.is_object() || qc.size() != 2 || !qc.at("decisions").is_array() ||
-        qc.at("decisions").size() > 10000)
+        qc.at("decisions").size() > kMaxJsonSourceEvents)
         throw std::invalid_argument("Expected QC policy and bounded decisions");
     const auto qcPolicy = qc.at("policy").get<std::string>();
     if (qcPolicy != "all" && qcPolicy != "good-only")
         throw std::invalid_argument("Unsupported QC policy");
     std::map<std::string, Truth> decisions;
     std::set<std::string> sourceKeys;
-    for (const auto& row : source.at("rows"))
-        sourceKeys.insert(row.at("key").get<std::string>());
+    for (const auto& row : source.at("rows")) {
+        const auto key = row.at("key").get<std::string>();
+        if (key.empty() || !sourceKeys.insert(key).second)
+            throw std::invalid_argument("Empty or duplicate source key");
+    }
     for (const auto& decision : qc.at("decisions")) {
         if (!decision.is_object() || decision.size() != 4)
             throw std::invalid_argument("QC decision requires key, status, reason and actor");
@@ -369,17 +224,33 @@ Json evaluateSource(const Json& rawSource, const Json& request) {
                          qcFingerprint,
                          "source-authority",
                          "native-graph/1"};
-    Membership universe{revision, {}}, eligibility{revision, {}};
+    for (const auto* field : {&revision.snapshot, &revision.sourceFingerprint, &revision.plan,
+                              &revision.application, &revision.parameters, &revision.qc})
+        if (field->empty()) throw std::invalid_argument("Unpinned analysis revision");
+    const auto unit = units.at(feature).get<std::string>();
+    if (unit.empty()) throw std::invalid_argument("Unqualified measurement column");
+    // The JSON rows become in-memory columns; the one columnar evaluator then
+    // decides membership and statistics for this host as for full recordings.
+    const auto& sourceRows = source.at("rows");
+    const auto events = static_cast<std::uint64_t>(sourceRows.size());
+    auto needed = gateFeatures(graph);
+    if (std::find(needed.begin(), needed.end(), feature) == needed.end()) needed.push_back(feature);
+    std::map<std::string, std::string> parameterUnits;
+    for (const auto& f : needed)
+        parameterUnits.emplace(f, units.at(f).is_string() ? units.at(f).get<std::string>()
+                                                          : units.at(f).dump());
+    VectorEventColumns columns({{"rows", events}}, parameterUnits);
+    for (const auto& f : needed) {
+        std::vector<double> values;
+        values.reserve(static_cast<std::size_t>(events));
+        for (const auto& row : sourceRows)
+            values.push_back(measurement(row, f).value_or(std::numeric_limits<double>::quiet_NaN()));
+        columns.setColumn(f, std::move(values));
+    }
+    TriStateBits eligibility(events);
     uint64_t qcGood = 0, qcBad = 0, qcUnknown = 0;
-    MeasurementColumn column{revision, feature, units.at(feature).get<std::string>(), {}};
-    std::map<std::string, Membership> predicates;
-    for (const auto& [id, gate] : graph.gates)
-        predicates.emplace(id, Membership{revision, {}});
-    for (const auto& [id, gate] : graph.geometries)
-        predicates.emplace(id, Membership{revision, {}});
-    for (const auto& row : source.at("rows")) {
-        const auto key = row.at("key").get<std::string>();
-        universe.rows.push_back({key, Truth::True});
+    for (std::uint64_t i = 0; i < events; ++i) {
+        const auto key = sourceRows[static_cast<std::size_t>(i)].at("key").get<std::string>();
         const auto quality = decisions.count(key) ? decisions.at(key) : Truth::Unknown;
         if (quality == Truth::True)
             ++qcGood;
@@ -387,50 +258,23 @@ Json evaluateSource(const Json& rawSource, const Json& request) {
             ++qcBad;
         else
             ++qcUnknown;
-        eligibility.rows.push_back({key, qcPolicy == "all" ? Truth::True : quality});
-        column.rows.push_back({key, measurement(row, feature)});
-        for (const auto& [id, gate] : graph.gates)
-            predicates.at(id).rows.push_back(
-                {key, evaluateInterval(measurement(row, gate.first), gate.second)});
-        for (const auto& [id, gate] : graph.geometries) {
-            const auto x = measurement(row, gate.at("x")), y = measurement(row, gate.at("y"));
-            Truth truth = Truth::Unknown;
-            if (x && y) {
-                if (gate.at("kind") == "polygon") {
-                    truth = polygonMembership(graph.polygons.at(id), *x, *y);
-                } else if (gate.at("kind") == "quadrant") {
-                    const bool right = *x >= gate.at("thresholdX").get<double>();
-                    const bool upper = *y >= gate.at("thresholdY").get<double>();
-                    const auto name = gate.at("quadrant").get<std::string>();
-                    truth = (right == (name == "lower-right" || name == "upper-right") &&
-                             upper == (name == "upper-left" || name == "upper-right"))
-                                ? Truth::True
-                                : Truth::False;
-                } else {
-                    const long double dx =
-                        (static_cast<long double>(*x) - gate.at("centerX").get<double>()) /
-                        gate.at("radiusX").get<double>();
-                    const long double dy =
-                        (static_cast<long double>(*y) - gate.at("centerY").get<double>()) /
-                        gate.at("radiusY").get<double>();
-                    truth = std::hypot(dx, dy) <= 1 ? Truth::True : Truth::False;
-                }
-            }
-            predicates.at(id).rows.push_back({key, truth});
-        }
+        eligibility.set(i, qcPolicy == "all" ? Truth::True : quality);
     }
-    const auto result =
-        evaluatePlan(graph.plan, universe, eligibility, predicates).at(graph.output);
-    const auto stats = populationStatistics(result, column);
+    const auto membership = evaluateColumns(graph, columns, revision, &eligibility);
+    const auto& result = membership->population(graph.output);
+    auto stats = columnStatistics(result, columns, feature, revision);
+    stats.unit = unit;
     const auto number = [](std::optional<double> v) -> Json {
         return v ? Json(*v) : Json(nullptr);
     };
     Json rows = Json::array();
-    for (const auto& row : result.rows)
-        rows.push_back({{"key", row.key},
-                        {"membership", row.value == Truth::True    ? "selected"
-                                       : row.value == Truth::False ? "excluded"
-                                                                   : "unknown"}});
+    for (std::uint64_t i = 0; i < events; ++i) {
+        const auto value = result.get(i);
+        rows.push_back({{"key", sourceRows[static_cast<std::size_t>(i)].at("key")},
+                        {"membership", value == Truth::True    ? "selected"
+                                       : value == Truth::False ? "excluded"
+                                                               : "unknown"}});
+    }
     return {
         {"schema", "F-evaluation/1"},
         {"sourceFingerprint", fingerprint},
@@ -440,7 +284,7 @@ Json evaluateSource(const Json& rawSource, const Json& request) {
         {"graph", request.at("graph")},
         {"graphFingerprint", graph.plan.revision},
         {"feature", feature},
-        {"unit", column.unit},
+        {"unit", unit},
         {"selected", std::to_string(stats.selected)},
         {"excluded", std::to_string(stats.excluded)},
         {"unknown", std::to_string(stats.unknownMembership)},

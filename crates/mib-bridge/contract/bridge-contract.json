@@ -665,18 +665,18 @@
   },
   "population_analysis": {
     "schema": "review-population/1",
-    "semantics": "analyze_population(request): same request/result as review-contract.json review_population; routed through BackendFacade idle configuration transaction and ReviewJobs lane exclusion. No acquisition or raw recording coexistence; #722 unchanged. ABI 45 remains reserved for #803."
+    "semantics": "analyze_population(request): same request/result as review-contract.json review_population (since review ABI 10, #808 F-1: whole-file columnar evaluation, bounded results, rows a page); routed through BackendFacade idle configuration transaction and ReviewJobs lane exclusion. No acquisition or raw recording coexistence; #722 unchanged. ABI 45 remains reserved for #803."
   },
   "analysis_workspace": {
     "schema": "F-analysis-strategy/1",
     "transport": "analysis_read / analysis_write (Review: review_analysis_read / review_analysis_write)",
     "actions": "snapshot, exact read, history, evaluate, gallery, jobInput, report, manifest, method (read); save, restore, import, retainSource (write)",
     "authority": "host app.sqlite3 workspace_revisions and workspace_commands; immutable source-bound CAS, exact retry receipts",
-    "source": "stored full-file SHA256 <=64MiB; live-run/live-epoch fenced E leases; run-archive E-run-events/1",
+    "source": "stored full-file SHA256, streamed at any file size (#808 F-1; was <=64MiB); live-run/live-epoch fenced E leases; run-archive E-run-events/1",
     "limits": {
       "request_bytes": 131072,
-      "rows": 10000,
-      "stored_file_bytes": 67108864,
+      "rows": 100000,
+      "rows_semantics": "F-source/1 JSON rows, bounded with an explicit refusal (#808 F-1; was 10000); full recordings are analysed by population_analysis's columnar evaluator (review-contract.json review_population). The 64 MiB stored-file cap is removed.",
       "retained_source_bytes": 900000,
       "report_populations": 32
     },

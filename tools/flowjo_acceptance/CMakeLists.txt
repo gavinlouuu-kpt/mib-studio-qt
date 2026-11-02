@@ -18,6 +18,21 @@ add_test(NAME analysis.graph COMMAND analysis_graph_test)
 set_tests_properties(analysis.graph PROPERTIES TIMEOUT 20 LABELS "backend;analysis;invariant")
 
 target_sources(mib_analysis PRIVATE "${MIB_ROOT}/src/backend/analysis/PopulationStatistics.cpp")
+
+# F-1: the columnar full-recording evaluator and its gate compiler (JSON only
+# for compiling graphs; no HDF5). Columnar == keyed parity at every node.
+find_package(nlohmann_json CONFIG QUIET)
+if(TARGET nlohmann_json::nlohmann_json)
+    target_sources(mib_analysis PRIVATE
+        "${MIB_ROOT}/src/backend/analysis/PopulationGates.cpp"
+        "${MIB_ROOT}/src/backend/analysis/ColumnarEvaluation.cpp")
+    target_link_libraries(mib_analysis PUBLIC nlohmann_json::nlohmann_json)
+    add_executable(analysis_columnar_test "${MIB_ROOT}/tests/analysis/columnar_test.cpp")
+    target_include_directories(analysis_columnar_test PRIVATE "${MIB_ROOT}/tests")
+    target_link_libraries(analysis_columnar_test PRIVATE mib_analysis)
+    add_test(NAME analysis.columnar COMMAND analysis_columnar_test)
+    set_tests_properties(analysis.columnar PROPERTIES TIMEOUT 60 LABELS "backend;analysis;invariant")
+endif()
 add_executable(analysis_statistics_test "${MIB_ROOT}/tests/analysis/statistics_test.cpp")
 target_include_directories(analysis_statistics_test PRIVATE "${MIB_ROOT}/tests")
 target_link_libraries(analysis_statistics_test PRIVATE mib_analysis)

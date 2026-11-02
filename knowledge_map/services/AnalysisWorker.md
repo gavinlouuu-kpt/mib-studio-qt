@@ -73,7 +73,9 @@ predicate-mask reference or AND/OR/NOT operands. Validation includes parent and
 operand edges in the same acyclic dependency graph. Execution is independent of
 input node ordering, joins every mask by exact key/revision, rejects missing or
 unused predicate inputs, and clips every result to parent and QC. Limits: 256
-nodes, 10,000 events and 1,000,000 node-events; excess is an error, never sampling.
+nodes; the keyed (string-key) path is bounded at 1,000,000 events and 16,777,216
+node-events (F-1; was 10,000 / 1,000,000); excess is an error, never sampling.
+Full recordings use the columnar evaluator below.
 Empty populations retain revision identity. This is an internal scientific
 contract, not a bridge ABI, serialized workspace document or a gate editor.
 
@@ -84,7 +86,7 @@ remain separate implementation obligations.
 
 ## Exact population reductions
 
-`PopulationStatistics.h` adds bounded (10,000 event) revision-bound feature/unit
+`PopulationStatistics.h` adds bounded (keyed-row bound, see above) revision-bound feature/unit
 columns joined by opaque exact keys. It reports selected/excluded/unknown
 membership separately from finite measured/missing selected values, and raw-value
 minimum/maximum/mean/median (null when no finite selected measurement exists).
@@ -154,3 +156,34 @@ Optional strategy QC stores exact-key attributed manual assertions; good-only
 eligibility remains tri-state and the worker revision pins its native fingerprint.
 No processing-validity-to-scientific-QC conversion is performed. Legacy optional
 fields remain omitted so pre-extension command receipts keep their identity.
+
+## Full-recording columnar evaluation (F-1, 2026-11-02)
+
+Sources: `include/backend/analysis/PopulationGates.h`, `ColumnarEvaluation.h`,
+`include/backend/review/RecordingColumns.h` (+ `src/`), tests
+`tests/analysis/columnar_test.cpp` (`analysis.columnar`) and
+`tests/review/review_population_scale_test.cpp` (`review.population_scale`).
+
+- **One graph compiler.** `PopulationGates::compileGraph` (moved out of
+  `SourceAnalysis.cpp`) validates interval/polygon/ellipse/quadrant/Boolean nodes;
+  `gateTruth` decides one event (missing coordinate → Unknown).
+- **Chunked columns.** `EventColumns::scan` delivers requested columns in
+  bounded chunks in event order (segments, e.g. valid then invalid; NaN =
+  missing). `RecordingColumns` adapts `Hdf5Service::readMetadataColumns` (members
+  only, 65,536 rows per read; absent compound members → missing, never 0;
+  `youngsModulus <= 0` → missing); `VectorEventColumns` holds in-memory columns.
+- **Evaluation.** `evaluateColumns` runs the DAG per chunk with
+  `logicalAnd/Or/Not` exactly as `evaluatePlan` (node = parent AND eligibility AND
+  predicate) and stores each population in `TriStateBits` (two bits per event,
+  rank lookup by popcount). The `MembershipSet` carries the `RevisionKey` (source
+  identity + graph revision), chunk evidence and byte size.
+- **Results.** `columnStatistics` (exact: every selected finite value through the
+  shared `reduceMeasuredValues`), `populationCounts`, `columnHistogram` (exact
+  bins), `columnScatter` (deterministic stride decimation), `eventReference`.
+- **Bounds** (`ResourceBounds`): chunk 65,536; ≤2^32−1 events; bitsets ≤256 MiB;
+  ≤2^26 exact-statistics values. Refusals name the bound.
+- **Hosts.** `evaluateSource` (F-source/1) converts JSON rows to in-memory columns
+  and uses the same evaluator (JSON rows bounded at `kMaxJsonSourceEvents` =
+  100,000). `ReviewSession::analyzePopulation` uses `RecordingColumns` for the
+  whole file (see [[ReviewSession]]).
+

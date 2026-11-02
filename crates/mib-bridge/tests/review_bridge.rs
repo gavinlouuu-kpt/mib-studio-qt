@@ -338,8 +338,8 @@ fn run_identity_in_info_and_the_probe() {
         serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
     assert_eq!(
         ffi::review_bridge_abi_version(),
-        9,
-        "review ABI 9 (source-bound strategies; 8 population analysis; 7 reserved for #804); previous ABI 6 (#716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
+        10,
+        "review ABI 10 (#808 F-1 full-file columnar population analysis; 9 source-bound strategies; 8 population analysis; 7 reserved for #804); previous ABI 6 (#716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
     );
     let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
     assert_eq!(max_paths, 256);
@@ -728,6 +728,19 @@ fn review_population_native_both_set_integration() {
     assert_eq!(result["rows"][0]["ordinal"], "0");
     assert_eq!(result["rows"][10]["ordinal"], "0");
     assert_ne!(result["rows"][0]["key"], result["rows"][10]["key"]);
+    // Review ABI 10 (#808 F-1): rows is a bounded page; the native membership is summarized.
+    assert_eq!(result["rowsTotal"], "14");
+    assert_eq!(result["rowsOffset"], 0);
+    assert_eq!(result["evaluation"]["engine"], "native-columnar/1");
+    assert_eq!(result["populations"][0]["selected"], "14");
+    let mut paged = request.clone();
+    paged["page"] = serde_json::json!({"offset": 12, "limit": 5});
+    let page = call(&mut bridge, &paged);
+    assert_eq!(page["rows"].as_array().unwrap().len(), 2, "{page}");
+    assert_eq!(page["rows"][0]["set"], "invalid");
+    assert_eq!(page["membershipKey"]["cached"], true, "same source and graph reuse the bitsets");
+    paged["page"]["limit"] = serde_json::json!(1001);
+    assert_eq!(call(&mut bridge, &paged)["ok"], false, "page limit bound");
     assert_ne!(result["snapshot"], call(&mut bridge, &request)["snapshot"]);
     // Native exact reduction agrees with independently summed bridge metadata.
     let valid = bridge.pin_mut().fetch_review_rows(true, 0, 100);

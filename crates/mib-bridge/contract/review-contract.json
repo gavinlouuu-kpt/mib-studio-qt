@@ -1,6 +1,6 @@
 {
   "$comment": "YOFO Review's own contract (ADR 0014, plan 2026-10-01-standalone-review-app): the review bridge (crates/mib-bridge/src/review_bridge.rs, review_shim.cpp) and the YOFO Review shell. Separate from bridge-contract.json, the MIB Studio backend bridge ABI, which it never changes. C++ ties to these values via static_asserts in review_shim.cpp; Rust via tests/review_bridge.rs; TypeScript via the generated desktop/src/review/reviewContract.ts and desktop/src-tauri/src/review_packet_contract.rs (scripts/gen_bridge_contract.py --check fails CI on drift). Additive changes only: append values, never renumber or repurpose.",
-  "review_abi_version": 9,
+  "review_abi_version": 10,
   "run_identity": {
     "source": "run snapshot v3 (#712, /run_provenance @run_snapshot_json) and the planned annotation (/experiment_annotation @annotation_json, @annotation_schema_version); fetch_review_info.identity for the open file, review_probe_runs per file (review ABI 2, #717 B1a; emodulus_lut and profile_id since review ABI 3, #717 B3b; since review ABI 5, #783, emodulus_lut also reads a regenerated file's /experiment_info @emodulus_lut_json, named by emodulus_lut_provenance)",
     "members": "snapshot_version, run_id, experiment_id, run_index, sample_ref, calibration_record_id, operator (id, name), annotation (sample, condition, experimental_unit, concentration {value, unit}, channel, medium, temperature_c, notes, free key/values sorted by key, schema_version), emodulus_lut (loaded, lut_id, revision, source, sha256, catalog_sha256, checksum_status: the snapshot v3 record, else a regenerated file's @emodulus_lut_json; the snapshot record wins, as in recording::readFileEModulusLut), emodulus_lut_provenance (review ABI 5, #783: one of emodulus_lut_provenances; snapshot = the run snapshot v3 record, the run's own; recorded = a regenerated file's record carried over from its source run; host = a regenerated file's record of the host's E-LUT at regeneration, the source recording none; absent exactly when emodulus_lut is), profile_id (the snapshot's profile_id, a non-empty string)",
@@ -159,8 +159,26 @@
   },
   "review_population": {
     "schema": "review-population/1",
-    "max_events": 10000,
-    "semantics": "review_analyze_population(request): expectedPath, feature (area in px\u00b2 or deformability dimensionless), nullable inclusive minimum/maximum. Atomic both-set stored-metadata snapshot and native interval/reductions, no implicit validity QC. Refuse raw recording, unreadable metadata, count mismatch, job lane busy or budget overflow; no sampling. Local evaluation keys plus set/decimal ordinal; fingerprint null and durable false. Absent fields and nonfinite measurements produce unknown membership; detailed per-event missing reasons are not exposed. No source writes or new readers.",
+    "max_events": 4294967295,
+    "semantics": "review_analyze_population(request): expectedPath, feature (area in px\u00b2, deformability dimensionless or youngsModulus in kPa; review ABI 10 added youngsModulus), nullable inclusive minimum/maximum. Review ABI 10 (#808 F-1): the whole stored file is evaluated natively by the columnar evaluator: the measurement columns are read from /valid_frames/metadata then /invalid_frames/metadata in bounded chunks (Hdf5Service::readMetadataColumns, chunk_events per read), the population graph is evaluated chunk by chunk with unchanged tri-state semantics, and every population's exact membership is held natively as a two-bit-per-event bitset keyed to the source identity and graph revision (membershipKey; reused for the same source and graph: cached true). Only bounded results cross the bridge: counts, statistics, a population table, optional bins and decimated scatter, a page of event references and a 12-image gallery. No implicit validity QC. Refuse raw recording, unreadable metadata, count mismatch, job lane busy or an exceeded resource bound (the reply names it); never sampling. Local evaluation keys (snapshot, unique per call) plus set/decimal ordinal; sourceFingerprint null unless fingerprint true (then the streamed full-file SHA-256, any file size); durable false. Absent fields and nonfinite measurements produce unknown membership; youngsModulus <= 0 is missing; detailed per-event missing reasons are not exposed. No source writes.",
+    "bounds": {
+      "chunk_events": 65536,
+      "max_events": 4294967295,
+      "max_membership_bytes": 268435456,
+      "max_exact_values": 67108864,
+      "page_max_events": 1000,
+      "page_default_events": 256,
+      "histogram_max_bins": 256,
+      "scatter_max_points": 65536,
+      "membership_cache_entries": 4,
+      "semantics": "chunk_events: events per HDF5 read and per evaluation step; max_membership_bytes: all population bitsets of one evaluation (2 bits x events x populations); max_exact_values: selected values held for exact order statistics (8 bytes each). Exceeding a bound refuses with its value; nothing is truncated or approximated."
+    },
+    "statistics": "selected, excluded, unknown, measured, missing (decimal strings); minimum, maximum, mean, median, p05, p25, p75, p95, sampleStandardDeviation, cvPercent, geometricMean (null when unavailable): exact, over every selected finite value (estimators: Hyndman-Fan type 7 quantiles, n-1 SD, CV 100*SD/|mean|), the same function (reduceMeasuredValues) as the keyed and F-source paths",
+    "populations": "populations: one entry per graph node in topological order {id, parent, selected, excluded, unknown, parentSelected (decimal strings), percentParent (null for an empty parent)}; without a graph the top-level interval is the one population 'interval'",
+    "rows": "review ABI 10: rows is a bounded page of event references {key, set, ordinal, membership} of the output population, not every event: optional page {offset, limit (0..page_max_events, default page_default_events), membership all (default) | selected | excluded | unknown}; rowsOffset, rowsLimit, rowsMembership and rowsTotal (decimal string: events matching the filter) describe it",
+    "optional_histogram": "histogram {minimum, maximum, bins 1..histogram_max_bins, optional feature (default: the reduction feature)} -> histogram {feature, unit, edges, counts (decimal strings), underflow, overflow, measured, missing}: exact counts of the output population's selected finite values, [left,right) with the last bin closed; sum(counts)+underflow+overflow = measured",
+    "optional_scatter": "scatter {x, y, maxPoints 1..scatter_max_points} -> scatter {x, y, eligible, stride, decimated, points [{key, set, ordinal, x, y}]}: every stride-th selected event with both values finite, in event order (deterministic decimation); display only, never used for counts or statistics",
+    "evaluation": "evaluation {engine native-columnar/1, events, chunkEvents, chunksRead, largestChunk, membershipBytes, bounds}: evidence of the bounded read",
     "optional_graph": {
       "fields": [
         "id",
@@ -170,17 +188,20 @@
       ],
       "node_kinds": [
         "interval",
+        "polygon",
+        "ellipse",
+        "quadrant",
         "and",
         "or",
         "not"
       ],
-      "semantics": "Optional graph replaces the top-level interval membership; top-level feature still selects the reduction. Native PopulationGraph validates parents/operands/cycles, 256 nodes and 1000000 node-events. Interval nodes have id,parent,kind,feature,minimum,maximum; Boolean nodes have id,parent,kind,operands. All inputs use the same atomic both-set snapshot. Recipes are not verified source-bound workspaces."
+      "semantics": "Optional graph replaces the top-level interval membership; top-level feature still selects the reduction. The one native graph compiler (PopulationGates, shared with F-source evaluation) validates fields, geometry, parents/operands/cycles and 256 nodes; features area, deformability, youngsModulus. Interval nodes have id,parent,kind,feature,minimum,maximum; polygon x,y,vertices (3..128, simple); ellipse x,y,centerX,centerY,radiusX,radiusY; quadrant x,y,thresholdX,thresholdY,quadrant; Boolean nodes id,parent,kind,operands (review ABI 10 added the geometry kinds). Recipes are not verified source-bound workspaces."
     },
     "optional_gallery": {
-      "request": "galleryOffset: unsigned integer 0..10000, offset among selected observations",
+      "request": "galleryOffset: unsigned integer, offset among selected observations (review ABI 10: no 10000 cap; past the end is an empty page)",
       "page_size": 12,
       "tile_size": 64,
-      "semantics": "gallery entries retain exact snapshot key, set and decimal ordinal. pixels is a 4096-element grayscale byte array or null for unavailable image. Images are copied under the same session lock as evaluation. Page requests reevaluate, not a persistent snapshot cursor; no new HDF5 reader. Valid-set then invalid-set row order."
+      "semantics": "gallery entries retain exact snapshot key, set and decimal ordinal. pixels is a 4096-element grayscale byte array or null for unavailable image. Images are copied under the same session lock as evaluation, located through the native membership bitset (rank lookup), not a re-sent row list. Valid-set then invalid-set row order."
     }
   },
   "analysis_workspace": {
@@ -188,11 +209,11 @@
     "transport": "analysis_read / analysis_write (Review: review_analysis_read / review_analysis_write)",
     "actions": "snapshot, exact read, history, evaluate, gallery, jobInput, report, manifest, method (read); save, restore, import, retainSource (write)",
     "authority": "host app.sqlite3 workspace_revisions and workspace_commands; immutable source-bound CAS, exact retry receipts",
-    "source": "stored full-file SHA256 <=64MiB; live-run/live-epoch fenced E leases; run-archive E-run-events/1",
+    "source": "stored full-file SHA256, streamed at any file size (review ABI 10; was <=64MiB); live-run/live-epoch fenced E leases; run-archive E-run-events/1",
     "limits": {
       "request_bytes": 131072,
-      "rows": 10000,
-      "stored_file_bytes": 67108864,
+      "rows": 100000,
+      "rows_semantics": "F-source/1 carries every event as a JSON row: bounded at rows (review ABI 10; was 10000) with an explicit refusal; larger recordings are analysed by review_population's columnar evaluator. The 64 MiB stored-file cap is removed (streamed SHA-256).",
       "retained_source_bytes": 900000,
       "report_populations": 32
     },
