@@ -83,8 +83,9 @@ void withSource(const Json& source, const ColumnResolver& columns,
                 "Columnar source requires a host that lends its columns; none is available");
         const auto sourceKey = source.at("sourceKey").get<std::string>();
         const auto& units = source.at("parameters");
-        if (!units.is_object() || units.empty() || units.size() > 64)
-            throw std::invalid_argument("Columnar source parameters must be 1..64 units");
+        if (!units.is_object() || units.empty() || units.size() > kMaxColumnarParameters)
+            throw std::invalid_argument("Columnar source parameters must be 1.." +
+                                        std::to_string(kMaxColumnarParameters) + " units");
         bool lent = false;
         columns(source, [&](const EventColumns& raw) {
             lent = true;
@@ -495,6 +496,11 @@ Json materializeColumnarSource(const Json& source, const EventColumns& columns) 
     std::vector<std::string> ids;
     for (auto it = source.at("parameters").begin(); it != source.at("parameters").end(); ++it)
         ids.push_back(it.key());
+    if (static_cast<std::uint64_t>(events) * ids.size() > kMaxJsonSourceCells)
+        throw std::invalid_argument("F-source/1 JSON rows are bounded at " + std::to_string(kMaxJsonSourceCells) +
+                                    " cells (events x parameters); this source has " + std::to_string(events) +
+                                    " events x " + std::to_string(ids.size()) +
+                                    " parameters. Use the columnar evaluator; nothing was sampled");
     Json rows = Json::array();
     columns.scan(ids, 65536, [&](std::uint64_t begin, std::size_t count, const std::vector<const double*>& v) {
         for (std::size_t j = 0; j < count; ++j) {

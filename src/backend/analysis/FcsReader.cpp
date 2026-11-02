@@ -12,6 +12,7 @@
 #include <fstream>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <set>
 
 namespace backend::analysis {
@@ -19,7 +20,7 @@ namespace {
 using Json = nlohmann::json;
 constexpr double kMissing = std::numeric_limits<double>::quiet_NaN();
 constexpr std::size_t kMaxTextBytes = 64ULL * 1024 * 1024;
-constexpr std::size_t kMaxParameters = 1024;
+constexpr std::size_t kMaxParameters = kMaxColumnarParameters; // every importable file is evaluable
 constexpr std::size_t kReadBytes = 4ULL * 1024 * 1024; // one physical DATA read
 
 [[noreturn]] void fail(const std::string& message) { throw FcsError("FCS: " + message); }
@@ -82,6 +83,20 @@ std::string graphSafe(const std::string& name, std::size_t index) {
     if (id.size() > 56) id.resize(56);
     if (id.empty()) id = "P" + std::to_string(index);
     return id;
+}
+// FCS 3.1 $PnR masking for $DATATYPE I: the stored values occupy the
+// smallest number of bits that holds $PnR - 1, i.e. mask = bit_ceil(ceil(R))
+// - 1 (R 1 -> 0, R 2 -> 1, R 1000 -> 1023, R 1024 -> 1023). Closed form,
+// bounded by the bit width and free of overflow: when R exceeds 2^(bits-1)
+// the mask would be all `bits` ones, which masks nothing, so none is applied;
+// otherwise ceil(R) <= 2^(bits-1) <= 2^63 and the power of two fits.
+std::optional<std::uint64_t> integerRangeMask(double range, unsigned bits) {
+    if (!(range > 0) || bits == 0 || bits > 64) return std::nullopt;
+    if (range > std::ldexp(1.0, static_cast<int>(bits) - 1)) return std::nullopt;
+    const auto needed = static_cast<std::uint64_t>(std::ceil(range)); // 1 .. 2^63
+    unsigned exponent = 0;
+    while (exponent < 63 && (std::uint64_t{1} << exponent) < needed) ++exponent;
+    return (std::uint64_t{1} << exponent) - 1;
 }
 // Bytes of one value, as stored, into a uint64 (little-endian assembly).
 std::uint64_t loadUnsigned(const unsigned char* p, unsigned bytes, bool bigEndian) {
@@ -255,11 +270,7 @@ FcsFile readFcsMetadata(const std::string& path, const FcsOptions& options) {
             fail(key("B") + " " + std::to_string(p.bits) + " is packed integer data (8/16/32/64 are read)");
         p.scale = "linear";
         if (f.dataType == 'I') {
-            if (p.range > 0 && p.range < std::ldexp(1.0, static_cast<int>(p.bits))) {
-                std::uint64_t pow2 = 1;
-                while (static_cast<double>(pow2) < p.range) pow2 <<= 1;
-                p.mask = pow2 - 1;
-            }
+            p.mask = integerRangeMask(p.range, p.bits);
             if (p.logDecades > 0) {
                 if (p.logOffset == 0) {
                     p.logOffset = 1;
@@ -367,7 +378,7 @@ bool FcsColumns::scan(const std::vector<std::string>& columns, std::size_t chunk
                     std::memcpy(&v, &raw, 8);
                 } else {
                     auto raw = loadUnsigned(at, width, file_.bigEndian);
-                    if (p.mask) raw &= p.mask;
+                    if (p.mask) raw &= *p.mask;
                     v = static_cast<double>(raw);
                     if (p.scale == "log-decoded")
                         v = p.logOffset * std::pow(10.0, p.logDecades * v / p.range);
@@ -384,35 +395,51 @@ bool FcsColumns::scan(const std::vector<std::string>& columns, std::size_t chunk
 }
 
 namespace {
-struct HashEntry {
-    std::string path;
+struct FileStat {
     std::uintmax_t size{0};
     std::filesystem::file_time_type time{};
+    bool operator==(const FileStat& o) const { return size == o.size && time == o.time; }
+    bool operator!=(const FileStat& o) const { return !(*this == o); }
+};
+FileStat statFile(const std::string& path) {
+    std::error_code ec;
+    FileStat s;
+    s.size = std::filesystem::file_size(path, ec);
+    if (ec) fail("cannot read " + path);
+    s.time = std::filesystem::last_write_time(path, ec);
+    if (ec) fail("cannot read " + path);
+    return s;
+}
+struct HashEntry {
+    std::string path;
+    FileStat stat;
     std::string hash;
 };
 std::mutex hashMutex;
 std::vector<HashEntry> hashCache;
 
-std::string fileFingerprint(const std::string& path) {
-    std::error_code ec;
-    const auto size = std::filesystem::file_size(path, ec);
-    if (ec) fail("cannot read " + path);
-    const auto time = std::filesystem::last_write_time(path, ec);
-    if (ec) fail("cannot read " + path);
+// The full-file SHA-256 of `path` and the size/write time it was computed
+// for. Cached by (path, size, write time): the hash is recomputed only when
+// either differs, so it is a stat-checked fingerprint, not a per-call re-hash.
+struct Fingerprint {
+    std::string hash;
+    FileStat stat;
+};
+Fingerprint fileFingerprint(const std::string& path) {
+    const auto before = statFile(path);
     {
         std::scoped_lock lock(hashMutex);
         for (const auto& e : hashCache)
-            if (e.path == path && e.size == size && e.time == time) return e.hash;
+            if (e.path == path && e.stat == before) return {e.hash, e.stat};
     }
     std::string error;
     const auto hash = processing::fileSha256(path, &error, {});
     if (hash.empty()) fail("fingerprint failed: " + error);
-    if (std::filesystem::file_size(path, ec) != size || std::filesystem::last_write_time(path, ec) != time)
-        fail("file changed while fingerprinting: " + path);
+    if (statFile(path) != before) fail("file changed while fingerprinting: " + path);
     std::scoped_lock lock(hashMutex);
-    hashCache.insert(hashCache.begin(), {path, size, time, "sha256:" + hash});
+    hashCache.insert(hashCache.begin(), {path, before, "sha256:" + hash});
     if (hashCache.size() > 16) hashCache.pop_back();
-    return hashCache.front().hash;
+    return {hashCache.front().hash, before};
 }
 
 std::string byteOrderName(const FcsFile& f) { return f.bigEndian ? "big-endian" : "little-endian"; }
@@ -426,8 +453,10 @@ Json fcsSourceDescriptor(const Json& descriptor) {
     FcsOptions options;
     options.applyGain = descriptor.value("applyGain", false);
     const auto path = descriptor.at("path").get<std::string>();
+    const auto pinned = fileFingerprint(path);
     const auto file = readFcsMetadata(path, options);
-    const auto hash = fileFingerprint(path);
+    if (statFile(path) != pinned.stat) fail("file changed while its descriptor was read: " + path);
+    const auto& hash = pinned.hash;
     Json parameters = Json::object(), imported = Json::array(), issues = Json::array(), keywords = Json::object();
     for (const auto& p : file.parameters) {
         parameters[p.id] = p.unit;
@@ -463,8 +492,12 @@ Json fcsSourceDescriptor(const Json& descriptor) {
                 {"populationComplete", true},
                 {"finalized", true},
                 {"retention",
-                 "file-pinned: DATA is re-read from the file and its full-file SHA-256 re-verified on every "
-                 "evaluation; no rows are copied"},
+                 "file-pinned: DATA is re-read from the file on every evaluation; no rows are copied. Before "
+                 "each evaluation the file's size and write time must equal those its full-file SHA-256 was "
+                 "computed for (the hash is recomputed when they differ and must equal fileFingerprint), and "
+                 "they are checked again after the read, so a change during evaluation is refused. A rewrite "
+                 "that keeps both size and write time is not detected: the full SHA-256 is not recomputed on "
+                 "every evaluation"},
                 {"import",
                  {{"format", file.version},
                   {"dataType", std::string(1, file.dataType)},
@@ -482,12 +515,24 @@ void lendFcsColumns(const Json& source, const ColumnVisitor& use) {
     const auto path = source.at("path").get<std::string>();
     FcsOptions options;
     options.applyGain = source.at("import").at("applyGain").get<bool>();
-    if (fileFingerprint(path) != source.at("fileFingerprint").get<std::string>())
+    const auto pinned = fileFingerprint(path);
+    if (pinned.hash != source.at("fileFingerprint").get<std::string>())
         throw std::invalid_argument("Pinned FCS file no longer matches its fingerprint: " + path);
+    const auto changed = [&] {
+        try {
+            return statFile(path) != pinned.stat;
+        } catch (const FcsError&) {
+            return true; // removed or unreadable
+        }
+    };
+    if (changed()) throw std::invalid_argument("Pinned FCS file changed before evaluation: " + path);
     FcsColumns columns(readFcsMetadata(path, options));
     for (const auto& p : columns.file().parameters)
         if (!source.at("parameters").contains(p.id) || source.at("parameters").at(p.id).get<std::string>() != p.unit)
             throw std::invalid_argument("FCS parameters changed since the source was resolved");
     use(columns);
+    // Post-scan fence (as withRecordingColumns): results read from a file
+    // that changed during the scan are refused, never returned.
+    if (changed()) throw std::invalid_argument("Pinned FCS file changed during evaluation: " + path);
 }
 } // namespace backend::analysis

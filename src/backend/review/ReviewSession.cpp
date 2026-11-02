@@ -349,12 +349,21 @@ namespace backend::review
 
         // Streaming SHA-256 of the open file (no size cap), fenced against
         // change since open; cached for the open generation.
+        // Stat fence: the open file still has the size and mtime recorded
+        // at open. Every source-bound read (fingerprint, cached membership,
+        // columnar scan) checks it, so an in-place rewrite is never mixed
+        // with state derived from the earlier content.
+        bool unchangedLocked() const
+        {
+            std::error_code sizeError, timeError;
+            const auto size = std::filesystem::file_size(path, sizeError);
+            const auto time = std::filesystem::last_write_time(path, timeError);
+            return !sizeError && !timeError && size == openedSize && time == openedWriteTime;
+        }
+
         std::string fileHashLocked()
         {
-            const auto unchanged = [&] {
-                return std::filesystem::file_size(path) == openedSize &&
-                       std::filesystem::last_write_time(path) == openedWriteTime;
-            };
+            const auto unchanged = [&] { return unchangedLocked(); };
             if (!unchanged()) throw std::invalid_argument("Source changed since open; reopen before source-bound analysis");
             if (!cachedFileHash.empty()) return cachedFileHash;
             std::string error;
@@ -1155,6 +1164,16 @@ namespace backend::review
                                        "not-used",
                                        "native-columnar/1"};
             const auto cacheKey = sourceIdentity + "|" + graphRevision;
+            // The identity above names the size/mtime recorded at open; re-stat
+            // before trusting any cached membership or reading columns. A
+            // changed file drops every cached membership of this generation.
+            const auto sourceChanged = [&] {
+                if (impl_->unchangedLocked()) return false;
+                impl_->memberships.clear();
+                return true;
+            };
+            if (sourceChanged())
+                return refuse("Source changed since open; reopen before source-bound analysis");
             std::shared_ptr<const MembershipSet> membership;
             bool cached = false;
             auto& cache = impl_->memberships;
@@ -1176,6 +1195,8 @@ namespace backend::review
             }
             const auto& population = membership->population(graph.output);
             const auto statistics = columnStatistics(population, columns, feature, revision, bounds);
+            if (sourceChanged())
+                return refuse("Source changed during analysis; reopen before source-bound analysis");
             static std::atomic<std::uint64_t> next{0};
             const auto snapshot = std::string("local-evaluation:") + std::to_string(++next);
             const auto membershipName = [](Truth t) {
@@ -1364,6 +1385,8 @@ namespace backend::review
                                     {"points", points},
                                     {"semantics", "display only: every stride-th selected event with both values finite, in event order; never used for counts or statistics"}};
             }
+            if (sourceChanged())
+                return refuse("Source changed during analysis; reopen before source-bound analysis");
             return reply.dump();
         } catch (const std::exception& e) {
             return refuse(e.what());

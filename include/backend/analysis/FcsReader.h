@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
@@ -49,7 +50,11 @@ struct FcsParameter {
     double logOffset{0};     // $PnE f2 (0 with f1 > 0 is read as 1, reported)
     double gain{1};          // $PnG (1 when absent)
     bool hasGain{false};
-    std::uint64_t mask{0};   // integer range mask (0: none)
+    // Integer range mask from $PnR (FCS 3.1: values use the smallest number
+    // of bits that holds $PnR - 1; higher bits are ignored). nullopt: no
+    // mask (non-integer data, or $PnR above 2^($PnB-1) so every stored bit
+    // counts). A present mask of 0 is real: $PnR 1 means every value is 0.
+    std::optional<std::uint64_t> mask;
     std::string scale;       // "linear", "log-decoded", "linear / $PnG"
     std::string unit;        // explicit unit string of the analysis column
 };
@@ -113,7 +118,11 @@ private:
 // file (scope "fcs", full-file SHA-256 identity, explicit units, an "import"
 // block with every parameter's keywords and the unsupported constructs).
 nlohmann::json fcsSourceDescriptor(const nlohmann::json& descriptor);
-// Lends FcsColumns for an F-source/2 handle of scope "fcs" after re-verifying
-// its full-file SHA-256 (cached by path, size and write time). Throws.
+// Lends FcsColumns for an F-source/2 handle of scope "fcs". Before the scan
+// the file's size and write time are checked against the ones its full-file
+// SHA-256 was computed for (the hash is recomputed whenever they differ, and
+// must equal the descriptor's); after the scan they are checked again, so a
+// change during the read is refused. A rewrite that keeps both size and
+// write time is not detected (no full re-hash per evaluation). Throws.
 void lendFcsColumns(const nlohmann::json& source, const ColumnVisitor& use);
 } // namespace backend::analysis

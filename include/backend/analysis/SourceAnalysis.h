@@ -28,6 +28,14 @@ inline std::string jsonSourceBoundMessage() {
            " events; analyse larger recordings with the columnar evaluator "
            "(review_analyze_population); nothing was sampled";
 }
+// Parameters of a columnar (F-source/2) source. Columns stay lazy: a scan
+// reads only the parameters a graph, reduction or transform references, so
+// a spectral FCS panel costs only what is gated on. Equal to the FCS
+// reader's $PAR bound, so every importable file is also evaluable.
+constexpr std::size_t kMaxColumnarParameters = 1024;
+// Materialized F-source/1 rows (events x parameters) are bounded by cells,
+// not only events: the former worst case (100,000 events x 64 parameters).
+constexpr std::uint64_t kMaxJsonSourceCells = 6400000;
 std::string contentHash(const nlohmann::json& value);
 constexpr const char* kColumnarSourceSchema = "F-source/2";
 // The host lends a columnar source's raw columns (descriptor units) to `use`
@@ -41,7 +49,8 @@ std::vector<EventSegment> columnarSegments(const nlohmann::json& source);
 std::string columnarEventKey(const std::string& sourceKey, const std::string& set,
                              std::uint64_t ordinal);
 // The F-source/1 row form of a columnar source (raw values, no transforms;
-// the stored-file row shape), refused above kMaxJsonSourceEvents. For the
+// the stored-file row shape), refused above kMaxJsonSourceEvents or
+// kMaxJsonSourceCells. For the
 // few consumers that need every row (worker job input, observation export).
 nlohmann::json materializeColumnarSource(const nlohmann::json& source, const EventColumns& columns);
 using EvidenceLeaseRead =

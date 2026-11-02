@@ -373,6 +373,14 @@ reports SKIPPED, exit 77, never a pass).
   documented rectangle through PopulationGraph semantics, zero boundary events,
   both 4,096-bin exports compared bin by bin (`ResourceBounds::maxHistogramBins`
   raised for this tool only), optional comparator recount.
+- **Review fixes (#823).** `$PnR` masking is closed-form and bounded by the bit
+  width (a 64-bit `$PnR` in (2^63, 2^64) hung the reader); "no mask" is
+  `std::nullopt`, so `$PnR` 1 masks to 0 per FCS 3.1. `lendFcsColumns` fences the
+  file's size and write time before and after the scan; the descriptor's
+  `retention` text no longer claims a per-evaluation re-hash (the SHA-256 is
+  recomputed only when size or write time changed; a rewrite preserving both is
+  not detected). Columnar sources take up to 1,024 parameters (was 64, while the
+  reader accepted 1,024), with lazy columns. Proof: `analysis.fcs_hardening`.
 - **Remaining.** Run the reference on a host with the fixture; FCS export of
   units/transforms and GatingML (F-6); compensation/Logicle (F03); `$TIMESTEP`
   scaling; a review-bridge test of the `fcs` kind; a desktop affordance for

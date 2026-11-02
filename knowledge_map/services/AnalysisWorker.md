@@ -251,7 +251,11 @@ tests `tests/analysis/fcs_reader_test.cpp` (`analysis.fcs_reader`),
   the HEADER records 0, supplemental TEXT; TEXT with any delimiter and doubled-
   delimiter escapes, case-insensitive keywords (`parseFcsText`); list mode with
   `$DATATYPE` F (32-bit), D (64-bit), I (8/16/32/64-bit per `$PnB`); `$BYTEORD`
-  ascending or descending; integer `$PnR` masking; integer `$PnE` log decoding
+  ascending or descending; integer `$PnR` masking (closed form, FCS 3.1: the
+  smallest bit count holding `$PnR` − 1, `bit_ceil(ceil(R)) − 1`; `$PnR` 1 is a
+  real mask of 0, `$PnR` 2 masks one bit; no mask when `$PnR` > 2^(bits−1), so a
+  64-bit `$PnR` between 2^63 and 2^64 no longer overflows into an endless loop;
+  `FcsParameter::mask` is `std::optional`); integer `$PnE` log decoding
   (`f2 * 10^(f1 * x / $PnR)`, f2 = 0 read as 1 and reported); `$PnG` division only
   with `FcsOptions.applyGain` (off by default; recorded either way).
 - **Refused** (`FcsError`, nothing read): FCS2.0, `$MODE` C/U, `$DATATYPE` A,
@@ -268,8 +272,17 @@ tests `tests/analysis/fcs_reader_test.cpp` (`analysis.fcs_reader`),
   `... channel value / $PnG`).
 - **Handle.** `fcsSourceDescriptor({kind: fcs, path[, applyGain]})` is the
   F-source/2 handle (scope `fcs`, full-file SHA-256 identity; with applied gain a
-  distinct fingerprint); `lendFcsColumns` re-verifies the SHA-256 (cached by path +
-  size + write time) and lends `FcsColumns`. Both hosts resolve `kind: fcs` and
+  distinct fingerprint); `lendFcsColumns` checks the file's size and write time
+  against those its full-file SHA-256 was computed for (the hash is recomputed when
+  they differ and must equal the descriptor's), lends `FcsColumns`, then re-stats
+  after the scan (post-scan fence, as `withRecordingColumns`): a change during the
+  scan is refused. A rewrite keeping both size and write time is not detected (no
+  full re-hash per evaluation); the descriptor's `retention` text says exactly this.
+- **Parameters.** Up to 1,024 (`kMaxColumnarParameters`, equal to the reader's
+  `$PAR` bound; formerly 64 in `SourceCore`, so wider panels imported but never
+  evaluated). Columns stay lazy: a scan reads only the referenced parameters.
+  Materialized F-source/1 rows are bounded by cells (`kMaxJsonSourceCells`,
+  100,000 × 64). Both hosts resolve `kind: fcs` and
   lend `scope: fcs`, so saved strategies, reports, plots, comparisons run on FCS
   files through the same evaluator as MIB recordings.
 - **Histogram bins.** `ResourceBounds::maxHistogramBins` (default 256, the display
