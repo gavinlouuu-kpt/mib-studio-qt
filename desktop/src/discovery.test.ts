@@ -46,6 +46,8 @@ function snapshot(partial: Partial<DiscoverySnapshot>): DiscoverySnapshot {
     valid: true,
     job_id: "7",
     generation: "7",
+    instance: "instance-1",
+    stale: false,
     state: DISCOVERY_JOB_STATES.Running,
     complete: false,
     overflow: false,
@@ -91,10 +93,16 @@ describe("toCameraDiscovery", () => {
 });
 
 describe("pollDiscovery", () => {
-  function api(states: number[], opts: { accepted?: boolean } = {}): DiscoveryApi & { cancelled: string[]; fetches: number } {
+  function api(
+    states: number[],
+    opts: { accepted?: boolean; restartAfter?: number } = {},
+  ): DiscoveryApi & { cancelled: string[]; fetches: number; instances: string[] } {
     let i = 0;
+    // The backend's current instance; `restartAfter` fetches simulate a backend restart.
+    let current = "instance-1";
     const self = {
       cancelled: [] as string[],
+      instances: [] as string[],
       fetches: 0,
       start: async (): Promise<DiscoveryStart> => ({
         accepted: opts.accepted ?? true,
@@ -102,12 +110,20 @@ describe("pollDiscovery", () => {
         job_id: "42",
         rejection: opts.accepted === false ? 1 : 0,
         reason: opts.accepted === false ? "no kinds" : "",
+        instance: current,
       }),
-      fetch: async (jobId: string): Promise<DiscoverySnapshot> => {
+      fetch: async (jobId: string, instance: string): Promise<DiscoverySnapshot> => {
         self.fetches += 1;
+        self.instances.push(instance);
+        if (opts.restartAfter !== undefined && self.fetches > opts.restartAfter) current = "instance-2";
+        // The reply shape of a backend that refused another instance's job ID.
+        if (instance !== current) {
+          return snapshot({ valid: false, stale: true, job_id: "0", generation: "0", instance: current,
+                            state: DISCOVERY_JOB_STATES.Failed });
+        }
         const state = states[Math.min(i, states.length - 1)];
         i += 1;
-        return snapshot({ job_id: jobId, state });
+        return snapshot({ job_id: jobId, state, instance: current });
       },
       cancel: async (jobId: string) => {
         self.cancelled.push(jobId);
@@ -133,6 +149,20 @@ describe("pollDiscovery", () => {
       pollDiscovery(a, { timeoutMs: 50, intervalMs: 10, now: () => (now += 20) }),
     ).rejects.toThrow(/timed out/);
     expect(a.cancelled).toEqual(["42"]);
+  });
+
+  it("passes the start's backend instance on every fetch", async () => {
+    const a = api([DISCOVERY_JOB_STATES.Running, DISCOVERY_JOB_STATES.Completed]);
+    await pollDiscovery(a, { timeoutMs: 1000, intervalMs: 1 });
+    expect(a.instances).toEqual(["instance-1", "instance-1"]);
+  });
+
+  it("stops on a stale reply after a backend restart instead of polling another job", async () => {
+    // The restarted backend reuses job 42; its reply to the old instance is stale.
+    const a = api([DISCOVERY_JOB_STATES.Running], { restartAfter: 1 });
+    await expect(pollDiscovery(a, { timeoutMs: 1000, intervalMs: 1 })).rejects.toThrow(/stale/);
+    expect(a.fetches).toBe(2);
+    expect(a.cancelled).toEqual([]);
   });
 
   it("surfaces a rejected start without polling", async () => {

@@ -2875,6 +2875,8 @@ namespace backend::bridge
             out.valid = s.jobId != 0;
             out.jobId = s.jobId;
             out.generation = s.generation;
+            out.instance = s.instance;
+            out.stale = s.stale;
             out.state = static_cast<int>(s.state);
             out.complete = s.complete;
             out.overflow = s.overflow;
@@ -2912,16 +2914,21 @@ namespace backend::bridge
         out.jobId = start.jobId;
         out.rejection = static_cast<int>(start.rejection);
         out.reason = start.reason;
+        out.instance = start.instance;
         return out;
     }
 
-    bool BackendFacade::cancelDeviceDiscovery(std::uint64_t jobId)
+    bool BackendFacade::cancelDeviceDiscovery(std::uint64_t jobId, const std::string &instance)
     {
         if (!initialized_)
         {
             return false;
         }
         auto &service = backend_.deviceDiscovery();
+        if (!instance.empty())
+        {
+            return service.cancelDiscovery(jobId, instance);
+        }
         const auto snapshot = service.discoverySnapshot(jobId);
         if (snapshot.jobId == 0 || discovery::isTerminal(snapshot.state))
         {
@@ -2931,14 +2938,17 @@ namespace backend::bridge
         return true;
     }
 
-    bool BackendFacade::fetchDeviceDiscovery(std::uint64_t jobId, BackendDiscoverySnapshot &out) const
+    bool BackendFacade::fetchDeviceDiscovery(std::uint64_t jobId, BackendDiscoverySnapshot &out,
+                                             const std::string &instance) const
     {
         out = BackendDiscoverySnapshot{};
         if (!initialized_)
         {
             return false;
         }
-        out = toSnapshot(backend_.deviceDiscovery().discoverySnapshot(jobId));
+        const auto &service = backend_.deviceDiscovery();
+        out = toSnapshot(instance.empty() ? service.discoverySnapshot(jobId)
+                                          : service.discoverySnapshot(jobId, instance));
         return out.valid;
     }
 

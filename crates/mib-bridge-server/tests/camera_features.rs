@@ -268,3 +268,103 @@ async fn mock_node_map_round_trip_through_the_server() {
     server.state().bridge.lock().unwrap().pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(data);
 }
+
+/// One backend instance behind a fresh server: init, mock capture running, the remote tree read.
+async fn backend_with_tree(tag: &str) -> (Arc<Server>, Socket, std::path::PathBuf, Value) {
+    let (server, addr, data) = start(tag).await;
+    let mut ws = connect(addr).await;
+    ok(&mut ws, 1, "init", json!({"dataDir": ""})).await;
+    ok(&mut ws, 2, "configure_mock",
+       json!({"frameDir": mock_frames(), "frameIntervalMs": 5, "loopFiles": true})).await;
+    let started = ok(&mut ws, 3, "start_capture", Value::Null).await;
+    assert_eq!(started["ok"], true, "{started}");
+    let tree = open_tree(&mut ws, 4).await;
+    (server, ws, data, tree)
+}
+
+async fn shut_down(server: Arc<Server>, mut ws: Socket, data: std::path::PathBuf) {
+    ok(&mut ws, 900, "stop_capture", Value::Null).await;
+    ws.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(data);
+}
+
+/// Poll a camera discovery job of this backend to its end (checked by instance).
+async fn finish_discovery(ws: &mut Socket, id: u64, start: &Value) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let snap = ok(ws, id, "fetch_device_discovery",
+                      json!({"jobId": start["job_id"], "instance": start["instance"]})).await;
+        assert_eq!(snap["stale"], false, "{snap}");
+        assert_eq!(snap["valid"], true, "{snap}");
+        if snap["state"].as_u64().unwrap() >= 2 {
+            return snap;
+        }
+        assert!(Instant::now() < deadline, "discovery never ended: {snap}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// E01 (#806 E-4): a backend restart. The second backend instance numbers capture generations,
+/// capability revisions and discovery jobs from the start again, so the first instance's
+/// tokens can equal the second's member for member except `instance`. Every such token is
+/// refused: the feature commands answer stale without touching the port, and the discovery
+/// fetch/cancel answer stale/false without touching the new job. Evidence: fixture/mock.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn tokens_from_before_a_backend_restart_are_refused() {
+    // Backend instance 1.
+    let (server, mut ws, data, tree) = backend_with_tree("restart_before").await;
+    let before = tree["session"].clone();
+    let remote = &tree["modules"][0];
+    let writable = remote["features"].as_array().unwrap().iter()
+        .find(|f| f["descriptor"]["kind"] == "float" && f["descriptor"]["writable"] == true)
+        .map(|f| f["name"].as_str().unwrap().to_string())
+        .expect("fixture has a writable float");
+    let discovery = ok(&mut ws, 5, "start_camera_discovery", Value::Null).await;
+    assert_eq!(discovery["accepted"], true, "{discovery}");
+    assert_eq!(discovery["instance"].as_str().unwrap().len(), 36, "instance is a UUID: {discovery}");
+    let finished = finish_discovery(&mut ws, 6, &discovery).await;
+    assert_eq!(finished["instance"], discovery["instance"]);
+    assert_eq!(before["instance"].as_str().unwrap().len(), 36, "token names its instance: {before}");
+    shut_down(server, ws, data).await;
+
+    // Backend instance 2: a new process would construct exactly this.
+    let (server, mut ws, data, tree) = backend_with_tree("restart_after").await;
+    let after = tree["session"].clone();
+    assert_ne!(after["instance"], before["instance"], "a new backend draws a new instance");
+    for member in ["source", "generation", "capability_revision"] {
+        assert_eq!(after[member], before[member], "the restart reuses {member}: {before} vs {after}");
+    }
+
+    // The old token is stale for read and write; the write never reaches the port.
+    let read = ok(&mut ws, 10, "camera_feature_read", request(&before, &writable, None)).await;
+    assert_eq!(read["outcome"], "stale", "{read}");
+    assert_eq!(read["session"], after, "the stale reply names the current session");
+    let value = json!({"type": "float", "value": 1.0});
+    let write = ok(&mut ws, 11, "camera_feature_write", request(&before, &writable, Some(value))).await;
+    assert_eq!(write["outcome"], "stale", "{write}");
+    assert!(write["readback"].is_null(), "{write}");
+    let fresh = ok(&mut ws, 12, "camera_feature_read", request(&after, &writable, None)).await;
+    assert_eq!(fresh["outcome"], "read", "the current token reads: {fresh}");
+    assert_eq!(fresh["session"], after, "a refused write did not advance the revision");
+
+    // The old discovery job identity is stale on the new backend, even when the new backend
+    // has a job with the same ID.
+    let reused = ok(&mut ws, 13, "start_camera_discovery", Value::Null).await;
+    assert_eq!(reused["accepted"], true, "{reused}");
+    assert_ne!(reused["instance"], discovery["instance"]);
+    let old = ok(&mut ws, 14, "fetch_device_discovery",
+                 json!({"jobId": discovery["job_id"], "instance": discovery["instance"]})).await;
+    assert_eq!(old["stale"], true, "{old}");
+    assert_eq!(old["valid"], false, "{old}");
+    assert_eq!(old["job_id"], "0", "nothing of a current job is reported: {old}");
+    assert!(old["candidates"].as_array().unwrap().is_empty(), "{old}");
+    assert_eq!(old["instance"], reused["instance"], "the stale reply names the current instance");
+    let cancelled = ok(&mut ws, 15, "cancel_device_discovery",
+                       json!({"jobId": discovery["job_id"], "instance": discovery["instance"]})).await;
+    assert_eq!(cancelled, json!(false), "a cancel from before the restart touches nothing");
+    let current = finish_discovery(&mut ws, 16, &reused).await;
+    assert_ne!(current["state"], 3, "the new job was not cancelled: {current}");
+    shut_down(server, ws, data).await;
+}

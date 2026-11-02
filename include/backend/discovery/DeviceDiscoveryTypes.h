@@ -157,6 +157,13 @@ struct DiscoveryError {
 struct DiscoverySnapshot {
     std::uint64_t jobId{0};
     std::uint64_t generation{0};
+    // E01 (E-4): the backend instance that owns the job (a random UUID drawn
+    // when the service is constructed). Job IDs and generations restart at 1
+    // in a new backend instance, so {instance, jobId, generation} is the reply
+    // identity. `stale`: the request named another instance; nothing of the
+    // job is reported (jobId 0) and `instance` is the current one.
+    std::string instance;
+    bool stale{false};
     JobState state{JobState::Queued};
     bool complete{false}; // identity coverage complete: no errors, no overflow
     bool overflow{false};
@@ -175,6 +182,7 @@ struct StartResult {
     std::uint64_t jobId{0};
     ErrorKind rejection{ErrorKind::None};
     std::string reason;
+    std::string instance; // E01: the backend instance that owns jobId
 };
 
 inline constexpr std::size_t kMaxCandidates = 256;

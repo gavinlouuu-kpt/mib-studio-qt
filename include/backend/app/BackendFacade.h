@@ -657,6 +657,7 @@ namespace backend::bridge
         std::uint64_t jobId{0};
         int rejection{0};
         std::string reason;
+        std::string instance; // E01: backend instance that owns jobId
     };
 
     struct BackendDiscoveredDevice
@@ -700,6 +701,8 @@ namespace backend::bridge
         bool valid{false};
         std::uint64_t jobId{0};
         std::uint64_t generation{0};
+        std::string instance; // E01: backend instance that owns jobId
+        bool stale{false};    // E01: the request named an earlier backend instance
         int state{0};
         bool complete{false};
         bool overflow{false};
@@ -1191,9 +1194,15 @@ namespace backend::bridge
         // snapshots additionally carry the synthetic mock entry (camera type
         // 2, `synthetic=true`) so the shell can always offer the mock source.
         // None of these block on a running probe.
+        // E01 (#806 E-4, additive in ABI 49): the start reply and every
+        // snapshot carry the backend `instance`. A non-empty `instance` makes
+        // cancel/fetch checked: a job ID from an earlier backend instance (a
+        // restart reuses job IDs and generations) is refused, cancel touches
+        // nothing and the snapshot is `stale`. Empty keeps the ABI 14 behaviour.
         BackendDiscoveryStart startDeviceDiscovery(const BackendDiscoveryRequest &request);
-        bool cancelDeviceDiscovery(std::uint64_t jobId);
-        bool fetchDeviceDiscovery(std::uint64_t jobId, BackendDiscoverySnapshot &out) const;
+        bool cancelDeviceDiscovery(std::uint64_t jobId, const std::string &instance = {});
+        bool fetchDeviceDiscovery(std::uint64_t jobId, BackendDiscoverySnapshot &out,
+                                  const std::string &instance = {}) const;
         // Compatibility wrapper (BE-2 shape) over the discovery service: runs
         // a camera+framegrabber job and BLOCKS until it ends (bounded by the
         // job deadline). Worker-thread callers only; never call from a UI

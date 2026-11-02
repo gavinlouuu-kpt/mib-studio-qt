@@ -5,6 +5,7 @@
 #include "backend/camera/egrabber/EGrabberCamera.h"
 #include "backend/camera/common/ICamera.h"
 #include "backend/camera/mock/MockCamera.h"
+#include "backend/profiles/InstrumentIdentity.h"
 
 #include <spdlog/spdlog.h>
 
@@ -15,7 +16,7 @@
 
 namespace backend::services {
 
-CaptureService::CaptureService() {
+CaptureService::CaptureService() : instanceId_(backend::profiles::generateUuidV4()) {
 #if MIB_HAS_EGRABBER
     cameraFactory_ = []() {
         return std::make_unique<::camera::common::EGrabberCamera>();
@@ -267,7 +268,7 @@ bool CaptureService::softTriggerActiveCamera() {
         featureRevision_ = 1;
     }
     ::camera::features::CurrentSession current;
-    current.token = {session->source(), activeCameraGeneration_, featureRevision_};
+    current.token = {session->source(), activeCameraGeneration_, featureRevision_, instanceId_};
     current.writesAuthorized = writeBlockReason.empty();
     current.writeBlockReason = writeBlockReason;
     current.evidence = session->evidence();

@@ -10,7 +10,7 @@
 namespace camera::features {
 
 bool SessionToken::operator==(const SessionToken& other) const {
-    return source == other.source && generation == other.generation &&
+    return instance == other.instance && source == other.source && generation == other.generation &&
            capabilityRevision == other.capabilityRevision;
 }
 
@@ -73,10 +73,10 @@ Result base(const CurrentSession& current, const Request& request) {
     return r;
 }
 bool precheck(Result& r, const CurrentSession& current, const Request& request) {
-    if (current.token.source.empty() || current.token.generation == 0 ||
+    if (current.token.instance.empty() || current.token.source.empty() || current.token.generation == 0 ||
         current.token.capabilityRevision == 0 || !(request.expected == current.token)) {
         r.outcome = Outcome::Stale;
-        r.reason = "Source, session or capability revision changed; refresh before retrying.";
+        r.reason = "Backend instance, source, session or capability revision changed; refresh before retrying.";
         return false;
     }
     if (const auto invalid = validateAddress(request.address)) {

@@ -3,8 +3,10 @@
 // Alignment tab already uses (fetch_camera_geometry, fetch_instrument_status, fetch_run_fps, the
 // processing config). Only what the classic tab can write is writable here, through the same
 // command: the camera ROI (save_camera_roi), the PZ7035 Run window (placed here, applied by the
-// switch to Run) or the processing ROI (set_processing_roi). Exposure and frame rate are
-// readbacks; gain is not exposed through the bridge. Nothing here sends a command.
+// switch to Run) or the processing ROI (set_processing_roi). The exposure and frame rate here are
+// the camera geometry's session report, shown only when the camera's GenApi node map has no
+// value for them; exposure, gain, frame rate and trigger mode as controls are SFNC bindings
+// resolved against the node map (cameraFeatures.ts, #806 E-3). Nothing here sends a command.
 import type { CameraGeometry } from "../bridge";
 import { initialWindow, RUN_WINDOW, snapRunWindow } from "../cameraAlignment";
 import { exposureText, fpsText, rateSummary as runRateSummary, type RunFpsStatus } from "../runFps";
@@ -37,7 +39,7 @@ export interface AlignFacts {
 export type RoiKind = "camera" | "run" | "processing";
 
 export interface ReadbackRow {
-  id: "exposure" | "gain" | "frameRate" | "runTiming";
+  id: "exposure" | "frameRate" | "runTiming";
   label: string;
   access: Extract<Access, "ro" | "unavailable">;
   /** The device's value as text, or null when it reports none. */
@@ -141,8 +143,6 @@ export function readbackRows(f: AlignFacts): ReadbackRow[] {
   rows.push(s?.exposure_us !== undefined
     ? { id: "exposure", label: "Exposure", access: "ro", value: exposureReadback(s.exposure_us), detail: "", chip: setBy, why: setByWhy }
     : { id: "exposure", label: "Exposure", access: "unavailable", value: null, detail: "", chip: "not reported", why: notReported });
-  rows.push({ id: "gain", label: "Gain", access: "unavailable", value: null, detail: "", chip: "not bridged",
-    why: f.pz7035 ? "not exposed through the bridge" : `not exposed through the bridge; ${where}` });
   if (s?.frame_rate_hz !== undefined) {
     const details: string[] = [];
     if (s.frame_rate_max_hz) details.push(`max ${fpsText(s.frame_rate_max_hz)} Hz`);
@@ -216,3 +216,14 @@ export function roiOverlay(row: RoiRow, shown: Rect | null, frame: Size | null):
   return frame.width === row.bounds.areaWidth && frame.height === row.bounds.areaHeight ? shown : null;
 }
 
+
+/** Why Align's writes are locked ("" = open). A viewer's writes would be refused by the server
+ *  with VIEWER_ONLY before anything is sent to the camera, so they are locked up front (#806
+ *  review). The backend's own refusals (sort pulses pending, a run in progress) come back as
+ *  replies and are shown as the backend wrote them. */
+export function alignLockedReason(ready: boolean, experimentActive: boolean, viewerOnly: boolean): string {
+  if (!ready) return "the backend is not initialized";
+  if (experimentActive) return "an experiment is active";
+  if (viewerOnly) return "another client controls this instrument; take control to write";
+  return "";
+}

@@ -62,7 +62,20 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   `prepareModel.ts` (pure tones and summaries), `usePrepareReadiness.ts`
   (path-less readiness poll; stopping it drops a read in flight, `usePrepareReadiness.test.tsx`), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
   probe, histogram, profile, `FrameInspector`), `quickControlModel.ts` + `useQuickControl.ts`
-  (requested → readback machine), `alignControls.ts` (which controls an instrument offers);
+  (requested → readback machine), `alignControls.ts` (which controls an instrument offers),
+  `cameraFeatures.ts` (#806 E-3: `SFNC_BINDINGS`, the standard names ExposureTime, Gain,
+  AcquisitionFrameRate, TriggerMode, resolved against the live `camera_feature_tree` reply into
+  absent / read-only with the access reason / writable / stale / refused (the backend's text: the
+  sort trigger armed, a run in progress) / unknown / unsupported; write replies shown as returned,
+  and a rejected write call kept apart as a `WriteFailure` (`viewer_only` / `not_sent` for a server
+  refusal code, `no_reply` for a transport failure), never as `unknown_write_outcome`; `treeLines`
+  for the browser), `useCameraFeatures.ts` (reads the remote tree on open, on camera start/stop,
+  after every write reply, and after a stale tree with a bounded backoff `STALE_RETRY_DELAYS_MS`;
+  the stale chip says "reading the tree again" only while a retry is due, then "press Refresh"),
+  `alignControls.ts` `alignLockedReason` (backend, run, or viewer: App passes `viewerOnly`),
+  `featureViews.tsx` (the binding's draft and readback cells; `FeatureTreeBrowser`, the
+  read-only tree behind Align's "Feature tree" button); tests `cameraFeatures.test.ts`,
+  `AlignView.test.tsx` (fixtures `cameraFeatureFixtures.ts`, tests only);
   O3 Experiment · Plan (#716 A5): `ExperimentView.tsx` (sub-views Plan / Live / Run summary / Quick look),
   `PlanView.tsx`, `planModel.ts` (pure: sheet, identity, `buildStartRequest`, bounds, refusals)
   and `usePlan.ts` (the plan held by App, remembered operators); O4 Experiment · Live (#716 A6b):
@@ -167,7 +180,7 @@ of the quick controls and the sample sheet, until the kit has them).
   `"workspace"` / `"classic"`, default `"workspace"`; every access guarded, so blocked storage
   falls back to the default). Only explicit switches record it: the menu row's "Workspace preview"
   records `workspace`, and the workspace's `onExit` (the header's "Classic view", the Review
-  stage's "Back to the classic view", Align's "All features · classic view") records `classic`.
+  stage's "Back to the classic view", Align's "Classic view") records `classic`.
   Task jumps to the classic view (Prepare's setup buttons, the Summary's Open in Review) do not.
   The same `App` serves the Tauri desktop and the PZ7035 browser UI, so both get the same
   default (the browser per origin, the desktop per webview); the Review app (`review.html`,
@@ -1941,8 +1954,9 @@ still show Failed. No bridge ABI or JSON field changes.
 
 **Camera GenApi features (ABI 49, #806 E-1/E-2).** `camera_feature_tree`, `camera_feature_read`
 and `camera_feature_write` are in `mib-app-commands` (`dispatch::COMMANDS`) and so on the
-WebSocket server; `camera_feature_write` is a control command. There is no Tauri command,
-`bridge.ts` wrapper or view for them yet: E-3 binds the Align quick controls (exposure, gain,
-FPS, trigger) to SFNC names resolved against the enumerated tree
-([[../camera/FeatureControl]]). Only `bridgeContract.ts` (generated, `CAMERA_FEATURES`) and the
-ABI pins in the desktop tests changed.
+WebSocket server; `camera_feature_write` is a control command. E-3 added the Tauri commands and
+`bridge.ts` wrappers and binds the Align quick controls (exposure, gain, FPS, trigger) to SFNC
+names resolved against the enumerated tree ([[../camera/FeatureControl]]). The Tauri
+`camera_feature_tree` is async (`spawn_blocking`): the tree is a backend job that
+`mib-app-commands` polls, so the wait is off the main thread and the bridge lock is held only
+per fetch (#806 review).

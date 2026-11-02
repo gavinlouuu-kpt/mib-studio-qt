@@ -150,6 +150,10 @@ fn camera_features_are_described() {
                           ("outcomes", "unknown_write_outcome"), ("outcomes", "requested"),
                           ("outcomes", "never an empty tree"), ("tree", "uncategorized"),
                           ("descriptor", "absent is never a default"),
+                          // E01 (#806 E-4): the backend instance in the token and in discovery.
+                          ("session", "instance"), ("session", "backend restart"),
+                          ("commands", "{instance, source, generation"),
+                          ("discovery_instance", "stale"), ("discovery_instance", "MissingSdk"),
                           ("guard", "pulseMutex_"), ("guard", "never before taking them"),
                           ("access", "while sorting is possible"), ("access", "merely started and bound with nothing queued is not a refusal"), ("guard", "serialized with sort pulses"),
                           ("access", "starting, active or stopping"), ("access", "realtime processing"),
@@ -978,8 +982,9 @@ fn camera_discovery_and_selection_contract() {
     assert!(start.accepted && start.job_id != 0, "camera discovery job refused: {}", start.reason);
     let deadline = Instant::now() + Duration::from_secs(30);
     let snapshot = loop {
-        let s = bridge.pin_mut().fetch_device_discovery(start.job_id);
-        assert!(s.valid, "discovery snapshot invalid for job {}", start.job_id);
+        let s = bridge.pin_mut().fetch_device_discovery(start.job_id, &start.instance);
+        assert!(s.valid && !s.stale, "discovery snapshot invalid for job {}", start.job_id);
+        assert_eq!(s.instance, start.instance, "every snapshot names the backend instance");
         // 2 Completed, 3 Cancelled, 4 Failed (contract discovery_job_states).
         if s.state >= 2 {
             break s;
@@ -999,8 +1004,14 @@ fn camera_discovery_and_selection_contract() {
         snapshot.candidates.iter().any(|c| c.camera_type == 2 && c.synthetic && c.kind == 0),
         "mock camera entry missing from discovery"
     );
-    assert!(!bridge.pin_mut().cancel_device_discovery(start.job_id), "cancel of an ended job is refused");
-    assert!(!bridge.pin_mut().fetch_device_discovery(987_654_321).valid, "unknown job is invalid");
+    assert!(!bridge.pin_mut().cancel_device_discovery(start.job_id, ""), "cancel of an ended job is refused");
+    assert!(!bridge.pin_mut().fetch_device_discovery(987_654_321, "").valid, "unknown job is invalid");
+    // E01 (ABI 49): a job ID named with another backend instance is stale, not this job.
+    assert_eq!(start.instance.len(), 36, "the instance is a UUID: {}", start.instance);
+    let foreign = bridge.pin_mut().fetch_device_discovery(start.job_id, "00000000-0000-4000-8000-000000000000");
+    assert!(foreign.stale && !foreign.valid && foreign.job_id == 0, "earlier instance refused");
+    assert_eq!(foreign.instance, start.instance, "the stale reply names the current instance");
+    assert!(!bridge.pin_mut().cancel_device_discovery(start.job_id, "00000000-0000-4000-8000-000000000000"));
     // A refused request reports a contract discovery_error_kinds value.
     let empty = ffi::BridgeDiscoveryRequest::default();
     let refused = bridge.pin_mut().start_device_discovery(&empty);
