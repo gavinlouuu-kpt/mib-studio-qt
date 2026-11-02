@@ -348,7 +348,7 @@ fn withhold(mut chunk: Bytes, sent: u64, expected: u64) -> (Bytes, Option<Bytes>
 }
 
 fn io_error(message: String) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, message)
+    std::io::Error::other(message)
 }
 
 pub(crate) async fn records(

@@ -33,11 +33,15 @@
 //      listing held between resolving what it serves and copying it, while
 //      another thread changes the capture: the change waits for the read's
 //      critical section, so the read is consistent with one capture and is
-//      never served after the change.
+//      never served after the change;
+//  10. one owner per copy (#789): a pinned strip cell has its own copy, so the
+//      refresh that drops the strip's frees nothing a reader of the pin copied
+//      (the interleaving replayed through the "refresh-dropped" hook).
 
 #include "backend/services/MonitoringCellStore.h"
 
 #include "support/assert.h"
+#include "support/watchdog.h"
 
 #include <opencv2/core.hpp>
 
@@ -764,6 +768,64 @@ void testReadsAgainstACaptureChange()
     }
 }
 
+// #789: a strip cell that is also pinned. The refresh that drops the strip's copy (the ring moved
+// to another run; pins stay until the next run starts) frees it after the store's mutex. Between
+// that unlock and the free, another thread reads the pin and unpins it. The pin owns a copy of its
+// own, so the refresh frees pixels nobody read since it removed them. Were the pin a refcount share
+// of the strip's copy, the refresh's free would be the last release of pixels the reader copied,
+// ordered after that read only by cv::Mat's reference count, which lives in uninstrumented OpenCV:
+// ThreadSanitizer reports that free as a race (what processing.monitoring_cell_concurrency hit).
+// The reader is handed its turn through relaxed atomics, which order nothing for TSan, so the
+// store's own discipline is all that orders the read before the free.
+void testPinOwnsItsCopy()
+{
+    std::printf("a pinned strip cell owns its copy (#789)\n");
+    FakeRing ring;
+    MonitoringCellStore store(ring);
+    ring.generation = 5;
+    store.beginRun(5);
+    ring.append(1, 0, true, 61);
+    store.refreshStrip();
+    const auto k = key(ring, 5, 1, 0);
+    const auto before = store.listing();
+    MIB_REQUIRE(inStrip(before, 1) != nullptr, "the row is in the strip");
+    MIB_REQUIRE(store.pin(k).outcome == Outcome::Pinned, "pin the strip cell");
+    ring.generation = 0; // the end of accumulation: the next refresh drops run 5's strip cells
+
+    // The handoff below waits without bounds: a hook that stopped firing (or fired under the mutex)
+    // fails here with a diagnostic instead of hanging. Its marks are relaxed: no happens-before.
+    mib::test::Watchdog wd(20);
+    wd.mark("pinned strip cell: refresh with the reader waiting");
+    std::atomic<int> phase{0};
+    bool served = false;
+    bool unpinned = false;
+    std::thread reader([&] {
+        while (phase.load(std::memory_order_relaxed) != 1) std::this_thread::yield();
+        cv::Mat px;
+        served = store.image(k, false, px) && px.size() == cv::Size(40, 36) && cv::countNonZero(px != 61) == 0;
+        unpinned = static_cast<bool>(store.unpin(k));
+        phase.store(2, std::memory_order_relaxed);
+    });
+    int droppedHooks = 0;
+    store.setReadHookForTests([&](const char* w) {
+        if (std::string(w) != "refresh-dropped") return;
+        ++droppedHooks;
+        phase.store(1, std::memory_order_relaxed);
+        while (phase.load(std::memory_order_relaxed) != 2) std::this_thread::yield();
+    });
+    store.refreshStrip();
+    store.setReadHookForTests({});
+    wd.mark("pinned strip cell: joining the reader");
+    reader.join();
+    wd.mark("pinned strip cell: done");
+    MIB_EXPECT(droppedHooks == 1, "the refresh dropped the strip cell (hook ran once)");
+    MIB_EXPECT(served, "the pin served its pixels after the strip dropped its copy");
+    MIB_EXPECT(unpinned, "unpinned");
+    const auto l = store.listing();
+    MIB_EXPECT(l.strip.empty() && l.pins.empty() && l.stats.stripBytes == 0 && l.stats.pinBytes == 0,
+               "nothing held afterwards");
+}
+
 void testGeometryOrigin()
 {
     std::printf("geometry origin: full-frame boxes into image coordinates\n");
@@ -810,6 +872,7 @@ int main()
     testSharesGoBack();
     testCaptureChange();
     testReadsAgainstACaptureChange();
+    testPinOwnsItsCopy();
     testGeometryOrigin();
     testMemoryStats();
     std::printf("monitoring_cell_store_test: %s\n", mib::test::exitCode() == 0 ? "PASS" : "FAIL");
