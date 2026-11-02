@@ -31,12 +31,14 @@ jobs:
         run: |
           set -euo pipefail
           text="$PR_TITLE"$'\n'"${PR_BODY:-}"
-          if ! { printf '%s' "$HEAD_REF" | grep -qE '(^|/)80[678]-' \
-                 || printf '%s' "$text" | grep -qE '#80[678]\b'; }; then
+          # grep reads here-strings, not a pipe: with pipefail, `grep -q` closing a
+          # pipe early makes printf die of SIGPIPE on bodies over 64 KiB.
+          if ! { grep -E '(^|/)80[678]-' <<<"$HEAD_REF" >/dev/null \
+                 || grep -E '#80[678]\b' <<<"$text" >/dev/null; }; then
             echo "Not a fold-in PR (no 806/807/808 branch or reference)."
             exit 0
           fi
-          if ! printf '%s' "$text" | grep -qE '\b(E0[1-9]|I(0[1-9]|1[0-3])|F(0[1-9]|1[0-6]))\b'; then
+          if ! grep -E '\b(E0[1-9]|I(0[1-9]|1[0-2])|F(0[1-9]|1[0-6]))\b' <<<"$text" >/dev/null; then
             echo "::error::Fold-in PR names no backend goal ID. State which goals (E01-E09, I01-I12, F01-F16) this PR advances and the headless proof it adds. See docs/architecture/fold-in-backend-goals.md."
             exit 1
           fi
@@ -44,7 +46,7 @@ jobs:
           views="$(printf '%s\n' "$changed" | grep -E '^desktop/src/' | grep -vE '\.test\.(ts|tsx)$|/fixtures/' || true)"
           backend="$(printf '%s\n' "$changed" | grep -E '^(src|include|crates|tests|tools|workers|bindings|contract)/' || true)"
           if [ -n "$views" ] && [ -z "$backend" ]; then
-            if ! printf '%s' "$text" | grep -qi 'ui probe'; then
+            if ! grep -i 'ui probe' <<<"$text" >/dev/null; then
               echo "Views changed with no backend change:"
               printf '%s\n' "$views"
               echo "::error::Fold-in PR changes desktop views but no backend code. Build the backend goal first, or label the PR 'UI probe' (it then counts for nothing toward acceptance). See docs/architecture/fold-in-backend-goals.md."
