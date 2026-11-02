@@ -520,7 +520,7 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
-## ABI 49: the camera's GenApi node map (#806 E-1/E-2/E-4, goals E02, E01)
+## ABI 49: the camera's GenApi node map (#806 E-1/E-2/E-3/E-4, goals E02, E01)
 
 Additive over ABI 44 (47 is the F track's, 48 the I track's, allocated provisionally).
 `camera_feature_tree {request: {modules?, descriptors?, available_only?}}`,
@@ -533,7 +533,8 @@ camera's node map ([[../camera/FeatureControl]]). Contract: `camera_features` (b
   (capture guard) -> `ICamera::featureSession()->withPort` (camera port guard) -> cxx
   `camera_feature_*(request_json) -> String` -> `mib-app-commands` `camera_feature_*(state, request)`
   (a JSON object; non-object or over 16384 bytes is `INVALID_ARGUMENTS` before the backend) ->
-  dispatch (WebSocket server). No Tauri command or desktop view yet (E-3).
+  dispatch (WebSocket server) and the Tauri commands `camera_feature_tree` / `_read` / `_write`
+  (E-3); `bridge.ts` `cameraFeatureTree` / `cameraFeatureRead` / `cameraFeatureWrite`.
 - **Session:** the token `{instance, source, generation, capability_revision}` (decimal strings;
   every member required) of an earlier reply; any difference is `stale`. A capture restart opens
   a new generation; a write that may have reached the device advances the revision; `instance`

@@ -62,7 +62,15 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   `prepareModel.ts` (pure tones and summaries), `usePrepareReadiness.ts`
   (path-less readiness poll; stopping it drops a read in flight, `usePrepareReadiness.test.tsx`), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
   probe, histogram, profile, `FrameInspector`), `quickControlModel.ts` + `useQuickControl.ts`
-  (requested → readback machine), `alignControls.ts` (which controls an instrument offers);
+  (requested → readback machine), `alignControls.ts` (which controls an instrument offers),
+  `cameraFeatures.ts` (#806 E-3: `SFNC_BINDINGS`, the standard names ExposureTime, Gain,
+  AcquisitionFrameRate, TriggerMode, resolved against the live `camera_feature_tree` reply into
+  absent / read-only with the access reason / writable / stale / unknown / unsupported; write
+  replies shown as returned; `treeLines` for the browser), `useCameraFeatures.ts` (reads the
+  remote tree on open, on camera start/stop, after every write reply and once more after a stale
+  tree), `featureViews.tsx` (the binding's draft and readback cells; `FeatureTreeBrowser`, the
+  read-only tree behind Align's "Feature tree" button); tests `cameraFeatures.test.ts`,
+  `AlignView.test.tsx` (fixtures `cameraFeatureFixtures.ts`, tests only);
   O3 Experiment · Plan (#716 A5): `ExperimentView.tsx` (sub-views Plan / Live / Run summary / Quick look),
   `PlanView.tsx`, `planModel.ts` (pure: sheet, identity, `buildStartRequest`, bounds, refusals)
   and `usePlan.ts` (the plan held by App, remembered operators); O4 Experiment · Live (#716 A6b):
@@ -167,7 +175,7 @@ of the quick controls and the sample sheet, until the kit has them).
   `"workspace"` / `"classic"`, default `"workspace"`; every access guarded, so blocked storage
   falls back to the default). Only explicit switches record it: the menu row's "Workspace preview"
   records `workspace`, and the workspace's `onExit` (the header's "Classic view", the Review
-  stage's "Back to the classic view", Align's "All features · classic view") records `classic`.
+  stage's "Back to the classic view", Align's "Classic view") records `classic`.
   Task jumps to the classic view (Prepare's setup buttons, the Summary's Open in Review) do not.
   The same `App` serves the Tauri desktop and the PZ7035 browser UI, so both get the same
   default (the browser per origin, the desktop per webview); the Review app (`review.html`,

@@ -12,6 +12,9 @@ import type { AlignFacts } from "./alignControls";
 import { INSPECT_INTERVAL_MS } from "./alignImageModel";
 import { AlignView, PROCESSING_ROI_WRITE, type AlignViewProps, type FrameSink } from "./AlignView";
 import { WRITE_TIMEOUT_MS, type Rect, type WriteResult } from "./quickControlModel";
+import type { CameraFeatureApi } from "./useCameraFeatures";
+import type { CameraFeatureReply, CameraFeatureTreeReply, CameraFeatureWriteRequest } from "../bridge";
+import { FEATURES, SESSION, treeOutcome, treeReply, writeReply } from "./cameraFeatureFixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -180,17 +183,16 @@ describe("image tools on the classic preview's frames", () => {
 });
 
 describe("quick controls: requested → readback", () => {
-  it("lists the features with their access: read-only, unavailable, writable", async () => {
+  it("without the feature tree connected, the SFNC rows say so and show the camera's geometry report", async () => {
     await render();
-    expect(chip("exposure").textContent).toBe("Read-only · camera script");
-    expect(chip("exposure").getAttribute("title")).toBe("Read-only: set in the camera script or configuration (classic view)");
-    expect(chip("exposure").getAttribute("data-tone")).toBe("neutral");
-    expect(chip("gain").getAttribute("data-tone")).toBe("unsupported");
-    expect(chip("gain").textContent).toBe("Unavailable · not bridged");
-    expect(chip("gain").getAttribute("title")).toMatch(/^Unavailable: not exposed through the bridge/);
+    expect(chip("exposure").textContent).toBe("Unknown · the camera's feature tree is not connected here");
+    expect(chip("exposure").getAttribute("data-tone")).toBe("unknown");
+    expect(chip("gain").textContent).toBe("Unknown · the camera's feature tree is not connected here");
     expect(chip("roi").textContent).toBe("Current");
     expect(field("X").value).toBe("768");
-    expect($("align-quick-controls").textContent).toContain("2 µs");
+    // The geometry's exposure report, labelled as not from the node map.
+    expect($("align-quick-controls").textContent).toContain("2 µscamera report, not from the node map");
+    expect($("align-quick-controls").textContent).not.toContain("classic view, as are all features");
   });
 
   it("writes only on Write, shows pending, then the readback read after the write", async () => {
@@ -288,9 +290,10 @@ describe("the camera mode switch is a button", () => {
     expect($("align-mode-chip").textContent).toBe("Full sensor 2048 × 512");
   });
 
-  it("All features leaves for the classic view", async () => {
+  it("Classic view leaves for the classic view; nothing claims the features live there", async () => {
     await render();
-    await press("All features · classic view");
+    expect(host.textContent).not.toContain("All features");
+    await press("Classic view");
     expect(onClassic).toHaveBeenCalledTimes(1);
   });
 });
@@ -309,5 +312,147 @@ describe("Write ROI says what else it does (#763 F16)", () => {
     expect($("align-roi-write-note")).toBeNull();
     await render({ facts: { ...FACTS, pz7035: true, instrumentModes: true, geometry: null, instrumentMode: "align" } });
     expect($("align-roi-write-note")).toBeNull();
+  });
+});
+
+describe("SFNC quick controls over the camera's node map (#806 E-3)", () => {
+  /** A backend double. Trees: `trees[0]` until the first write, then each later entry once in
+   *  turn (the last repeats). StrictMode reads the tree twice on mount; neither moves the queue. */
+  function fakeFeatures(trees: CameraFeatureTreeReply[], write: (r: CameraFeatureWriteRequest) => CameraFeatureReply | Promise<CameraFeatureReply>) {
+    let queue = [trees[0]];
+    const api = {
+      tree: vi.fn(async () => (queue.length > 1 ? queue.shift()! : queue[0])),
+      write: vi.fn(async (r: CameraFeatureWriteRequest) => {
+        if (trees.length > 1) queue = trees.slice(1);
+        return write(r);
+      }),
+    } satisfies CameraFeatureApi;
+    return api;
+  }
+  const settle = () => act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  const draft = (id: string) => host.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-testid=align-draft-${id}] input, [data-testid=align-draft-${id}] select`)!;
+  async function setDraft(id: string, value: string) {
+    const el = draft(id);
+    const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+    });
+  }
+  const writeButton = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="Write ${label}"]`)!;
+
+  it("reads the tree on open (a read), resolves each SFNC name and writes nothing", async () => {
+    const api = fakeFeatures([treeReply({ features: [FEATURES.ExposureTime, FEATURES.TriggerMode, FEATURES.AcquisitionFrameRate] })],
+      () => { throw new Error("no write expected"); });
+    await render({ features: api });
+    await settle();
+    expect(api.tree).toHaveBeenCalledWith({ modules: ["remote"] });
+    expect(api.write).not.toHaveBeenCalled();
+    expect(chip("exposure").textContent).toBe("Writable");
+    expect(draft("exposure").value).toBe("1000");
+    expect(chip("gain").textContent).toBe("Not available on this camera");
+    expect(draft("gain")).toBeNull();
+    expect(chip("trigger").textContent).toBe("Writable");
+    expect(draft("trigger").value).toBe("Off");
+    expect($("align-roi-nodemap").textContent).toBe("Node map: sensor ROI not available on this camera");
+  });
+
+  it("a read-only node shows the device's access reason and offers no draft", async () => {
+    const ro = { ...FEATURES.ExposureTime, descriptor: { ...FEATURES.ExposureTime.descriptor!, writable: false, access_reason: "Not writable while ExposureAuto is Continuous." } };
+    await render({ features: fakeFeatures([treeReply({ features: [ro] })], () => { throw new Error(); }) });
+    await settle();
+    expect(chip("exposure").textContent).toBe("Read-only · Not writable while ExposureAuto is Continuous.");
+    expect(draft("exposure")).toBeNull();
+    expect($("align-quick-controls").textContent).toContain("1000 us");
+  });
+
+  it("commits a draft with the tree's token on Write, shows requested and readback as returned, and re-reads the tree", async () => {
+    const after = treeReply({ session: { ...SESSION, capability_revision: "2" },
+      features: [{ ...FEATURES.ExposureTime, descriptor: { ...FEATURES.ExposureTime.descriptor!, value: { type: "float", value: 248 } } }] });
+    const api = fakeFeatures([treeReply(), after], (r) =>
+      writeReply("readback", r.feature, r.value, { ...FEATURES.ExposureTime.descriptor!, value: { type: "float", value: 248 } }, "",
+        { ...SESSION, capability_revision: "2" }));
+    await render({ features: api });
+    await settle();
+    await setDraft("exposure", "250");
+    expect(api.write).not.toHaveBeenCalled(); // nothing goes out until Write
+    const reads = api.tree.mock.calls.length;
+    await act(async () => writeButton("Exposure").click());
+    await settle();
+    expect(api.write).toHaveBeenCalledWith({ session: SESSION, module: "remote", feature: "ExposureTime", value: { type: "float", value: 250 } });
+    expect($("align-write-exposure").textContent).toBe("Written · readback · requested 250 us · 248 us");
+    expect($("align-write-exposure").getAttribute("data-tone")).toBe("confirmed");
+    expect(api.tree).toHaveBeenCalledTimes(reads + 1); // refreshed after the write
+    expect(draft("exposure").value).toBe("248"); // the draft follows the new tree
+  });
+
+  it("an out-of-range value is sent and the backend's refusal is shown with its reason", async () => {
+    const api = fakeFeatures([treeReply()], (r) =>
+      writeReply("refused", r.feature, r.value, FEATURES.Gain.descriptor!, "Value is outside the current device bounds."));
+    await render({ features: api });
+    await settle();
+    await setDraft("gain", "99");
+    await act(async () => writeButton("Gain").click());
+    await settle();
+    expect(api.write).toHaveBeenCalledTimes(1);
+    expect($("align-write-gain").textContent).toBe("Refused · requested 99 dB · 0 dB · Value is outside the current device bounds.");
+    expect($("align-write-gain").getAttribute("data-tone")).toBe("blocked");
+  });
+
+  it("a stale write reply re-reads the tree; a stale tree is read again at once", async () => {
+    const api = fakeFeatures([treeReply(), treeOutcome("stale", "Source, session or capability revision changed during enumeration; enumerate again."),
+      treeReply({ session: { ...SESSION, generation: "2" } })], (r) =>
+      writeReply("stale", r.feature, r.value, null, "Backend instance, source, session or capability revision changed; refresh before retrying.",
+        { ...SESSION, generation: "2" }));
+    await render({ features: api });
+    await settle();
+    await setDraft("trigger", "On");
+    const reads = api.tree.mock.calls.length;
+    await act(async () => writeButton("Trigger mode").click());
+    await settle();
+    expect(api.write).toHaveBeenCalledWith(expect.objectContaining({ feature: "TriggerMode", value: { type: "string", value: "On" } }));
+    expect($("align-write-trigger").textContent).toContain("Stale · requested On · no readback");
+    expect(api.tree).toHaveBeenCalledTimes(reads + 2); // after the write, and again after the stale tree
+    expect(chip("trigger").textContent).toBe("Writable");
+  });
+
+  it("an unknown write outcome is shown as unknown, never as written", async () => {
+    const api = fakeFeatures([treeReply()], (r) => writeReply("unknown_write_outcome", r.feature, r.value, null, "write transport outcome unknown"));
+    await render({ features: api });
+    await settle();
+    await setDraft("frameRate", "60");
+    await act(async () => writeButton("Frame rate").click());
+    await settle();
+    expect($("align-write-frameRate").textContent).toBe("Unknown outcome · it may have reached the camera · requested 60 Hz · no readback · write transport outcome unknown");
+    expect($("align-write-frameRate").getAttribute("data-tone")).toBe("unknown");
+  });
+
+  it("is locked while a run is active", async () => {
+    const api = fakeFeatures([treeReply()], () => { throw new Error(); });
+    await render({ features: api, lockedReason: "an experiment is active" });
+    await settle();
+    expect(draft("exposure").disabled).toBe(true);
+    expect(writeButton("Exposure").disabled).toBe(true);
+  });
+
+  it("Feature tree shows the camera's categories and features, read-only", async () => {
+    await render({ features: fakeFeatures([treeReply()], () => { throw new Error(); }) });
+    await settle();
+    expect($("align-feature-tree")).toBeNull();
+    await press("Feature tree");
+    const tree = $("align-feature-tree");
+    expect($("align-feature-tree-status").textContent).toBe("8 features");
+    expect(tree.textContent).toContain("▸ AcquisitionControl");
+    expect(tree.textContent).toContain("ExposureTimefloatread/write1000 us10–1000000 us");
+    expect(tree.textContent).toContain("DeviceModelNamestringread-onlyMIB Mock Camera");
+    expect(tree.querySelectorAll("input, select")).toHaveLength(0);
+  });
+
+  it("a camera without GenApi: every SFNC row and the browser say unsupported", async () => {
+    await render({ features: fakeFeatures([treeOutcome("unsupported", "The active camera has no GenApi node map.")], () => { throw new Error(); }) });
+    await settle();
+    expect(chip("gain").textContent).toBe("Unsupported · The active camera has no GenApi node map.");
+    await press("Feature tree");
+    expect($("align-feature-tree-status").textContent).toBe("unsupported · The active camera has no GenApi node map.");
   });
 });

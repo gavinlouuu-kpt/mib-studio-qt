@@ -2,8 +2,10 @@
 // pixel probe, a histogram and a line profile, beside typed quick controls (requested →
 // readback). The image is the classic preview's own stream: the shell hands every frame it
 // already pulled to one sink here, so there is no second capture path. Inspection is bounded and
-// runs off the delivery path (FrameInspector). Opening this view sends no command: the camera
-// mode switch the classic tab does on entry is a button here, and writes go out only on Write.
+// runs off the delivery path (FrameInspector). Opening this view sends no command but reads: the
+// camera mode switch the classic tab does on entry is a button here, and writes go out only on
+// Write. Exposure, gain, frame rate and trigger mode are SFNC names resolved against the camera's
+// own GenApi node map (camera_feature_tree, #806 E-3); the Feature tree button shows that map.
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Button, Card, DataTable, Notice, StateChip, Toolbar, type DataTableColumn } from "@mib/ui";
 import { mono8ToImageData } from "../bridge";
@@ -50,6 +52,10 @@ import {
   type WriteResult,
 } from "./quickControlModel";
 import { useQuickControl } from "./useQuickControl";
+import { encodeDraft, NOT_AVAILABLE, resolutionStatus, resolveBinding, SFNC_BINDINGS, SFNC_ROI_FEATURES, valueText, type BindingId, type Resolution } from "./cameraFeatures";
+import { useCameraFeatures, type CameraFeatureApi } from "./useCameraFeatures";
+import { BindingDraft, BindingReadback, FeatureTreeBrowser } from "./featureViews";
+import type { CameraFeatureReply, CameraFeatureTreeReply } from "../bridge";
 
 /** Takes a delivered packet; true when the view shows it (false while frozen or invalid). */
 export type FrameSink = (packet: FramePacket) => boolean;
@@ -64,7 +70,9 @@ export interface AlignViewProps {
   writeRoi: (kind: RoiKind, rect: Rect) => Promise<WriteResult<Rect>>;
   /** Why writes are locked now (a run is active); "" when they are not. */
   lockedReason: string;
-  /** Back to the classic view (All features, XML, scripts). */
+  /** The camera's GenApi node map (bridge ABI 49). Absent: the quick controls say it is not connected. */
+  features?: CameraFeatureApi;
+  /** Back to the classic view. */
   onClassic: () => void;
 }
 
@@ -94,6 +102,9 @@ function AlignBody(p: BodyProps) {
   const mode = alignMode(p.facts);
   const rows = readbackRows(p.facts);
   const [switching, setSwitching] = useState(false);
+  const [showTree, setShowTree] = useState(false);
+  // The tree is read again whenever the camera starts or stops: a new session, a new token.
+  const camera = useCameraFeatures(p.features, p.facts.running);
   const writeRoi = p.writeRoi;
   const control = useQuickControl<Rect, RectDraft>({
     codec: RECT_CODEC, empty: EMPTY_DRAFT, readback: roi.readback, initial: roi.initial,
@@ -130,7 +141,11 @@ function AlignBody(p: BodyProps) {
           </Notice>
         ) : null}
         modeChip={<StateChip tone={mode.tone} data-testid="align-mode-chip">{mode.label}</StateChip>}
-        controls={<QuickControls roi={roi} rows={rows} control={control} lockedReason={p.lockedReason} pz7035={p.facts.pz7035} />}
+        showTree={showTree}
+        onToggleTree={() => setShowTree((v) => !v)}
+        tree={showTree ? <FeatureTreeBrowser tree={camera.tree} loading={camera.loading} onRefresh={() => void camera.refresh()} /> : null}
+        controls={<QuickControls roi={roi} rows={rows} control={control} lockedReason={p.lockedReason} pz7035={p.facts.pz7035}
+          camera={p.features ? camera : null} />}
       />
     </div>
   );
@@ -141,6 +156,9 @@ interface ImageProps extends BodyProps {
   modeNotice: ReactNode;
   modeChip: ReactNode;
   controls: ReactNode;
+  tree: ReactNode;
+  showTree: boolean;
+  onToggleTree: () => void;
 }
 
 function AlignImage(p: ImageProps) {
@@ -333,7 +351,9 @@ function AlignImage(p: ImageProps) {
     <>
       <Toolbar title="Align">
         <Button variant="selected" aria-current="page">Quick controls</Button>
-        <Button onClick={p.onClassic} title="All features, the GenApi XML and scripts stay in the classic view">All features · classic view</Button>
+        <Button variant={p.showTree ? "selected" : "secondary"} aria-pressed={p.showTree} onClick={p.onToggleTree}
+          title="Every category and feature the camera's GenApi node map reports, read-only">Feature tree</Button>
+        <Button onClick={p.onClassic} title="Back to the classic view">Classic view</Button>
         <Button variant={frozen ? "selected" : "secondary"} aria-pressed={frozen} onClick={() => setFrozen((f) => !f)}
           title="Holds the shown frame for inspection; capture and polling go on">
           {frozen ? "Resume display" : "Freeze display"}
@@ -388,6 +408,7 @@ function AlignImage(p: ImageProps) {
           </Card>
           {p.controls}
         </div>
+        {p.tree}
       </div>
     </>
   );
@@ -431,18 +452,50 @@ export const PROCESSING_ROI_WRITE = "Write ROI applies the processing settings w
   + "the earlier capture keep their measurements only.";
 
 type ControlApi = ReturnType<typeof useQuickControl<Rect, RectDraft>>;
-type TableRow = { id: string; label: string; roi?: RoiRow; readback?: ReadbackRow };
+type CameraApi = ReturnType<typeof useCameraFeatures>;
+interface BindingRow { id: BindingId; resolution: Resolution; reply: CameraFeatureReply | undefined; fallback: string | null }
+type TableRow = { id: string; label: string; roi?: RoiRow; readback?: ReadbackRow; binding?: BindingRow };
 
-function QuickControls({ roi, rows, control, lockedReason, pz7035 }: { roi: RoiRow; rows: ReadbackRow[]; control: ControlApi; lockedReason: string; pz7035: boolean }) {
+/** The camera ROI against the node map's SFNC image-format nodes (shown only: the ROI is written by
+ *  save_camera_roi, which also saves the experiment window). */
+export function roiNodeMap(tree: CameraFeatureTreeReply | null): string | null {
+  if (tree?.outcome !== "read") return null;
+  const found: string[] = [];
+  for (const f of SFNC_ROI_FEATURES) {
+    const r = resolveBinding(tree, "remote", f);
+    if (r.state === "writable" || r.state === "readOnly")
+      found.push(`${f} ${valueText(r.descriptor.value, r.descriptor.unit)} (${r.state === "writable" ? "writable" : "read-only"})`);
+  }
+  return found.length ? `Node map: ${found.join(" · ")}` : `Node map: sensor ROI ${NOT_AVAILABLE}`;
+}
+
+function QuickControls({ roi, rows, control, lockedReason, pz7035, camera }: {
+  roi: RoiRow; rows: ReadbackRow[]; control: ControlApi; lockedReason: string; pz7035: boolean; camera: CameraApi | null;
+}) {
+  const [drafts, setDrafts] = useState<Partial<Record<BindingId, string | null>>>({});
   const s = control.state;
   const roiStatus = controlStatus(s, roi.access, RECT_CODEC, rectText, roi.why);
+  const nodeMap = roi.kind === "camera" ? roiNodeMap(camera?.tree ?? null) : null;
+  const commitBinding = (b: BindingRow, text: string) => {
+    if (!camera || b.resolution.state !== "writable" || lockedReason) return;
+    const binding = SFNC_BINDINGS.find((x) => x.id === b.id)!;
+    const value = encodeDraft(b.resolution.descriptor, text);
+    if (!value.ok) return;
+    setDrafts((all) => ({ ...all, [b.id]: null })); // the draft follows the tree's value again
+    void camera.commit(b.id, binding.module, binding.feature, value.value);
+  };
   const pending = s.phase === "pending";
   const locked = !!lockedReason;
   const fixed = roi.bounds?.fixedSize;
   const columns: DataTableColumn<TableRow>[] = [
     { key: "label", header: "Feature", emphasis: true, width: "20%" },
     {
-      key: "requested", header: "Requested", width: "30%", cell: (r) => r.roi
+      key: "requested", header: "Requested", width: "30%", cell: (r) => r.binding
+        ? <BindingDraft id={r.id} label={r.label} resolution={r.binding.resolution} draft={drafts[r.binding.id] ?? null}
+          pending={!!camera?.pending[r.id]} lockedReason={lockedReason}
+          onDraft={(text) => setDrafts((all) => ({ ...all, [r.binding!.id]: text }))}
+          onCommit={(text) => commitBinding(r.binding!, text)} />
+        : r.roi
         ? (r.roi.access === "rw" ? (
           <span className="ws-roi" data-testid="align-roi-draft">
             {RECT_KEYS.map((k) => (
@@ -464,8 +517,13 @@ function QuickControls({ roi, rows, control, lockedReason, pz7035 }: { roi: RoiR
         : NOT_WRITABLE,
     },
     {
-      key: "readback", header: "Readback", width: "24%", cell: (r) => r.roi
-        ? (s.readback ? rectText(s.readback) : r.roi.access === "rw" ? `No readback · ${r.roi.why}` : "—")
+      key: "readback", header: "Readback", width: "24%", cell: (r) => r.binding
+        ? <BindingReadback id={r.id} resolution={r.binding.resolution} reply={r.binding.reply} fallback={r.binding.fallback} />
+        : r.roi
+        ? <>
+          {s.readback ? rectText(s.readback) : r.roi.access === "rw" ? `No readback · ${r.roi.why}` : "—"}
+          {nodeMap ? <span className="ws-detail" data-testid="align-roi-nodemap">{nodeMap}</span> : null}
+        </>
         : <>
           {r.readback!.value ?? "Not reported"}
           {r.readback!.detail ? <span className="ws-detail">{r.readback!.detail}</span> : null}
@@ -474,14 +532,26 @@ function QuickControls({ roi, rows, control, lockedReason, pz7035 }: { roi: RoiR
     {
       key: "state", header: "State", width: "26%", cell: (r) => {
         const rb = r.readback;
-        const st = r.roi ? { ...roiStatus, title: roiStatus.label } : rb!.access === "unavailable"
+        const st = r.binding ? resolutionStatus(r.binding.resolution) : r.roi ? { ...roiStatus, title: roiStatus.label } : rb!.access === "unavailable"
           ? { tone: "unsupported" as const, label: `Unavailable · ${rb!.chip}`, title: `Unavailable: ${rb!.why}` }
           : { tone: "neutral" as const, label: `Read-only · ${rb!.chip}`, title: `Read-only: ${rb!.why}` };
         return <StateChip size="small" tone={st.tone} title={st.title} data-testid={`align-state-${r.id}`}>{st.label}</StateChip>;
       },
     },
   ];
-  const table: TableRow[] = [...rows.map((r) => ({ id: r.id, label: r.label, readback: r })), { id: "roi", label: roi.label, roi }];
+  const geometry: Record<string, string | null> = Object.fromEntries(rows.map((r) => [r.id, r.value]));
+  const bindings: TableRow[] = SFNC_BINDINGS.map((b) => ({
+    id: b.id, label: b.label,
+    binding: {
+      id: b.id,
+      resolution: camera ? resolveBinding(camera.tree, b.module, b.feature)
+        : { state: "unknown", reason: "the camera's feature tree is not connected here" },
+      reply: camera?.replies[b.id],
+      fallback: geometry[b.id] ?? null,
+    },
+  }));
+  const others: TableRow[] = rows.filter((r) => r.id === "runTiming").map((r) => ({ id: r.id, label: r.label, readback: r }));
+  const table: TableRow[] = [...bindings, ...others, { id: "roi", label: roi.label, roi }];
   const canWrite = roi.access === "rw" && !pending && !locked;
   return (
     <Card
@@ -497,9 +567,11 @@ function QuickControls({ roi, rows, control, lockedReason, pz7035 }: { roi: RoiR
       <DataTable columns={columns} rows={table} rowKey={(r) => r.id} density="compact" />
       {locked ? <p className="ws-note" data-testid="align-locked">Writes are locked: {lockedReason}.</p> : null}
       {s.phase === "idle" && s.written && s.reason ? <p className="ws-note" data-testid="align-snap-note">Written after snapping: {s.reason}.</p> : null}
-      <p className="ws-note">
-        Exposure, gain and frame rate are {pz7035 ? "set in Config → Camera document" : "set by the camera script or configuration"} in the classic view, as are all features, the XML and scripts.
-        Nothing here is written until you press Write.
+      <p className="ws-note" data-testid="align-features-note">
+        Exposure, gain, frame rate and trigger mode are looked up by their standard (SFNC) names in the GenApi node map the camera reports:
+        whether each exists, its access and its range come from the camera.
+        {pz7035 ? " The Run rate and exposure are set in Config → Camera document in the classic view." : ""}
+        {" "}Nothing here is written until you press Write; the reply shows the requested value and the camera's readback.
       </p>
       {roi.kind === "processing" && roi.access === "rw" ? <p className="ws-note" data-testid="align-roi-write-note">{PROCESSING_ROI_WRITE}</p> : null}
     </Card>

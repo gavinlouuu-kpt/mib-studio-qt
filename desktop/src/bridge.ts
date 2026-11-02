@@ -480,6 +480,70 @@ export interface DiscoverySnapshot {
   origin: string;
 }
 
+// ---- Camera GenApi features (bridge ABI 49, #806 E02/E01; bridge-contract.json camera_features) ----
+// The wire shapes only. Every fact (what exists, its type, access, value, bounds) and every
+// outcome comes from the backend's enumeration of the camera's own node map.
+export type CameraFeatureModule = "system" | "interface" | "device" | "stream" | "remote";
+export type CameraFeatureOutcome =
+  | "read" | "readback" | "written_unconfirmed" | "refused" | "stale" | "unsupported" | "error" | "unknown_write_outcome";
+export type CameraFeatureKind = "integer" | "float" | "boolean" | "string" | "enumeration" | "command" | "unsupported";
+/** The session token of a reply: pass it back unchanged. Decimal strings; `instance` is the backend instance (E01). */
+export interface CameraFeatureSession { instance: string; source: string; generation: string; capability_revision: string }
+/** Integers are decimal strings (lossless int64); a float is a JSON number (null when not finite). */
+export type CameraFeatureValue =
+  | { type: "integer"; value: string }
+  | { type: "float"; value: number | null }
+  | { type: "boolean"; value: boolean }
+  | { type: "string"; value: string };
+export interface CameraFeatureDescriptor {
+  kind: CameraFeatureKind;
+  implemented: boolean;
+  readable: boolean;
+  writable: boolean;
+  access_reason: string;
+  visibility: string;
+  unit: string;
+  value: CameraFeatureValue | null;
+  minimum: CameraFeatureValue | null;
+  maximum: CameraFeatureValue | null;
+  increment: CameraFeatureValue | null;
+  entries: string[];
+}
+export interface CameraFeatureNodeInfo { name: string; display_name: string; tooltip: string; description: string; visibility: string }
+export interface CameraFeatureCategory extends CameraFeatureNodeInfo { categories: string[]; features: string[]; error: string }
+export interface CameraFeatureEntry extends CameraFeatureNodeInfo { descriptor: CameraFeatureDescriptor | null; error: string }
+export interface CameraFeatureModuleTree {
+  module: CameraFeatureModule;
+  enumerated: boolean;
+  reason: string;
+  truncated: boolean;
+  roots: string[];
+  categories: CameraFeatureCategory[];
+  features: CameraFeatureEntry[];
+  uncategorized: string[];
+}
+export interface CameraFeatureTreeReply {
+  schema_version: number;
+  outcome: CameraFeatureOutcome;
+  reason: string;
+  evidence: string;
+  session: CameraFeatureSession | null;
+  modules: CameraFeatureModuleTree[];
+}
+export interface CameraFeatureReply {
+  schema_version: number;
+  outcome: CameraFeatureOutcome;
+  reason: string;
+  evidence: string;
+  session: CameraFeatureSession | null;
+  address: { module: CameraFeatureModule; feature: string; selector: string | null };
+  requested: CameraFeatureValue | null;
+  readback: CameraFeatureDescriptor | null;
+}
+export interface CameraFeatureTreeRequest { modules?: CameraFeatureModule[]; descriptors?: boolean; available_only?: boolean }
+export interface CameraFeatureReadRequest { session: CameraFeatureSession; module: CameraFeatureModule; feature: string; selector?: string | null }
+export interface CameraFeatureWriteRequest extends CameraFeatureReadRequest { value: CameraFeatureValue }
+
 /** Authoritative selected-device snapshot (bridge schema v7, BE-2). `mode`
  *  is a contract CAMERA_SELECTION_MODES value. */
 export interface CameraSelection {
@@ -1055,6 +1119,15 @@ export const bridge = {
   // `deferred` ("computed when the instrument is idle"), never an error.
   runQuickLook: async (paths: string[], reference?: RunQuickLookReference | null) =>
     decodeRunQuickLookReply(await invoke<unknown>("run_quick_look", runQuickLookArgs(paths, reference))),
+  // Camera GenApi features (bridge ABI 49, #806 E02/E01): the node map as the camera describes it,
+  // and typed read/write by name under the session token. Tree and read are reads; write is a
+  // camera control whose outcome (readback / refused / stale / unknown) is the backend's.
+  cameraFeatureTree: (request: CameraFeatureTreeRequest = {}) =>
+    invoke<CameraFeatureTreeReply>("camera_feature_tree", { request }),
+  cameraFeatureRead: (request: CameraFeatureReadRequest) =>
+    invoke<CameraFeatureReply>("camera_feature_read", { request }),
+  cameraFeatureWrite: (request: CameraFeatureWriteRequest) =>
+    invoke<CameraFeatureReply>("camera_feature_write", { request }),
   triggerSetPulseDuration: (pulseUs: number) =>
     invokeCommand("trigger_set_pulse_duration", { pulseUs }),
   triggerManualPulse: () => invokeCommand("trigger_manual_pulse"),

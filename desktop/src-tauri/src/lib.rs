@@ -666,6 +666,23 @@ fn run_quick_look(
     cmds::run_quick_look(&state, paths, reference)
 }
 
+// ABI 49 (#806 E-1/E-2/E-3): the camera's GenApi node map (bridge-contract.json camera_features).
+// Tree and read are reads; write is a camera control. The backend decides every outcome.
+#[tauri::command]
+fn camera_feature_tree(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::camera_feature_tree(&state, request)
+}
+
+#[tauri::command]
+fn camera_feature_read(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::camera_feature_read(&state, request)
+}
+
+#[tauri::command]
+fn camera_feature_write(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::camera_feature_write(&state, request)
+}
+
 #[tauri::command]
 fn trigger_set_pulse_duration(state: State<AppState>, pulse_us: i32) -> Result<cmds::CmdResult, String> {
     cmds::trigger_set_pulse_duration(&state, pulse_us)
@@ -945,6 +962,9 @@ pub fn run() {
             calibration_record_get,
             calibration_apply,
             run_quick_look,
+            camera_feature_tree,
+            camera_feature_read,
+            camera_feature_write,
             trigger_set_pulse_duration,
             trigger_manual_pulse,
             trigger_periodic_start,
