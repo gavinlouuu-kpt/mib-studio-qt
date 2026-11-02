@@ -233,3 +233,39 @@ Sources: `include/backend/analysis/SourceAnalysis.h`,
   descriptive comparison (file A not open: short-lived reader) equals the oracle;
   open RSS < 24 MiB and the whole sequence < 64 MiB peak growth (asserted;
   measured values in the ledger).
+
+## FCS 3.0/3.1 import feeding the native evaluator (F-2, F15 read side)
+
+Sources: `include/backend/analysis/FcsReader.h`, `src/backend/analysis/FcsReader.cpp`;
+tests `tests/analysis/fcs_reader_test.cpp` (`analysis.fcs_reader`),
+`tests/analysis/flowjo_reference_test.cpp` (`analysis.flowjo_reference`), writer
+`tests/analysis/fcs_test_support.h`; optional comparator
+`tools/flowjo_acceptance/fcs_comparator.py` (never production, ADR 0016).
+
+- **Reader** (native C++, no Python): HEADER offsets, `$BEGINDATA/$ENDDATA` when
+  the HEADER records 0, supplemental TEXT; TEXT with any delimiter and doubled-
+  delimiter escapes, case-insensitive keywords (`parseFcsText`); list mode with
+  `$DATATYPE` F (32-bit), D (64-bit), I (8/16/32/64-bit per `$PnB`); `$BYTEORD`
+  ascending or descending; integer `$PnR` masking; integer `$PnE` log decoding
+  (`f2 * 10^(f1 * x / $PnR)`, f2 = 0 read as 1 and reported); `$PnG` division only
+  with `FcsOptions.applyGain` (off by default; recorded either way).
+- **Refused** (`FcsError`, nothing read): FCS2.0, `$MODE` C/U, `$DATATYPE` A,
+  packed integer widths, mixed byte orders, F/D width mismatch, DATA outside the
+  file or shorter than `$TOT` × width, missing/duplicate keywords, malformed TEXT.
+- **Reported, not applied** (`unsupported`, in the handle's `import` block):
+  compensation (`$SPILLOVER`/`$SPILL`/`$COMP`), `$PnCALIBRATION`, `$PnD`,
+  `$TIMESTEP`, `$PnE` on float data, `$NEXTDATA` data sets, the ANALYSIS segment,
+  trailing DATA bytes, unapplied `$PnG`.
+- **Columns.** `FcsColumns` is an `EventColumns` (one segment `events`): each
+  scan reopens the file and reads at most min(chunk, 4 MiB / event width) events
+  per read. Parameter ids are `$PnN` made graph-safe and unique; units are
+  explicit (`a.u. (FCS channel value)`, `... log-decoded scale value`,
+  `... channel value / $PnG`).
+- **Handle.** `fcsSourceDescriptor({kind: fcs, path[, applyGain]})` is the
+  F-source/2 handle (scope `fcs`, full-file SHA-256 identity; with applied gain a
+  distinct fingerprint); `lendFcsColumns` re-verifies the SHA-256 (cached by path +
+  size + write time) and lends `FcsColumns`. Both hosts resolve `kind: fcs` and
+  lend `scope: fcs`, so saved strategies, reports, plots, comparisons run on FCS
+  files through the same evaluator as MIB recordings.
+- **Histogram bins.** `ResourceBounds::maxHistogramBins` (default 256, the display
+  hosts' bound) lets the acceptance compare FlowJo's 4,096-bin exports.

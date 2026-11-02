@@ -319,8 +319,10 @@ ColumnHistogram columnHistogram(const TriStateBits& population, const EventColum
     if (population.size() != columns.eventCount())
         throw std::invalid_argument("Membership does not cover the source");
     if (!std::isfinite(minimum) || !std::isfinite(maximum) || minimum >= maximum || bins < 1 ||
-        bins > 256)
-        throw std::invalid_argument("Histogram needs finite minimum < maximum and 1..256 bins");
+        bins > std::min<std::size_t>(bounds.maxHistogramBins, 65536))
+        throw std::invalid_argument("Histogram needs finite minimum < maximum and 1.." +
+                                    std::to_string(std::min<std::size_t>(bounds.maxHistogramBins, 65536)) +
+                                    " bins");
     ColumnHistogram h;
     for (std::size_t i = 0; i <= bins; ++i) {
         const long double weight = static_cast<long double>(i) / bins;

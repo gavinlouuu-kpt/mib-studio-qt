@@ -331,3 +331,42 @@ native ctest. No real-instrument recording, no hardware.
   bounded at 65,536 events; run-archive and live sources stay inline (≤100k by
   design); no real-recording run; the desktop view shows no FCS/columnar-specific
   affordance yet.
+
+### F-2 FCS import feeding the native evaluator (2026-11-02, `claude/808-f1b-f2`)
+
+Goals advanced: F15 (read side), F04. Evidence class: **real backend, synthetic
+FCS files written by the test**; the FlowJo reference acceptance is implemented
+but **was not run here** (private fixture absent: `analysis.flowjo_reference`
+reports SKIPPED, exit 77, never a pass).
+
+- **Mechanism.** Native `FcsReader` (FCS 3.0/3.1 HEADER, TEXT with delimiter
+  escapes, supplemental TEXT, `$BEGINDATA/$ENDDATA`; list mode F/D/I with
+  `$BYTEORD`, `$PnB`, `$PnR` masking, `$PnE` log decoding, optional `$PnG`) →
+  `FcsColumns` (chunked DATA reads) → F-source/2 handle (scope `fcs`, full-file
+  SHA-256, explicit units, `import` block listing unapplied constructs) → the same
+  `ColumnarEvaluation` / `AnalysisHost` path as MIB recordings. Both hosts
+  resolve `{kind: fcs, path}` and lend `scope: fcs`. No Python in the path.
+- **Unsupported (refused):** FCS2.0, `$MODE` C/U, `$DATATYPE` A, packed integer
+  widths, mixed byte orders, F/D width mismatch, truncated DATA. **Reported, not
+  applied:** compensation (F03), `$PnCALIBRATION`, `$PnD`, `$TIMESTEP`, `$PnE` on
+  float data, extra data sets, ANALYSIS segment, `$PnG` unless `applyGain`.
+- **Proof.** `analysis.fcs_reader`: tokenizer escapes (keywords and values, `|`
+  and form-feed delimiters, odd/duplicate refusal); F big-endian (250,000 events,
+  lowercase keywords), D little-endian with DATA offsets only in TEXT, I with
+  8/16/32-bit, masking, log decoding and gain — every value equals the
+  independent writer's; seven refusals; a rectangle gate over 250,000 events
+  (62,507 selected) through `evaluateSource` and a saved strategy report through
+  `AnalysisHost` equal the oracle; a changed file is refused. Optional comparator
+  `tools/flowjo_acceptance/fcs_comparator.py` (fcsparser 0.2.8, else flowio;
+  both pip-installable here) agreed with the native reader on event count and sum
+  when `MIB_FCS_COMPARATOR_PYTHON` pointed at a scratch venv; it is not in the
+  production path or the default CI run.
+- **Reference acceptance (pending fixture).** `analysis.flowjo_reference` with
+  `MIB_FLOWJO_REFERENCE_ROOT`: SHA-256 pins, 229,585 events, 190,705 in the
+  documented rectangle through PopulationGraph semantics, zero boundary events,
+  both 4,096-bin exports compared bin by bin (`ResourceBounds::maxHistogramBins`
+  raised for this tool only), optional comparator recount.
+- **Remaining.** Run the reference on a host with the fixture; FCS export of
+  units/transforms and GatingML (F-6); compensation/Logicle (F03); `$TIMESTEP`
+  scaling; a review-bridge test of the `fcs` kind; a desktop affordance for
+  choosing an FCS source.
