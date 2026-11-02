@@ -1875,6 +1875,9 @@ mib_add_backend_test_executable(analysis_flowjo_reference_test analysis/flowjo_r
 add_test(NAME analysis.flowjo_reference COMMAND $<TARGET_FILE:mib_backend_tests> analysis_flowjo_reference_test)
 set_tests_properties(analysis.flowjo_reference PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
     LABELS "analysis;backend;acceptance")
+mib_add_backend_test_executable(review_population_rewrite_test review/review_population_rewrite_test.cpp)
+add_test(NAME review.population_rewrite COMMAND $<TARGET_FILE:mib_backend_tests> review_population_rewrite_test)
+set_tests_properties(review.population_rewrite PROPERTIES TIMEOUT 120 LABELS "review;analysis;backend;hdf5;fault")
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
 # F-2: tests that call the optional comparator script (tools/flowjo_acceptance).
