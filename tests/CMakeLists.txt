@@ -1875,6 +1875,12 @@ mib_add_backend_test_executable(analysis_flowjo_reference_test analysis/flowjo_r
 add_test(NAME analysis.flowjo_reference COMMAND $<TARGET_FILE:mib_backend_tests> analysis_flowjo_reference_test)
 set_tests_properties(analysis.flowjo_reference PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
     LABELS "analysis;backend;acceptance")
+# F-2 review fixes: $PnR masks (64-bit high range must finish, $PnR 1/2),
+# FCS rewrite between descriptor and evaluation / during the scan, and an
+# 80-parameter file gated on two parameters with lazy columns.
+mib_add_backend_test_executable(analysis_fcs_hardening_test analysis/fcs_hardening_test.cpp)
+add_test(NAME analysis.fcs_hardening COMMAND $<TARGET_FILE:mib_backend_tests> analysis_fcs_hardening_test)
+set_tests_properties(analysis.fcs_hardening PROPERTIES TIMEOUT 60 LABELS "analysis;backend;roundtrip;fault")
 mib_add_backend_test_executable(review_population_rewrite_test review/review_population_rewrite_test.cpp)
 add_test(NAME review.population_rewrite COMMAND $<TARGET_FILE:mib_backend_tests> review_population_rewrite_test)
 set_tests_properties(review.population_rewrite PROPERTIES TIMEOUT 120 LABELS "review;analysis;backend;hdf5;fault")
