@@ -266,8 +266,28 @@ the bridge. No I slice is TypeScript only.
 
 ## Progress
 
+Draft PRs as of 2026-11-02. Evidence classes: E = fixture/mock; F and I =
+real backend on synthetic data. Nothing has been checked on hardware yet.
+
 - [x] D1–D4 recorded (2026-11-02; ADR 0016; fold-in goal guard)
-- [ ] U-1, U-2
-- [ ] E-1, E-2, E-3, E-4, E-5
-- [ ] I-1, I-2, I-3, I-4, I-5, I-6, I-7
-- [ ] F-1, F-2, F-3, F-4, F-5, F-6
+- [x] U-1: #820, `develop` merged into `feat/egrabber-workspace`
+- [x] U-2a: #821, #810 merged onto the workspace branch (bridge ABI 47 / review ABI 9).
+  Also fixes #810's regression where `stop_capture` recorded two capture changes.
+- [x] U-2b: #822, the I-track rebuilt on #821 without the copied F code (bridge ABI 48).
+  Supersedes #815.
+- [x] E-1, E-2: #817 (on #812). GenApi node-map enumeration and wired typed feature
+  commands (bridge ABI 49).
+- [x] E-3, E-4: #819. Restart-safe tokens and discovery generations. Align quick
+  controls are SFNC bindings over the node map, plus a feature-tree browser.
+- [ ] E-5: Windows eGrabber rig run. Needs hardware.
+- [x] I-1: #825 (on #822). Native RecipeProvider, backend compatibility diff, apply
+  preview (bridge ABI 50).
+- [ ] I-2, I-3, I-4, I-5, I-6, I-7
+- [x] F-1: #818 (on #810). Columnar evaluation; 10k / 64 MiB caps removed (review ABI 10).
+- [x] F-1b, F-2: #823. Workspace path at full scale; native FCS 3.0/3.1 import.
+- [ ] F-2 reference: run `analysis.flowjo_reference` with `MIB_FLOWJO_REFERENCE_ROOT`.
+  Needs the private fixture.
+- [x] F-3, F-4: #824. ADR 0016 docs; native ComparisonSpec inference and 4PL/3PL fits.
+- [ ] F-5, F-6
+- [ ] Move the F stack (#818 → #823 → #824) onto #821 once it lands. The stack is
+  still based on `develop` through #810.
