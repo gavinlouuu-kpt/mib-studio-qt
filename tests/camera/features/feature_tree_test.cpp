@@ -261,7 +261,7 @@ void enumerationRefusesStaleAndUnsupported() {
         check(enumerate(guard, {}).outcome == Outcome::Refused, "no session: refused");
     }
     {
-        // The guard refuses before the port (the sort trigger is armed): refused
+        // The guard refuses before the port (sort pulses pending): refused
         // with the guard's reason, nothing enumerated.
         TestGuard guard(map);
         guard.mode = Access::Refused;

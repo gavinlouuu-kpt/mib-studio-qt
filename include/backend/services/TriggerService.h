@@ -50,16 +50,16 @@ public:
     // Currently bound session generation (0 when no camera is bound).
     uint64_t boundGeneration() const { return boundGeneration_.load(std::memory_order_acquire); }
 
-    // E02 (#806) feature I/O interlock. Runs `fn` while holding pulseMutex_,
-    // the lock the trigger thread holds for a whole pulse (rising edge, busy
-    // wait, falling edge), and only when the trigger is idle: the service is
-    // not running and no camera is bound for trigger output (armed). Otherwise
-    // `fn` is not called, `reason` says why, and false is returned. Because the
-    // decision and `fn` share pulseMutex_, no camera feature operation can run
-    // between a pulse's edges, and none can start while the trigger is armed
-    // (setCamera() and start() take the same lock). Lock order: pulseMutex_
-    // before the capture session guard and the camera's own port guard.
-    bool runWhileTriggerIdle(const std::function<void()>& fn, std::string& reason);
+    // E02 (#806) feature I/O interlock. Always runs `fn` while holding
+    // pulseMutex_, the lock the trigger thread holds for a whole pulse (rising
+    // edge, busy wait, falling edge), so no camera feature operation can ever
+    // run between a pulse's edges. It refuses (fn not called, `reason` set,
+    // false returned) only while a pulse is pending or imminent: a request is
+    // queued, a dequeued request has not finished its pulse, or the periodic
+    // test generator is on. A trigger that is merely started and bound with
+    // nothing queued is not a refusal. Lock order: pulseMutex_ before
+    // triggerMutex_, the capture session guard and the camera's port guard.
+    bool runSerializedWithPulses(const std::function<void()>& fn, std::string& reason);
 
     // Called by ProcessingService callback when a frame has target-group ownership.
     // Metadata carries trigger owner identity; one trigger request is expected
@@ -172,6 +172,9 @@ private:
     std::mutex lifecycleMutex_;
     std::thread thread_;
     std::atomic<bool> running_{false};
+    // True from the moment the loop dequeues a request until that request's
+    // pulse (or drop) is finished: a pulse is imminent (E02 interlock).
+    std::atomic<bool> firing_{false};
 
     // Periodic test pulse generator (BE-5)
     std::thread periodicThread_;

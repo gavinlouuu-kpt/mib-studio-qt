@@ -24,10 +24,11 @@ view" pointer is gone. Evidence: fixture/mock only; no hardware run. See
 [[services/CaptureService]], [[services/DeviceDiscoveryService]], [[camera/FeatureControl]],
 [[architecture/Rust-Bridge]], [[architecture/Desktop-Shell]].
 
-**Review fixes (E02 view, E01).** Merged #817's fixes (feature I/O refused while the
-sort trigger is armed or a run is in progress; the tree as a backend job; the Tauri
-`camera_feature_tree` is now async). The server tests that drive the mock node map
-boot with `MIB_DISABLED_SERVICES=trigger`; tokens carry `instance`. In Align: a
+**Review fixes (E02 view, E01).** Merged #817's fixes (feature I/O serialized with
+sort pulses always and refused while sorting is possible: pulses queued or firing,
+a run, realtime processing or autofocus; the tree as a backend job; the Tauri
+`camera_feature_tree` is now async). The server tests run in the default boot (the
+trigger started and bound); tokens carry `instance`. In Align: a
 write rejected without a backend reply is a `WriteFailure` (VIEWER_ONLY and other
 server codes "Not sent", a transport failure "No reply from the backend"), never
 "may have reached the camera"; App locks Align's writes for a viewer

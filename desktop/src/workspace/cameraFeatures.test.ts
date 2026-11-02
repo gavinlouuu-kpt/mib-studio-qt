@@ -70,8 +70,8 @@ describe("resolveBinding against the live tree", () => {
     expect(resolutionStatus(r, false).label).not.toContain("reading the tree again");
   });
 
-  it("refused: the backend's refusal (the sort trigger armed, a run in progress) is shown in its own words", () => {
-    const reason = "Camera feature access is refused while the sort trigger output is armed on this camera: a node-map call between pulse edges would stretch the sort pulse.";
+  it("refused: the backend's refusal (sort pulses pending, a run in progress) is shown in its own words", () => {
+    const reason = "Camera feature access is refused while sort pulses are pending: a node-map call would delay them.";
     const r = resolveBinding(treeOutcome("refused", reason), "remote", "Gain");
     expect(r).toEqual({ state: "refused", reason });
     expect(resolutionStatus(r)).toEqual({ tone: "blocked", label: `Refused · ${reason}`, title: `The backend refused: ${reason}` });

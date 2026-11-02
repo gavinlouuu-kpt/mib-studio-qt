@@ -17,7 +17,7 @@ namespace camera::features {
 // (CaptureService) holds its session guard for the whole call, builds the
 // CurrentSession (token = source + capture generation + capability revision)
 // and stores back any revision `fn` advances. Refused: the guard declined the
-// operation before touching the device (the sort trigger is armed, a run is in
+// operation before touching the device (sort pulses pending, a run is in
 // progress) and `reason` says why; replies carry outcome "refused".
 enum class Access { Ran, NoSession, Unsupported, Refused };
 class GuardedPort {

@@ -49,7 +49,7 @@ export type Resolution =
   | { state: "unknown"; reason: string }
   /** The tree's session changed while it was read (the hook reads it again, a bounded number of times). */
   | { state: "stale"; reason: string }
-  /** The backend refused to touch the camera's node map (the sort trigger is armed, a run is in
+  /** The backend refused to touch the camera's node map (sort pulses pending, a run is in
    *  progress, ...); `reason` is the backend's text. */
   | { state: "refused"; reason: string }
   /** The camera has no GenApi node map. */

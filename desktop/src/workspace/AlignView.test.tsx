@@ -469,8 +469,8 @@ describe("SFNC quick controls over the camera's node map (#806 E-3)", () => {
     expect(api.tree.mock.calls.length).toBeGreaterThan(calls); // Refresh reads again
   });
 
-  it("the backend's refusal (sort trigger armed) is shown in Align as the backend wrote it", async () => {
-    const reason = "Camera feature access is refused while the sort trigger output is armed on this camera: a node-map call between pulse edges would stretch the sort pulse.";
+  it("the backend's refusal (sort pulses pending) is shown in Align as the backend wrote it", async () => {
+    const reason = "Camera feature access is refused while sort pulses are pending: a node-map call would delay them.";
     await render({ features: fakeFeatures([treeOutcome("refused", reason)], () => { throw new Error(); }) });
     await settle();
     expect(chip("exposure").textContent).toBe(`Refused · ${reason}`);

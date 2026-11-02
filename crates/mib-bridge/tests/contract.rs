@@ -129,7 +129,7 @@ fn abi_version_is_stable() {
     // v49 (#806 E-1/E-2; 47 is the F track's, 48 the I track's) camera_feature_tree_start /
     // camera_feature_tree_fetch (the tree as a job) / camera_feature_read / camera_feature_write:
     // the camera's GenApi node map enumerated from the device, typed access by name under the
-    // capture session token, refused while the sort trigger is armed or a run is in progress.
+    // capture session token, serialized with sort pulses and refused while sorting is possible.
     assert_eq!(ffi::bridge_abi_version(), 49);
 }
 
@@ -155,7 +155,7 @@ fn camera_features_are_described() {
                           ("commands", "{instance, source, generation"),
                           ("discovery_instance", "stale"), ("discovery_instance", "MissingSdk"),
                           ("guard", "pulseMutex_"), ("guard", "never before taking them"),
-                          ("access", "trigger output is armed or the trigger service is running"),
+                          ("access", "while sorting is possible"), ("access", "merely started and bound with nothing queued is not a refusal"), ("guard", "serialized with sort pulses"),
                           ("access", "starting, active or stopping"), ("access", "realtime processing"),
                           ("access", "autofocus"), ("tree", "never an empty enumerated tree"),
                           ("job", "camera_feature_tree_start"), ("job", "never for the walk"),

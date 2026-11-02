@@ -4021,8 +4021,9 @@ std::string BackendFacade::fetchCameraGeometryJson() const {
 namespace {
 // E02: the facade's view of the camera as a GuardedPort. Every step runs
 //   [writes: the coordinator's idle transaction, so Start is excluded]
-//   -> TriggerService::runWhileTriggerIdle (the pulse lock; refused while the
-//      sort trigger is armed or running)
+//   -> TriggerService::runSerializedWithPulses (the pulse lock, always: no
+//      feature operation between a pulse's edges; refused while pulses are
+//      queued or firing)
 //   -> CaptureService::withCameraFeatures (the capture guard; the gate below is
 //      evaluated there, before the port)
 //   -> the camera's own port guard.
@@ -4043,7 +4044,7 @@ public:
         }
         Access access = Access::Refused;
         const auto guarded = [&] {
-            if (!backend_.trigger().runWhileTriggerIdle(
+            if (!backend_.trigger().runSerializedWithPulses(
                     [&] { access = backend_.capture().withCameraFeatures(fn, reason, gate()); }, reason))
                 access = Access::Refused;
         };
@@ -4063,25 +4064,27 @@ public:
 private:
     services::CameraFeatureGate gate() {
         services::CameraFeatureGate g;
-        // A run records the camera's configuration at start and depends on the
-        // camera while it runs: no feature I/O at all from Starting to Stopping.
+        // Refused while sorting is possible, i.e. a pulse could become pending at
+        // any moment: a run from Starting to Stopping, realtime processing (its
+        // target selection feeds the trigger) or autofocus running. Queued pulses
+        // are refused by runSerializedWithPulses.
         g.refuseAll = [this]() -> std::string {
             const auto run = backend_.experiment().stateNow();
             if (run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
                 run == app::ExperimentRunState::Stopping)
                 return std::string("Camera feature access is refused while the experiment is ") +
                        app::toString(run) + ".";
+            if (backend_.processing().isRealtimeRunning())
+                return "Camera feature access is refused while realtime processing is running: its target "
+                       "selection drives sort pulses.";
+            if (backend_.autofocus().isEnabled())
+                return "Camera feature access is refused while autofocus is running.";
             return {};
         };
-        // Writes: what configApplyBlocker refuses, except capture itself (the node
-        // map is only open while the camera runs).
+        // Writes also: a frame recording records the camera's configuration.
         g.refuseWrites = [this]() -> std::string {
             if (backend_.isFrameRecording())
                 return "Feature writes are refused while a frame recording is running.";
-            if (backend_.processing().isRealtimeRunning())
-                return "Feature writes are refused while realtime processing is running.";
-            if (backend_.autofocus().isEnabled())
-                return "Feature writes are refused while autofocus is enabled.";
             return {};
         };
         return g;

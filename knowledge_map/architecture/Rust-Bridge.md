@@ -530,7 +530,7 @@ camera's node map ([[../camera/FeatureControl]]). Contract: `camera_features` (b
 `commands`, `session`, `guard`, `access`, `outcomes`, `descriptor`, `tree`, `job`).
 
 - **Path:** C++ `BackendFacade::cameraFeature{Tree,Read,Write}Json` -> [writes: the
-  coordinator's idle transaction] -> `TriggerService::runWhileTriggerIdle` (pulse lock) ->
+  coordinator's idle transaction] -> `TriggerService::runSerializedWithPulses` (pulse lock) ->
   `CaptureService::withCameraFeatures` (capture guard, run-state gate) ->
   `ICamera::featureSession()->withPort` (camera port guard) -> cxx `camera_feature_read` /
   `camera_feature_write(request_json) -> String` and, for the tree, `camera_feature_tree_start(request_json)
@@ -548,11 +548,12 @@ camera's node map ([[../camera/FeatureControl]]). Contract: `camera_features` (b
   last 16 replies are kept; shutdown cancels the walk at its next guarded step and joins it. The
   cxx surface changed within the unmerged ABI 49 (`camera_feature_tree` ->
   `camera_feature_tree_start` / `camera_feature_tree_fetch`).
-- **Refusals (#806 review, finding 1):** every feature command is `refused` (with the reason, no
-  device access) while the sort trigger is armed or running and while an experiment is
-  Starting/Active/Stopping; writes also while a frame recording or realtime processing runs or
-  autofocus is enabled. In the default boot the trigger runs with every capture session, so the
-  commands answer `refused` until the trigger service is disabled.
+- **Pulses (#806 review, finding 1):** serialized with sort pulses always; refused while sorting is possible. Every feature command runs under
+  the trigger's pulse lock and is `refused` (with the reason, no device access) only while sort
+  pulses are queued or firing (or periodic test pulses run), an experiment is
+  Starting/Active/Stopping, or realtime processing or autofocus runs; writes also while a frame
+  recording runs. A started, bound trigger with nothing queued is not a refusal, so the commands
+  work in the default boot.
 - **Session:** the token `{instance, source, generation, capability_revision}` (decimal strings;
   every member required) of an earlier reply; any difference is `stale`. A capture restart opens
   a new generation; a write that may have reached the device advances the revision; `instance`
@@ -572,8 +573,8 @@ camera's node map ([[../camera/FeatureControl]]). Contract: `camera_features` (b
 - **Tests:** `contract.rs` `camera_features_are_described`, `camera_features_without_a_session`
   (start/fetch before init, unknown job);
   the server's `camera_feature_write_is_control_and_reads_are_open`; real server
-  `tests/camera_features.rs` (`feature_io_refused_while_the_sort_trigger_is_armed` in the default
-  boot; with `MIB_DISABLED_SERVICES=trigger` the mock node map round trip: enumerate, read, write
+  `tests/camera_features.rs`, all in the default boot (`feature_io_refused_while_pulses_are_imminent`:
+  periodic test pulses refuse, stopping them reopens; the mock node map round trip: enumerate, read, write
   with readback, stale old revision, refused read-only and out-of-range writes, viewer denied,
   stale generation after a capture restart; `tokens_from_before_a_backend_restart_are_refused`: a
   second backend instance whose token equals the first's except `instance`, the old token stale for
