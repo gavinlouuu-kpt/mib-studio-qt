@@ -269,3 +269,44 @@ tests `tests/analysis/fcs_reader_test.cpp` (`analysis.fcs_reader`),
   files through the same evaluator as MIB recordings.
 - **Histogram bins.** `ResourceBounds::maxHistogramBins` (default 256, the display
   hosts' bound) lets the acceptance compare FlowJo's 4,096-bin exports.
+
+## Comparison and concentration-response fits (F-4, F09 / I09 / I10)
+
+The native inference authority (ADR 0016; no TypeScript or Python in the path):
+
+- `include/backend/analysis/AnalysisInference.h` / `src/backend/analysis/AnalysisInference.cpp`:
+  pure C++ distributions (regularized incomplete beta and gamma, normal, t
+  quantile by bisection) and tests on unit-level values: Welch t, Mann-Whitney U
+  (exact null distribution when untied and both n <= 50, else normal
+  approximation with tie and 0.5 continuity correction), paired t, Wilcoxon
+  signed-rank (zeros dropped; exact when untied and n <= 50, else normal
+  approximation with tie correction), one-way ANOVA, Kruskal-Wallis; and
+  `fitLogistic`: 4PL / 3PL (hill 1) by Levenberg-Marquardt (three starts,
+  bounds |hill| <= 10, logEC50 within 3 decades of the tested range), covariance
+  s^2 (J'WJ)^-1, t CIs, EC50 CI on log10 or linear scale, residuals, R^2,
+  optional 1/variance-of-replicate-units weights.
+- `compareSpec` / `fitSpec` (`AnalysisComparison.cpp`): parse
+  `F-comparison-spec/1` and `F-fit-spec/1`, evaluate each pinned sample through
+  the host (`evaluate` with the optional `metric {population, parameter}`, which
+  adds `sourceParameters` / `sourceProvenance`), exclude incompatible sources
+  with reasons (parameters/units, preprocessing fingerprint, processing core,
+  calibration, E-LUT, missing metric, repeated source), average technical
+  replicates per unit, and run inference only when declared and every group has
+  >= 3 units (`kMinimumUnitsPerGroup`; can be raised, not lowered), otherwise
+  `insufficient` with reasons and no p-value. Fits with fewer points than
+  parameters + 1, fewer distinct concentrations than parameters, no response
+  variation, or unweighable replicates return `insufficient` and no parameters;
+  suspect reasons: not converged, EC50 outside the tested range, EC50 CI wider
+  than the range, fewer than 5 concentrations, parameter at bound, singular
+  covariance.
+- Host actions `comparisonSpec` / `concentrationFit` (read endpoint; reply
+  carries `contentHash`). The descriptive `compare` (F-analysis-comparison/1)
+  stays for existing findings.
+- Proof: `analysis.inference` (scipy values from
+  `tools/analysis_inference/generate_reference.py` → `tests/analysis/inference_reference.h`)
+  and `analysis.comparison_spec` (the same numbers through `AnalysisHost`, plus
+  exclusions, insufficient units, technical replicates, suspect and insufficient
+  fits).
+- Remaining: no CI for rank-test shifts or ANOVA effect sizes; repeated-measures
+  (paired > 2 groups) and dose series within one unit are refused, not modelled;
+  no multiplicity correction; no I-6 view yet.

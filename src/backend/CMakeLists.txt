@@ -227,6 +227,7 @@ add_library(mib_review_core STATIC
     analysis/PopulationScatter.cpp
     analysis/ParameterTransforms.cpp
     analysis/AnalysisComparison.cpp
+    analysis/AnalysisInference.cpp
     analysis/AnalysisReports.cpp
     analysis/AnalysisOverlay.cpp
     analysis/AnalysisLibrary.cpp

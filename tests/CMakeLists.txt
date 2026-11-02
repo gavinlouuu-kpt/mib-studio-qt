@@ -1843,6 +1843,16 @@ set_tests_properties(analysis.workspace_host_test PROPERTIES TIMEOUT 40 LABELS "
 mib_add_backend_test_executable(analysis_host_test analysis/analysis_host_test.cpp)
 add_test(NAME analysis.host COMMAND $<TARGET_FILE:mib_backend_tests> analysis_host_test)
 set_tests_properties(analysis.host PROPERTIES TIMEOUT 40 LABELS "analysis;persistence;stress")
+# F-4 (#808 F09, I09, I10): native inference/fits against scipy reference
+# values (tools/analysis_inference/generate_reference.py), and the
+# ComparisonSpec / fit authority through AnalysisHost (compatibility
+# exclusions, insufficient units, suspect fits).
+mib_add_backend_test_executable(analysis_inference_test analysis/inference_test.cpp)
+add_test(NAME analysis.inference COMMAND $<TARGET_FILE:mib_backend_tests> analysis_inference_test)
+set_tests_properties(analysis.inference PROPERTIES TIMEOUT 30 LABELS "analysis;backend;invariant")
+mib_add_backend_test_executable(analysis_comparison_spec_test analysis/comparison_spec_test.cpp)
+add_test(NAME analysis.comparison_spec COMMAND $<TARGET_FILE:mib_backend_tests> analysis_comparison_spec_test)
+set_tests_properties(analysis.comparison_spec PROPERTIES TIMEOUT 40 LABELS "analysis;backend;persistence")
 # F-1 (#808 F04/F05/F08/F16): the columnar full-recording evaluator equals the
 # keyed evaluator at every node and chunk size; explicit resource bounds refuse.
 mib_add_backend_test_executable(analysis_columnar_test analysis/columnar_test.cpp)

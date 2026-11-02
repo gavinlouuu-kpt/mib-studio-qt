@@ -256,6 +256,21 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 {"status", "ok"}, {"comparison", result}, {"contentHash", contentHash(result)}}
                 .dump();
         }
+        if (action == "comparisonSpec" || action == "concentrationFit") {
+            // F-4 (#808 F09, I09, I10): declared-unit comparison and fits over
+            // pinned revisions; each sample is evaluated through this host.
+            fields(q, {"action", "spec"});
+            const auto evaluate = [&](const Json& request) {
+                return Json::parse(
+                    analysisRequest(database, request.dump(), false, source, method, columns));
+            };
+            const auto result = action == "comparisonSpec" ? compareSpec(q.at("spec"), evaluate)
+                                                           : fitSpec(q.at("spec"), evaluate);
+            return Json{{"status", "ok"},
+                        {action == "comparisonSpec" ? "comparison" : "fit", result},
+                        {"contentHash", contentHash(result)}}
+                .dump();
+        }
         if (action == "saveFinding") {
             if (!write) throw std::invalid_argument("Saving a finding requires write endpoint");
             fields(q, {"action", "findingId", "commandId", "spec", "note"});
@@ -578,6 +593,9 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             fields(q, action == "gallery"
                           ? std::set<std::string>{"action", "planId", "revision", "source",
                                                   "offset", "mask"}
+                      : action == "evaluate"
+                          ? std::set<std::string>{"action", "planId", "revision", "source",
+                                                  "metric"}
                           : std::set<std::string>{"action", "planId", "revision", "source"});
             if (q.at("revision").is_null())
                 throw std::invalid_argument("Evaluation requires pinned revision");
@@ -622,6 +640,31 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 columns(current, [&](const EventColumns& raw) {
                     inlineSource = materializeColumnarSource(current, raw);
                 });
+            }
+            if (q.contains("metric")) {
+                // F-4 (F09): one population x parameter of the pinned revision,
+                // with the source identity the comparison/fit authority checks.
+                const auto& metric = q.at("metric");
+                fields(metric, {"population", "parameter"});
+                if (!metric.contains("population") || !metric.contains("parameter"))
+                    throw std::invalid_argument("Metric requires population and parameter");
+                const auto population = metric.at("population").get<std::string>();
+                bool known = false;
+                for (const auto& node : doc.at("graph").at("nodes"))
+                    known = known || node.at("id").get<std::string>() == population;
+                if (!known)
+                    throw std::invalid_argument("Metric population " + population +
+                                                " is not in the pinned revision");
+                auto request = doc;
+                request["feature"] = metric.at("parameter");
+                auto result = evaluatePopulations(inlineSource, request, {population}, columns).at(0);
+                result["planId"] = q.at("planId");
+                result["revision"] = saved.at("revision");
+                result["metric"] = metric;
+                result["sourceParameters"] = current.at("parameters");
+                result["sourceProvenance"] =
+                    current.contains("provenance") ? current.at("provenance") : Json(nullptr);
+                return Json{{"status", "ok"}, {"evaluation", result}}.dump();
             }
             auto result = evaluateSource(inlineSource, doc, columns);
             result["planId"] = q.at("planId");

@@ -370,3 +370,47 @@ reports SKIPPED, exit 77, never a pass).
   units/transforms and GatingML (F-6); compensation/Logicle (F03); `$TIMESTEP`
   scaling; a review-bridge test of the `fcs` kind; a desktop affordance for
   choosing an FCS source.
+
+### F-4 Comparison and concentration-response fits (2026-11-02, `claude/808-f4-comparison-fits`)
+
+Goals advanced: F09, and the fit authority behind I09/I10. Evidence class:
+**real backend (AnalysisHost, pinned revisions, exact statistics) on synthetic
+sources; independent numbers from scipy 1.18.1**.
+
+- **Mechanism.** `AnalysisInference.cpp` (pure C++: incomplete beta/gamma,
+  t/F/chi-square/normal, tests, Levenberg-Marquardt 4PL/3PL) under
+  `compareSpec` / `fitSpec` in `AnalysisComparison.cpp`; host read actions
+  `comparisonSpec` and `concentrationFit`; `evaluate` gains the optional
+  `metric {population, parameter}`. Results bind each unit value to its
+  planId, revision, graphFingerprint and sourceFingerprint and carry a
+  contentHash. Review ABI stays 10 (additive to the unmerged contract).
+- **Declared inputs.** Experimental unit per source (shared units in a group
+  are technical replicates, averaged), groups (first is the reference), design
+  unpaired or paired by unit id, inference none/parametric/rank/both,
+  confidence level; fits: model 4PL or 3PL (hill 1), concentration unit, scale
+  log10 or linear, weighting none or inverse-variance of replicate units,
+  design independent-units.
+- **Compatibility.** Excluded with reasons: different parameters or units,
+  different parameter preprocessing, different processing core/contract,
+  calibration or E-LUT identity (source provenance; unknown matches only
+  unknown), missing metric (refused evaluation, absent population, no finite
+  statistic), repeated source fingerprint; fits also exclude other
+  concentration units and concentrations <= 0.
+- **Rules.** >= 3 independent units per group (paired: complete pairs);
+  otherwise `insufficient`, no test, no p-value. Fits: no fit with <= p unit
+  points, < p distinct concentrations, constant response or unweighable
+  replicates; suspect when not converged, EC50 outside the tested range, EC50
+  CI wider than the tested range, < 5 concentrations, a parameter at a bound,
+  or a singular covariance.
+- **Proof.** `analysis.inference` (Welch on unequal variances, Mann-Whitney
+  with ties and exact, paired t, Wilcoxon exact (Darwin) and with ties/zeros,
+  ANOVA and Kruskal-Wallis on the McDonald mussel data, 4PL unweighted /
+  weighted / 3PL / linear-scale EC50 vs `curve_fit`, suspect, insufficient);
+  `analysis.comparison_spec` (the same numbers through `AnalysisHost`, seven
+  exclusion reasons, insufficient units, technical replicates, fit unit
+  exclusion, suspect and insufficient fits). Generator:
+  `tools/analysis_inference/generate_reference.py` (outside production).
+- **Remaining.** CIs for rank shifts and ANOVA effect sizes; repeated measures
+  (paired > 2 groups, dose series within one unit) are refused, not modelled;
+  no multiplicity correction; the I-6 view.
+
