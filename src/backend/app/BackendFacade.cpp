@@ -867,10 +867,13 @@ namespace backend::bridge
                 // stopped", from the camera-ready callback inside stop()). Realtime then drains
                 // and stops for the live evidence summary; that is part of the same stop, not a
                 // second capture change that would replace the reason (#716 A6a review 2-3).
-                // With no active camera, the realtime stop ends the capture itself.
-                const bool cameraEndsCapture = backend_.capture().isRunning();
+                // A camera that dropped by itself (Faulted, so not isRunning()) already ended
+                // that capture on the capture thread: decided by whether the camera session's
+                // close is still the current capture, not by the lifecycle (#821 review). With
+                // no camera close since the last capture change, the realtime stop ends it.
                 backend_.capture().stop();
-                backend_.processing().drainAndStopRealtime(!cameraEndsCapture);
+                const bool cameraEndedCapture = backend_.monitoringCaptureEndedByCameraClose();
+                backend_.processing().drainAndStopRealtime(!cameraEndedCapture);
             }
             emitEvent(makeCameraStatus(CameraState::Stopped));
             return {true, BackendCommandType::Camera, "Capture stopped"};

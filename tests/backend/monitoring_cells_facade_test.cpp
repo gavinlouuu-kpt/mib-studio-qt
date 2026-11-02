@@ -514,6 +514,65 @@ int main()
         MIB_REQUIRE(facade.dispatch(stopCapture).ok, "capture stop");
         expectEnded(facade, proc, kBase + 310, before, "the camera stopped", "camera stop");
 
+        // The camera drops by itself (#821 review): the capture thread releases it ("the camera
+        // stopped") and the lifecycle is Faulted, so not isRunning(); realtime keeps running. The
+        // user's stop_capture then stops realtime as part of the same stop: no second capture
+        // change, the reason stays "the camera stopped", and the cells of that capture stay.
+        wd.mark("camera loss");
+        {
+            bridge::CameraCommand configure;
+            configure.action = bridge::CameraCommandAction::ConfigureMockCamera;
+            configure.mockFrameDirectory = mockDir.string();
+            configure.mockFrameIntervalMs = 5;
+            configure.mockLoopFiles = false; // one frame, then the stream ends by itself
+            MIB_REQUIRE(facade.dispatch(configure).ok, "mock camera configure (no loop)");
+            proc.setRealtimeEnabled(true);
+            proc.startRealtime(backendApp.getFrameStore()); // before the camera: its close is the last change
+            MIB_REQUIRE(proc.isRealtimeRunning(), "realtime runs");
+            const auto beforeCamera = proc.monitoringCaptureEpoch();
+            bridge::CameraCommand startCapture;
+            startCapture.action = bridge::CameraCommandAction::StartCapture;
+            MIB_REQUIRE(facade.dispatch(startCapture).ok, "capture start");
+            MIB_REQUIRE(waitFor(
+                            [&] {
+                                return backendApp.capture().lifecycleSnapshot().state ==
+                                       backend::services::CaptureLifecycleState::Faulted;
+                            },
+                            std::chrono::seconds(15)),
+                        "the stream ends by itself: Faulted");
+            MIB_EXPECT(!backendApp.capture().isRunning() && proc.isRealtimeRunning(),
+                       "the camera is lost, realtime still runs");
+            auto c = cells(facade);
+            MIB_REQUIRE(c["last_capture_change"].is_object() &&
+                            c["last_capture_change"]["reason"] == "the camera stopped",
+                        "the capture thread's release is the capture change: " + c.dump());
+            const auto lostEpoch = proc.monitoringCaptureEpoch();
+            MIB_EXPECT(lostEpoch > beforeCamera + 1, "the session opened and closed: two changes");
+            const auto held = holdTwo(facade, proc, kBase + 330);
+            MIB_EXPECT(held == lostEpoch, "cells of the capture after the loss");
+
+            bridge::CameraCommand stopCapture;
+            stopCapture.action = bridge::CameraCommandAction::StopCapture;
+            MIB_REQUIRE(facade.dispatch(stopCapture).ok, "capture stop after the loss");
+            MIB_EXPECT(!proc.isRealtimeRunning() && !backendApp.capture().isRunning(), "both stopped");
+            MIB_EXPECT(proc.monitoringCaptureEpoch() == lostEpoch, "stop_capture records no second capture change");
+            c = cells(facade);
+            MIB_EXPECT(c["last_capture_change"]["reason"] == "the camera stopped" &&
+                           c["last_capture_change"]["capture_epoch"] == std::to_string(lostEpoch),
+                       "the reason stays the camera's: " + c.dump());
+            bool mismatch = false;
+            std::string why;
+            MIB_EXPECT(!facade.fetchMonitoringCellImage(0, beforeCamera, kBase + 330, 0, false, frame, &mismatch,
+                                                        &why) &&
+                           mismatch && contains(why, "the camera stopped") &&
+                           !contains(why, "realtime processing stopped"),
+                       "an earlier capture is refused with the camera's reason: " + why);
+            MIB_EXPECT(c["pins"].size() == 1 && !c["pins"][0]["image"].is_null() &&
+                           facade.fetchMonitoringCellImage(0, lostEpoch, kBase + 331, 0, false, frame),
+                       "the pin of the capture after the loss keeps its image: " + c.dump());
+            MIB_EXPECT(facade.clearMonitoringCellPins().ok, "clear the pin");
+        }
+
         wd.mark("buffer resize");
         before = holdTwo(facade, proc, kBase + 315);
         const auto resized =

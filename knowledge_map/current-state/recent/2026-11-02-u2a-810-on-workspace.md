@@ -29,3 +29,15 @@ second monitoring capture change, "realtime processing stopped", on top of the c
 `drainAndStopRealtime(false)` skips the second change when an active camera's stop already ended
 the capture (with no active camera the realtime stop still ends it). See
 [[services/ProcessingService]] and [[services/MonitoringCellStore]].
+
+**Review fix (#821): a camera that drops by itself.** The first fix chose `false` from
+`capture().isRunning()`, which is only Starting/Running. When the camera dropped by itself the
+capture thread had already released it ("the camera stopped") and the lifecycle was Faulted, so a
+later `stop_capture` still recorded "realtime processing stopped". `AppBackend` now keeps the
+capture epoch its camera-close began (`monitoringClosedCaptureEpoch_`), and
+`monitoringCaptureEndedByCameraClose()` is true while that epoch is still the cell store's
+current capture. The facade asks it after `capture().stop()`, so both an explicit stop and an
+earlier loss keep "the camera stopped" as the one change. A capture change after the close (for
+example realtime started later) still lets the realtime stop end its capture.
+`monitoring_cells_facade_test` adds a "camera loss" section: a non-looping mock camera ends its
+stream, then `stop_capture` leaves the epoch, the reason and the pin of that capture unchanged.
