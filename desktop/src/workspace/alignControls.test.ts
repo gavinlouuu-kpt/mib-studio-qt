@@ -2,7 +2,16 @@
 // with geometry, desktop without, PZ7035), and the explicit camera mode switch.
 import { describe, expect, it } from "vitest";
 import type { CameraGeometry } from "../bridge";
-import { alignMode, exposureReadback, readbackRows, roiOverlay, roiRow, RUN_WINDOW_BOUNDS, type AlignFacts } from "./alignControls";
+import { alignLockedReason, alignMode, exposureReadback, readbackRows, roiOverlay, roiRow, RUN_WINDOW_BOUNDS, type AlignFacts } from "./alignControls";
+
+describe("Align's write lock (#806 review)", () => {
+  it("a viewer is locked up front: the server would refuse with VIEWER_ONLY before reaching the camera", () => {
+    expect(alignLockedReason(true, false, true)).toBe("another client controls this instrument; take control to write");
+    expect(alignLockedReason(true, false, false)).toBe("");
+    expect(alignLockedReason(false, false, true)).toBe("the backend is not initialized");
+    expect(alignLockedReason(true, true, true)).toBe("an experiment is active");
+  });
+});
 
 const ARAVIS: CameraGeometry = {
   supported: true, overview: false, camera: "aravis", sensor_width: 2048, sensor_height: 512,

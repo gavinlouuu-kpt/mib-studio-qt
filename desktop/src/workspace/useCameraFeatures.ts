@@ -1,8 +1,11 @@
 // The camera's GenApi tree for Align (#806 E-3): read on open and whenever the caller's `epoch`
-// changes (the camera started or stopped), again after every write reply and after a stale reply,
-// and on the operator's Refresh. A write goes out only on commit, with the token of the tree the
-// draft was made against; the backend's reply is kept as it came. Nothing here decides a value,
-// an access or an outcome.
+// changes (the camera started or stopped), again after every write reply, after a stale reply
+// (with a bounded backoff, STALE_RETRY_DELAYS_MS; then it stops and the view says to Refresh), and
+// on the operator's Refresh. A write goes out only on commit, with the token of the tree the draft
+// was made against; the backend's reply is kept as it came. A write call that is rejected without
+// a backend reply (VIEWER_ONLY and the server's other refusal codes, or a transport failure) is
+// kept as a WriteFailure, never as a device outcome. Nothing here decides a value, an access or
+// an outcome.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CameraFeatureModule,
@@ -12,7 +15,7 @@ import type {
   CameraFeatureValue,
   CameraFeatureWriteRequest,
 } from "../bridge";
-import { resolveBinding } from "./cameraFeatures";
+import { resolveBinding, writeFailure, type FeatureWriteResult } from "./cameraFeatures";
 
 export interface CameraFeatureApi {
   tree: (request: CameraFeatureTreeRequest) => Promise<CameraFeatureTreeReply>;
@@ -22,18 +25,18 @@ export interface CameraFeatureApi {
 /** The tree the quick controls and the browser read: the remote device (the camera itself). */
 export const TREE_REQUEST: CameraFeatureTreeRequest = { modules: ["remote"] };
 
+/** After a stale tree, read again after each of these delays, then stop (Refresh reads again). */
+export const STALE_RETRY_DELAYS_MS: readonly number[] = [0, 250, 1000];
+
 const failedTree = (reason: string): CameraFeatureTreeReply =>
   ({ schema_version: 1, outcome: "error", reason, evidence: "", session: null, modules: [] });
 
-/** A transport failure as a reply, so the view shows it like any other outcome. */
-const failedWrite = (module: CameraFeatureModule, feature: string, value: CameraFeatureValue, reason: string): CameraFeatureReply =>
-  ({ schema_version: 1, outcome: "unknown_write_outcome", reason, evidence: "", session: null,
-    address: { module, feature, selector: null }, requested: value, readback: null });
+const sleep = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
 
 export function useCameraFeatures(api: CameraFeatureApi | undefined, epoch: unknown) {
   const [tree, setTree] = useState<CameraFeatureTreeReply | null>(null);
   const [loading, setLoading] = useState(false);
-  const [replies, setReplies] = useState<Record<string, CameraFeatureReply>>({});
+  const [replies, setReplies] = useState<Record<string, FeatureWriteResult>>({});
   const [pending, setPending] = useState<Record<string, boolean>>({});
   const seq = useRef(0);
   const mounted = useRef(true);
@@ -46,8 +49,9 @@ export function useCameraFeatures(api: CameraFeatureApi | undefined, epoch: unkn
     if (!api) return;
     const mine = ++seq.current;
     setLoading(true);
-    // A stale tree (the session moved while it was walked) is read once more at once.
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // A stale tree (the session moved while it was walked) is read again with a bounded backoff;
+    // `loading` stays true while a retry is due, so the view says "reading again" only then.
+    for (let attempt = 0; ; attempt++) {
       let reply: CameraFeatureTreeReply;
       try {
         reply = (await api.tree(TREE_REQUEST)) ?? failedTree("no reply from the backend");
@@ -56,7 +60,9 @@ export function useCameraFeatures(api: CameraFeatureApi | undefined, epoch: unkn
       }
       if (!mounted.current || mine !== seq.current) return; // a newer read owns the view
       setTree(reply);
-      if (reply.outcome !== "stale") break;
+      if (reply.outcome !== "stale" || attempt >= STALE_RETRY_DELAYS_MS.length) break;
+      await sleep(STALE_RETRY_DELAYS_MS[attempt]);
+      if (!mounted.current || mine !== seq.current) return;
     }
     setLoading(false);
   }, [api]);
@@ -69,12 +75,14 @@ export function useCameraFeatures(api: CameraFeatureApi | undefined, epoch: unkn
     const r = resolveBinding(tree, module, feature);
     if (r.state !== "writable") return;
     setPending((p) => ({ ...p, [key]: true }));
-    let reply: CameraFeatureReply;
+    let reply: FeatureWriteResult;
     try {
-      reply = (await api.write({ session: r.session, module, feature, value }))
-        ?? failedWrite(module, feature, value, "no reply from the backend");
+      const answer: CameraFeatureReply | null | undefined = await api.write({ session: r.session, module, feature, value });
+      reply = answer ?? writeFailure("no reply from the backend", value);
     } catch (e) {
-      reply = failedWrite(module, feature, value, `no reply: ${String(e).replace(/^Error: /, "")}`);
+      // Refused by the server before the backend acted (VIEWER_ONLY, INVALID_ARGUMENTS, ...) or a
+      // transport failure: not a device outcome.
+      reply = writeFailure(e, value);
     }
     if (!mounted.current) return;
     setReplies((all) => ({ ...all, [key]: reply }));

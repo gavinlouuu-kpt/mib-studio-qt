@@ -5,12 +5,14 @@
 import { describe, expect, it } from "vitest";
 import {
   encodeDraft,
+  isWriteFailure,
   NOT_AVAILABLE,
   rangeText,
   resolutionStatus,
   resolveBinding,
   SFNC_BINDINGS,
   treeLines,
+  writeFailure,
   writeSummary,
 } from "./cameraFeatures";
 import { FEATURES, SESSION, treeOutcome, treeReply, writeReply } from "./cameraFeatureFixtures";
@@ -61,13 +63,28 @@ describe("resolveBinding against the live tree", () => {
     const r = resolveBinding(treeOutcome("stale", "Source, session or capability revision changed during enumeration; enumerate again."),
       "remote", "ExposureTime");
     expect(r.state).toBe("stale");
-    expect(resolutionStatus(r)).toMatchObject({ tone: "warn", label: "Stale · reading the tree again" });
+    // "reading the tree again" only while a re-read is actually due; after the bounded retries stop
+    // the chip says what to do instead of promising a read that will not come.
+    expect(resolutionStatus(r, true)).toMatchObject({ tone: "warn", label: "Stale · reading the tree again" });
+    expect(resolutionStatus(r)).toMatchObject({ tone: "warn", label: "Stale · press Refresh to read the tree again" });
+    expect(resolutionStatus(r, false).label).not.toContain("reading the tree again");
+  });
+
+  it("refused: the backend's refusal (the sort trigger armed, a run in progress) is shown in its own words", () => {
+    const reason = "Camera feature access is refused while the sort trigger output is armed on this camera: a node-map call between pulse edges would stretch the sort pulse.";
+    const r = resolveBinding(treeOutcome("refused", reason), "remote", "Gain");
+    expect(r).toEqual({ state: "refused", reason });
+    expect(resolutionStatus(r)).toEqual({ tone: "blocked", label: `Refused · ${reason}`, title: `The backend refused: ${reason}` });
+    expect(resolveBinding(treeOutcome("refused", "Camera feature access is refused while the experiment is active."), "remote", "Gain"))
+      .toEqual({ state: "refused", reason: "Camera feature access is refused while the experiment is active." });
+    expect(resolveBinding(treeOutcome("refused", ""), "remote", "Gain"))
+      .toEqual({ state: "refused", reason: "the backend refused to read the camera's feature tree" });
   });
 
   it("unknown: no tree yet, no camera session, a feature the backend could not describe", () => {
     expect(resolveBinding(null, "remote", "Gain")).toEqual({ state: "unknown", reason: "the feature tree has not been read yet" });
-    expect(resolveBinding(treeOutcome("refused", "No camera session is open; start capture first."), "remote", "Gain"))
-      .toEqual({ state: "unknown", reason: "No camera session is open; start capture first." });
+    expect(resolveBinding(treeOutcome("error", "camera_feature_tree failed"), "remote", "Gain"))
+      .toEqual({ state: "unknown", reason: "camera_feature_tree failed" });
     const failed = { ...FEATURES.Gain, descriptor: null, error: "GenTL error -1010: access denied" };
     expect(resolveBinding(treeReply({ features: [failed] }), "remote", "Gain")).toEqual({ state: "unknown", reason: "GenTL error -1010: access denied" });
     const notEnumerated = treeReply();
@@ -96,6 +113,32 @@ describe("a write reply is shown as the backend returned it", () => {
     expect(writeSummary(writeReply("unknown_write_outcome", "ExposureTime", requested, null, "write transport outcome unknown")))
       .toMatchObject({ tone: "unknown", label: "Unknown outcome · it may have reached the camera", readback: "no readback" });
     expect(writeSummary(writeReply("written_unconfirmed", "ExposureTime", requested, null))).toMatchObject({ tone: "warn", label: "Written · no readback" });
+  });
+});
+
+describe("a write the server refused before acting, or that got no reply, is not a device outcome", () => {
+  const requested = { type: "float", value: 250 } as const;
+  it("VIEWER_ONLY is its own state: not sent, never 'may have reached the camera'", () => {
+    const f = writeFailure(new Error("VIEWER_ONLY: another client controls the instrument"), requested);
+    expect(f).toEqual({ failure: "viewer_only", code: "VIEWER_ONLY", reason: "another client controls the instrument", requested });
+    expect(isWriteFailure(f)).toBe(true);
+    const s = writeSummary(f, "us");
+    expect(s).toEqual({ tone: "blocked", label: "Not sent · another client controls this instrument", requested: "250 us",
+      readback: "no readback", reason: "another client controls the instrument" });
+    expect(s.label).not.toContain("reached the camera");
+  });
+  it("other server refusal codes are 'not sent' with the code", () => {
+    const f = writeFailure("INVALID_ARGUMENTS: request must be a JSON object", requested);
+    expect(f).toMatchObject({ failure: "not_sent", code: "INVALID_ARGUMENTS", reason: "request must be a JSON object" });
+    expect(writeSummary(f)).toMatchObject({ tone: "blocked", label: "Not sent · the server refused (INVALID_ARGUMENTS)" });
+  });
+  it("a transport failure is 'no reply', a transport state, not unknown_write_outcome", () => {
+    const f = writeFailure(new Error("WebSocket closed"), requested);
+    expect(f).toEqual({ failure: "no_reply", code: "", reason: "WebSocket closed", requested });
+    const s = writeSummary(f);
+    expect(s).toMatchObject({ tone: "unknown", label: "No reply from the backend", readback: "no readback" });
+    expect(s.label).not.toContain("Unknown outcome");
+    expect(isWriteFailure(writeReply("unknown_write_outcome", "ExposureTime", requested, null))).toBe(false);
   });
 });
 

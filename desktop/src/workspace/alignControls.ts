@@ -216,3 +216,14 @@ export function roiOverlay(row: RoiRow, shown: Rect | null, frame: Size | null):
   return frame.width === row.bounds.areaWidth && frame.height === row.bounds.areaHeight ? shown : null;
 }
 
+
+/** Why Align's writes are locked ("" = open). A viewer's writes would be refused by the server
+ *  with VIEWER_ONLY before anything is sent to the camera, so they are locked up front (#806
+ *  review). The backend's own refusals (the sort trigger armed, a run in progress) come back as
+ *  replies and are shown as the backend wrote them. */
+export function alignLockedReason(ready: boolean, experimentActive: boolean, viewerOnly: boolean): string {
+  if (!ready) return "the backend is not initialized";
+  if (experimentActive) return "an experiment is active";
+  if (viewerOnly) return "another client controls this instrument; take control to write";
+  return "";
+}

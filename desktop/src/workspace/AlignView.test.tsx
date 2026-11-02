@@ -427,6 +427,71 @@ describe("SFNC quick controls over the camera's node map (#806 E-3)", () => {
     expect($("align-write-frameRate").getAttribute("data-tone")).toBe("unknown");
   });
 
+  it("a write the server refused before acting (VIEWER_ONLY) is shown as not sent, never as a possible camera write", async () => {
+    const api = fakeFeatures([treeReply()], () => Promise.reject(new Error("VIEWER_ONLY: another client controls the instrument")));
+    await render({ features: api });
+    await settle();
+    await setDraft("exposure", "250");
+    await act(async () => writeButton("Exposure").click());
+    await settle();
+    const w = $("align-write-exposure");
+    expect(w.textContent).toBe("Not sent · another client controls this instrument · requested 250 us · no readback · another client controls the instrument");
+    expect(w.getAttribute("data-tone")).toBe("blocked");
+    expect(w.textContent).not.toContain("may have reached the camera");
+  });
+
+  it("a write with no reply (transport failure) is a transport state, not an unknown camera outcome", async () => {
+    const api = fakeFeatures([treeReply()], () => Promise.reject(new Error("WebSocket closed")));
+    await render({ features: api });
+    await settle();
+    await setDraft("gain", "3");
+    await act(async () => writeButton("Gain").click());
+    await settle();
+    const w = $("align-write-gain");
+    expect(w.textContent).toBe("No reply from the backend · requested 3 dB · no readback · WebSocket closed");
+    expect(w.textContent).not.toContain("Unknown outcome");
+  });
+
+  it("a tree that stays stale is re-read a bounded number of times, then the chip says to Refresh", async () => {
+    const stale = treeOutcome("stale", "Source, session or capability revision changed during enumeration; enumerate again.");
+    const api = fakeFeatures([stale], () => { throw new Error(); });
+    await render({ features: api });
+    await settle();
+    expect(chip("exposure").textContent).toBe("Stale · reading the tree again"); // a re-read is due
+    await advance(5000);
+    const calls = api.tree.mock.calls.length;
+    expect(chip("exposure").textContent).toBe("Stale · press Refresh to read the tree again");
+    await advance(60_000);
+    expect(api.tree.mock.calls.length).toBe(calls); // the retries stopped
+    await press("Feature tree");
+    await act(async () => button("Refresh").click());
+    await settle();
+    expect(api.tree.mock.calls.length).toBeGreaterThan(calls); // Refresh reads again
+  });
+
+  it("the backend's refusal (sort trigger armed) is shown in Align as the backend wrote it", async () => {
+    const reason = "Camera feature access is refused while the sort trigger output is armed on this camera: a node-map call between pulse edges would stretch the sort pulse.";
+    await render({ features: fakeFeatures([treeOutcome("refused", reason)], () => { throw new Error(); }) });
+    await settle();
+    expect(chip("exposure").textContent).toBe(`Refused · ${reason}`);
+    expect(chip("exposure").getAttribute("title")).toBe(`The backend refused: ${reason}`);
+    expect(draft("exposure")).toBeNull(); // nothing to write against a refused tree
+    expect($("align-features-refused").textContent).toBe(`The backend refused camera feature access: ${reason}`);
+    await press("Feature tree");
+    expect($("align-feature-tree-status").textContent).toBe(`refused · ${reason}`);
+  });
+
+  it("a write refused by the backend for a run in progress keeps the backend's reason", async () => {
+    const reason = "Camera feature access is refused while the experiment is starting.";
+    const api = fakeFeatures([treeReply()], (r) => writeReply("refused", r.feature, r.value, null, reason));
+    await render({ features: api });
+    await settle();
+    await setDraft("exposure", "250");
+    await act(async () => writeButton("Exposure").click());
+    await settle();
+    expect($("align-write-exposure").textContent).toBe(`Refused · requested 250 us · no readback · ${reason}`);
+  });
+
   it("is locked while a run is active", async () => {
     const api = fakeFeatures([treeReply()], () => { throw new Error(); });
     await render({ features: api, lockedReason: "an experiment is active" });

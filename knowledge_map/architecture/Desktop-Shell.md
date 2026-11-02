@@ -65,10 +65,15 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   (requested → readback machine), `alignControls.ts` (which controls an instrument offers),
   `cameraFeatures.ts` (#806 E-3: `SFNC_BINDINGS`, the standard names ExposureTime, Gain,
   AcquisitionFrameRate, TriggerMode, resolved against the live `camera_feature_tree` reply into
-  absent / read-only with the access reason / writable / stale / unknown / unsupported; write
-  replies shown as returned; `treeLines` for the browser), `useCameraFeatures.ts` (reads the
-  remote tree on open, on camera start/stop, after every write reply and once more after a stale
-  tree), `featureViews.tsx` (the binding's draft and readback cells; `FeatureTreeBrowser`, the
+  absent / read-only with the access reason / writable / stale / refused (the backend's text: the
+  sort trigger armed, a run in progress) / unknown / unsupported; write replies shown as returned,
+  and a rejected write call kept apart as a `WriteFailure` (`viewer_only` / `not_sent` for a server
+  refusal code, `no_reply` for a transport failure), never as `unknown_write_outcome`; `treeLines`
+  for the browser), `useCameraFeatures.ts` (reads the remote tree on open, on camera start/stop,
+  after every write reply, and after a stale tree with a bounded backoff `STALE_RETRY_DELAYS_MS`;
+  the stale chip says "reading the tree again" only while a retry is due, then "press Refresh"),
+  `alignControls.ts` `alignLockedReason` (backend, run, or viewer: App passes `viewerOnly`),
+  `featureViews.tsx` (the binding's draft and readback cells; `FeatureTreeBrowser`, the
   read-only tree behind Align's "Feature tree" button); tests `cameraFeatures.test.ts`,
   `AlignView.test.tsx` (fixtures `cameraFeatureFixtures.ts`, tests only);
   O3 Experiment · Plan (#716 A5): `ExperimentView.tsx` (sub-views Plan / Live / Run summary / Quick look),
@@ -1949,8 +1954,9 @@ still show Failed. No bridge ABI or JSON field changes.
 
 **Camera GenApi features (ABI 49, #806 E-1/E-2).** `camera_feature_tree`, `camera_feature_read`
 and `camera_feature_write` are in `mib-app-commands` (`dispatch::COMMANDS`) and so on the
-WebSocket server; `camera_feature_write` is a control command. There is no Tauri command,
-`bridge.ts` wrapper or view for them yet: E-3 binds the Align quick controls (exposure, gain,
-FPS, trigger) to SFNC names resolved against the enumerated tree
-([[../camera/FeatureControl]]). Only `bridgeContract.ts` (generated, `CAMERA_FEATURES`) and the
-ABI pins in the desktop tests changed.
+WebSocket server; `camera_feature_write` is a control command. E-3 added the Tauri commands and
+`bridge.ts` wrappers and binds the Align quick controls (exposure, gain, FPS, trigger) to SFNC
+names resolved against the enumerated tree ([[../camera/FeatureControl]]). The Tauri
+`camera_feature_tree` is async (`spawn_blocking`): the tree is a backend job that
+`mib-app-commands` polls, so the wait is off the main thread and the bridge lock is held only
+per fetch (#806 review).

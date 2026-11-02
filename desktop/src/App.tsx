@@ -110,7 +110,7 @@ import { Workspace, workspaceReadsPrepare } from "./workspace/Workspace";
 import { initialWorkspaceStage, readLanding, writeLanding } from "./workspace/landing";
 import type { ExperimentSubView } from "./workspace/ExperimentView";
 import type { FrameSink } from "./workspace/AlignView";
-import type { RoiKind } from "./workspace/alignControls";
+import { alignLockedReason, type RoiKind } from "./workspace/alignControls";
 import type { WriteResult } from "./workspace/quickControlModel";
 import { VIEWER_ONLY_REASON, ViewerGate, useViewerOnly, viewerReason } from "./components/ViewerGate";
 import "./App.css";
@@ -1807,7 +1807,7 @@ export default function App() {
               onSwitchMode: switchFromWorkspace,
               writeRoi: writeAlignRoi,
               features: ALIGN_CAMERA_FEATURES,
-              lockedReason: !ready ? "the backend is not initialized" : expActive ? "an experiment is active" : "",
+              lockedReason: alignLockedReason(ready, expActive, viewerOnly),
             }}
             preflightInput={preflightInput}
             zStage={zStage}

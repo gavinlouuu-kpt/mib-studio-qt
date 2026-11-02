@@ -52,10 +52,10 @@ import {
   type WriteResult,
 } from "./quickControlModel";
 import { useQuickControl } from "./useQuickControl";
-import { encodeDraft, NOT_AVAILABLE, resolutionStatus, resolveBinding, SFNC_BINDINGS, SFNC_ROI_FEATURES, valueText, type BindingId, type Resolution } from "./cameraFeatures";
+import { encodeDraft, NOT_AVAILABLE, resolutionStatus, resolveBinding, SFNC_BINDINGS, SFNC_ROI_FEATURES, valueText, type BindingId, type FeatureWriteResult, type Resolution } from "./cameraFeatures";
 import { useCameraFeatures, type CameraFeatureApi } from "./useCameraFeatures";
 import { BindingDraft, BindingReadback, FeatureTreeBrowser } from "./featureViews";
-import type { CameraFeatureReply, CameraFeatureTreeReply } from "../bridge";
+import type { CameraFeatureTreeReply } from "../bridge";
 
 /** Takes a delivered packet; true when the view shows it (false while frozen or invalid). */
 export type FrameSink = (packet: FramePacket) => boolean;
@@ -453,7 +453,7 @@ export const PROCESSING_ROI_WRITE = "Write ROI applies the processing settings w
 
 type ControlApi = ReturnType<typeof useQuickControl<Rect, RectDraft>>;
 type CameraApi = ReturnType<typeof useCameraFeatures>;
-interface BindingRow { id: BindingId; resolution: Resolution; reply: CameraFeatureReply | undefined; fallback: string | null }
+interface BindingRow { id: BindingId; resolution: Resolution; reply: FeatureWriteResult | undefined; fallback: string | null }
 type TableRow = { id: string; label: string; roi?: RoiRow; readback?: ReadbackRow; binding?: BindingRow };
 
 /** The camera ROI against the node map's SFNC image-format nodes (shown only: the ROI is written by
@@ -532,7 +532,7 @@ function QuickControls({ roi, rows, control, lockedReason, pz7035, camera }: {
     {
       key: "state", header: "State", width: "26%", cell: (r) => {
         const rb = r.readback;
-        const st = r.binding ? resolutionStatus(r.binding.resolution) : r.roi ? { ...roiStatus, title: roiStatus.label } : rb!.access === "unavailable"
+        const st = r.binding ? resolutionStatus(r.binding.resolution, !!camera?.loading) : r.roi ? { ...roiStatus, title: roiStatus.label } : rb!.access === "unavailable"
           ? { tone: "unsupported" as const, label: `Unavailable · ${rb!.chip}`, title: `Unavailable: ${rb!.why}` }
           : { tone: "neutral" as const, label: `Read-only · ${rb!.chip}`, title: `Read-only: ${rb!.why}` };
         return <StateChip size="small" tone={st.tone} title={st.title} data-testid={`align-state-${r.id}`}>{st.label}</StateChip>;
@@ -566,6 +566,11 @@ function QuickControls({ roi, rows, control, lockedReason, pz7035, camera }: {
     >
       <DataTable columns={columns} rows={table} rowKey={(r) => r.id} density="compact" />
       {locked ? <p className="ws-note" data-testid="align-locked">Writes are locked: {lockedReason}.</p> : null}
+      {camera?.tree?.outcome === "refused" ? (
+        <p className="ws-note" data-testid="align-features-refused">
+          The backend refused camera feature access: {camera.tree.reason || "no reason given"}
+        </p>
+      ) : null}
       {s.phase === "idle" && s.written && s.reason ? <p className="ws-note" data-testid="align-snap-note">Written after snapping: {s.reason}.</p> : null}
       <p className="ws-note" data-testid="align-features-note">
         Exposure, gain, frame rate and trigger mode are looked up by their standard (SFNC) names in the GenApi node map the camera reports:

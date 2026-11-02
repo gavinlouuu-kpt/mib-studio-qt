@@ -668,9 +668,16 @@ fn run_quick_look(
 
 // ABI 49 (#806 E-1/E-2/E-3): the camera's GenApi node map (bridge-contract.json camera_features).
 // Tree and read are reads; write is a camera control. The backend decides every outcome.
+// The tree is a backend job polled by mib-app-commands (camera_features.job): it waits off the
+// main thread, and the bridge lock is held only for each short fetch, never for the walk.
 #[tauri::command]
-fn camera_feature_tree(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
-    cmds::camera_feature_tree(&state, request)
+async fn camera_feature_tree(app: tauri::AppHandle, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        cmds::camera_feature_tree(&state, request)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

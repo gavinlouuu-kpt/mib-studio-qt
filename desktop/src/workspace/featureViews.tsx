@@ -3,7 +3,7 @@
 // camera_feature_write returned; every fact and outcome is the backend's.
 import { useMemo } from "react";
 import { Button, Card, DataTable, StateChip, type DataTableColumn } from "@mib/ui";
-import type { CameraFeatureReply, CameraFeatureTreeReply } from "../bridge";
+import type { CameraFeatureTreeReply } from "../bridge";
 import {
   accessText,
   draftOf,
@@ -12,6 +12,7 @@ import {
   treeLines,
   valueText,
   writeSummary,
+  type FeatureWriteResult,
   type Resolution,
   type TreeLine,
 } from "./cameraFeatures";
@@ -69,7 +70,7 @@ export function BindingDraft(p: BindingDraftProps) {
 
 /** The Readback cell: the tree's value and range, then the last write's reply as returned. */
 export function BindingReadback({ id, resolution: r, reply, fallback }: {
-  id: string; resolution: Resolution; reply: CameraFeatureReply | undefined;
+  id: string; resolution: Resolution; reply: FeatureWriteResult | undefined;
   /** A camera report from outside the node map (the geometry session), shown only without one. */
   fallback: string | null;
 }) {

@@ -47,8 +47,11 @@ export const NOT_AVAILABLE = "not available on this camera";
 export type Resolution =
   /** No tree yet, a tree that could not be read, or a node the backend could not describe. */
   | { state: "unknown"; reason: string }
-  /** The tree's session changed while it was read; it is being read again. */
+  /** The tree's session changed while it was read (the hook reads it again, a bounded number of times). */
   | { state: "stale"; reason: string }
+  /** The backend refused to touch the camera's node map (the sort trigger is armed, a run is in
+   *  progress, ...); `reason` is the backend's text. */
+  | { state: "refused"; reason: string }
   /** The camera has no GenApi node map. */
   | { state: "unsupported"; reason: string }
   | { state: "absent"; reason: string }
@@ -65,7 +68,8 @@ export function resolveBinding(tree: CameraFeatureTreeReply | null, module: Came
   if (!tree) return { state: "unknown", reason: "the feature tree has not been read yet" };
   switch (tree.outcome) {
     case "read": break;
-    case "stale": return { state: "stale", reason: tree.reason || "the camera session changed; reading the tree again" };
+    case "stale": return { state: "stale", reason: tree.reason || "the camera session changed while the tree was read" };
+    case "refused": return { state: "refused", reason: tree.reason || "the backend refused to read the camera's feature tree" };
     case "unsupported": return { state: "unsupported", reason: tree.reason || "the camera has no GenApi node map" };
     default: return { state: "unknown", reason: tree.reason || `the feature tree was not read (${tree.outcome})` };
   }
@@ -144,16 +148,49 @@ export function encodeDraft(d: CameraFeatureDescriptor, text: string): { ok: tru
 
 export type FeatureTone = "confirmed" | "warn" | "blocked" | "unknown" | "unsupported" | "info" | "neutral";
 
-/** The chip of a binding before (or apart from) any write. */
-export function resolutionStatus(r: Resolution): { tone: FeatureTone; label: string; title: string } {
+/** The chip of a binding before (or apart from) any write. `rereading`: the tree is being read
+ *  again right now (a stale tree's bounded retry); a stale chip says so only then. */
+export function resolutionStatus(r: Resolution, rereading = false): { tone: FeatureTone; label: string; title: string } {
   switch (r.state) {
     case "writable": return { tone: "neutral", label: "Writable", title: `Writable: ${accessText(r.descriptor)}` };
     case "readOnly": return { tone: "neutral", label: `Read-only · ${r.reason}`, title: `Read-only: ${r.reason}` };
     case "absent": return { tone: "unsupported", label: "Not available on this camera", title: r.reason };
     case "unsupported": return { tone: "unsupported", label: `Unsupported · ${r.reason}`, title: r.reason };
-    case "stale": return { tone: "warn", label: "Stale · reading the tree again", title: r.reason };
+    case "stale": return rereading
+      ? { tone: "warn", label: "Stale · reading the tree again", title: r.reason }
+      : { tone: "warn", label: "Stale · press Refresh to read the tree again", title: r.reason };
+    case "refused": return { tone: "blocked", label: `Refused · ${r.reason}`, title: `The backend refused: ${r.reason}` };
     case "unknown": return { tone: "unknown", label: `Unknown · ${r.reason}`, title: r.reason };
   }
+}
+
+/** A write that got no backend reply: the request was refused before the backend acted
+ *  (`viewer_only`: another client controls the instrument; `not_sent`: another server refusal code
+ *  such as INVALID_ARGUMENTS) or the transport failed (`no_reply`). None of these is a device
+ *  outcome: nothing here claims the camera was or was not written; the tree is read again. */
+export interface WriteFailure {
+  failure: "viewer_only" | "not_sent" | "no_reply";
+  /** The server's code (`VIEWER_ONLY`, `INVALID_ARGUMENTS`, ...), "" for a transport failure. */
+  code: string;
+  reason: string;
+  requested: CameraFeatureValue;
+}
+
+/** What the hook keeps per binding after a Write: the backend's reply, or why there is none. */
+export type FeatureWriteResult = CameraFeatureReply | WriteFailure;
+
+export function isWriteFailure(r: FeatureWriteResult): r is WriteFailure {
+  return (r as WriteFailure).failure !== undefined;
+}
+
+/** Classify a rejected write call. A server refusal is `CODE: reason` (bridge-server error codes);
+ *  anything else is a transport failure. */
+export function writeFailure(error: unknown, requested: CameraFeatureValue): WriteFailure {
+  const text = String(error).replace(/^Error: /, "");
+  const m = /^([A-Z][A-Z_]{2,}): ?(.*)$/s.exec(text);
+  if (m && m[1] === "VIEWER_ONLY") return { failure: "viewer_only", code: m[1], reason: m[2] || text, requested };
+  if (m) return { failure: "not_sent", code: m[1], reason: m[2] || text, requested };
+  return { failure: "no_reply", code: "", reason: text || "no reply from the backend", requested };
 }
 
 const OUTCOME_LABEL: Record<CameraFeatureOutcome, { tone: FeatureTone; label: string }> = {
@@ -170,7 +207,14 @@ const OUTCOME_LABEL: Record<CameraFeatureOutcome, { tone: FeatureTone; label: st
 /** A write reply as the backend returned it: outcome, requested and readback kept apart. */
 export interface WriteSummary { tone: FeatureTone; label: string; requested: string; readback: string; reason: string }
 /** `treeUnit`: the node's unit from the tree, for a reply that carries no readback descriptor. */
-export function writeSummary(reply: CameraFeatureReply, treeUnit = ""): WriteSummary {
+export function writeSummary(reply: FeatureWriteResult, treeUnit = ""): WriteSummary {
+  if (isWriteFailure(reply)) {
+    const label = reply.failure === "viewer_only" ? "Not sent · another client controls this instrument"
+      : reply.failure === "not_sent" ? `Not sent · the server refused (${reply.code})`
+        : "No reply from the backend";
+    return { tone: reply.failure === "no_reply" ? "unknown" : "blocked", label,
+      requested: valueText(reply.requested, treeUnit), readback: "no readback", reason: reply.reason };
+  }
   const o = OUTCOME_LABEL[reply.outcome] ?? { tone: "unknown" as const, label: `Unknown reply (${String(reply.outcome)})` };
   const unit = reply.readback?.unit ?? treeUnit;
   return {
