@@ -153,7 +153,7 @@ async fn mock_node_map_round_trip_through_the_server() {
     let (server, addr, data) = start("camera_features").await;
     let mut ws = connect(addr).await;
     ok(&mut ws, 1, "init", json!({"dataDir": ""})).await;
-    assert_eq!(ok(&mut ws, 2, "abi_version", Value::Null).await, json!(49));
+    assert_eq!(ok(&mut ws, 2, "abi_version", Value::Null).await, json!(50));
 
     // No camera session yet: the tree is refused (not empty, not an error reply).
     let none = ok(&mut ws, 3, "camera_feature_tree", Value::Null).await;
