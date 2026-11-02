@@ -993,7 +993,9 @@ namespace backend
                     if (cam)
                         monitoringCells_->advanceCapture("the camera started a new capture session", generation);
                     else if (monitoringClosedCaptureSession_.exchange(generation) != generation)
-                        monitoringCells_->advanceCapture("the camera stopped", generation + 1);
+                        monitoringClosedCaptureEpoch_.store(
+                            monitoringCells_->advanceCapture("the camera stopped", generation + 1),
+                            std::memory_order_release);
                 }
                 if (!bootTrigger) return;
                 if (triggerService_) {
@@ -3206,6 +3208,13 @@ namespace backend
     services::MonitoringDensityService &AppBackend::monitoringDensity() { return *monitoringDensity_; }
 
     services::MonitoringCellStore *AppBackend::monitoringCells() { return monitoringCells_.get(); }
+
+    bool AppBackend::monitoringCaptureEndedByCameraClose() const
+    {
+        if (!monitoringCells_) return false;
+        const auto closed = monitoringClosedCaptureEpoch_.load(std::memory_order_acquire);
+        return closed != 0 && monitoringCells_->currentCapture() == closed;
+    }
 
     services::serialbus::SerialBusManager &AppBackend::serialBus() { return *serialBusManager_; }
 
