@@ -1,4 +1,5 @@
 #include "backend/workspace/NextRunPlanning.h"
+#include "backend/workspace/RecipeProvider.h"
 #include "backend/database/SqliteService.h"
 #include "backend/analysis/SourceAnalysis.h"
 #include <regex>
@@ -51,7 +52,8 @@ void validatePlan(const J& doc) {
 }
 } // namespace
 std::string nextRunPlanning(services::SqliteService& db, const std::string& text, bool write,
-                            PlanningRead analysisRead, PlanningRead methodRead) {
+                            PlanningRead analysisRead, PlanningRead methodRead,
+                            const RecipeProvider* recipes) {
     try {
         if (text.size() > 16384) throw std::invalid_argument("Planning request exceeds 16 KiB");
         const auto q = J::parse(text);
@@ -188,12 +190,26 @@ std::string nextRunPlanning(services::SqliteService& db, const std::string& text
               {"rows", doc.at("plan").at("rows")}}},
             {"recipe", recipe},
             {"next_run_evidence", evidence}};
+        // #807 I02: the next-run recipe is a new immutable provider recipe derived from the pinned
+        // one (adopted from this exact workspace revision when the provider has no record yet).
+        if (!recipes)
+            throw std::invalid_argument("Next-run drafts require the native recipe provider");
+        const auto derived = recipes->handle(
+            J{{"action", "recipe_derive"},
+              {"command_id", q.at("command_id")},
+              {"recipe_id", q.at("recipe_id")},
+              {"parent", {{"id", recipe.at("id")}, {"revision", recipe.at("revision")}}},
+              {"note", "Next run from finding " + ref.at("findingId").get<std::string>()},
+              {"finding", {{"id", ref.at("findingId")}, {"revision", ref.at("revision")}}},
+              {"profile_base", q.at("profile_base")},
+              {"parent_document", recipe}},
+            true, true);
+        if (derived.value("status", std::string{}) != "ok") return derived.dump();
+        const auto& provided = derived.at("recipe");
         draft["plan"]["experimentId"] = q.at("experiment_id");
-        draft["recipe"]["id"] = q.at("recipe_id");
-        draft["recipe"]["revision"] = "1";
-        draft["recipe"]["lineage"] = {
-            {"recipe", {{"id", recipe.at("id")}, {"revision", recipe.at("revision")}}},
-            {"finding", {{"id", ref.at("findingId")}, {"revision", ref.at("revision")}}}};
+        draft["recipe"]["id"] = provided.at("id");
+        draft["recipe"]["revision"] = provided.at("revision");
+        draft["recipe"]["lineage"] = provided.at("lineage");
         if (doc.contains("annotation_display"))
             draft["annotation_display"] = doc.at("annotation_display");
         return db.analysisWorkspaceRequest(J{{"action", "derive"},

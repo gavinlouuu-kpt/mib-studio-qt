@@ -1007,3 +1007,124 @@ async fn scientific_reads_before_init_are_refused() {
     ws.close(None).await.unwrap();
     let _ = std::fs::remove_dir_all(&data);
 }
+
+fn json_ok(reply: Result<Reply, String>) -> Value {
+    match reply {
+        Ok(Reply::Json(v)) => v,
+        other => panic!("{other:?}"),
+    }
+}
+
+// #807 I02 (fold-in slice I-1): the native recipe provider over the real backend and WebSocket:
+// create -> derive -> diff -> apply preview, with the original byte-for-byte unchanged, nothing
+// applied, the namespace closed to workspace_write, and creation control-only.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn recipe_provider_create_derive_diff_apply_preview() {
+    use mib_bridge::review_ffi;
+    let (server, addr, data) = start("recipes").await;
+    let run = data.join("run.h5").to_string_lossy().into_owned();
+    assert!(review_ffi::review_fixture_write_quick_look(&run, 0));
+    let profiles = data.join("profiles");
+    std::fs::create_dir_all(profiles.join("beads")).unwrap();
+    std::fs::write(profiles.join("beads").join("config.json"), "{}").unwrap();
+    std::fs::write(profiles.join("beads").join("profile.meta.json"), r#"{"profile_id":"beads-method"}"#).unwrap();
+    let base = profiles.to_string_lossy().into_owned();
+    let mut controller = connect(addr).await;
+    let mut viewer = connect(addr).await;
+    let mut events = Vec::new();
+    let mut id = 0u64;
+    macro_rules! send {
+        ($ws:expr, $cmd:expr, $args:expr) => {{
+            id += 1;
+            call($ws, id, $cmd, $args, &mut events).await
+        }};
+    }
+    assert_eq!(json_ok(send!(&mut controller, "init", json!({ "dataDir": "" }))), json!(true));
+
+    // An F analysis plan revision and a local method profile to pair.
+    let source = json!({ "kind": "stored", "path": run });
+    let snapshot = json_ok(send!(&mut controller, "analysis_read", json!({ "request": { "action": "snapshot", "source": source } })));
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    let binding: serde_json::Map<String, Value> = ["fingerprint", "sourceKey", "parameters", "scope"].iter()
+        .map(|k| (k.to_string(), snapshot["source"][*k].clone())).collect();
+    let plan = json_ok(send!(&mut controller, "analysis_write", json!({ "request": { "action": "save", "planId": "recipe-plan",
+        "expectedRevision": null, "commandId": "recipe-plan-1", "feature": "area", "source": source, "sourceBinding": binding,
+        "graph": { "id": "recipe-plan", "revision": "draft1", "output": "gate",
+                   "nodes": [{ "id": "gate", "parent": "", "kind": "interval", "feature": "area", "minimum": null, "maximum": null }] } } })));
+    assert_eq!(plan["revision"], "1", "{plan}");
+    let profile = json_ok(send!(&mut controller, "profile_command", json!({ "base": base, "request": r#"{"operation":"read","name":"beads"}"# })));
+    let method_revision = profile["profile"]["revision"].as_str().unwrap().to_string();
+
+    // Create: control-only, exact replay, refused for a viewer.
+    let create = json!({ "command_id": "create-1", "recipe_id": "recipe-original", "title": "Bead QC", "note": "baseline",
+        "method": { "source": "local", "id": "beads-method", "revision": method_revision },
+        "analysis_plan": { "id": "recipe-plan", "revision": "1" }, "profile_base": base });
+    let refused = send!(&mut viewer, "recipe_create", json!({ "request": create })).unwrap_err();
+    assert!(refused.starts_with("VIEWER_ONLY"), "{refused}");
+    let created = json_ok(send!(&mut controller, "recipe_create", json!({ "request": create })));
+    assert_eq!(created["status"], "ok", "{created}");
+    let original = created["recipe"].clone();
+    assert_eq!(original["revision"], "1");
+    assert_eq!(json_ok(send!(&mut controller, "recipe_create", json!({ "request": create })))["recipe"], original, "exact retry replays");
+
+    // Derive: a new recipe linked to its parent; the parent is untouched.
+    let derive = json!({ "command_id": "derive-1", "recipe_id": "recipe-next", "parent": { "id": "recipe-original", "revision": "1" },
+        "note": "next run", "profile_base": base });
+    let derived = json_ok(send!(&mut controller, "recipe_derive", json!({ "request": derive })));
+    assert_eq!(derived["status"], "ok", "{derived}");
+    assert_eq!(derived["recipe"]["lineage"]["recipe"], json!({ "id": "recipe-original", "revision": "1" }));
+    assert_eq!(derived["recipe"]["method"], original["method"]);
+
+    // Diff: computed by the backend; every item carries a reason.
+    let status = |d: &Value, dim: &str| d["items"].as_array().unwrap().iter().find(|i| i["dimension"] == dim).unwrap().clone();
+    let against_parent = json_ok(send!(&mut viewer, "recipe_diff", json!({ "request": { "recipe_id": "recipe-next", "revision": "1",
+        "against": { "recipe_id": "recipe-original", "revision": "1" }, "profile_base": base } })));
+    assert_eq!(against_parent["status"], "ok", "{against_parent}");
+    assert_eq!(status(&against_parent, "method")["status"], "equal", "{against_parent}");
+    assert_eq!(status(&against_parent, "profile")["status"], "equal", "{against_parent}");
+    let core = status(&against_parent, "core");
+    assert_eq!(core["status"], "unknown", "a local profile without a contract pins no core: {core}");
+    assert!(core["reason"].as_str().unwrap().contains("declares no processing contract"), "{core}");
+    let instrument = json_ok(send!(&mut viewer, "recipe_diff", json!({ "request": { "recipe_id": "recipe-original", "revision": "1",
+        "against": "instrument", "profile_base": base } })));
+    assert_eq!(instrument["right"]["kind"], "instrument", "{instrument}");
+    for item in instrument["items"].as_array().unwrap() {
+        assert!(!item["reason"].as_str().unwrap().is_empty(), "{item}");
+    }
+
+    // Apply preview: exact changes and the method-authority request; nothing applied.
+    let preview = json_ok(send!(&mut viewer, "recipe_apply_preview", json!({ "request": { "recipe_id": "recipe-original", "revision": "1",
+        "profile_base": base } })));
+    assert_eq!(preview["status"], "ok", "{preview}");
+    assert_eq!((preview["applied"].clone(), preview["hardware_actuated"].clone()), (json!(false), json!(false)));
+    assert_eq!(preview["requires_explicit_acceptance"], true);
+    if status(&preview, "method")["status"] != "equal" {
+        assert_eq!(preview["method_selection"]["command"], "profile_command", "{preview}");
+        let request: Value = serde_json::from_str(preview["method_selection"]["args"]["request"].as_str().unwrap()).unwrap();
+        assert_eq!(request, json!({ "operation": "apply", "name": "beads", "baseline": method_revision }));
+    }
+    let again = json_ok(send!(&mut viewer, "recipe_diff", json!({ "request": { "recipe_id": "recipe-original", "revision": "1",
+        "against": "instrument", "profile_base": base } })));
+    assert_eq!(again["items"], instrument["items"], "the preview changed no instrument state");
+
+    // The original is unchanged, has one revision, and workspace_write cannot reach it.
+    let reread = json_ok(send!(&mut viewer, "recipe_get", json!({ "request": { "recipe_id": "recipe-original", "revision": "1" } })));
+    assert_eq!(reread["recipe"], original, "original unchanged after create, derive, diff and apply preview");
+    let history = json_ok(send!(&mut viewer, "workspace_read",
+        json!({ "request": json!({ "action": "history", "workspace_id": "recipe/recipe-original" }).to_string() })));
+    assert_eq!(history["revisions"], json!(["1"]), "{history}");
+    let spoof = json_ok(send!(&mut controller, "workspace_write", json!({ "request": json!({ "action": "commit",
+        "workspace_id": "recipe/recipe-original", "expected_revision": "1", "command_id": "spoof",
+        "document": { "schema_version": 1 } }).to_string() })));
+    assert_eq!(spoof["status"], "invalid", "{spoof}");
+    let listed = json_ok(send!(&mut viewer, "recipe_list", json!({ "request": {} })));
+    assert_eq!(listed["recipes"].as_array().unwrap().len(), 2, "{listed}");
+    assert!(send!(&mut viewer, "recipe_list", json!({ "request": { "action": "recipe_create" } })).is_err(),
+            "the command names the action");
+
+    controller.close(None).await.unwrap();
+    viewer.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}

@@ -122,6 +122,12 @@ def render(contract: dict) -> str:
     quick = {k: v for k, v in contract["run_quick_look"].items() if isinstance(v, int)}
     lines.append("export const RUN_QUICK_LOOK = " + json.dumps(quick, indent=2) + " as const;")
     lines.append("")
+    # ABI 50 (#807 I02): the recipe provider's diff vocabulary and bounds (the prose stays in the JSON).
+    rec = contract["recipes"]
+    recipes = {k: v for k, v in rec.items() if isinstance(v, int)}
+    recipes.update({k: rec[k] for k in ("document_type", "dimensions", "item_statuses")})
+    lines.append("export const RECIPES = " + json.dumps(recipes, indent=2) + " as const;")
+    lines.append("")
     # Reverse lookup for event kinds: numeric value -> stable name.
     lines.append("export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {")
     for name, value in contract["event_kinds"].items():

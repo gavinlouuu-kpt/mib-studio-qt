@@ -1840,6 +1840,11 @@ set_tests_properties(analysis.workspace_store_test PROPERTIES TIMEOUT 40 LABELS 
 mib_add_backend_test_executable(workspace_host_test workspace/workspace_host_test.cpp)
 add_test(NAME analysis.workspace_host_test COMMAND $<TARGET_FILE:mib_backend_tests> workspace_host_test)
 set_tests_properties(analysis.workspace_host_test PROPERTIES TIMEOUT 40 LABELS "analysis;persistence;stress")
+# #807 I02 (slice I-1): the native recipe provider: immutability, derive lineage, the
+# compatibility diff and apply preview without side effects, on the real metadata host.
+mib_add_backend_test_executable(recipe_provider_test workspace/recipe_provider_test.cpp)
+add_test(NAME workspace.recipe_provider COMMAND $<TARGET_FILE:mib_backend_tests> recipe_provider_test)
+set_tests_properties(workspace.recipe_provider PROPERTIES TIMEOUT 40 LABELS "backend;workspace;round-trip;fault-injection")
 mib_add_backend_test_executable(analysis_host_test analysis/analysis_host_test.cpp)
 add_test(NAME analysis.host COMMAND $<TARGET_FILE:mib_backend_tests> analysis_host_test)
 set_tests_properties(analysis.host PROPERTIES TIMEOUT 40 LABELS "analysis;persistence;stress")

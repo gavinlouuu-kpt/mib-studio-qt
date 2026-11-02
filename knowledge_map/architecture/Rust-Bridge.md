@@ -552,6 +552,29 @@ returns the per-run statistics of closed HDF5 experiment runs and `run − refer
   `run_quick_look_is_a_read`; `runQuickLook.test.ts`; C++ `review.run_statistics`,
   `e2e.run_quick_look`.
 
+## ABI 50: the native recipe provider (#807 I02, fold-in slice I-1)
+
+Provisional allocation after 47 (F analysis), 48 (I workspace) and 49 (E feature control,
+#806). Six commands, each with one argument `{request: object}`; the command layer
+(`mib_app_commands::recipe_command`) adds `action` = the command name and refuses a request
+that names its own action. One cxx function, `BackendBridge::recipe_request(request, write)`,
+reaches `BackendFacade::recipeRequestJson` and [[../services/RecipeProvider]].
+
+- **Reads:** `recipe_list`, `recipe_get`, `recipe_diff` (against `"instrument"` or another
+  recipe; four items method / profile / core / calibration, each equal / different / unknown
+  with a reason), `recipe_apply_preview` (changes, the method-selection request for
+  `registry_apply_method` or `profile_command`, `not_changed_by_apply`, `applied: false`,
+  `hardware_actuated: false`). Viewers may use them.
+- **Writes (control-only in the WS server):** `recipe_create`, `recipe_derive`. Exact replay by
+  `command_id` + request.
+- **ABI touch points:** `bridge-contract.json` `abi_version` 50 and `recipes`; `shim.cpp`
+  `bridge_abi_version()`; `contract.rs` `abi_version_is_stable`, `recipes_are_described`;
+  generated `bridgeContract.ts` `RECIPES`; `dispatch.rs` pin; `eventAdapter.test.ts`,
+  `runQuickLook.test.ts` pins; Tauri `recipe_*` commands and `bridge.ts` `recipe*` wrappers.
+- **Tests:** `ws.rs` `recipe_provider_create_derive_diff_apply_preview`, the server's
+  `calibration_apply_is_control_only_but_reads_are_not` (recipe reads/writes), C++
+  `workspace.recipe_provider`.
+
 ## ABI 43: the applied method's calibration declarations in readiness (#776)
 
 Additive over ABI 42. The workspace could not tell from the bridge that the applied method is a

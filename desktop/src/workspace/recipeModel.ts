@@ -52,12 +52,64 @@ export function currentCompatibility(recipe: Recipe | RecipeDraft, contextRevisi
     && ["compatible", "incompatible", "unknown"].includes(result.status)
     && Array.isArray(result.reasons) && result.reasons.every(reason => typeof reason === "string") ? result : null;
 }
-/** Consumer proposal, not a deployed bridge API or a persistence implementation. */
-export interface RecipeProvider {
-  read(id: string, revision: string): Promise<Recipe>;
-  compatibility(recipe: Recipe | RecipeDraft, contextRevision: string): Promise<RecipeCompatibility>;
-  create(draft: RecipeDraft, workspaceRevision: string, commandId: string): Promise<
-    { status: "saved"; recipe: Recipe; workspace_revision: string }
-    | { status: "conflict"; workspace_revision: string }
-    | { status: "invalid" | "unavailable" | "unknown"; reason: string }>;
+/** Bridge ABI 50 (#807 I02): the native recipe provider's records and replies. These decoders only
+ *  check shape; every comparison, diff and apply decision is the backend's (RecipeProvider.cpp). */
+export type DiffStatus = "equal" | "different" | "unknown";
+export interface DiffItem { dimension: "method" | "profile" | "core" | "calibration"; status: DiffStatus; reason: string; left: unknown; right: unknown }
+export interface ProviderRecipe {
+  schema_version: 1; type: "I-recipe/1"; id: string; revision: string; title: string; note: string; created_at: string;
+  method: MethodRef & { content_sha256: string }; analysis_plan: RevisionRef;
+  lineage: { recipe: RevisionRef | null; finding: RevisionRef | null };
+  basis: Record<string, unknown>;
 }
+export interface RecipeSummary { id: string; revision: string; title: string; created_at: string; method: MethodRef; analysis_plan: RevisionRef; lineage: { recipe: RevisionRef | null; finding: RevisionRef | null } }
+export interface RecipeDiff { left: { kind: "recipe"; id: string; revision: string }; right: Record<string, unknown>; items: DiffItem[]; overall: DiffStatus }
+export interface RecipeApplyPreview {
+  recipe: RevisionRef; readiness_generation: string; items: DiffItem[]; overall: DiffStatus;
+  changes: { dimension: string; from: unknown; to: unknown; via: string | null }[];
+  method_selection: null | { authority: string; command: string; args: Record<string, unknown> };
+  not_changed_by_apply: { dimension: string; status: DiffStatus; reason: string; action: string }[];
+  blocked: string[]; analysis_plan: RevisionRef & { effect: string };
+  applied: false; hardware_actuated: false; requires_explicit_acceptance: true;
+}
+/** A provider refusal ({status != ok, message}) becomes an Error carrying the backend's words. */
+function ok(reply: unknown): Record<string, unknown> {
+  if (!object(reply) || typeof reply.status !== "string") throw new Error("Invalid recipe provider reply");
+  if (reply.status !== "ok") throw new Error(`${reply.status}: ${typeof reply.message === "string" ? reply.message : "refused"}`);
+  return reply;
+}
+const diffItems = (v: unknown): DiffItem[] => {
+  if (!Array.isArray(v) || v.length !== 4 || !v.every(i => object(i) && typeof i.dimension === "string"
+    && ["equal", "different", "unknown"].includes(i.status as string) && typeof i.reason === "string" && i.reason.length > 0))
+    throw new Error("Invalid recipe diff items");
+  return v as DiffItem[];
+};
+const providerRecipe = (v: unknown): ProviderRecipe => {
+  if (!object(v) || v.type !== "I-recipe/1" || !token(v.id) || !token(v.revision) || typeof v.title !== "string"
+    || !ref(v.method) || !ref(v.analysis_plan) || !object(v.lineage)) throw new Error("Invalid provider recipe");
+  return v as unknown as ProviderRecipe;
+};
+export const decodeRecipeList = (reply: unknown): { recipes: RecipeSummary[]; next_after: string | null } => {
+  const r = ok(reply);
+  if (!Array.isArray(r.recipes) || !r.recipes.every(x => object(x) && token(x.id) && token(x.revision) && typeof x.title === "string"))
+    throw new Error("Invalid recipe listing");
+  return { recipes: r.recipes as RecipeSummary[], next_after: typeof r.next_after === "string" ? r.next_after : null };
+};
+export const decodeRecipeReply = (reply: unknown): ProviderRecipe => providerRecipe(ok(reply).recipe);
+export const decodeRecipeDiff = (reply: unknown): RecipeDiff => {
+  const r = ok(reply);
+  if (!object(r.left) || !object(r.right) || !["equal", "different", "unknown"].includes(r.overall as string)) throw new Error("Invalid recipe diff");
+  return { left: r.left as RecipeDiff["left"], right: r.right, items: diffItems(r.items), overall: r.overall as DiffStatus };
+};
+export const decodeApplyPreview = (reply: unknown): RecipeApplyPreview => {
+  const r = ok(reply);
+  if (r.applied !== false || r.hardware_actuated !== false || r.requires_explicit_acceptance !== true
+    || !Array.isArray(r.changes) || !Array.isArray(r.not_changed_by_apply) || !Array.isArray(r.blocked))
+    throw new Error("Invalid apply preview: a preview must not apply or actuate");
+  diffItems(r.items);
+  return r as unknown as RecipeApplyPreview;
+};
+/** The pinned pair as RecipePairing shows it (identity only; nothing is computed). */
+export const pairingView = (r: ProviderRecipe): Recipe => ({ schema_version: 1, id: r.id, revision: r.revision, title: r.title,
+  question: r.note, method: { source: r.method.source, id: r.method.id, revision: r.method.revision },
+  analysis_plan: { id: r.analysis_plan.id, revision: r.analysis_plan.revision }, lineage: r.lineage });

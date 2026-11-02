@@ -49,12 +49,16 @@ bool SqliteService::execute(const std::string& sql) {
     return db_ && sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
 }
 std::string SqliteService::workspaceRequest(const std::string& text, bool write) {
-    return request(text, write, false);
+    return request(text, write, Authority::Public);
 }
 std::string SqliteService::analysisWorkspaceRequest(const std::string& text, bool write) {
-    return request(text, write, true);
+    return request(text, write, Authority::Analysis);
 }
-std::string SqliteService::request(const std::string& request, bool write, bool analysisAuthority) {
+std::string SqliteService::recipeStoreRequest(const std::string& text, bool write) {
+    return request(text, write, Authority::Recipe);
+}
+std::string SqliteService::request(const std::string& request, bool write, Authority authority) {
+    const bool analysisAuthority = authority == Authority::Analysis;
     std::lock_guard<std::mutex> lock(mutex_);
     if (!workspace_)
         return R"({"status":"unavailable","message":"Metadata database is not available"})";
@@ -76,7 +80,21 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
             (workspaceId.rfind("analysis/", 0) == 0 || workspaceId.rfind("analysis-", 0) == 0))
             throw StoreError(StoreErrorCode::Invalid,
                              "Analysis namespaces require the native analysis authority");
+        // #807 I02: recipes are create-only records of the native recipe provider.
+        const bool recipeNamespace = workspaceId.rfind("recipe/", 0) == 0;
+        if (write && authority != Authority::Recipe && recipeNamespace)
+            throw StoreError(StoreErrorCode::Invalid,
+                             "Recipe namespace requires the native recipe provider");
         const auto action = q.at("action").get<std::string>();
+        if (authority == Authority::Recipe) {
+            const bool allowed = recipeNamespace &&
+                                 (action == "read" || action == "catalog" ||
+                                  (write && action == "commit" && q.contains("expected_revision") &&
+                                   q.at("expected_revision").is_null()));
+            if (!allowed)
+                throw StoreError(StoreErrorCode::Invalid,
+                                 "Recipe store permits reads and create-only commits in recipe/");
+        }
         std::set<std::string> keys{"action", "workspace_id"};
         if (analysisAuthority && (action == "derived_receipt" || (write && action == "derive"))) {
             keys.insert("command_id");
@@ -103,7 +121,8 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
             keys.insert("source_id");
         } else if (action == "read")
             keys.insert("revision");
-        else if (action == "history" || (analysisAuthority && action == "catalog")) {
+        else if (action == "history" ||
+                 ((analysisAuthority || authority == Authority::Recipe) && action == "catalog")) {
             keys.insert("after");
             keys.insert("limit");
         } else if ((write && action == "commit") || action == "receipt") {

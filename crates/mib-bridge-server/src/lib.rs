@@ -199,6 +199,9 @@ const CONTROL_COMMANDS: &[&str] = &[
     // Calibration apply (#716 A4a, ABI 42): it sets the instrument's pixel-to-micron factor, so
     // only the controlling client may send it. Listing and reading records stay open to viewers.
     "workspace_write",
+    // ABI 50 (#807 I02): creating and deriving recipes are writes; list/get/diff/apply_preview
+    // are reads every client may use (apply_preview never applies anything).
+    "recipe_create", "recipe_derive",
     "calibration_apply",
 ];
 
@@ -709,6 +712,10 @@ mod stage_control_tests {
     fn calibration_apply_is_control_only_but_reads_are_not() {
         assert!(CONTROL_COMMANDS.contains(&"workspace_write"));
         assert!(!CONTROL_COMMANDS.contains(&"workspace_read"));
+        for cmd in ["recipe_create", "recipe_derive"] { assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} is a write"); }
+        for cmd in ["recipe_list", "recipe_get", "recipe_diff", "recipe_apply_preview"] {
+            assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
         assert!(CONTROL_COMMANDS.contains(&"calibration_apply"), "calibration_apply must be a CONTROL command");
         for cmd in ["calibration_records_list", "calibration_record_get"] {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");

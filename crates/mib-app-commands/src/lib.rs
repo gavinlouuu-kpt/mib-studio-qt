@@ -1834,6 +1834,23 @@ pub fn workspace_read(state: &AppState, request: String) -> Result<serde_json::V
 pub fn workspace_write(state: &AppState, request: String) -> Result<serde_json::Value, String> {
     workspace_request(state, request, true)
 }
+/// ABI 50 (#807 I02): the native recipe provider. `action` is the command name; `request` is
+/// the command's argument object (bridge-contract.json `recipes`). Reads never write; create and
+/// derive are the control-only writes. Nothing applies a method or actuates hardware.
+pub const RECIPE_READS: &[&str] = &["recipe_list", "recipe_get", "recipe_diff", "recipe_apply_preview"];
+pub const RECIPE_WRITES: &[&str] = &["recipe_create", "recipe_derive"];
+pub fn recipe_command(state: &AppState, action: &str, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let write = RECIPE_WRITES.contains(&action);
+    if !write && !RECIPE_READS.contains(&action) { return Err(format!("Unknown recipe command {action}")); }
+    let serde_json::Value::Object(mut map) = request else { return Err("Recipe request must be an object".into()); };
+    if map.contains_key("action") { return Err("Recipe request must not name an action".into()); }
+    map.insert("action".into(), serde_json::Value::String(action.into()));
+    let text = serde_json::Value::Object(map).to_string();
+    if text.len() > 65_536 { return Err("Recipe request too large".into()); }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().recipe_request(&text, write)).map_err(|e| e.to_string())
+}
+
 fn workspace_request(state: &AppState, request: String, write: bool) -> Result<serde_json::Value, String> {
     if request.len() > 2_200_000 { return Err("Workspace request too large".into()); }
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;

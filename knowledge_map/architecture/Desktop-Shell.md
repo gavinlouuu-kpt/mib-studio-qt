@@ -2014,6 +2014,16 @@ and scientific validation awaits #808. Design proposal:
 `docs/design/ique-workflow/WORKSPACE-CONTRACT.md`.
 
 
+## Recipe library (#807 I02, ABI 50)
+
+Experiment → Plan mounts `RecipeLibrary` (`desktop/src/workspace/RecipeLibrary.tsx`) under
+`SavedPlan`. It lists, opens, creates and derives ("Base a new draft on this recipe") recipes
+through the `bridge.recipe*` wrappers, and renders `RecipePairing` with the backend's
+`recipe_diff` items verbatim and the `recipe_apply_preview` reply (the method-selection
+request is shown, never sent). Creating and deriving need control. No fixture is imported;
+`recipeModel.ts` decoders check shape only and refuse a preview that claims to have applied.
+See [[../services/RecipeProvider]].
+
 ## Saved workspace plan (#807, ABI 48; first written as 45)
 
 Experiment → Plan includes `SavedPlan`: explicit native metadata save/new revision

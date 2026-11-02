@@ -118,3 +118,4 @@ back.
 Central method registry/cache (#398): [[services/ProfileRegistryService]].
 
 Workspace persistence core (#807): [[services/WorkspaceStore]]; injected metadata connection, not a second method/journal authority.
+Recipe authority (#807 I02): [[services/RecipeProvider]]; recipes live in `recipe/` of the same store, create-only.

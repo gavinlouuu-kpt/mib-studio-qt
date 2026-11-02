@@ -1148,6 +1148,11 @@ namespace backend::bridge
         // refused unless the experiment is idle (it runs inside the coordinator's idle
         // transaction); only the WebSocket server's controlling client may send it.
         std::string workspaceRequestJson(const std::string& request, bool write);
+        // Bridge ABI 50 (#807 I02): the native recipe provider (workspace/RecipeProvider.h):
+        // recipe_list / recipe_get / recipe_diff / recipe_apply_preview read; recipe_create /
+        // recipe_derive write (control-only). `request` carries the action. Never applies a
+        // method, changes calibration or actuates hardware.
+        std::string recipeRequestJson(const std::string& request, bool write);
         std::string calibrationRecordsListJson() const;
         std::string calibrationRecordGetJson(const std::string &recordId) const;
         std::string applyCalibrationJson(const std::string &recordId, double expectedCurrentFactor);

@@ -238,6 +238,7 @@ public:
     BridgeCommandResult monitoring_cell_clear_pins();
     // ABI 42 (#716 A4a): calibration records (bridge-contract.json calibration_records).
     rust::String workspace_request(rust::Str request, bool write);
+    rust::String recipe_request(rust::Str request, bool write);
     rust::String calibration_records_list();
     rust::String calibration_record_get(rust::Str record_id);
     rust::String calibration_apply(rust::Str record_id, double expected_current_factor);

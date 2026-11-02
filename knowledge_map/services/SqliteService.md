@@ -29,5 +29,11 @@ operator attribution. Store errors map to explicit statuses. Successful command
 replay returns its original revision; unknown writes must retry exactly.
 
 `backend.workspace_host` tests real persistence, restart, rollback, replay and
-stale-CAS refusal. See [[WorkspaceStore]] and
+stale-CAS refusal.
+
+**Authorities (#807 I02, ABI 50).** `request()` takes an `Authority`: `Public`
+(`workspaceRequest`), `Analysis` (`analysisWorkspaceRequest`, F's namespaces) and
+`Recipe` (`recipeStoreRequest`, only read / catalog / create-only commit inside
+`recipe/`). Any other authority's write into `recipe/` is refused, so recipes are
+immutable to `workspace_write`; see [[RecipeProvider]]. See [[WorkspaceStore]] and
 `docs/design/ique-workflow/PRODUCTION-INTEGRATION.md` for limits.
