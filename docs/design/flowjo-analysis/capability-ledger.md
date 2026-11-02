@@ -428,6 +428,18 @@ sources; independent numbers from scipy 1.18.1**.
 - **Remaining.** CIs for rank shifts and ANOVA effect sizes; repeated measures
   (paired > 2 groups, dose series within one unit) are refused, not modelled;
   no multiplicity correction; the I-6 view.
+- **Review fixes (#824).** Degenerate inputs (zero within-group or
+  paired-difference variance, every paired difference zero, all values tied, or a
+  non-finite intermediate near 1e200 / 1e308) give test `status: undefined` with
+  `undefinedReason` and null statistic, p-value and CI, never p = 0 or 1; the
+  comparison is `undefined` only when no requested test is defined. Fit suspect
+  flags no longer depend on the reporting scale (the CI-width rule uses the log10
+  interval; a linear Wald CI reaching <= 0 is flagged), a damping blow-up is
+  `termination: stalled`, inverse-variance weights from < 3 replicates are
+  flagged, and one confidence rule (0.5, 0.999] covers comparisons and fits.
+  Proof: `analysis.inference` (n = 3, effect sizes and Hodges-Lehmann vs
+  scipy/numpy, degenerate and overflow cases, bounded hill `atBound`, the
+  linear-scale review dataset) and `analysis.comparison_spec`.
 
 ### F-3 Engine decision applied (2026-11-02, `claude/808-f4-comparison-fits`)
 

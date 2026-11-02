@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -125,6 +126,39 @@ double tieSum(const std::vector<double>& ties) {
     return s;
 }
 
+constexpr const char* kNonFinite =
+    "non-finite intermediate: values too large in magnitude for double-precision arithmetic";
+bool allFinite(std::initializer_list<double> values) {
+    for (double v : values)
+        if (!std::isfinite(v)) return false;
+    return true;
+}
+// The test is not defined for these values: no statistic, p-value or CI.
+TestResult& undefinedTest(TestResult& r, const std::string& reason) {
+    r.status = "undefined";
+    r.undefinedReason = reason;
+    r.statistic.reset();
+    r.pValue.reset();
+    r.confidenceInterval.reset();
+    r.ciUnavailableReason = reason;
+    r.pMethod = "undefined: " + reason;
+    return r;
+}
+// Last guard for every test: a computed result has a finite statistic and a
+// p-value in [0, 1]; any non-finite reported number makes it undefined.
+TestResult finished(TestResult r) {
+    const auto bad = [](const std::optional<double>& v) { return v && !std::isfinite(*v); };
+    if (bad(r.estimate)) r.estimate.reset();
+    if (bad(r.effectSize)) r.effectSize.reset();
+    if (r.status != "computed") return r;
+    const bool ciBad = r.confidenceInterval &&
+                       !allFinite({r.confidenceInterval->lower, r.confidenceInterval->upper});
+    if (!r.statistic || !r.pValue || bad(r.statistic) || bad(r.df1) || bad(r.df2) || ciBad ||
+        !(*r.pValue >= 0 && *r.pValue <= 1))
+        undefinedTest(r, kNonFinite);
+    return r;
+}
+
 void requireFinite(const std::vector<double>& v, std::size_t minimum, const char* what) {
     if (v.size() < minimum) throw std::invalid_argument(std::string(what) + ": too few values");
     for (double x : v)
@@ -240,9 +274,16 @@ double fSurvival(double f, double d1, double d2) {
 }
 double chiSquareSurvival(double x, double k) { return gammaUpper(k / 2, x / 2); }
 
+double checkConfidenceLevel(double level) {
+    if (!(level > 0.5 && level <= 0.999))
+        throw std::invalid_argument("confidenceLevel must be in (0.5, 0.999]");
+    return level;
+}
+
 // ---- tests ---------------------------------------------------------------
 TestResult welchT(const std::vector<double>& reference, const std::vector<double>& comparator,
                   double confidenceLevel) {
+    checkConfidenceLevel(confidenceLevel);
     requireFinite(reference, 2, "Welch t reference");
     requireFinite(comparator, 2, "Welch t comparator");
     const double na = reference.size(), nb = comparator.size();
@@ -256,23 +297,17 @@ TestResult welchT(const std::vector<double>& reference, const std::vector<double
     r.estimate = diff;
     r.effectSizeName = "Hedges g (pooled SD, small-sample corrected)";
     const double pooled = std::sqrt(((na - 1) * va + (nb - 1) * vb) / (na + nb - 2));
-    if (pooled > 0) r.effectSize = diff / pooled * (1 - 3 / (4 * (na + nb) - 9));
-    if (!(se > 0)) {
-        r.statistic = 0;
-        r.pValue = 1;
-        r.pMethod = "undefined: zero variance in both groups";
-        r.ciUnavailableReason = "zero standard error";
-        r.notes.push_back("both groups have zero variance; no test statistic");
-        return r;
-    }
+    if (pooled > 0 && std::isfinite(pooled)) r.effectSize = diff / pooled * (1 - 3 / (4 * (na + nb) - 9));
+    if (!allFinite({va, vb, diff, se})) return finished(undefinedTest(r, kNonFinite));
+    if (!(se > 0)) return finished(undefinedTest(r, "zero within-group variance in both groups"));
     const double df = (sa + sb) * (sa + sb) / (sa * sa / (na - 1) + sb * sb / (nb - 1));
     r.statistic = diff / se;
     r.df1 = df;
-    r.pValue = studentTTwoSided(r.statistic, df);
+    r.pValue = studentTTwoSided(*r.statistic, df);
     r.pMethod = "two-sided Student t with Welch-Satterthwaite df (regularized incomplete beta)";
     const double q = studentTQuantile(0.5 + confidenceLevel / 2, df);
     r.confidenceInterval = Interval{diff - q * se, diff + q * se};
-    return r;
+    return finished(r);
 }
 
 TestResult mannWhitneyU(const std::vector<double>& reference,
@@ -292,6 +327,12 @@ TestResult mannWhitneyU(const std::vector<double>& reference,
     r.statisticName = "U";
     r.statistic = u1;
     const double big = std::max(u1, u2);
+    if (ties.size() == 1 && ties[0] == static_cast<double>(n)) {
+        r.estimateName = "Hodges-Lehmann shift (median of comparator - reference differences)";
+        r.estimate = 0.0;
+        r.effectSizeName = "rank-biserial correlation 2U/(n1 n2) - 1";
+        return finished(undefinedTest(r, "all values tied"));
+    }
     if (ties.empty() && n1 <= 50 && n2 <= 50) {
         r.pValue = std::min(1.0, 2 * mannWhitneyExactUpper(n1, n2, static_cast<std::size_t>(
                                                                        std::llround(big))));
@@ -314,13 +355,15 @@ TestResult mannWhitneyU(const std::vector<double>& reference,
     r.ciUnavailableReason = "no confidence interval is computed for the rank shift";
     r.effectSizeName = "rank-biserial correlation 2U/(n1 n2) - 1";
     r.effectSize = 2 * u1 / (double(n1) * n2) - 1;
-    return r;
+    if (!std::isfinite(*r.estimate)) return finished(undefinedTest(r, kNonFinite));
+    return finished(r);
 }
 
 TestResult pairedT(const std::vector<double>& reference, const std::vector<double>& comparator,
                    double confidenceLevel) {
     if (reference.size() != comparator.size())
         throw std::invalid_argument("Paired t requires matched units");
+    checkConfidenceLevel(confidenceLevel);
     requireFinite(reference, 2, "Paired t");
     requireFinite(comparator, 2, "Paired t");
     std::vector<double> d(reference.size());
@@ -333,19 +376,19 @@ TestResult pairedT(const std::vector<double>& reference, const std::vector<doubl
     r.estimate = m;
     r.effectSizeName = "Cohen dz (mean difference / SD of differences)";
     r.df1 = n - 1;
-    if (!(se > 0)) {
-        r.pValue = 1;
-        r.pMethod = "undefined: zero variance of differences";
-        r.ciUnavailableReason = "zero standard error";
-        return r;
-    }
+    for (double v : d)
+        if (!std::isfinite(v)) return finished(undefinedTest(r, kNonFinite));
+    if (!allFinite({m, sd, se})) return finished(undefinedTest(r, kNonFinite));
+    if (!(se > 0))
+        return finished(
+            undefinedTest(r, "zero variance of the paired differences (every difference equal)"));
     r.effectSize = m / sd;
     r.statistic = m / se;
-    r.pValue = studentTTwoSided(r.statistic, n - 1);
+    r.pValue = studentTTwoSided(*r.statistic, n - 1);
     r.pMethod = "two-sided Student t, df = n - 1 (regularized incomplete beta)";
     const double q = studentTQuantile(0.5 + confidenceLevel / 2, n - 1);
     r.confidenceInterval = Interval{m - q * se, m + q * se};
-    return r;
+    return finished(r);
 }
 
 TestResult wilcoxonSignedRank(const std::vector<double>& reference,
@@ -363,6 +406,8 @@ TestResult wilcoxonSignedRank(const std::vector<double>& reference,
     TestResult r;
     r.test = "wilcoxon-signed-rank";
     r.statisticName = "W";
+    for (double v : all)
+        if (!std::isfinite(v)) return finished(undefinedTest(r, kNonFinite));
     const std::size_t zeros = all.size() - d.size();
     if (zeros) r.notes.push_back(std::to_string(zeros) + " zero difference(s) dropped (Wilcoxon)");
     std::vector<double> walsh;
@@ -372,11 +417,7 @@ TestResult wilcoxonSignedRank(const std::vector<double>& reference,
     r.estimate = median(walsh);
     r.ciUnavailableReason = "no confidence interval is computed for the pseudo-median";
     r.effectSizeName = "matched-pairs rank-biserial (W+ - W-) / (W+ + W-)";
-    if (d.empty()) {
-        r.pValue = 1;
-        r.pMethod = "undefined: every paired difference is zero";
-        return r;
-    }
+    if (d.empty()) return finished(undefinedTest(r, "every paired difference is zero"));
     std::vector<double> magnitude(d.size()), ties;
     for (std::size_t i = 0; i < d.size(); ++i) magnitude[i] = std::fabs(d[i]);
     const auto ranks = averageRanks(magnitude, ties);
@@ -387,16 +428,17 @@ TestResult wilcoxonSignedRank(const std::vector<double>& reference,
     r.effectSize = (plus - minus) / (plus + minus);
     if (ties.empty() && d.size() <= 50) {
         r.pValue = std::min(
-            1.0, 2 * wilcoxonExactLower(d.size(), static_cast<std::size_t>(std::llround(r.statistic))));
+            1.0, 2 * wilcoxonExactLower(d.size(), static_cast<std::size_t>(std::llround(*r.statistic))));
         r.pMethod = "exact null distribution (no ties, n <= 50 after dropping zeros), two-sided";
     } else {
         const double mn = n * (n + 1) / 4;
         const double se = std::sqrt((n * (n + 1) * (2 * n + 1) - 0.5 * tieSum(ties)) / 24);
-        const double z = se > 0 ? (r.statistic - mn) / se : 0;
+        if (!(se > 0)) return finished(undefinedTest(r, "all nonzero differences tied"));
+        const double z = (*r.statistic - mn) / se;
         r.pValue = std::min(1.0, 2 * normalCdf(-std::fabs(z)));
         r.pMethod = "normal approximation with tie correction, no continuity correction, two-sided";
     }
-    return r;
+    return finished(r);
 }
 
 TestResult oneWayAnova(const std::vector<std::vector<double>>& groups) {
@@ -424,16 +466,14 @@ TestResult oneWayAnova(const std::vector<std::vector<double>>& groups) {
     if (between + within > 0) r.effectSize = static_cast<double>(between / (between + within));
     r.estimateName = "";
     r.ciUnavailableReason = "omnibus test; no single contrast estimate";
-    if (!(msw > 0)) {
-        r.pValue = between > 0 ? 0 : 1;
-        r.statistic = between > 0 ? INFINITY : 0;
-        r.pMethod = "degenerate: zero within-group variance";
-        return r;
-    }
+    if (!allFinite({grand, msb, msw})) return finished(undefinedTest(r, kNonFinite));
+    if (!(msw > 0))
+        return finished(undefinedTest(r, between > 0 ? "zero within-group variance"
+                                                     : "zero within-group variance; all values identical"));
     r.statistic = msb / msw;
-    r.pValue = fSurvival(r.statistic, k - 1, n - k);
+    r.pValue = fSurvival(*r.statistic, k - 1, n - k);
     r.pMethod = "upper tail of F(k-1, N-k) (regularized incomplete beta)";
-    return r;
+    return finished(r);
 }
 
 TestResult kruskalWallis(const std::vector<std::vector<double>>& groups) {
@@ -462,17 +502,13 @@ TestResult kruskalWallis(const std::vector<std::vector<double>>& groups) {
     r.df1 = k - 1;
     r.ciUnavailableReason = "omnibus test; no single contrast estimate";
     r.effectSizeName = "epsilon squared H (N + 1) / (N^2 - 1)";
-    if (!(correction > 0)) {
-        r.pValue = 1;
-        r.pMethod = "undefined: every value tied";
-        return r;
-    }
+    if (!(correction > 0)) return finished(undefinedTest(r, "all values tied"));
     h /= correction;
     r.statistic = h;
     r.effectSize = h * (n + 1) / (n * n - 1);
     r.pValue = chiSquareSurvival(h, k - 1);
     r.pMethod = "chi-square approximation with k-1 df, tie-corrected H (regularized gamma)";
-    return r;
+    return finished(r);
 }
 
 // ---- concentration-response fit -------------------------------------------
@@ -560,6 +596,7 @@ struct Run {
     std::vector<double> theta;
     double ssr{INFINITY};
     bool converged{false};
+    bool stalled{false};
     int iterations{0};
 };
 } // namespace
@@ -570,8 +607,7 @@ LogisticFitResult fitLogistic(const LogisticFitRequest& request) {
     const std::size_t p = model.parameters(), n = request.concentration.size();
     auto refuse = [&](std::string reason) { out.insufficientReasons.push_back(std::move(reason)); };
     if (n != request.response.size()) throw std::invalid_argument("Fit input length mismatch");
-    if (!(request.confidenceLevel > 0.5 && request.confidenceLevel < 1))
-        throw std::invalid_argument("Fit confidence level must be in (0.5, 1)");
+    checkConfidenceLevel(request.confidenceLevel);
     std::vector<double> x(n);
     std::map<double, std::vector<double>> byConcentration;
     for (std::size_t i = 0; i < n; ++i) {
@@ -595,6 +631,7 @@ LogisticFitResult fitLogistic(const LogisticFitRequest& request) {
         if (*lo == *hi) refuse("response has no variation");
     }
     std::map<double, double> varianceAt;
+    bool fewWeightReplicates = false;
     if (request.weighting == FitWeighting::InverseVarianceOfReplicateUnits)
         for (const auto& [c, ys] : byConcentration) {
             if (ys.size() < 2) {
@@ -608,6 +645,7 @@ LogisticFitResult fitLogistic(const LogisticFitRequest& request) {
                 break;
             }
             varianceAt[c] = v;
+            if (ys.size() < kSuspectBelowWeightReplicates) fewWeightReplicates = true;
         }
     if (!out.insufficientReasons.empty()) return out;
 
@@ -684,8 +722,10 @@ LogisticFitResult fitLogistic(const LogisticFitRequest& request) {
                     }
                 }
                 if (lambda > 1e16) {
-                    // No descent direction: a (possibly bound-constrained) minimum.
-                    run.converged = true;
+                    // No descent step accepted although neither the step nor
+                    // the SSR criterion was met: possibly a worse local
+                    // minimum. Reported as stalled, never as converged.
+                    run.stalled = true;
                     run.theta = theta;
                     run.ssr = current;
                     return run;
@@ -706,12 +746,15 @@ LogisticFitResult fitLogistic(const LogisticFitRequest& request) {
         std::vector<double> start{yLow, yHigh, xmin + fraction * (xmax - xmin)};
         if (!model.fixedHill) start.push_back(1.0);
         const auto run = levenbergMarquardt(start);
-        if ((run.converged && !best.converged) ||
-            (run.converged == best.converged && run.ssr < best.ssr))
+        // The lowest SSR wins; at an equal SSR a converged run is preferred.
+        const double tie = 1e-12 * std::max(1.0, std::fabs(best.ssr));
+        if (best.theta.empty() || run.ssr < best.ssr - tie ||
+            (std::fabs(run.ssr - best.ssr) <= tie && run.converged && !best.converged))
             best = run;
     }
     out.fitted = true;
     out.converged = best.converged;
+    out.termination = best.converged ? "converged" : best.stalled ? "stalled" : "iteration-limit";
     out.iterations = best.iterations;
     out.degreesOfFreedom = static_cast<int>(n - p);
     out.weights = w;
@@ -755,6 +798,8 @@ LogisticFitResult fitLogistic(const LogisticFitRequest& request) {
     }
     auto& c = out.parameters[2];
     out.ec50 = std::pow(10.0, c.estimate);
+    // The log10 EC50 interval decides the width flag in both reporting scales.
+    const std::optional<Interval> logInterval = c.confidenceInterval;
     if (request.scale == ConcentrationScale::Log10) {
         if (c.confidenceInterval)
             out.ec50Interval = Interval{std::pow(10.0, c.confidenceInterval->lower),
@@ -775,7 +820,11 @@ LogisticFitResult fitLogistic(const LogisticFitRequest& request) {
         c = linear;
     }
 
-    if (!out.converged)
+    if (best.stalled)
+        out.suspectReasons.push_back(
+            "Levenberg-Marquardt stalled (no descent step accepted at damping > 1e16) before "
+            "convergence; possibly a worse local minimum");
+    else if (!out.converged)
         out.suspectReasons.push_back("not converged after " + std::to_string(out.iterations) +
                                      " Levenberg-Marquardt iterations");
     if (out.ec50 < out.minimumConcentration || out.ec50 > out.maximumConcentration)
@@ -783,18 +832,23 @@ LogisticFitResult fitLogistic(const LogisticFitRequest& request) {
     if (!covariance) {
         out.suspectReasons.push_back(
             "parameter covariance is singular; standard errors and CIs unavailable");
-    } else if (out.ec50Interval) {
-        const bool wide =
-            request.scale == ConcentrationScale::Log10
-                ? !(out.ec50Interval->lower > 0) ||
-                      std::log10(out.ec50Interval->upper / out.ec50Interval->lower) >
-                          xmax - xmin
-                : out.ec50Interval->upper - out.ec50Interval->lower >
-                      out.maximumConcentration - out.minimumConcentration;
-        if (wide || !std::isfinite(out.ec50Interval->upper))
+    } else if (logInterval) {
+        // One rule whatever the reporting scale: the log10 EC50 interval
+        // spans more decades than the tested range.
+        const bool wide = !allFinite({logInterval->lower, logInterval->upper}) ||
+                          logInterval->upper - logInterval->lower > xmax - xmin;
+        if (wide)
             out.suspectReasons.push_back(
                 "EC50 confidence interval wider than the tested concentration range");
+        if (request.scale == ConcentrationScale::Linear && out.ec50Interval &&
+            !(out.ec50Interval->lower > 0))
+            out.suspectReasons.push_back(
+                "linear-scale EC50 confidence interval reaches a non-positive concentration");
     }
+    if (fewWeightReplicates)
+        out.suspectReasons.push_back("weights estimated from fewer than " +
+                                     std::to_string(kSuspectBelowWeightReplicates) +
+                                     " replicates per concentration");
     if (out.distinctConcentrations < kSuspectBelowConcentrations)
         out.suspectReasons.push_back("fewer than " + std::to_string(kSuspectBelowConcentrations) +
                                      " distinct concentrations");

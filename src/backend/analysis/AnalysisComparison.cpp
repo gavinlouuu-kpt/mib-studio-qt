@@ -200,10 +200,8 @@ double confidence(const Json& spec) {
     if (!spec.contains("confidenceLevel")) return 0.95;
     if (!spec.at("confidenceLevel").is_number())
         throw std::invalid_argument("confidenceLevel must be a number");
-    const auto level = spec.at("confidenceLevel").get<double>();
-    if (!(level >= 0.5 && level <= 0.999))
-        throw std::invalid_argument("confidenceLevel must be in [0.5, 0.999]");
-    return level;
+    // One rule for comparisons and fits (inference::checkConfidenceLevel).
+    return inf::checkConfidenceLevel(spec.at("confidenceLevel").get<double>());
 }
 
 // One pinned source evaluated for the declared metric, then checked against
@@ -370,6 +368,8 @@ Json testJson(const inf::TestResult& r, double level) {
               {"lower", number(r.confidenceInterval->lower)},
               {"upper", number(r.confidenceInterval->upper)}};
     return {{"test", r.test},
+            {"status", r.status},
+            {"undefinedReason", r.status == "undefined" ? Json(r.undefinedReason) : Json(nullptr)},
             {"statisticName", r.statisticName},
             {"statistic", number(r.statistic)},
             {"df1", number(r.df1)},
@@ -531,7 +531,17 @@ Json compareSpec(const Json& spec, const SampleEvaluator& evaluate) {
                 if (parametric) tests.push_back(testJson(inf::oneWayAnova(data), level));
                 if (rank) tests.push_back(testJson(inf::kruskalWallis(data), level));
             }
-            inferenceOut["status"] = "computed";
+            // Each test carries its own status; the comparison is "undefined"
+            // only when no requested test is defined for these values.
+            bool anyComputed = false;
+            for (const auto& t : tests) {
+                if (t.at("status") == "computed")
+                    anyComputed = true;
+                else
+                    reasons.push_back(t.at("test").get<std::string>() + ": " +
+                                      t.at("undefinedReason").get<std::string>());
+            }
+            inferenceOut["status"] = anyComputed ? "computed" : "undefined";
             inferenceOut["tests"] = tests;
             inferenceOut["referenceGroup"] = groups[0];
             inferenceOut["comparatorGroup"] = groups.size() == 2 ? Json(groups[1]) : Json(nullptr);
@@ -696,6 +706,7 @@ Json fitSpec(const Json& spec, const SampleEvaluator& evaluate) {
     out["residualSumSquares"] = number(fit.residualSumSquares);
     out["degreesOfFreedom"] = fit.degreesOfFreedom;
     out["converged"] = fit.converged;
+    out["termination"] = fit.termination;
     out["iterations"] = fit.iterations;
     out["suspect"] = !fit.suspectReasons.empty();
     out["suspectReasons"] = fit.suspectReasons;

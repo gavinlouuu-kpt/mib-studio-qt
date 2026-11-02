@@ -31,12 +31,24 @@ double chiSquareSurvival(double x, double k);
 struct Interval {
     double lower{0}, upper{0};
 };
+// One confidence-level rule for every test, fit and comparison spec:
+// (0.5, 0.999]. Throws std::invalid_argument naming the range otherwise.
+double checkConfidenceLevel(double level);
+
+// status "computed": statistic and pValue are finite numbers.
+// status "undefined": the test is not defined for these values (zero
+// within-group variance, every value tied, every paired difference zero, or a
+// non-finite intermediate from values too large for double arithmetic);
+// statistic, pValue and the confidence interval are absent and
+// undefinedReason says why. A degenerate input never yields p = 0 or p = 1.
 struct TestResult {
     std::string test;          // "welch-t", "mann-whitney-u", ...
     std::string statisticName; // "t", "U", "W", "F", "H"
-    double statistic{0};
+    std::string status{"computed"};
+    std::string undefinedReason;
+    std::optional<double> statistic;
     std::optional<double> df1, df2;
-    double pValue{1};
+    std::optional<double> pValue;
     std::string pMethod;       // how the p-value was obtained (exact / distribution)
     std::string estimateName;  // e.g. "difference of means (comparator - reference)"
     std::optional<double> estimate;
@@ -88,6 +100,11 @@ struct LogisticFitResult {
     bool fitted{false};                        // false: insufficient, nothing below is set
     std::vector<std::string> insufficientReasons;
     bool converged{false};
+    // "converged" (relative step or SSR decrease below tolerance),
+    // "stalled" (no descent step accepted as the damping exceeded 1e16: a
+    // possibly worse local minimum, reported as a suspect reason) or
+    // "iteration-limit".
+    std::string termination;
     int iterations{0};
     std::vector<FitParameter> parameters;      // bottom, top, logEC50|ec50, hill (4PL)
     double ec50{0};
@@ -101,11 +118,17 @@ struct LogisticFitResult {
 };
 // Levenberg-Marquardt on y = bottom + (top - bottom) / (1 + 10^((logEC50 - log10 c) * hill)),
 // 3PL fixes hill = 1. Covariance s^2 (J'WJ)^-1 with s^2 = WSSR / (n - p).
+// Suspect flags do not depend on the reporting scale: the "CI wider than the
+// tested range" rule is evaluated on the log10 EC50 interval in both scales,
+// and a linear-scale Wald interval reaching <= 0 is flagged.
 LogisticFitResult fitLogistic(const LogisticFitRequest& request);
 
 // Bounds the fit enforces (and reports as "parameter at bound").
 inline constexpr double kHillBound = 10.0;
 inline constexpr double kLogEc50Margin = 3.0; // decades beyond the tested range
 inline constexpr std::size_t kSuspectBelowConcentrations = 5;
+// Inverse-variance weights from fewer replicate units than this per
+// concentration are flagged as suspect (a 2-unit variance is very noisy).
+inline constexpr std::size_t kSuspectBelowWeightReplicates = 3;
 
 } // namespace backend::analysis::inference

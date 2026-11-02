@@ -314,9 +314,16 @@ The native inference authority (ADR 0016; no TypeScript or Python in the path):
   `insufficient` with reasons and no p-value. Fits with fewer points than
   parameters + 1, fewer distinct concentrations than parameters, no response
   variation, or unweighable replicates return `insufficient` and no parameters;
-  suspect reasons: not converged, EC50 outside the tested range, EC50 CI wider
-  than the range, fewer than 5 concentrations, parameter at bound, singular
-  covariance.
+  suspect reasons: stalled (damping > 1e16, `termination: stalled`) or not
+  converged, EC50 outside the tested range, EC50 CI wider than the range (judged
+  on the log10 interval in both reporting scales), linear-scale EC50 CI reaching
+  <= 0, fewer than 5 concentrations, inverse-variance weights from fewer than 3
+  replicates per concentration, parameter at bound, singular covariance.
+- Each test reports `status` `computed` or `undefined` (zero within-group or
+  paired-difference variance, all values tied, every paired difference zero, or a
+  non-finite intermediate) with `undefinedReason` and null statistic / p-value /
+  CI; never p = 0 or 1 for a degenerate input. Confidence levels follow one rule,
+  `checkConfidenceLevel` (0.5, 0.999].
 - Host actions `comparisonSpec` / `concentrationFit` (read endpoint; reply
   carries `contentHash`). The descriptive `compare` (F-analysis-comparison/1)
   stays for existing findings.

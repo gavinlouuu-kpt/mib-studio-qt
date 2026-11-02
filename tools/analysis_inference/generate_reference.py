@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import sys
+import warnings
 
 import numpy as np
 import scipy
@@ -61,7 +62,60 @@ FIT_RESP = [4.19, 8.26, 7.9, 8.04, 10.41, 10.74, 15.88, 24.87, 24.97, 50.49, 49.
 SUSPECT_CONC = [c for c in [0.03, 0.1, 0.3, 1, 3, 10] for _ in range(3)]
 SUSPECT_RESP = [10.19, 10.38, 9.92, 10.83, 10.73, 10.35, 11.05, 11.13, 10.59, 12.5, 13.5,
                 13.77, 18.27, 18.29, 17.82, 32.65, 31.81, 32.65]
+# n = 3 per group (the minimum the comparison spec accepts).
+N3_REF = [1.0, 2.0, 3.5]
+N3_CMP = [4.0, 6.0, 5.2]
+PAIRED_N3_REF = [1.0, 2.0, 3.0]
+PAIRED_N3_CMP = [2.0, 4.5, 3.2]
+ANOVA_N3 = [[1.0, 2.0, 3.0], [2.5, 3.5, 4.0], [5.0, 6.0, 7.5]]
+# Degenerate inputs: scipy returns nan/inf/0 for these; the native authority
+# reports status "undefined" with a reason and no p-value (never p = 0 or 1).
+DEGEN_CONST_REF = [5.0, 5.0, 5.0]
+DEGEN_CONST_CMP = [7.0, 7.0, 7.0]
+DEGEN_SHIFT_REF = [1.0, 2.0, 3.0]
+DEGEN_SHIFT_CMP = [2.0, 3.0, 4.0]  # every paired difference +1
+DEGEN_ANOVA = [[5.0, 5.0, 5.0], [7.0, 7.0, 7.0], [9.0, 9.0, 9.0]]
+DEGEN_TIED = [[5.0, 5.0, 5.0], [5.0, 5.0, 5.0]]
+DEGEN_HUGE_REF = [1e200, 2e200, 3e200]
+DEGEN_HUGE_CMP = [4e200, 5e200, 7e200]
+# Step response: the transition lies between two tested concentrations, so
+# the hill coefficient runs to its bound (|hill| <= 10).
+STEP_CONC = [c for c in [0.01, 0.1, 1, 10, 100, 1000] for _ in range(3)]
+STEP_RESP = [0, 0.1, -0.1, 0, 0.2, -0.2, 0.1, 0, -0.1, 100, 99.9, 100.1, 100, 100.2, 99.8,
+             100, 100.1, 99.9]
+# Linear-scale EC50 whose Wald interval reaches below zero (review finding):
+# two units per concentration.
+NEGCI_CONC = [c for c in [0.1, 1, 10, 100, 1000] for _ in range(2)]
+NEGCI_RESP = [19.39, -17.38, 27.37, 19.48, 72.35, 74.25, 80.77, 95.08, 92.76, 126.27]
 CONFIDENCE = 0.95
+
+
+def hedges_g(ref, cmp):
+    """Hedges g with the small-sample factor 1 - 3 / (4 (n1 + n2) - 9)."""
+    a, b = np.asarray(ref, float), np.asarray(cmp, float)
+    na, nb = len(a), len(b)
+    sp = np.sqrt(((na - 1) * a.var(ddof=1) + (nb - 1) * b.var(ddof=1)) / (na + nb - 2))
+    return (b.mean() - a.mean()) / sp * (1 - 3 / (4 * (na + nb) - 9))
+
+
+def walsh_median(d):
+    d = list(d)
+    return float(np.median([(d[i] + d[j]) / 2 for i in range(len(d)) for j in range(i, len(d))]))
+
+
+def require_degenerate():
+    """scipy agrees these inputs have no finite, informative test."""
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # scipy warns about the degenerate moments
+        checks = [
+            stats.ttest_ind(DEGEN_CONST_CMP, DEGEN_CONST_REF, equal_var=False).statistic,
+            stats.ttest_rel(DEGEN_SHIFT_CMP, DEGEN_SHIFT_REF).statistic,
+            stats.f_oneway(*DEGEN_ANOVA).statistic,
+            stats.kruskal(*DEGEN_TIED).statistic,
+        ]
+    for value in checks:
+        if np.isfinite(value):
+            raise SystemExit(f"degenerate fixture is not degenerate in scipy: {value}")
 
 
 def logistic(x, b, t, c, h):
@@ -164,6 +218,60 @@ def values() -> dict[str, object]:
     params, se, q, _ = fit(logistic, np.log10(SUSPECT_CONC), np.asarray(SUSPECT_RESP),
                            [10.0, 32.0, -0.26, 1.0])
     out.update(suspectEc50=10 ** params[2], suspectHill=params[3])
+
+    # n = 3 two-group, paired and k-group cases, with effect sizes.
+    welch = stats.ttest_ind(N3_CMP, N3_REF, equal_var=False)
+    ci = welch.confidence_interval(CONFIDENCE)
+    out.update(n3WelchT=welch.statistic, n3WelchDf=welch.df, n3WelchP=welch.pvalue,
+               n3WelchCiLower=ci.low, n3WelchCiUpper=ci.high,
+               n3HedgesG=hedges_g(N3_REF, N3_CMP))
+    mwu = stats.mannwhitneyu(N3_CMP, N3_REF, alternative="two-sided", method="exact")
+    out.update(n3MwuU=mwu.statistic, n3MwuP=mwu.pvalue,
+               n3RankBiserial=2 * mwu.statistic / (len(N3_REF) * len(N3_CMP)) - 1,
+               n3HodgesLehmann=np.median(np.subtract.outer(N3_CMP, N3_REF)))
+    paired = stats.ttest_rel(PAIRED_N3_CMP, PAIRED_N3_REF)
+    ci = paired.confidence_interval(CONFIDENCE)
+    d = np.subtract(PAIRED_N3_CMP, PAIRED_N3_REF)
+    out.update(n3PairedT=paired.statistic, n3PairedP=paired.pvalue, n3PairedCiLower=ci.low,
+               n3PairedCiUpper=ci.high, n3CohenDz=d.mean() / d.std(ddof=1))
+    wil = stats.wilcoxon(d, zero_method="wilcox", alternative="two-sided", method="exact")
+    ranks = stats.rankdata(np.abs(d))
+    plus, minus = ranks[d > 0].sum(), ranks[d < 0].sum()
+    out.update(n3WilcoxonW=wil.statistic, n3WilcoxonP=wil.pvalue,
+               n3MatchedRankBiserial=(plus - minus) / (plus + minus),
+               n3PseudoMedian=walsh_median(d))
+    anova = stats.f_oneway(*ANOVA_N3)
+    pooled = np.concatenate(ANOVA_N3)
+    ssb = sum(len(g) * (np.mean(g) - pooled.mean()) ** 2 for g in ANOVA_N3)
+    out.update(n3AnovaF=anova.statistic, n3AnovaP=anova.pvalue,
+               n3EtaSquared=ssb / ((pooled - pooled.mean()) ** 2).sum())
+    kw = stats.kruskal(*ANOVA_N3)
+    out.update(n3KruskalH=kw.statistic, n3KruskalP=kw.pvalue,
+               n3EpsilonSquared=kw.statistic / (len(pooled) - 1))
+    # Effect sizes and Hodges-Lehmann on the larger fixtures.
+    out.update(welchHedgesG=hedges_g(WELCH_REF, WELCH_CMP),
+               welchHodgesLehmann=np.median(np.subtract.outer(WELCH_CMP, WELCH_REF)))
+    d = np.subtract(PAIRED_CMP, PAIRED_REF)
+    out.update(pairedCohenDz=d.mean() / d.std(ddof=1), pairedPseudoMedian=walsh_median(d))
+
+    require_degenerate()
+
+    # Hill at its bound: scipy's bounded fit (same bounds) also ends at 10.
+    x = np.log10(STEP_CONC)
+    lower = [-np.inf, -np.inf, x.min() - 3, -10]
+    upper = [np.inf, np.inf, x.max() + 3, 10]
+    params, _ = optimize.curve_fit(logistic, x, STEP_RESP, p0=[0, 100, np.mean(x), 1],
+                                   bounds=(lower, upper), maxfev=100000)
+    out.update(stepHill=params[3], stepLogEc50=params[2])
+
+    # Linear-scale Wald interval below zero; log10 interval of the same fit.
+    params, se, q, _ = fit(logistic_linear, np.asarray(NEGCI_CONC, dtype=float),
+                           np.asarray(NEGCI_RESP), [0.0, 100.0, 3.0, 1.0])
+    out.update(negciEc50=params[2], negciEc50Lower=params[2] - q * se[2],
+               negciEc50Upper=params[2] + q * se[2])
+    params, se, q, _ = fit(logistic, np.log10(NEGCI_CONC), np.asarray(NEGCI_RESP),
+                           [0.0, 100.0, 0.5, 1.0])
+    out.update(negciLogEc50Lower=params[2] - q * se[2], negciLogEc50Upper=params[2] + q * se[2])
     return out
 
 
@@ -182,6 +290,14 @@ def render() -> str:
         "wilcoxonTiesReference": WILCOXON_TIES_REF, "wilcoxonTiesComparator": WILCOXON_TIES_CMP,
         "fitConcentration": FIT_CONC, "fitResponse": FIT_RESP,
         "suspectConcentration": SUSPECT_CONC, "suspectResponse": SUSPECT_RESP,
+        "n3Reference": N3_REF, "n3Comparator": N3_CMP,
+        "pairedN3Reference": PAIRED_N3_REF, "pairedN3Comparator": PAIRED_N3_CMP,
+        "degenerateConstantReference": DEGEN_CONST_REF,
+        "degenerateConstantComparator": DEGEN_CONST_CMP,
+        "degenerateShiftReference": DEGEN_SHIFT_REF, "degenerateShiftComparator": DEGEN_SHIFT_CMP,
+        "degenerateHugeReference": DEGEN_HUGE_REF, "degenerateHugeComparator": DEGEN_HUGE_CMP,
+        "stepConcentration": STEP_CONC, "stepResponse": STEP_RESP,
+        "negciConcentration": NEGCI_CONC, "negciResponse": NEGCI_RESP,
     }
     lines = [
         "// GENERATED by tools/analysis_inference/generate_reference.py; do not edit.",
@@ -193,8 +309,11 @@ def render() -> str:
     ]
     for name, values_ in data.items():
         lines.append(f"inline const std::vector<double> {name}{literal(values_)};")
-    lines.append("inline const std::vector<std::vector<double>> anovaGroups{" +
-                 ", ".join(literal(g) for g in ANOVA_GROUPS) + "};")
+    for name, groups in (("anovaGroups", ANOVA_GROUPS), ("anovaN3Groups", ANOVA_N3),
+                         ("degenerateAnovaGroups", DEGEN_ANOVA),
+                         ("degenerateTiedGroups", DEGEN_TIED)):
+        lines.append(f"inline const std::vector<std::vector<double>> {name}{{" +
+                     ", ".join(literal(g) for g in groups) + "};")
     for name, value in values().items():
         lines.append(f"constexpr double {name} = {float(value)!r};")
     lines.append("} // namespace inference_reference")

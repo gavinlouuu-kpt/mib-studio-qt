@@ -6,12 +6,15 @@
 #include "analysis/inference_reference.h"
 #include "support/assert.h"
 #include <cmath>
+#include <optional>
+#include <stdexcept>
 #include <string>
 
 namespace inf = backend::analysis::inference;
 namespace ref = inference_reference;
 
 namespace {
+double val(const std::optional<double>& v) { return v ? *v : std::nan(""); }
 bool near(double actual, double expected, double relative, double absolute = 0) {
     return std::fabs(actual - expected) <= std::max(absolute, relative * std::fabs(expected));
 }
@@ -41,49 +44,49 @@ int main() {
 
     // Welch t on unequal variances (10 vs 20 units)
     const auto welch = inf::welchT(ref::welchReference, ref::welchComparator, 0.95);
-    NEAR(welch.statistic, ref::welchT, 1e-10, "Welch t");
+    NEAR(val(welch.statistic), ref::welchT, 1e-10, "Welch t");
     NEAR(*welch.df1, ref::welchDf, 1e-10, "Welch df");
-    NEAR(welch.pValue, ref::welchP, 1e-8, "Welch p");
+    NEAR(val(welch.pValue), ref::welchP, 1e-8, "Welch p");
     NEAR(welch.confidenceInterval->lower, ref::welchCiLower, 1e-8, "Welch CI lower");
     NEAR(welch.confidenceInterval->upper, ref::welchCiUpper, 1e-8, "Welch CI upper");
 
     // Mann-Whitney U with ties (normal approximation, tie + continuity correction)
     const auto ties = inf::mannWhitneyU(ref::mwuTiesReference, ref::mwuTiesComparator);
-    NEAR(ties.statistic, ref::mwuTiesU, 1e-12, "MWU U with ties");
-    NEAR(ties.pValue, ref::mwuTiesP, 1e-9, "MWU p with ties");
+    NEAR(val(ties.statistic), ref::mwuTiesU, 1e-12, "MWU U with ties");
+    NEAR(val(ties.pValue), ref::mwuTiesP, 1e-9, "MWU p with ties");
     MIB_EXPECT(ties.pMethod.find("normal approximation") != std::string::npos,
                "tied MWU states the approximation");
     // Mann-Whitney exact (no ties)
     const auto exact = inf::mannWhitneyU(ref::mwuExactReference, ref::mwuExactComparator);
-    NEAR(exact.statistic, ref::mwuExactU, 1e-12, "MWU exact U");
-    NEAR(exact.pValue, ref::mwuExactP, 1e-10, "MWU exact p");
+    NEAR(val(exact.statistic), ref::mwuExactU, 1e-12, "MWU exact U");
+    NEAR(val(exact.pValue), ref::mwuExactP, 1e-10, "MWU exact p");
     MIB_EXPECT(exact.pMethod.find("exact") == 0, "untied small MWU is exact");
 
     // paired t and Wilcoxon signed-rank
     const auto paired = inf::pairedT(ref::pairedReference, ref::pairedComparator, 0.95);
-    NEAR(paired.statistic, ref::pairedT, 1e-10, "paired t");
+    NEAR(val(paired.statistic), ref::pairedT, 1e-10, "paired t");
     NEAR(*paired.df1, ref::pairedDf, 1e-12, "paired df");
-    NEAR(paired.pValue, ref::pairedP, 1e-8, "paired p");
+    NEAR(val(paired.pValue), ref::pairedP, 1e-8, "paired p");
     NEAR(paired.confidenceInterval->lower, ref::pairedCiLower, 1e-9, "paired CI lower");
     NEAR(paired.confidenceInterval->upper, ref::pairedCiUpper, 1e-9, "paired CI upper");
     const auto darwin =
         inf::wilcoxonSignedRank(ref::wilcoxonExactReference, ref::wilcoxonExactComparator);
-    NEAR(darwin.statistic, ref::wilcoxonExactW, 1e-12, "Wilcoxon exact W (Darwin)");
-    NEAR(darwin.pValue, ref::wilcoxonExactP, 1e-12, "Wilcoxon exact p (Darwin)");
+    NEAR(val(darwin.statistic), ref::wilcoxonExactW, 1e-12, "Wilcoxon exact W (Darwin)");
+    NEAR(val(darwin.pValue), ref::wilcoxonExactP, 1e-12, "Wilcoxon exact p (Darwin)");
     MIB_EXPECT(darwin.pMethod.find("exact") == 0, "untied Wilcoxon is exact");
     const auto tiedPairs =
         inf::wilcoxonSignedRank(ref::wilcoxonTiesReference, ref::wilcoxonTiesComparator);
-    NEAR(tiedPairs.statistic, ref::wilcoxonTiesW, 1e-12, "Wilcoxon W with ties and zeros");
-    NEAR(tiedPairs.pValue, ref::wilcoxonTiesP, 1e-9, "Wilcoxon p with ties and zeros");
+    NEAR(val(tiedPairs.statistic), ref::wilcoxonTiesW, 1e-12, "Wilcoxon W with ties and zeros");
+    NEAR(val(tiedPairs.pValue), ref::wilcoxonTiesP, 1e-9, "Wilcoxon p with ties and zeros");
     MIB_EXPECT(!tiedPairs.notes.empty(), "dropped zero differences are reported");
 
     // one-way ANOVA and Kruskal-Wallis (five groups)
     const auto anova = inf::oneWayAnova(ref::anovaGroups);
-    NEAR(anova.statistic, ref::anovaF, 1e-10, "ANOVA F");
-    NEAR(anova.pValue, ref::anovaP, 1e-8, "ANOVA p");
+    NEAR(val(anova.statistic), ref::anovaF, 1e-10, "ANOVA F");
+    NEAR(val(anova.pValue), ref::anovaP, 1e-8, "ANOVA p");
     const auto kw = inf::kruskalWallis(ref::anovaGroups);
-    NEAR(kw.statistic, ref::kruskalH, 1e-10, "Kruskal-Wallis H");
-    NEAR(kw.pValue, ref::kruskalP, 1e-8, "Kruskal-Wallis p");
+    NEAR(val(kw.statistic), ref::kruskalH, 1e-10, "Kruskal-Wallis H");
+    NEAR(val(kw.pValue), ref::kruskalP, 1e-8, "Kruskal-Wallis p");
 
     // 4PL, log10 scale, unweighted
     inf::LogisticFitRequest request;
@@ -181,5 +184,147 @@ int main() {
     const auto single = inf::fitLogistic(unweighable);
     MIB_EXPECT(!single.fitted && hasReason(single.insufficientReasons, ">= 2 replicate units"),
                "inverse-variance weighting needs replicate units at every concentration");
+    // ---- review fixes (F09/I10) ------------------------------------------
+    // n = 3 per group, with effect sizes and Hodges-Lehmann against scipy.
+    const auto n3 = inf::welchT(ref::n3Reference, ref::n3Comparator, 0.95);
+    MIB_EXPECT(n3.status == "computed", "n = 3 Welch computed");
+    NEAR(val(n3.statistic), ref::n3WelchT, 1e-10, "n3 Welch t");
+    NEAR(val(n3.df1), ref::n3WelchDf, 1e-10, "n3 Welch df");
+    NEAR(val(n3.pValue), ref::n3WelchP, 1e-8, "n3 Welch p");
+    NEAR(n3.confidenceInterval->lower, ref::n3WelchCiLower, 1e-8, "n3 Welch CI lower");
+    NEAR(n3.confidenceInterval->upper, ref::n3WelchCiUpper, 1e-8, "n3 Welch CI upper");
+    NEAR(val(n3.effectSize), ref::n3HedgesG, 1e-12, "n3 Hedges g");
+    NEAR(val(welch.effectSize), ref::welchHedgesG, 1e-12, "Hedges g (10 vs 20)");
+    const auto n3u = inf::mannWhitneyU(ref::n3Reference, ref::n3Comparator);
+    NEAR(val(n3u.statistic), ref::n3MwuU, 1e-12, "n3 MWU U");
+    NEAR(val(n3u.pValue), ref::n3MwuP, 1e-10, "n3 MWU exact p");
+    NEAR(val(n3u.effectSize), ref::n3RankBiserial, 1e-12, "n3 rank-biserial");
+    NEAR(val(n3u.estimate), ref::n3HodgesLehmann, 1e-12, "n3 Hodges-Lehmann shift");
+    NEAR(val(inf::mannWhitneyU(ref::welchReference, ref::welchComparator).estimate),
+         ref::welchHodgesLehmann, 1e-12, "Hodges-Lehmann shift (10 vs 20)");
+    const auto n3p = inf::pairedT(ref::pairedN3Reference, ref::pairedN3Comparator, 0.95);
+    NEAR(val(n3p.statistic), ref::n3PairedT, 1e-10, "n3 paired t");
+    NEAR(val(n3p.pValue), ref::n3PairedP, 1e-8, "n3 paired p");
+    NEAR(n3p.confidenceInterval->lower, ref::n3PairedCiLower, 1e-9, "n3 paired CI lower");
+    NEAR(n3p.confidenceInterval->upper, ref::n3PairedCiUpper, 1e-9, "n3 paired CI upper");
+    NEAR(val(n3p.effectSize), ref::n3CohenDz, 1e-12, "n3 Cohen dz");
+    NEAR(val(paired.effectSize), ref::pairedCohenDz, 1e-12, "Cohen dz (12 pairs)");
+    const auto n3w = inf::wilcoxonSignedRank(ref::pairedN3Reference, ref::pairedN3Comparator);
+    NEAR(val(n3w.statistic), ref::n3WilcoxonW, 1e-12, "n3 Wilcoxon W");
+    NEAR(val(n3w.pValue), ref::n3WilcoxonP, 1e-12, "n3 Wilcoxon exact p");
+    NEAR(val(n3w.effectSize), ref::n3MatchedRankBiserial, 1e-12, "n3 matched rank-biserial");
+    NEAR(val(n3w.estimate), ref::n3PseudoMedian, 1e-12, "n3 Hodges-Lehmann pseudo-median");
+    NEAR(val(inf::wilcoxonSignedRank(ref::pairedReference, ref::pairedComparator).estimate),
+         ref::pairedPseudoMedian, 1e-12, "pseudo-median (12 pairs)");
+    const auto n3a = inf::oneWayAnova(ref::anovaN3Groups);
+    NEAR(val(n3a.statistic), ref::n3AnovaF, 1e-10, "n3 ANOVA F");
+    NEAR(val(n3a.pValue), ref::n3AnovaP, 1e-8, "n3 ANOVA p");
+    NEAR(val(n3a.effectSize), ref::n3EtaSquared, 1e-12, "n3 eta squared");
+    const auto n3k = inf::kruskalWallis(ref::anovaN3Groups);
+    NEAR(val(n3k.statistic), ref::n3KruskalH, 1e-10, "n3 Kruskal-Wallis H");
+    NEAR(val(n3k.pValue), ref::n3KruskalP, 1e-8, "n3 Kruskal-Wallis p");
+    NEAR(val(n3k.effectSize), ref::n3EpsilonSquared, 1e-12, "n3 epsilon squared");
+
+    // Degenerate inputs: status undefined with a reason; no statistic, p or
+    // CI (formerly p = 1 or p = 0 reported as computed).
+    const auto undefined = [&](const inf::TestResult& r, const std::string& reason, const char* what) {
+        MIB_EXPECT(r.status == "undefined" && !r.pValue && !r.statistic && !r.confidenceInterval &&
+                       r.undefinedReason.find(reason) != std::string::npos,
+                   std::string(what) + ": status " + r.status + ", reason '" + r.undefinedReason + "'");
+    };
+    undefined(inf::welchT(ref::degenerateConstantReference, ref::degenerateConstantComparator, 0.95),
+              "zero within-group variance", "Welch {5,5,5} vs {7,7,7}");
+    undefined(inf::pairedT(ref::degenerateShiftReference, ref::degenerateShiftComparator, 0.95),
+              "zero variance of the paired differences", "paired t, every difference +1");
+    undefined(inf::oneWayAnova(ref::degenerateAnovaGroups), "zero within-group variance",
+              "ANOVA {5,5,5}/{7,7,7}/{9,9,9}");
+    undefined(inf::wilcoxonSignedRank(ref::degenerateShiftReference, ref::degenerateShiftReference),
+              "every paired difference is zero", "Wilcoxon, all differences zero");
+    undefined(inf::kruskalWallis(ref::degenerateTiedGroups), "all values tied", "Kruskal-Wallis, all tied");
+    undefined(inf::mannWhitneyU(ref::degenerateTiedGroups[0], ref::degenerateTiedGroups[1]),
+              "all values tied", "Mann-Whitney, all tied");
+    // Values near the double range: a non-finite intermediate is undefined,
+    // never p = 1 or NaN reported as computed.
+    undefined(inf::welchT(ref::degenerateHugeReference, ref::degenerateHugeComparator, 0.95),
+              "non-finite intermediate", "Welch on 1e200-scale values");
+    undefined(inf::pairedT({1e308, -1e308, 1e308}, {-1e308, 1e308, -1e308}, 0.95),
+              "non-finite intermediate", "paired t on +/-1e308");
+    undefined(inf::wilcoxonSignedRank({1e308, -1e308, 1e308}, {-1e308, 1e308, -1e308}),
+              "non-finite intermediate", "Wilcoxon on +/-1e308");
+    undefined(inf::oneWayAnova({ref::degenerateHugeReference, ref::degenerateHugeComparator}),
+              "non-finite intermediate", "ANOVA on 1e200-scale values");
+
+    // One confidence-level rule for tests and fits: (0.5, 0.999].
+    const auto refused = [](auto&& call) {
+        try {
+            call();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+    MIB_EXPECT(refused([] { inf::checkConfidenceLevel(0.5); }) &&
+                   refused([] { inf::checkConfidenceLevel(0.9995); }) &&
+                   !refused([] { inf::checkConfidenceLevel(0.999); }),
+               "confidence level (0.5, 0.999]");
+    inf::LogisticFitRequest half;
+    half.concentration = ref::fitConcentration;
+    half.response = ref::fitResponse;
+    half.confidenceLevel = 0.5;
+    MIB_EXPECT(refused([&] { inf::fitLogistic(half); }) &&
+                   refused([] { inf::welchT(ref::n3Reference, ref::n3Comparator, 0.5); }),
+               "fits and tests apply the same rule");
+
+    // Parameter at bound: a step response drives hill to its bound (scipy's
+    // bounded fit agrees).
+    inf::LogisticFitRequest step;
+    step.concentration = ref::stepConcentration;
+    step.response = ref::stepResponse;
+    const auto stepFit = inf::fitLogistic(step);
+    MIB_REQUIRE(stepFit.fitted && stepFit.parameters.size() == 4, "step response fits");
+    MIB_EXPECT(stepFit.parameters[3].atBound && !stepFit.parameters[2].atBound &&
+                   hasReason(stepFit.suspectReasons, "parameter at bound: hill"),
+               "hill at its bound is flagged atBound and suspect");
+    NEAR(stepFit.parameters[3].estimate, ref::stepHill, 1e-6, "bounded hill");
+    NEAR(stepFit.parameters[2].estimate, ref::stepLogEc50, 1e-4, "step logEC50");
+    MIB_EXPECT(!fit.parameters[3].atBound && fit.termination == "converged",
+               "a well-designed fit is not at a bound and converged");
+
+    // Linear-scale suspect flags (review dataset): EC50 3.27 with Wald CI
+    // [-6.02, 12.56] is flagged; the log10 fit of the same data is not wide
+    // on the log scale, and the width rule is the same in both scales.
+    inf::LogisticFitRequest negci;
+    negci.concentration = ref::negciConcentration;
+    negci.response = ref::negciResponse;
+    negci.scale = inf::ConcentrationScale::Linear;
+    const auto negLinear = inf::fitLogistic(negci);
+    MIB_REQUIRE(negLinear.fitted && negLinear.ec50Interval, "linear-scale fit with a Wald interval");
+    NEAR(negLinear.ec50, ref::negciEc50, 1e-5, "negci EC50");
+    NEAR(negLinear.ec50Interval->lower, ref::negciEc50Lower, 1e-4, "negci EC50 CI lower (< 0)");
+    NEAR(negLinear.ec50Interval->upper, ref::negciEc50Upper, 1e-4, "negci EC50 CI upper");
+    MIB_EXPECT(negLinear.ec50Interval->lower < 0 &&
+                   hasReason(negLinear.suspectReasons, "non-positive concentration"),
+               "a linear EC50 interval reaching <= 0 is suspect");
+    negci.scale = inf::ConcentrationScale::Log10;
+    const auto negLog = inf::fitLogistic(negci);
+    MIB_EXPECT(hasReason(negLog.suspectReasons, "wider than the tested") ==
+                   hasReason(negLinear.suspectReasons, "wider than the tested") &&
+                   ref::negciLogEc50Upper - ref::negciLogEc50Lower < 4.0 &&
+                   !hasReason(negLog.suspectReasons, "wider than the tested"),
+               "the width rule uses the log10 interval in both scales");
+    // Step data: the log10 interval is wide, so both scales flag it.
+    step.scale = inf::ConcentrationScale::Linear;
+    MIB_EXPECT(hasReason(inf::fitLogistic(step).suspectReasons, "wider than the tested") &&
+                   hasReason(stepFit.suspectReasons, "wider than the tested"),
+               "a wide log10 interval is flagged in the linear scale too");
+
+    // Inverse-variance weights from two replicate units per concentration.
+    negci.weighting = inf::FitWeighting::InverseVarianceOfReplicateUnits;
+    const auto twoUnitWeights = inf::fitLogistic(negci);
+    MIB_EXPECT(twoUnitWeights.fitted &&
+                   hasReason(twoUnitWeights.suspectReasons, "weights estimated from fewer than 3 replicates"),
+               "weights from 2 replicate units are suspect");
+    MIB_EXPECT(!hasReason(weighted.suspectReasons, "weights estimated from fewer"),
+               "weights from 3 replicate units are not flagged");
     return mib::test::exitCode();
 }

@@ -375,6 +375,50 @@ int main() {
                    !insufficient.at("fit").at("reasons").empty(),
                "three points: no fit, with reasons");
 
+    // Review fixes (F09/I10). Degenerate units: zero within-group variance
+    // is "undefined" with a reason and a null pValue, never p = 1 computed.
+    samples = json::array();
+    for (int i = 0; i < 6; ++i) {
+        auto s = f.sample("flat" + std::to_string(i), i < 3 ? 5.0 : 7.0);
+        s["group"] = i < 3 ? "control" : "treated";
+        samples.push_back(s);
+    }
+    const auto flat = f.call({{"action", "comparisonSpec"},
+                              {"spec", comparisonSpec("unpaired", {"control", "treated"}, samples,
+                                                      "parametric")}},
+                             false);
+    MIB_REQUIRE(flat.value("status", "") == "ok", "degenerate comparison answers");
+    const auto& flatInference = flat.at("comparison").at("inference");
+    const auto* flatWelch = findTest(flat.at("comparison"), "welch-t");
+    MIB_EXPECT(flatInference.at("status") == "undefined" && flatWelch &&
+                   flatWelch->at("status") == "undefined" && flatWelch->at("pValue").is_null() &&
+                   flatWelch->at("statistic").is_null() &&
+                   flatWelch->at("estimate").at("confidenceInterval").is_null() &&
+                   anyReason(flatInference.at("reasons"), "zero within-group variance"),
+               "zero within-group variance: undefined, reason, null pValue: " + flatInference.dump());
+    const auto flatBoth = f.call({{"action", "comparisonSpec"},
+                                  {"spec", comparisonSpec("unpaired", {"control", "treated"}, samples)}},
+                                 false);
+    const auto& bothInference = flatBoth.at("comparison").at("inference");
+    MIB_EXPECT(bothInference.at("status") == "computed" &&
+                   findTest(flatBoth.at("comparison"), "welch-t")->at("status") == "undefined" &&
+                   findTest(flatBoth.at("comparison"), "mann-whitney-u")->at("status") == "computed" &&
+                   findTest(flatBoth.at("comparison"), "welch-t")->at("undefinedReason").is_string(),
+               "each test carries its own status; one defined test keeps the comparison computed");
+    // One confidence-level rule: 0.5 is refused for comparisons as for fits.
+    auto halfSpec = comparisonSpec("unpaired", {"control", "treated"}, samples);
+    halfSpec["confidenceLevel"] = 0.5;
+    const auto half = f.call({{"action", "comparisonSpec"}, {"spec", halfSpec}}, false);
+    MIB_EXPECT(half.value("status", "") != "ok", "confidenceLevel 0.5 refused: " + half.dump().substr(0, 200));
+    fitRequest["samples"] = suspectSamples;
+    fitRequest["confidenceLevel"] = 0.5;
+    MIB_EXPECT(f.call({{"action", "concentrationFit"}, {"spec", fitRequest}}, false).value("status", "") != "ok",
+               "the fit applies the same confidence-level rule");
+    fitRequest.erase("confidenceLevel");
+    MIB_EXPECT(suspect.at("fit").at("termination").is_string() &&
+                   fitted.at("termination") == "converged",
+               "the fit reports how Levenberg-Marquardt terminated");
+
     // The evaluate metric selector refuses an unknown population.
     const auto badMetric = f.call({{"action", "evaluate"},
                                    {"planId", "plan-1"},
