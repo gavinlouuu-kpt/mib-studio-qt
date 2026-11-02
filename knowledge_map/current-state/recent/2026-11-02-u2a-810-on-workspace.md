@@ -15,3 +15,7 @@ added the `PopulationAnalysis` panel above that note. The resolution keeps the w
 mounts `PopulationAnalysis` (experiment files, disabled while a review job runs) above the notice.
 No goal row (F01–F16) changes state with this merge; see [[services/AnalysisWorker]] and
 [[frontend/YofoReview]].
+
+#810 left two desktop version pins behind its contract (`eventAdapter.test.ts` and
+`runQuickLook.test.ts` expected bridge ABI 46 / review ABI 8 while the generated contract says
+47 / 9); they fail on `feat/808-flowjo-realignment` itself and are updated to 47 / 9 here.
