@@ -1855,11 +1855,39 @@ set_tests_properties(analysis.columnar PROPERTIES TIMEOUT 60 LABELS "analysis;ba
 mib_add_backend_test_executable(review_population_scale_test review/review_population_scale_test.cpp)
 add_test(NAME review.population_scale COMMAND $<TARGET_FILE:mib_backend_tests> review_population_scale_test)
 set_tests_properties(review.population_scale PROPERTIES TIMEOUT 300 LABELS "review;analysis;backend;hdf5;roundtrip;performance")
+# F-1b: the analysis workspace path (AnalysisHost) over two 255k/260k-event
+# recordings: columnar source handles, saved strategy + report + plot +
+# retained file-pinned sources + comparison against an independent oracle,
+# row/columnar parity, paged browse metadata and a stated memory bound.
+mib_add_backend_test_executable(review_workspace_scale_test review/review_workspace_scale_test.cpp)
+add_test(NAME review.workspace_scale COMMAND $<TARGET_FILE:mib_backend_tests> review_workspace_scale_test)
+set_tests_properties(review.workspace_scale PROPERTIES TIMEOUT 300 LABELS "review;analysis;backend;hdf5;roundtrip;performance")
+# F-2 (F15 read side): the native FCS 3.0/3.1 reader against files the test
+# writes (byte orders, data types, delimiter escapes, refusals, unapplied
+# constructs) and a 250k-event FCS file through the evaluator and AnalysisHost.
+mib_add_backend_test_executable(analysis_fcs_reader_test analysis/fcs_reader_test.cpp)
+add_test(NAME analysis.fcs_reader COMMAND $<TARGET_FILE:mib_backend_tests> analysis_fcs_reader_test)
+set_tests_properties(analysis.fcs_reader PROPERTIES TIMEOUT 120 LABELS "analysis;backend;roundtrip;invariant")
+# F-2 acceptance: the private FlowJo 10.8.1 reference (229,585 / 190,705 and
+# both 4,096-bin exports) through the native reader and PopulationGraph. Runs
+# only with MIB_FLOWJO_REFERENCE_ROOT; otherwise exits 77 = SKIPPED (never a pass).
+mib_add_backend_test_executable(analysis_flowjo_reference_test analysis/flowjo_reference_test.cpp)
+add_test(NAME analysis.flowjo_reference COMMAND $<TARGET_FILE:mib_backend_tests> analysis_flowjo_reference_test)
+set_tests_properties(analysis.flowjo_reference PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+    LABELS "analysis;backend;acceptance")
+# F-2 review fixes: $PnR masks (64-bit high range must finish, $PnR 1/2),
+# FCS rewrite between descriptor and evaluation / during the scan, and an
+# 80-parameter file gated on two parameters with lazy columns.
+mib_add_backend_test_executable(analysis_fcs_hardening_test analysis/fcs_hardening_test.cpp)
+add_test(NAME analysis.fcs_hardening COMMAND $<TARGET_FILE:mib_backend_tests> analysis_fcs_hardening_test)
+set_tests_properties(analysis.fcs_hardening PROPERTIES TIMEOUT 60 LABELS "analysis;backend;roundtrip;fault")
 mib_add_backend_test_executable(review_population_rewrite_test review/review_population_rewrite_test.cpp)
 add_test(NAME review.population_rewrite COMMAND $<TARGET_FILE:mib_backend_tests> review_population_rewrite_test)
 set_tests_properties(review.population_rewrite PROPERTIES TIMEOUT 120 LABELS "review;analysis;backend;hdf5;fault")
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
+# F-2: tests that call the optional comparator script (tools/flowjo_acceptance).
+target_compile_definitions(mib_backend_tests PRIVATE MIB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 # The vendored PZ7035 ABI header, for tests that fake bridge registers
 # (processing.pz_platform_monitor).
 target_include_directories(mib_backend_tests PRIVATE ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)

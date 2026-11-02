@@ -291,3 +291,90 @@ real-recording or hardware evidence is claimed.
   229,585 / 190,705 through `PopulationGraph` needs F-2 (FCS import, F15).
   No real-recording run; F16 worker memory bound at full size unproven.
 
+
+### F-1b workspace path at full scale (2026-11-02, `claude/808-f1b-f2`)
+
+Goals advanced: F01, F04, F05, F08, F12, F16. Evidence class: **real backend,
+synthetic full-size MIB-schema files** (production `Hdf5Service` writer), headless
+native ctest. No real-instrument recording, no hardware.
+
+- **Mechanism.** Stored files resolve to an **F-source/2 columnar handle**
+  (descriptor, no rows; same fingerprint/sourceKey/parameters/scope as before, so
+  saved bindings stay valid). `AnalysisHost` takes a `ColumnResolver`; both hosts
+  lend `RecordingColumns` through `ReviewJobs::withRecordingColumns` (session
+  lock, coverage check, full-file SHA-256 re-verified; a non-open file through a
+  short-lived reader). One core (`SourceCore`) serves row and columnar sources:
+  evaluate, report (one membership pass), plot, scatter (bounded heap, identical
+  sample), gallery (bitset rank lookup), overlay, comparison, library, report
+  batches. `observations` (≤65,536 events) and `jobInput` (≤100,000) materialize
+  rows and refuse above, naming the bound. Retained stored sources are small
+  file-pinned handles; a changed file is refused.
+- **Browse memory.** `ReviewSession` no longer holds a `ProcessedFrame` per row:
+  counts at open, 1,024-row pages (8 cached), streamed passes for scatter/track
+  rows. Open RSS: **+7.9 MiB at 300,000 events** (was +174 MiB), +7.1 MiB at
+  255,000 (asserted < 24 MiB, after `malloc_trim`).
+- **Proof.** `review.workspace_scale`: rows vs columnar parity (evaluation with
+  a log10 transform and good-only QC, density histogram, seeded scatter) on 2,200
+  events; on 255,000 (A) and 260,000 (B) events a saved interval + polygon +
+  Boolean strategy's 4-population report (selected/unknown/excluded, n, mean,
+  median, p05, p95, denominator), 48-bin plot and a gallery at the last selected
+  ranks equal an independent oracle; the strategy applied to B, both retained,
+  and an independent-design comparison (A not open) gives oracle means
+  133.778052045 / 133.635478269 and their difference. Peak RSS growth of the
+  whole save → report → plot → gallery → retain → apply → compare sequence:
+  **15.9 MiB** (VmHWM after clear_refs; asserted < 64 MiB). Each recording is
+  lent once per comparison. `review.population_scale` additionally asserts the
+  open bound. Bridge: `review_bridge` source-bound strategy test now runs on the
+  columnar handle.
+- **Remaining.** Worker jobs (`jobInput`, Cytoflow parity/t-SNE) still take rows
+  ≤100,000 events (F16 memory bound at full size unproven); observation export is
+  bounded at 65,536 events; run-archive and live sources stay inline (≤100k by
+  design); no real-recording run; the desktop view shows no FCS/columnar-specific
+  affordance yet.
+
+### F-2 FCS import feeding the native evaluator (2026-11-02, `claude/808-f1b-f2`)
+
+Goals advanced: F15 (read side), F04. Evidence class: **real backend, synthetic
+FCS files written by the test**; the FlowJo reference acceptance is implemented
+but **was not run here** (private fixture absent: `analysis.flowjo_reference`
+reports SKIPPED, exit 77, never a pass).
+
+- **Mechanism.** Native `FcsReader` (FCS 3.0/3.1 HEADER, TEXT with delimiter
+  escapes, supplemental TEXT, `$BEGINDATA/$ENDDATA`; list mode F/D/I with
+  `$BYTEORD`, `$PnB`, `$PnR` masking, `$PnE` log decoding, optional `$PnG`) →
+  `FcsColumns` (chunked DATA reads) → F-source/2 handle (scope `fcs`, full-file
+  SHA-256, explicit units, `import` block listing unapplied constructs) → the same
+  `ColumnarEvaluation` / `AnalysisHost` path as MIB recordings. Both hosts
+  resolve `{kind: fcs, path}` and lend `scope: fcs`. No Python in the path.
+- **Unsupported (refused):** FCS2.0, `$MODE` C/U, `$DATATYPE` A, packed integer
+  widths, mixed byte orders, F/D width mismatch, truncated DATA. **Reported, not
+  applied:** compensation (F03), `$PnCALIBRATION`, `$PnD`, `$TIMESTEP`, `$PnE` on
+  float data, extra data sets, ANALYSIS segment, `$PnG` unless `applyGain`.
+- **Proof.** `analysis.fcs_reader`: tokenizer escapes (keywords and values, `|`
+  and form-feed delimiters, odd/duplicate refusal); F big-endian (250,000 events,
+  lowercase keywords), D little-endian with DATA offsets only in TEXT, I with
+  8/16/32-bit, masking, log decoding and gain — every value equals the
+  independent writer's; seven refusals; a rectangle gate over 250,000 events
+  (62,507 selected) through `evaluateSource` and a saved strategy report through
+  `AnalysisHost` equal the oracle; a changed file is refused. Optional comparator
+  `tools/flowjo_acceptance/fcs_comparator.py` (fcsparser 0.2.8, else flowio;
+  both pip-installable here) agreed with the native reader on event count and sum
+  when `MIB_FCS_COMPARATOR_PYTHON` pointed at a scratch venv; it is not in the
+  production path or the default CI run.
+- **Reference acceptance (pending fixture).** `analysis.flowjo_reference` with
+  `MIB_FLOWJO_REFERENCE_ROOT`: SHA-256 pins, 229,585 events, 190,705 in the
+  documented rectangle through PopulationGraph semantics, zero boundary events,
+  both 4,096-bin exports compared bin by bin (`ResourceBounds::maxHistogramBins`
+  raised for this tool only), optional comparator recount.
+- **Review fixes (#823).** `$PnR` masking is closed-form and bounded by the bit
+  width (a 64-bit `$PnR` in (2^63, 2^64) hung the reader); "no mask" is
+  `std::nullopt`, so `$PnR` 1 masks to 0 per FCS 3.1. `lendFcsColumns` fences the
+  file's size and write time before and after the scan; the descriptor's
+  `retention` text no longer claims a per-evaluation re-hash (the SHA-256 is
+  recomputed only when size or write time changed; a rewrite preserving both is
+  not detected). Columnar sources take up to 1,024 parameters (was 64, while the
+  reader accepted 1,024), with lazy columns. Proof: `analysis.fcs_hardening`.
+- **Remaining.** Run the reference on a host with the fixture; FCS export of
+  units/transforms and GatingML (F-6); compensation/Logicle (F03); `$TIMESTEP`
+  scaling; a review-bridge test of the `fcs` kind; a desktop affordance for
+  choosing an FCS source.

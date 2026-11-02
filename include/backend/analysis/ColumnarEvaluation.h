@@ -41,6 +41,9 @@ struct ResourceBounds {
     std::uint64_t maxMembershipBytes{256ULL * 1024 * 1024};
     // Values held for exact order statistics (8 bytes each): 2^26 = 512 MiB.
     std::uint64_t maxExactValues{1ULL << 26};
+    // Bins of one exact histogram (columnHistogram). 256 for display hosts;
+    // acceptance tools comparing finer exports (FlowJo's 4,096) raise it.
+    std::size_t maxHistogramBins{256};
 };
 
 // A read-only, chunked, columnar event source. Missing measurements are NaN
@@ -143,6 +146,7 @@ struct ColumnHistogram {
     std::uint64_t underflow{0}, overflow{0}, measured{0}, missing{0};
 };
 // Exact binned counts of selected finite values; sum(counts)+under+over == measured.
+// 1..bounds.maxHistogramBins bins (at most 65536).
 ColumnHistogram columnHistogram(const TriStateBits& population, const EventColumns& columns,
                                 const std::string& feature, double minimum, double maximum,
                                 std::size_t bins, const ResourceBounds& bounds = {});

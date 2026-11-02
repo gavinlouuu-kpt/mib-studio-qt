@@ -36,6 +36,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <malloc.h>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
@@ -245,11 +246,14 @@ int main() {
 
     // 2. The product entry point (review_analyze_population's C++ authority).
     backend::review::ReviewSession session;
+    malloc_trim(0); // freed writer/oracle memory back to the OS: growth is real growth
     const long beforeOpenKb = statusKb("VmRSS");
     MIB_REQUIRE(session.open(path), "ReviewSession opens the full file");
     const long afterOpenKb = statusKb("VmRSS");
-    std::printf("F-1 scale: ReviewSession open RSS +%.1f MiB (browse metadata, not analysis)\n",
+    std::printf("F-1 scale: ReviewSession open RSS +%.1f MiB (browse metadata paged, F-1b)\n",
                 (afterOpenKb - beforeOpenKb) / 1024.0);
+    // F-1b: was +174 MiB when every row's ProcessedFrame was held at open.
+    MIB_EXPECT((afterOpenKb - beforeOpenKb) / 1024.0 < 24.0, "open of 300k events stays under 24 MiB (paged)");
     Json request{{"expectedPath", path}, {"feature", "area"}, {"minimum", nullptr}, {"maximum", nullptr},
                  {"graph", graph()},
                  {"histogram", {{"minimum", 80.0}, {"maximum", 200.0}, {"bins", 60}}},

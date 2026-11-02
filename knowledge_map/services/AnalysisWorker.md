@@ -187,3 +187,98 @@ Sources: `include/backend/analysis/PopulationGates.h`, `ColumnarEvaluation.h`,
   100,000). `ReviewSession::analyzePopulation` uses `RecordingColumns` for the
   whole file (see [[ReviewSession]]).
 
+
+## Workspace path at full scale: columnar source handles (F-1b, 2026-11-02)
+
+Sources: `include/backend/analysis/SourceAnalysis.h`,
+`src/backend/analysis/SourceCore.{h,cpp}` (internal), `PopulationPlot.cpp`,
+`PopulationScatter.cpp`, `AnalysisHost.{h,cpp}`; test
+`tests/review/review_workspace_scale_test.cpp` (`review.workspace_scale`).
+
+- **Two source kinds, one core.** F-source/1 keeps inline JSON rows (≤100,000;
+  live/run-archive evidence and retained live snapshots). **F-source/2** is a
+  columnar *handle*: descriptor only (`storage: columnar`, sourceKey/fingerprint,
+  scope, path, parameters + units, `segments` [{set, count}], `events`,
+  `retention`), no rows. Event keys are `JSON[sourceKey, set, ordinal]`, the same
+  strings the stored F-source/1 rows always carried, so saved bindings, QC keys
+  and gallery keys are unchanged.
+- **`ColumnResolver`.** `analysisRequest(db, request, write, source, method,
+  columns)`: the host lends a handle's raw columns for the duration of a call
+  (`ReviewJobs::withRecordingColumns` for stored files, `lendFcsColumns` for FCS).
+  `SourceCore::withSource` builds a `SourceView` (raw columns + key/index
+  functions) for either kind; row sources use `RowColumns` over the JSON rows in
+  place (no copy).
+- **Shared evaluation.** `prepare` applies ordered transforms per chunk
+  (`TransformedColumns`, the former long-double arithmetic); `runGraph` validates
+  gates/QC/revision and evaluates every node once (`evaluateColumns`);
+  `evaluation` reduces one population (`columnStatistics`). `evaluateSource`,
+  `evaluatePopulations` (reports: one membership pass for ≤32 populations),
+  `selectedEventKeys` (gallery: rank lookup in the bitset), `plotSource`
+  (`columnHistogram` per layer) and `scatterSource` (SHA-256 ranks kept in a
+  `maxPoints` heap: the same sample as before, never every eligible point) all
+  run on it. Row sources still return per-row `rows`; columnar sources return
+  `membershipStorage: native-bitset` and `events` instead.
+- **Every-row consumers.** `observations` (≤65,536 events, 4 MiB) and `jobInput`
+  (worker jobs, ≤100,000) materialize F-source/1 rows from the lent columns
+  (`materializeColumnarSource`) and refuse above, naming the bound.
+- **Retained handles.** `retainSource` of a stored file stores the small
+  descriptor (file-pinned); comparisons, overlays, libraries and report batches
+  over retained handles re-read the file and re-verify its full-file SHA-256 on
+  every evaluation; a changed file is refused, never reused.
+- **Proof** (`review.workspace_scale`): row/columnar parity (evaluation with
+  transforms + good-only QC, histogram, seeded scatter identical) on a 2,200-event
+  file; on 255,000- and 260,000-event files a saved interval+polygon+Boolean
+  strategy, its 4-population report, 48-bin plot and deep gallery equal an
+  independent oracle; the strategy applied to file B, both retained, and a
+  descriptive comparison (file A not open: short-lived reader) equals the oracle;
+  open RSS < 24 MiB and the whole sequence < 64 MiB peak growth (asserted;
+  measured values in the ledger).
+
+## FCS 3.0/3.1 import feeding the native evaluator (F-2, F15 read side)
+
+Sources: `include/backend/analysis/FcsReader.h`, `src/backend/analysis/FcsReader.cpp`;
+tests `tests/analysis/fcs_reader_test.cpp` (`analysis.fcs_reader`),
+`tests/analysis/flowjo_reference_test.cpp` (`analysis.flowjo_reference`), writer
+`tests/analysis/fcs_test_support.h`; optional comparator
+`tools/flowjo_acceptance/fcs_comparator.py` (never production, ADR 0016).
+
+- **Reader** (native C++, no Python): HEADER offsets, `$BEGINDATA/$ENDDATA` when
+  the HEADER records 0, supplemental TEXT; TEXT with any delimiter and doubled-
+  delimiter escapes, case-insensitive keywords (`parseFcsText`); list mode with
+  `$DATATYPE` F (32-bit), D (64-bit), I (8/16/32/64-bit per `$PnB`); `$BYTEORD`
+  ascending or descending; integer `$PnR` masking (closed form, FCS 3.1: the
+  smallest bit count holding `$PnR` − 1, `bit_ceil(ceil(R)) − 1`; `$PnR` 1 is a
+  real mask of 0, `$PnR` 2 masks one bit; no mask when `$PnR` > 2^(bits−1), so a
+  64-bit `$PnR` between 2^63 and 2^64 no longer overflows into an endless loop;
+  `FcsParameter::mask` is `std::optional`); integer `$PnE` log decoding
+  (`f2 * 10^(f1 * x / $PnR)`, f2 = 0 read as 1 and reported); `$PnG` division only
+  with `FcsOptions.applyGain` (off by default; recorded either way).
+- **Refused** (`FcsError`, nothing read): FCS2.0, `$MODE` C/U, `$DATATYPE` A,
+  packed integer widths, mixed byte orders, F/D width mismatch, DATA outside the
+  file or shorter than `$TOT` × width, missing/duplicate keywords, malformed TEXT.
+- **Reported, not applied** (`unsupported`, in the handle's `import` block):
+  compensation (`$SPILLOVER`/`$SPILL`/`$COMP`), `$PnCALIBRATION`, `$PnD`,
+  `$TIMESTEP`, `$PnE` on float data, `$NEXTDATA` data sets, the ANALYSIS segment,
+  trailing DATA bytes, unapplied `$PnG`.
+- **Columns.** `FcsColumns` is an `EventColumns` (one segment `events`): each
+  scan reopens the file and reads at most min(chunk, 4 MiB / event width) events
+  per read. Parameter ids are `$PnN` made graph-safe and unique; units are
+  explicit (`a.u. (FCS channel value)`, `... log-decoded scale value`,
+  `... channel value / $PnG`).
+- **Handle.** `fcsSourceDescriptor({kind: fcs, path[, applyGain]})` is the
+  F-source/2 handle (scope `fcs`, full-file SHA-256 identity; with applied gain a
+  distinct fingerprint); `lendFcsColumns` checks the file's size and write time
+  against those its full-file SHA-256 was computed for (the hash is recomputed when
+  they differ and must equal the descriptor's), lends `FcsColumns`, then re-stats
+  after the scan (post-scan fence, as `withRecordingColumns`): a change during the
+  scan is refused. A rewrite keeping both size and write time is not detected (no
+  full re-hash per evaluation); the descriptor's `retention` text says exactly this.
+- **Parameters.** Up to 1,024 (`kMaxColumnarParameters`, equal to the reader's
+  `$PAR` bound; formerly 64 in `SourceCore`, so wider panels imported but never
+  evaluated). Columns stay lazy: a scan reads only the referenced parameters.
+  Materialized F-source/1 rows are bounded by cells (`kMaxJsonSourceCells`,
+  100,000 × 64). Both hosts resolve `kind: fcs` and
+  lend `scope: fcs`, so saved strategies, reports, plots, comparisons run on FCS
+  files through the same evaluator as MIB recordings.
+- **Histogram bins.** `ResourceBounds::maxHistogramBins` (default 256, the display
+  hosts' bound) lets the acceptance compare FlowJo's 4,096-bin exports.

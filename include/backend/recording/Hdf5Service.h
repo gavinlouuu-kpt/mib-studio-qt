@@ -228,6 +228,20 @@ public:
     bool readMetadataColumns(bool valid, std::size_t chunkRows,
                              const std::function<bool(const MetadataColumnRow* rows, std::size_t count)>& sink) const;
 
+    // F-1b: browse metadata by page instead of every row at open. The row
+    // count of a set's metadata dataset (0 when the dataset is absent,
+    // nullopt when it cannot be queried), and rows [start, start + count)
+    // as readValidMetadata / readInvalidMetadata give them (count is clipped
+    // to the extent; false when start is past it or the read fails).
+    std::optional<std::uint64_t> metadataRowCount(bool valid) const;
+    bool readMetadataRange(bool valid, std::uint64_t start, std::uint64_t count,
+                           std::vector<ProcessedFrame>& frames) const;
+    // The same for a recording file's /recorded_frames/metadata (index and
+    // timestampNs only, as readRecordingMetadata); nullopt when absent.
+    std::optional<std::uint64_t> recordingMetadataRowCount() const;
+    bool readRecordingMetadataRange(std::uint64_t start, std::uint64_t count,
+                                    std::vector<ProcessedFrame>& frames) const;
+
     // Chart snapshot saving (for saving chart images to HDF5)
     bool saveChartSnapshot(const std::string& datasetPath, const cv::Mat& image);
     

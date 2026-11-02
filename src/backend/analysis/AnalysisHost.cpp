@@ -107,7 +107,7 @@ Json applicationGraph(const Json& parent, const Json& application, const Json& d
 }
 } // namespace
 std::string analysisRequest(services::SqliteService& database, const std::string& text, bool write,
-                            SourceResolver source, MethodResolver method) {
+                            SourceResolver source, MethodResolver method, ColumnResolver columns) {
     try {
         if (text.size() > 131072) throw std::invalid_argument("Analysis request exceeds 128 KiB");
         const auto q = Json::parse(text, [](int depth, Json::parse_event_t, Json&) {
@@ -182,7 +182,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             return analysisOverlayRequest(database, q, write,
                                           [&](const Json& request) {
                                               return Json::parse(analysisRequest(
-                                                  database, request.dump(), false, source, method));
+                                                  database, request.dump(), false, source, method, columns));
                                           })
                 .dump();
         if (action == "librarySave" || action == "libraryRead")
@@ -192,7 +192,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             return analysisReportRequest(database, q, write,
                                          [&](const Json& request) {
                                              return Json::parse(analysisRequest(
-                                                 database, request.dump(), false, source, method));
+                                                 database, request.dump(), false, source, method, columns));
                                          })
                 .dump();
         if (action == "retainSource") {
@@ -250,7 +250,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             fields(q, {"action", "spec"});
             const auto result = compareAnalysis(q.at("spec"), [&](const Json& request) {
                 return Json::parse(
-                    analysisRequest(database, request.dump(), false, source, method));
+                    analysisRequest(database, request.dump(), false, source, method, columns));
             });
             return Json{
                 {"status", "ok"}, {"comparison", result}, {"contentHash", contentHash(result)}}
@@ -285,7 +285,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             if (existing.value("status", std::string{}) != "not_found") return existing.dump();
             const auto result = compareAnalysis(q.at("spec"), [&](const Json& request) {
                 return Json::parse(
-                    analysisRequest(database, request.dump(), false, source, method));
+                    analysisRequest(database, request.dump(), false, source, method, columns));
             });
             const Json doc{{"schema_version", 1},
                            {"type", "F-analysis-finding/1"},
@@ -363,7 +363,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 auto request = pin;
                 request["action"] = "manifest";
                 const auto item =
-                    Json::parse(analysisRequest(database, request.dump(), false, source, method));
+                    Json::parse(analysisRequest(database, request.dump(), false, source, method, columns));
                 if (item.value("status", std::string{}) != "ok")
                     return Json{{"status", item.value("status", std::string("invalid"))},
                                 {"failedPin", pin},
@@ -437,7 +437,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                       {"source", q.at("source")},
                       {"expectedRevision", q.at("expectedRevision")},
                       {"commandId", q.at("commandId")}};
-            return analysisRequest(database, save.dump(), true, source, method);
+            return analysisRequest(database, save.dump(), true, source, method, columns);
         }
         if (action == "apply") {
             if (!write) throw std::invalid_argument("Applying a strategy requires write endpoint");
@@ -471,7 +471,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             if (doc.contains("qc"))
                 save["qc"] =
                     Json{{"policy", doc.at("qc").at("policy")}, {"decisions", Json::array()}};
-            return analysisRequest(database, save.dump(), true, source, method);
+            return analysisRequest(database, save.dump(), true, source, method, columns);
         }
         if (action == "save") {
             if (!write) throw std::invalid_argument("Save requires the analysis write endpoint");
@@ -536,8 +536,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 if (current.at(key) != binding.at(key))
                     throw std::invalid_argument("Source binding changed; refresh explicitly");
             // Also validates source parameter availability and graph budgets.
-            evaluateSource(current, doc);
-            if (!doc.value("plot", Json(nullptr)).is_null()) plotSource(current, doc);
+            evaluateSource(current, doc, columns);
+            if (!doc.value("plot", Json(nullptr)).is_null()) plotSource(current, doc, columns);
             if (!doc.at("method").is_null()) {
                 if (!method) throw std::invalid_argument("Method resolver unavailable");
                 const auto resolved = method(doc.at("method"));
@@ -607,11 +607,27 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 const auto resolved = method(doc.at("method"));
                 if (resolved.value("status", std::string{}) != "ok") return resolved.dump();
             }
-            auto result = evaluateSource(current, doc);
+            // F-1b: the two consumers that need every row (worker job input,
+            // observation export) get a columnar source's rows materialized
+            // under the explicit F-source/1 bound; everything else runs on the
+            // lent columns and returns bounded results.
+            Json inlineSource = current;
+            if ((action == "observations" || action == "jobInput") && isColumnarSource(current)) {
+                const auto events = std::stoull(current.at("events").get<std::string>());
+                if (action == "observations" && events > 65536)
+                    throw std::invalid_argument(
+                        "Observation export exceeds 4 MiB (" + std::to_string(events) +
+                        " events at >= 64 bytes each); use the report or a bounded page");
+                if (!columns) throw std::invalid_argument("Columnar source requires a host column resolver");
+                columns(current, [&](const EventColumns& raw) {
+                    inlineSource = materializeColumnarSource(current, raw);
+                });
+            }
+            auto result = evaluateSource(inlineSource, doc, columns);
             result["planId"] = q.at("planId");
             result["revision"] = saved.at("revision");
             if (action == "observations") {
-                const auto prepared = prepareAnalysisSource(current, doc);
+                const auto prepared = prepareAnalysisSource(inlineSource, doc);
                 const auto feature = doc.at("feature").get<std::string>();
                 Json rows = Json::array();
                 std::map<std::string, Json> memberships;
@@ -688,7 +704,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     return Json{{"status", "unavailable"},
                                 {"message", "This revision has no saved PlotSpec"}}
                         .dump();
-                auto plot = plotSource(current, doc);
+                auto plot = plotSource(current, doc, columns);
                 plot["planId"] = q.at("planId");
                 plot["revision"] = saved.at("revision");
                 return Json{{"status", "ok"}, {"plot", plot}, {"contentHash", contentHash(plot)}}
@@ -696,7 +712,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             }
             if (action == "report") {
                 validateTable(doc);
-                const auto columns =
+                const auto selectedColumns =
                     doc.contains("table")
                         ? doc.at("table").at("columns").get<std::vector<std::string>>()
                         : tableColumns;
@@ -705,7 +721,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     populations = doc.at("table").at("populations").get<std::vector<std::string>>();
                 else
                     for (const auto& node : doc.at("graph").at("nodes"))
-                        populations.push_back(node.at("id"));
+                        populations.push_back(node.at("id").get<std::string>());
                 if (populations.size() > 32)
                     throw std::invalid_argument("Report supports at most 32 populations");
                 Json table = Json::array();
@@ -725,19 +741,20 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     return escaped + "\"";
                 };
                 std::string csv;
-                for (std::size_t i = 0; i < columns.size(); ++i) {
+                for (std::size_t i = 0; i < selectedColumns.size(); ++i) {
                     if (i) csv += ',';
-                    csv += columns[i];
+                    csv += selectedColumns[i];
                 }
                 csv += "\r\n";
-                for (const auto& population : populations) {
-                    auto request = doc;
-                    request["graph"]["output"] = population;
-                    auto row = evaluateSource(current, request);
+                // One membership pass for every population (F-1b).
+                const auto rows = evaluatePopulations(current, doc, populations, columns);
+                for (std::size_t p = 0; p < populations.size(); ++p) {
+                    const auto& population = populations[p];
+                    auto row = rows[p];
                     row["population"] = population;
                     Json compact = Json::object();
-                    for (std::size_t i = 0; i < columns.size(); ++i) {
-                        const auto& key = columns[i];
+                    for (std::size_t i = 0; i < selectedColumns.size(); ++i) {
+                        const auto& key = selectedColumns[i];
                         compact[key] = row.at(key);
                         if (i) csv += ',';
                         csv += csvCell(row.at(key));
@@ -752,7 +769,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                             {"strategy", doc},
                             {"estimators", result.at("estimators")},
                             {"table", table},
-                            {"columns", columns},
+                            {"columns", selectedColumns},
                             {"scientificCompatibility", "unknown"},
                             {"qcPolicy", result.at("qcPolicy")},
                             {"parameterFingerprint", result.at("parameterFingerprint")},
@@ -770,15 +787,13 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 if (!q.at("offset").is_number_unsigned())
                     throw std::invalid_argument("Invalid gallery offset");
                 const auto offset = q.at("offset").get<std::size_t>();
-                Json keys = Json::array(), images = Json::array();
-                std::size_t selected = 0;
-                for (const auto& row : result.at("rows")) {
-                    if (row.at("membership") != "selected") continue;
-                    if (selected++ < offset) continue;
-                    if (keys.size() == 12) break;
-                    keys.push_back(row.at("key"));
+                Json images = Json::array();
+                // Any selected rank, from the native membership (F-1b).
+                const auto page = selectedEventKeys(current, doc, offset, 12, columns);
+                const auto keys = page.at("keys");
+                for (const auto& key : keys) {
                     images.push_back(
-                        {{"key", row.at("key")},
+                        {{"key", key},
                          {"pixels", nullptr},
                          {"status", "unavailable"},
                          {"reason",
@@ -825,7 +840,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     .dump();
             }
             Json reply{{"status", "ok"}, {"evaluation", result}};
-            if (action == "jobInput") reply["source"] = prepareAnalysisSource(current, doc);
+            if (action == "jobInput") reply["source"] = prepareAnalysisSource(inlineSource, doc);
             return reply.dump();
         }
         throw std::invalid_argument("Unsupported analysis action");
