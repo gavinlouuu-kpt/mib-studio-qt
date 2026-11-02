@@ -1820,7 +1820,7 @@ export default function App() {
             // The classic Connect tab only reads (it never switches camera modes).
             onOpenSetup={() => { setTab("connect"); exitWorkspace(); }}
             // O3 Plan: Start run is locked for the same reasons as the classic Start button.
-            experiment={{ plan, lockedReason: startExperimentReason ?? "", view: experimentView, onView: setExperimentView,
+            experiment={{ plan, onOpenSource: async (path: string) => { if (summaryReviewReason) throw new Error(summaryReviewReason); await loadReviewSource(path); }, lockedReason: startExperimentReason ?? "", view: experimentView, onView: setExperimentView,
               cameraMode: planCameraMode({ instrumentModes, mode: instrumentModes ? instrument?.mode?.name ?? null : null, windowPlaced: cameraWin.placed,
                 experimentActive: expActive, runFrozen: !!instrument?.ring?.run_frozen, modeError: modeError?.mode === "run" ? modeError.message : "",
                 fullSensor: !instrumentModes && cameraGeometry?.supported && cameraGeometry.overview

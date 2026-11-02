@@ -130,10 +130,13 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
             for (const auto& s :
                  workspace_->list(q.value("limit", 100), q.value("after", std::string{}))) {
                 const auto d = json::parse(s.documentJson);
-                rows.push_back({{"workspace_id", s.workspaceId},
-                                {"revision", s.revision},
-                                {"title", d.value("title", s.workspaceId)},
-                                {"archived", d.value("archived", false)}});
+                rows.push_back(
+                    {{"workspace_id", s.workspaceId},
+                     {"revision", s.revision},
+                     {"title", d.value("title", s.workspaceId)},
+                     {"archived", d.value("archived", false)},
+                     {"kind", d.value("type", d.contains("plan") ? std::string{"workspace"}
+                                                                 : std::string{"document"})}});
             }
             return json{{"status", "ok"}, {"workspaces", rows}}.dump();
         }

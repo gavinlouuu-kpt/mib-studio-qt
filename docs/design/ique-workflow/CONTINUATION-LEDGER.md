@@ -46,3 +46,62 @@ that a path still contains those bytes. No inferred operator authentication or h
   local profile, resolves it, modifies its bytes and observes unresolved. Compatibility
   remains unknown; no apply command is sent.
 - Host lifecycle harness passes ASan/UBSan with leak detection enabled.
+
+## Pinned scientific/lifecycle integration (2026-10-23)
+
+This section supersedes the pending provider rows above. Provider code is pinned from
+F `0f5588df` (relative to its `0a58e201` base, retaining I's store) and E `65406f15`
+run-fence delta. No main/develop merge and no edits to either provider worktree.
+
+- `workspace_read.evaluate_recipe` requires exact workspace revision, linked source ID,
+  source kind (`stored` or `run-archive`) and local profile base. It verifies file bytes,
+  resolves the exact saved method, reads/evaluates the exact persisted F strategy, then
+  rechecks file/method. Wrong/missing revisions, changed methods/files and a different
+  open Review source refuse; there is no fallback to latest or frontend arithmetic.
+- Production Plan opens a linked source using the existing Review path, explicitly
+  evaluates, shows provider counts/statistics/missingness, and persists immutable findings
+  with interpretation separate from scientific evidence. Saved evidence can be inspected
+  after reopening. No method apply, gate deployment, acquisition or automatic retry.
+- Exports include exact referenced F definitions from recipe and findings. Import inserts
+  all missing identities/revisions and the workspace/receipt in one SQLite transaction.
+  Conflicting existing identities refuse, injected failure rolls everything back. Multiple
+  referenced revisions of a newly imported identity are supported; source bytes and method
+  configurations are external, and unresolved analysis refs are reported, not invented.
+- Explicit workspace saves now record current client queue/start/reference observations.
+  They are historical observations, never live state or automatic queue resumption.
+  Loading a sheet still uses a fresh experiment identity and clears active queue/reference.
+
+### Verified evidence
+
+- 597 tests across 34 workspace/provider/adapter test files passed after final integration.
+  Additional focused tests cover observation-only persistence and malformed/late evaluation
+  responses; final command logs are in the isolated QA data/host temporary logs.
+- Native production library and server, TypeScript and isolated Vite bundle build.
+- Five native CTest cases pass: workspace store/host, F analysis host, E live evidence,
+  Review statistics. Three standalone population/graph/statistics cases pass.
+- 16 server Rust tests pass. Workspace host passes ASan/UBSan with leak detection,
+  including atomic dependency rollback, conflicting definitions and multi-revision import.
+- `recipe_ws.mjs` against the real app: stored 10-selected gate gives mean 104.6 and
+  median 104.5; saving strategy revision 2 leaves recipe revision 1 unchanged; empty
+  selection, missing revision, changed method/file and wrong open source are checked.
+- The actual E processing/HDF producer fixture passes the same workspace recipe path,
+  with keyed measurements preserved and unknown denominator retained after processing
+  failures. This is synthetic processing evidence, not camera/hardware qualification.
+- Both stored and E archive results/findings/exports/receipts reproduce after restarting
+  only the owned :18089 process, through secure tailnet WebSocket :18489. A separately
+  owned fresh real-app database imported the exported strategy and reproduced evaluation;
+  the unexported newer revision was absent.
+- `viewer_ws.mjs` confirms viewer reads and denial of workspace/analysis writes without
+  taking control. Existing :18088 and its controller remain untouched.
+
+### Concrete remaining acceptance boundaries
+
+This closes the requested metadata lifecycle and pinned native scientific integration,
+not all historical I01–I12 product acceptance. Browser rendered interaction is blocked
+by browser policy; native Tauri packaging and hardware acquisition are unverified.
+TSan cannot start on this host. F's pinned API does not supply qualified dose-response
+fits, compensation/embedding, comparison criteria qualification or scientific QC trends;
+those cannot be fabricated by I. Acquisition-compatible method validation is distinct
+from exact lookup and remains `unknown`; hardware readiness is `not_evaluated`.
+Run observations are inspectable historical records, not a backend restart-resumption
+contract. No queue auto-resume or inferred biological replication is claimed.

@@ -82,6 +82,7 @@ export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "re
     /** The recording this page has open in the classic Review ("" or absent: none): the Plan's Start
      *  is unavailable meanwhile (#716 A7b). */
     reviewOpen?: string;
+    onOpenSource?: (path:string)=>Promise<void>;
   };
 }
 
@@ -148,7 +149,7 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
       ) : stage === 1 ? (
         <AlignView {...align} onClassic={onExit} />
       ) : stage === 2 ? (
-        <ExperimentView plan={experiment.plan} lockedReason={experiment.lockedReason} view={experiment.view} onView={experiment.onView}
+        <ExperimentView onOpenSource={experiment.onOpenSource} plan={experiment.plan} lockedReason={experiment.lockedReason} view={experiment.view} onView={experiment.onView}
           cameraMode={experiment.cameraMode} onCameraMode={experiment.onCameraMode} live={experiment.live}
           summary={{ ...(experiment.summary ?? NO_REVIEW), onAlign: () => onStage(1), onPrepare: showCalibration }} reviewOpen={experiment.reviewOpen}
           verdict={verdict} blockers={confirmBlockers(report)} confirmation={confirmation} calibration={planCalibration} />

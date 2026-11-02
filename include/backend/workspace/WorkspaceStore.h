@@ -59,6 +59,8 @@ private:
     sqlite3* db_;
     bool initialized_{false};
     void requireInitialized() const;
+    Snapshot writeInTransaction(const std::string&, const std::optional<std::string>&,
+                                const std::string&, const std::string&, const std::string&);
     Snapshot write(const std::string&, const std::optional<std::string>&, const std::string&,
                    const std::string&, const std::string&);
 };

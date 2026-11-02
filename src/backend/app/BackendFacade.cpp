@@ -1566,6 +1566,44 @@ namespace backend::bridge
         if (!initialized_) return R"({"status":"unavailable","message":"Backend not initialized"})";
         try {
             const auto action=nlohmann::json::parse(request).value("action",std::string{});
+            if (action=="evaluate_recipe") {
+                using J=nlohmann::json;
+                const auto q=J::parse(request);
+                if (q.size()!=6) return R"({"status":"invalid","message":"Expected exact workspace, source and method-provider fields"})";
+                const auto saved=J::parse(backend_.sqlite().workspaceRequest(J{{"action","read"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")}}.dump(),false));
+                if (saved.at("status")!="ok") return saved.dump();
+                const auto& recipe=saved.at("document").at("recipe");
+                const auto& link=saved.at("document").at("sources").at(q.at("source_id").get<std::string>());
+                const J verify={{"action","verify_source"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},{"source_id",q.at("source_id")}};
+                const J methodRequest={{"action","resolve_recipe"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},{"profile_base",q.at("profile_base")}};
+                const auto verified=J::parse(workspaceRequestJson(verify.dump(),false));
+                if (verified.at("status")!="ok") return verified.dump();
+                const auto resolved=J::parse(workspaceRequestJson(methodRequest.dump(),false));
+                if (resolved.at("status")!="ok" || resolved.at("method").at("status")!="resolved")
+                    return J{{"status","unavailable"},{"message","Pinned acquisition method could not be resolved; no recipe evaluation performed"}}.dump();
+                const auto& planRef=recipe.at("analysis_plan");
+                const auto strategy=J::parse(analysisRequestJson(J{{"action","read"},{"planId",planRef.at("id")},{"revision",planRef.at("revision")}}.dump(),false));
+                if (strategy.at("status")!="ok") return strategy.dump();
+                const auto method=strategy.at("document").value("method",J(nullptr));
+                if (!method.is_null() && (method.at("method_id")!=recipe.at("method").at("id") ||
+                    method.at("revision_id")!=recipe.at("method").at("revision") ||
+                    method.at("content_hash")!=resolved.at("method").value("content_sha256",std::string{})))
+                    return R"({"status":"reference_mismatch","message":"Strategy and recipe pin different acquisition methods"})";
+                const auto kind=q.at("source_kind").get<std::string>();
+                if (kind!="stored" && kind!="run-archive") return R"({"status":"invalid","message":"Unsupported workspace source kind"})";
+                const auto evaluated=J::parse(analysisRequestJson(J{{"action","evaluate"},{"planId",planRef.at("id")},{"revision",planRef.at("revision")},
+                    {"source",{{"kind",kind},{"path",link.at("path")}}}}.dump(),false));
+                if (evaluated.at("status")!="ok") return evaluated.dump();
+                const auto reverified=J::parse(workspaceRequestJson(verify.dump(),false));
+                if (reverified.at("status")!="ok") return reverified.dump();
+                const auto remethod=J::parse(workspaceRequestJson(methodRequest.dump(),false));
+                if (remethod!=resolved) return R"({"status":"conflict","message":"Method changed during evaluation"})";
+                if (kind=="stored" && evaluated.at("evaluation").at("sourceFingerprint")!="sha256:"+link.at("sha256").get<std::string>())
+                    return R"({"status":"source_mismatch","message":"Evaluation source differs from pinned file bytes"})";
+                return J{{"status","ok"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},{"source_id",q.at("source_id")},
+                    {"evaluation",evaluated.at("evaluation")},{"method",resolved.at("method")},{"compatibility","unknown"},
+                    {"hardwareReadiness","not_evaluated"},{"applied",false}}.dump();
+            }
             if (action=="resolve_recipe") {
                 using J=nlohmann::json;
                 const auto q=J::parse(request);

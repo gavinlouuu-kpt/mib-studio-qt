@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Button, Card, Notice } from "@mib/ui";
 import { invoke } from "../transport";
 import { decodeRecipe, type Recipe } from "./recipeModel";
+import { RecipeScience } from "./RecipeScience";
 import { RecipePairing } from "./RecipePairing";
 import { AnnotationGroups } from "./AnnotationGroups";
 import { mintExperimentId, type PlanDraft } from "./planModel";
@@ -12,9 +13,9 @@ const recovered = () => { try { return sessionStorage.getItem(PENDING_SAVE_KEY);
 type WorkspaceDocument = { schema_version: 1; plan: PlanDraft; recipe?: Recipe; title?: string; archived?: boolean;
   sources?: Record<string, {path:string; sha256:string; size_bytes:string}>; [key:string]: unknown };
 type Snapshot = { workspace_id: string; revision: string; document: WorkspaceDocument };
-type Listed = {workspace_id:string; revision:string; title:string; archived:boolean};
+type Listed = {workspace_id:string; revision:string; title:string; archived:boolean;kind?:string};
 /** Production metadata client. No automatic reads/writes, acquisition actions or localStorage fallback. */
-export function SavedPlan({ draft, controlHeld, onLoad }: { draft: PlanDraft; controlHeld: boolean; onLoad?: (plan: PlanDraft) => boolean }) {
+export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObservation }: { runObservation?: Record<string,unknown>; draft: PlanDraft; controlHeld: boolean; onLoad?: (plan: PlanDraft) => boolean; onOpenSource?: (path:string)=>Promise<void> }) {
   const [id, setId] = useState(() => { try { return JSON.parse(recovered() ?? "null")?.workspace_id ?? draft.experimentId; } catch { return draft.experimentId; } });
   const [library,setLibrary] = useState<Listed[]>([]);
   const [listCursor,setListCursor] = useState("");
@@ -68,7 +69,7 @@ export function SavedPlan({ draft, controlHeld, onLoad }: { draft: PlanDraft; co
       if (q.action === "export" || q.action === "export_status") {
         if (r.state!=="complete" || r.workspace_id!==q.workspace_id || r.job_id!==q.job_id || !r.manifest) throw new Error("Invalid export reply");
         setManifest(r.manifest); setJobId(q.job_id); if(write) clearPending();
-        setMessage(`Export ${q.job_id} materialized for immutable revision ${r.revision}. Download separately; source files are not embedded.`); return;
+        setMessage(`Export ${q.job_id} materialized for immutable revision ${r.revision}. Download separately; source files and method configurations are not embedded. Unresolved analysis references: ${Array.isArray((r.manifest as {payload?:{unresolved_references?:unknown[]}})?.payload?.unresolved_references) ? (r.manifest as {payload:{unresolved_references:unknown[]}}).payload.unresolved_references.length : 0}.`); return;
       }
       if (q.action === "verify_source") {
         if(r.workspace_id!==q.workspace_id || r.revision!==q.revision || r.source_id!==q.source_id || r.verified!==true) throw new Error("Invalid source verification reply");
@@ -96,7 +97,7 @@ export function SavedPlan({ draft, controlHeld, onLoad }: { draft: PlanDraft; co
     } finally { pending.current = false; setBusy(false); }
   };
   const save = () => {
-    const document = { ...snapshot?.document, schema_version: 1, title, annotation_display:{layer:annotationLayer}, plan: draft, ...(recipe ? {recipe} : {}) };
+    const document = { ...snapshot?.document, schema_version: 1, title, annotation_display:{layer:annotationLayer}, plan: draft, ...(runObservation ? {run_observation:{recorded_at:new Date().toISOString(),kind:"client-observation/1",...structuredClone(runObservation)}} : {}), ...(recipe ? {recipe} : {}) };
     try { decodeWorkspaceDocument(document); if (recipe) decodeRecipe(recipe); } catch (e) { setMessage(String(e)); return; }
     void request(true, JSON.stringify({ action: "commit", workspace_id: id, expected_revision: snapshot?.revision ?? null,
       command_id: mintExperimentId(), document }));
@@ -106,7 +107,7 @@ export function SavedPlan({ draft, controlHeld, onLoad }: { draft: PlanDraft; co
     <details><summary>Workspace library</summary>
       <Button disabled={busy || !!retry} onClick={() => void request(false,JSON.stringify({action:"list",limit:100}))}>List workspaces</Button>
       {listCursor && <Button disabled={busy || !!retry} onClick={() => void request(false,JSON.stringify({action:"list",limit:100,after:listCursor}))}>More workspaces</Button>}
-      <ul>{library.map(w=><li key={w.workspace_id}><Button disabled={busy || !!retry} onClick={() => {setHistory([]);setManifest(null);void request(false,JSON.stringify({action:"read",workspace_id:w.workspace_id}));}}>{w.title || w.workspace_id} · revision {w.revision}{w.archived ? " · archived" : ""}</Button></li>)}</ul>
+      <ul>{library.filter(w=>!w.kind||w.kind==="workspace").map(w=><li key={w.workspace_id}><Button disabled={busy || !!retry} onClick={() => {setHistory([]);setManifest(null);void request(false,JSON.stringify({action:"read",workspace_id:w.workspace_id}));}}>{w.title || w.workspace_id} · revision {w.revision}{w.archived ? " · archived" : ""}</Button></li>)}</ul>
       <Button disabled={busy || !!retry} onClick={()=>{setSnapshot(null);setId(mintExperimentId());setTitle("");setRecipe(null);setHistory([]);setManifest(null);setMessage("New workspace identity. The active experiment was not changed.");}}>New workspace</Button>
     </details>
     <label>Workspace title <input aria-label="Workspace title" value={title} disabled={busy || !!retry || !controlHeld} onChange={e=>setTitle(e.target.value)}/></label>
@@ -141,13 +142,17 @@ export function SavedPlan({ draft, controlHeld, onLoad }: { draft: PlanDraft; co
       <label>Local profile directory <input aria-label="Local profile directory" value={profileBase} disabled={busy || !!retry} onChange={e=>{setProfileBase(e.target.value);setMethodResolution(null);}}/></label>
       <Button disabled={busy || !!retry || !snapshot?.document.recipe} onClick={()=>void request(false,JSON.stringify({action:"resolve_recipe",workspace_id:id,revision:snapshot!.revision,profile_base:profileBase}))}>Resolve pinned method</Button>
       {methodResolution && <Notice tone="info" title={`Method ${methodResolution.status}`}>{methodResolution.provider ?? methodResolution.reason} · Resolution is not scientific compatibility or permission to apply.</Notice>}
-      <p>Record immutable references supplied by your method/analysis provider. References are not resolved or scientifically validated on this runtime.</p>
+      <p>Record immutable references supplied by your method/analysis provider. Save the references, then explicitly resolve the method and evaluate the pinned strategy below. Resolution does not establish scientific compatibility.</p>
       {!recipe && <Button disabled={busy || !!retry || !controlHeld} onClick={() => setRecipe({schema_version:1,id:mintExperimentId(),revision:"1",title:"Workspace recipe",question:"",method:{source:"local",id:"",revision:""},analysis_plan:{id:"",revision:""},lineage:{recipe:null,finding:null}})}>Add recipe references</Button>}
       {recipe && <>{(["title", "question"] as const).map(k => <label key={k}>{k}<input aria-label={`Recipe ${k}`} value={recipe[k]} disabled={busy || !!retry || !controlHeld} onChange={e => editRecipe({...recipe,[k]:e.target.value})}/></label>)}
       {(["method", "analysis_plan"] as const).map(k => <fieldset key={k}><legend>{k === "method" ? "Acquisition method" : "Analysis plan"}</legend>{(["id", "revision"] as const).map(f => <label key={f}>{f}<input aria-label={`${k} ${f}`} value={recipe[k][f]} disabled={busy || !!retry || !controlHeld} onChange={e => editRecipe({...recipe,[k]:{...recipe[k],[f]:e.target.value}})}/></label>)}</fieldset>)}
       <label>Method source <select aria-label="Method source" value={recipe.method.source} disabled={busy || !!retry || !controlHeld} onChange={e => editRecipe({...recipe,method:{...recipe.method,source:e.target.value as "local" | "registry"}})}><option value="local">Local</option><option value="registry">Registry</option></select></label>
       <RecipePairing recipe={snapshot?.document.recipe?.id === recipe.id ? recipe : {...recipe, revision:null}} contextRevision={null} compatibility={null}/></>}
     </details>
+    {snapshot?.document.recipe && <RecipeScience workspaceId={snapshot.workspace_id} revision={snapshot.revision} recipe={snapshot.document.recipe} sources={snapshot.document.sources??{}} profileBase={profileBase} controlHeld={controlHeld} blocked={busy||!!retry} onOpenSource={onOpenSource}
+      onSaveFinding={finding=>void request(true,JSON.stringify({action:"commit",workspace_id:id,expected_revision:snapshot.revision,command_id:mintExperimentId(),document:{...snapshot.document,findings:[...(Array.isArray(snapshot.document.findings)?snapshot.document.findings:[]),finding]}}))}/>}
+    {Array.isArray(snapshot?.document.findings)&&snapshot.document.findings.length>0&&<details><summary>Saved findings ({snapshot.document.findings.length})</summary><ul>{snapshot.document.findings.map((f,i)=><li key={i}>{typeof f==="object"&&f!==null?String((f as Record<string,unknown>).interpretation??(f as Record<string,unknown>).id??"Finding"):"Unsupported finding"}<details><summary>Immutable finding evidence</summary><pre>{JSON.stringify(f,null,2)}</pre></details></li>)}</ul></details>}
+    {snapshot?.document.run_observation!==undefined&&<details><summary>Recorded run observations</summary><p>Historical client observations, not current instrument state. Opening or loading a plan never resumes this queue or reuses its run identity.</p><pre>{JSON.stringify(snapshot.document.run_observation,null,2)}</pre></details>}
     {message && <Notice tone="info" title="Workspace persistence">{message}</Notice>}
     {snapshot && <><p>Workspace {snapshot.workspace_id} · immutable revision {snapshot.revision}</p><AnnotationGroups draft={snapshot.document.plan} selectedLayer={annotationLayer} onSelectLayer={controlHeld && !busy && !retry ? setAnnotationLayer : undefined} /></>}
   </Card>;

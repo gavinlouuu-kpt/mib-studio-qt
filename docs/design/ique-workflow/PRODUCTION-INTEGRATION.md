@@ -102,3 +102,21 @@ full workspace lifecycle beyond the saved plan/recipe document, pagination beyon
 1000 history entries, cross-tab/closed-tab pending recovery, TSan qualification.
 This is a recovery checkpoint, not full revamp acceptance. Coordinator was asked
 for current F/E application contracts/commits; no generic shared-file gate asserted.
+
+## 2026-10-23 pinned providers and full metadata lifecycle
+
+The continuation ledger now supersedes earlier missing lifecycle/provider notes:
+[requirement and evidence ledger](CONTINUATION-LEDGER.md). Production library,
+archive/history/CAS restore, full-document save/reopen, pending-write recovery,
+export/import with exact analysis dependencies, source relink and native recipe
+resolution/evaluation are integrated. See F's pinned
+[production API](../flowjo-analysis/production-api.md) for authority and bounds.
+
+QA (tailnet-only): https://gavin-p5-ubuntu.himalayan-coho.ts.net:18489/
+Experiment → Plan → Saved workspace plan → Workspace library. Open a workspace;
+source links can be verified/relinked, then **Open linked source in Review** and
+**Evaluate pinned recipe**. Local methods require their host profile directory;
+method configurations are not embedded in exports. Save finding is explicit.
+Use classic Review's native analysis workspace to create the pinned strategy first.
+Mock/offline runtime, no hardware. This is the real application/SQLite backend,
+with synthetic qualification data; not an alternate fixture UI.
