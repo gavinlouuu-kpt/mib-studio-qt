@@ -1379,6 +1379,19 @@ pub mod ffi {
         /// cache miss is computed only while the instrument is idle and no review job runs,
         /// otherwise deferred. `{"ok": false, ...}` before init and for a refused request.
         fn run_quick_look(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
+        /// ABI 49 (#806 E-1/E-2): the active camera's GenApi node map, enumerated from the
+        /// device (bridge-contract.json `camera_features.tree`). A read, run as a job so no
+        /// bridge call blocks for the walk: start returns a job id at once (a start with the
+        /// same request as the walk in flight joins it; another request while one runs gets a
+        /// job whose reply is already a refusal), fetch returns "" while the job runs and the
+        /// tree reply once it has finished (`camera_features.job`).
+        fn camera_feature_tree_start(self: Pin<&mut BackendBridge>, request_json: &str) -> u64;
+        fn camera_feature_tree_fetch(self: Pin<&mut BackendBridge>, job_id: u64) -> String;
+        /// ABI 49: one feature's descriptor by name under the session token (`camera_features`).
+        fn camera_feature_read(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
+        /// ABI 49: a typed write by name with readback; requested, readback, refused, stale,
+        /// unsupported and unknown_write_outcome stay distinct (`camera_features.outcomes`).
+        fn camera_feature_write(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
 
         /// Set the sorter trigger pulse duration in microseconds.
         fn trigger_set_pulse_duration(self: Pin<&mut BackendBridge>, pulse_us: i32)

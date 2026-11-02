@@ -3,7 +3,7 @@
 #include <iostream>
 #include <typeindex>
 
-using namespace backend::camera::features;
+using namespace camera::features;
 struct FakeGrabber {
     bool rollback{true}, range{true};
     int writes{0};
@@ -26,9 +26,21 @@ struct FakeGrabber {
     template <class M> double getFloat(const std::string&) {
         throw std::runtime_error("unexpected float");
     }
-    template <class M> std::string getString(const std::string&) { return {}; }
+    std::vector<std::string> lists; // every list query string seen, in order
+    template <class M> std::string getString(const std::string& key) {
+        // Tooltip fallback: only the SDK-example spelling answers.
+        if (key == std::string(Euresys::query::info("NodeB", "Tooltip"))) return "tip-b";
+        if (key == std::string(Euresys::query::info("NodeB", "DisplayName"))) return "Node B";
+        if (key.rfind("@info", 0) == 0) throw std::runtime_error("absent metadata");
+        return {};
+    }
     template <class M> std::vector<std::string> getStringList(const std::string& key) {
         module = typeid(M);
+        lists.push_back(key);
+        if (key == std::string(Euresys::query::categories(false))) return {"CatRoot", "CatChild"};
+        if (key == std::string(Euresys::query::categoriesOf("CatRoot", false))) return {"CatChild"};
+        if (key == std::string(Euresys::query::featuresOf("CatChild", true))) return {"NodeB"};
+        if (key == std::string(Euresys::query::features(false))) return {"NodeB", "NodeC"};
         if (key == std::string(Euresys::query::interfaces("Gain[A]"))) return {"IInteger"};
         throw std::runtime_error("unexpected list");
     }
@@ -86,5 +98,38 @@ int main() {
     g.range = true;
     a.feature = "@checkRange";
     refused();
+    // E-1 enumeration: the adapter composes exactly the SDK's query strings,
+    // dispatches by module, and returns the grabber's names untouched.
+    g.lists.clear();
+    check(port.categories(Module::Stream, false) ==
+          std::vector<std::string>{"CatRoot", "CatChild"});
+    check(g.module == typeid(Euresys::StreamModule));
+    check(port.categoriesOf(Module::Device, "CatRoot", false) ==
+          std::vector<std::string>{"CatChild"});
+    check(g.module == typeid(Euresys::DeviceModule));
+    check(port.featuresOf(Module::Remote, "CatChild", true) == std::vector<std::string>{"NodeB"});
+    check(port.features(Module::Interface, false) ==
+          std::vector<std::string>{"NodeB", "NodeC"});
+    check(g.module == typeid(Euresys::InterfaceModule));
+    check(g.lists.size() == 4 && g.lists[0] == "@categories" &&
+          g.lists[1] == "@categories CatRoot" && g.lists[2] == "@!features CatChild" &&
+          g.lists[3] == "@features");
+    const auto info = port.info(Module::Remote, "NodeB");
+    check(info.displayName == "Node B" && info.toolTip == "tip-b" && info.description.empty() &&
+          info.visibility.empty());
+    check(port.canEnumerate());
+    // Names are spliced into query strings: query syntax is refused before the SDK.
+    const auto listsBefore = g.lists.size();
+    for (const char* bad : {"CatRoot =~ .*", "A B", "", "@features"}) {
+        bool threw = false;
+        try {
+            port.featuresOf(Module::Remote, bad, false);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        check(threw);
+    }
+    check(g.lists.size() == listsBefore);
     std::cout << "SDK adapter query, scope, and refusal checks passed\n";
+    return 0;
 }

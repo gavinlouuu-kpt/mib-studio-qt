@@ -4,10 +4,12 @@
 #include <EGrabber.h>
 
 #include <algorithm>
+#include <string>
+#include <vector>
 #include <stdexcept>
 #include <type_traits>
 
-namespace backend::camera::features {
+namespace camera::features {
 
 // Borrow an existing capture-owned EGrabber; never constructs/opens a device.
 // The enclosing capture session must serialize this port with stop, scripts,
@@ -50,7 +52,90 @@ public:
         throw std::invalid_argument("Unknown module");
     }
 
+    // E-1 (E02) node-map introspection. Query builders verified against the
+    // eGrabber SDK header internal/common/GenapiBuilders.h (namespace
+    // Euresys::query): categories(bool), categoriesOf(category, bool),
+    // featuresOf(category, bool), features(bool), info(feature, what). Each
+    // returns the live node map's names; nothing here lists a feature.
+    bool canEnumerate() const override { return true; }
+    std::vector<std::string> categories(Module module, bool availableOnly) override {
+        return onModule(module, [&](auto tag) {
+            using M = typename decltype(tag)::type;
+            return names<M>(Euresys::query::categories(availableOnly));
+        });
+    }
+    std::vector<std::string> categoriesOf(Module module, const std::string& category,
+                                          bool availableOnly) override {
+        checkNode(category);
+        return onModule(module, [&](auto tag) {
+            using M = typename decltype(tag)::type;
+            return names<M>(Euresys::query::categoriesOf(category, availableOnly));
+        });
+    }
+    std::vector<std::string> featuresOf(Module module, const std::string& category,
+                                        bool availableOnly) override {
+        checkNode(category);
+        return onModule(module, [&](auto tag) {
+            using M = typename decltype(tag)::type;
+            return names<M>(Euresys::query::featuresOf(category, availableOnly));
+        });
+    }
+    std::vector<std::string> features(Module module, bool availableOnly) override {
+        return onModule(module, [&](auto tag) {
+            using M = typename decltype(tag)::type;
+            return names<M>(Euresys::query::features(availableOnly));
+        });
+    }
+    NodeInfo info(Module module, const std::string& node) override {
+        checkNode(node);
+        return onModule(module, [&](auto tag) {
+            using M = typename decltype(tag)::type;
+            NodeInfo i;
+            i.displayName = optionalInfo<M>(node, "DisplayName");
+            i.toolTip = toolTip<M>(node);
+            i.description = optionalInfo<M>(node, "Description");
+            i.visibility = optionalInfo<M>(node, "Visibility");
+            return i;
+        });
+    }
+
 private:
+    template <class M> struct Tag {
+        using type = M;
+    };
+    template <class F> auto onModule(Module module, F&& f) {
+        switch (module) {
+        case Module::System:
+            return f(Tag<Euresys::SystemModule>{});
+        case Module::Interface:
+            return f(Tag<Euresys::InterfaceModule>{});
+        case Module::Device:
+            return f(Tag<Euresys::DeviceModule>{});
+        case Module::Stream:
+            return f(Tag<Euresys::StreamModule>{});
+        case Module::Remote:
+            return f(Tag<Euresys::RemoteModule>{});
+        }
+        throw std::invalid_argument("Unknown module");
+    }
+    // Node names are spliced into SDK query strings; only bounded GenApi
+    // identifiers may be, never query syntax.
+    static void checkNode(const std::string& node) {
+        if (const auto reason = validateAddress(Address{Module::Remote, node, std::nullopt}))
+            throw std::invalid_argument(*reason);
+    }
+    template <class M> std::vector<std::string> names(const std::string& query) {
+        auto list = grabber_.template getStringList<M>(query);
+        if (list.size() > 65536) throw std::runtime_error("Node list exceeds enumeration limit.");
+        return list;
+    }
+    // UNVERIFIED on hardware: the GenICam schema element is "ToolTip"; the SDK
+    // header's query::info example spells it "Tooltip". Try the schema name
+    // first, then the SDK example; an absent tooltip stays empty.
+    template <class M> std::string toolTip(const std::string& node) {
+        auto text = optionalInfo<M>(node, "ToolTip");
+        return text.empty() ? optionalInfo<M>(node, "Tooltip") : text;
+    }
     static void check(const Address& address) {
         if (const auto reason = validateAddress(address)) throw std::invalid_argument(*reason);
     }
@@ -156,4 +241,4 @@ private:
     Grabber& grabber_;
 };
 
-} // namespace backend::camera::features
+} // namespace camera::features

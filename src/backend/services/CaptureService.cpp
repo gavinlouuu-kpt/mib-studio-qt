@@ -228,6 +228,58 @@ bool CaptureService::softTriggerActiveCamera() {
     return activeCamera_ && activeCamera_->softTrigger();
 }
 
+::camera::features::Access CaptureService::withCameraFeatures(
+    const std::function<void(::camera::features::Port&,
+                             ::camera::features::CurrentSession&)>& fn,
+    std::string& reason, const std::string& writeBlockReason) {
+    CameraFeatureGate gate;
+    if (!writeBlockReason.empty())
+        gate.refuseWrites = [writeBlockReason] { return writeBlockReason; };
+    return withCameraFeatures(fn, reason, gate);
+}
+
+::camera::features::Access CaptureService::withCameraFeatures(
+    const std::function<void(::camera::features::Port&,
+                             ::camera::features::CurrentSession&)>& fn,
+    std::string& reason, const CameraFeatureGate& gate) {
+    using ::camera::features::Access;
+    std::scoped_lock lk(cameraMutex_);
+    if (!activeCamera_) {
+        reason = "No camera session is open; start capture first.";
+        return Access::NoSession;
+    }
+    auto* session = activeCamera_->featureSession();
+    if (!session) {
+        reason = "The active camera has no GenApi node map.";
+        return Access::Unsupported;
+    }
+    // The gate is decided here, under the guard and before the port: no
+    // check-then-act gap between the run-state decision and the device access.
+    if (gate.refuseAll) {
+        if (auto why = gate.refuseAll(); !why.empty()) {
+            reason = std::move(why);
+            return Access::Refused;
+        }
+    }
+    const std::string writeBlockReason = gate.refuseWrites ? gate.refuseWrites() : std::string{};
+    if (featureRevisionGeneration_ != activeCameraGeneration_) {
+        featureRevisionGeneration_ = activeCameraGeneration_;
+        featureRevision_ = 1;
+    }
+    ::camera::features::CurrentSession current;
+    current.token = {session->source(), activeCameraGeneration_, featureRevision_};
+    current.writesAuthorized = writeBlockReason.empty();
+    current.writeBlockReason = writeBlockReason;
+    current.evidence = session->evidence();
+    const bool ran = session->withPort(
+        [&](::camera::features::Port& port) { fn(port, current); }, reason);
+    if (!ran) return Access::NoSession;
+    // Only the revision may advance; source and generation are this guard's.
+    if (current.token.capabilityRevision > featureRevision_)
+        featureRevision_ = current.token.capabilityRevision;
+    return Access::Ran;
+}
+
 // ---------------------------------------------------------------------------
 // Telemetry (issue #368)
 // ---------------------------------------------------------------------------
@@ -446,6 +498,7 @@ void CaptureService::run(uint64_t generation) {
         {
             std::scoped_lock lk(cameraMutex_);
             activeCamera_ = camera.get();
+            activeCameraGeneration_ = generation;
         }
 
         // A stop() that landed while we were opening must win: never confirm

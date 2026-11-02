@@ -423,6 +423,31 @@ mib_add_backend_test_executable(mindvision_config_test backend/mindvision_config
 add_test(NAME backend.mindvision_config COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_config_test)
 set_tests_properties(backend.mindvision_config PROPERTIES LABELS "backend;camera" TIMEOUT 30)
 
+# E02 (#806): GenApi typed feature control and node-map enumeration over fake
+# ports, and the capture-guarded path with MockCamera's fake node map.
+mib_add_backend_test_executable(feature_control_test camera/features/feature_control_test.cpp)
+add_test(NAME camera.feature_control COMMAND $<TARGET_FILE:mib_backend_tests> feature_control_test)
+set_tests_properties(camera.feature_control PROPERTIES LABELS "camera;genapi" TIMEOUT 30)
+mib_add_backend_test_executable(feature_tree_test camera/features/feature_tree_test.cpp)
+add_test(NAME camera.feature_tree COMMAND $<TARGET_FILE:mib_backend_tests> feature_tree_test)
+set_tests_properties(camera.feature_tree PROPERTIES LABELS "camera;genapi" TIMEOUT 30)
+mib_add_backend_test_executable(capture_camera_features_test camera/features/capture_camera_features_test.cpp)
+mib_backend_test_link(capture_camera_features_test PRIVATE Threads::Threads)
+add_test(NAME camera.capture_features COMMAND $<TARGET_FILE:mib_backend_tests> capture_camera_features_test)
+set_tests_properties(camera.capture_features PROPERTIES LABELS "camera;genapi;concurrency;stress" TIMEOUT 90)
+# #806 E02 review: feature I/O never lands between a pulse's edges and is refused only while pulses are
+# pending or imminent (TriggerService::runSerializedWithPulses; contention stress).
+mib_add_backend_test_executable(trigger_feature_interlock_test backend/trigger_feature_interlock_test.cpp)
+mib_backend_test_link(trigger_feature_interlock_test PRIVATE Threads::Threads)
+add_test(NAME camera.trigger_feature_interlock COMMAND $<TARGET_FILE:mib_backend_tests> trigger_feature_interlock_test)
+set_tests_properties(camera.trigger_feature_interlock PROPERTIES LABELS "camera;genapi;trigger;concurrency;stress;safety" TIMEOUT 120)
+# #806 E02 review: the facade's feature gates driven through backend state (default boot succeeds; experiment
+# Starting/Active/Stopping, realtime processing, queued pulses, autofocus, frame recording) and the tree job's in-flight-once rule.
+mib_add_backend_test_executable(camera_feature_facade_test backend/camera_feature_facade_test.cpp)
+mib_backend_test_link(camera_feature_facade_test PRIVATE Threads::Threads)
+add_test(NAME e2e.camera_feature_facade COMMAND $<TARGET_FILE:mib_backend_tests> camera_feature_facade_test)
+set_tests_properties(e2e.camera_feature_facade PROPERTIES LABELS "backend;bridge;e2e;camera;genapi;safety" TIMEOUT 180)
+
 # Issue #366: MindVision Mono8/geometry fail-closed conversion, driven through
 # the injectable SDK seam (no hardware, no vendor headers).
 mib_add_backend_test_executable(illuminated_live_test backend/illuminated_live_test.cpp)

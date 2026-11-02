@@ -3,7 +3,10 @@ project(mib_egrabber_feature_acceptance LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 get_filename_component(MIB_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-add_library(mib_feature_control STATIC "${MIB_ROOT}/src/backend/camera/features/FeatureControl.cpp")
+add_library(mib_feature_control STATIC
+  "${MIB_ROOT}/src/backend/camera/features/FeatureControl.cpp"
+  "${MIB_ROOT}/src/backend/camera/features/FeatureTree.cpp"
+  "${MIB_ROOT}/src/backend/camera/features/FakeNodeMap.cpp")
 target_include_directories(mib_feature_control PUBLIC "${MIB_ROOT}/include")
 if(MSVC)
   target_compile_options(mib_feature_control PRIVATE /W4 /WX)
@@ -15,6 +18,11 @@ target_link_libraries(feature_control_test PRIVATE mib_feature_control)
 enable_testing()
 add_test(NAME egrabber.feature_control COMMAND feature_control_test)
 set_tests_properties(egrabber.feature_control PROPERTIES TIMEOUT 15)
+# E-1 (E02): node-map enumeration and guarded typed access over a fake port.
+add_executable(feature_tree_test "${MIB_ROOT}/tests/camera/features/feature_tree_test.cpp")
+target_link_libraries(feature_tree_test PRIVATE mib_feature_control)
+add_test(NAME egrabber.feature_tree COMMAND feature_tree_test)
+set_tests_properties(egrabber.feature_tree PROPERTIES TIMEOUT 15)
 
 # Optional compile-only proof against an operator-provided, installed SDK.
 # Does not execute the SDK, open a device, or vendor any SDK files.

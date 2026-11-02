@@ -1069,6 +1069,33 @@ namespace backend::bridge
         // Camera & Alignment geometry: mode, sensor size, saved experiment window, steps and
         // the last camera read-back (ABI 20).
         std::string fetchCameraGeometryJson() const;
+        // E02 (#806, bridge ABI 49; bridge-contract.json camera_features): the active
+        // camera's GenApi node map, enumerated from the device at call time, and typed
+        // read/write by name under CaptureService's camera guard. Every reply carries
+        // the session token {source, generation, capability_revision}; a request from
+        // an older token is refused as stale. A camera without GenApi is "unsupported".
+        // Every operation (tree, read, write) is serialized with sort pulses
+        // (TriggerService::runSerializedWithPulses holds the pulse lock for the whole
+        // operation, so none lands between a pulse's edges) and is refused, without
+        // touching the device, while sorting is possible: sort pulses queued or firing,
+        // an experiment starting, active or stopping, realtime processing or autofocus
+        // running. A started, bound trigger with nothing queued is not a refusal. Writes
+        // are also refused while a frame recording runs, and run inside the
+        // coordinator's idle transaction, so Start cannot begin under a write. All of
+        // these are decided under the guards, never before taking them.
+        // cameraFeatureTreeJson is synchronous (native callers and tests); the bridge
+        // runs the tree as a job (startCameraFeatureTree / fetchCameraFeatureTree), so
+        // no bridge call blocks for the walk.
+        std::string cameraFeatureTreeJson(const std::string &requestJson);
+        std::string cameraFeatureReadJson(const std::string &requestJson);
+        std::string cameraFeatureWriteJson(const std::string &requestJson);
+        // The tree as a job. One enumeration is in flight at a time: a start with the
+        // same request while one runs joins it (same job id); a start with another
+        // request gets a job whose reply is already a refusal. Returns at once.
+        std::uint64_t startCameraFeatureTree(const std::string &requestJson);
+        // The job's reply once finished, "" while it runs; an unknown or expired job id
+        // gets a refused reply. Finished replies are kept for the last few jobs.
+        std::string fetchCameraFeatureTree(std::uint64_t jobId);
         // Where the science runs and what this build has (ABI 21): {science: host|pl,
         // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
         // `capabilities` (#501) says which surfaces exist on this instrument.
@@ -1388,6 +1415,10 @@ namespace backend::bridge
         // lanes hold the status snapshots. Declared after everything its
         // workers call back into, so it is destroyed (and joined) first.
         const std::unique_ptr<review::ReviewJobs> reviewJobs_;
+        // E02 (#806): the camera feature tree job (one in flight); joined at shutdown
+        // and in the destructor.
+        struct FeatureTreeJobs;
+        const std::unique_ptr<FeatureTreeJobs> featureTreeJobs_;
     };
 
     // Test-only: the facade's review lanes (#512 S7), so tests wait for a
