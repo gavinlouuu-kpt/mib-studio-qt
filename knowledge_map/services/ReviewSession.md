@@ -713,7 +713,12 @@ a native `MembershipSet` of two-bit bitsets keyed to the source identity (open
 generation + size + write time, or the streamed SHA-256 when `fingerprint` is
 true) and the graph's content hash; the four most recent sets are cached in the
 session (`Impl::memberships`, cleared on open/close) so gallery pages and other
-reductions reuse them. Only bounded results return: counts, exact statistics,
+reductions reuse them. Because that identity names the size and write time
+recorded at open, every evaluation first re-stats the file (`Impl::unchangedLocked`,
+the check `fileHashLocked` uses) before any cache lookup or column read, and again
+after the reductions: an in-place rewrite clears the cache and is refused
+("Source changed since open; reopen…"), never answered from the old membership
+(`review.population_rewrite`). Only bounded results return: counts, exact statistics,
 `populations` table, optional `histogram` / decimated `scatter`, a `rows` page
 (`page` {offset, limit ≤1000, membership}) and a 12-image gallery at any selected
 offset. The full-file SHA-256 (`Impl::fileHashLocked`) is streamed with no size
