@@ -19,3 +19,13 @@ No goal row (F01–F16) changes state with this merge; see [[services/AnalysisWo
 #810 left two desktop version pins behind its contract (`eventAdapter.test.ts` and
 `runQuickLook.test.ts` expected bridge ABI 46 / review ABI 8 while the generated contract says
 47 / 9); they fail on `feat/808-flowjo-realignment` itself and are updated to 47 / 9 here.
+
+Two Rust tests failed on #810 itself and pass on the U-1 branch: `mib-app-commands`
+`monitoring_cells_through_dispatch` and `mib-bridge-server` `live_cells_over_the_websocket`.
+#810's facade `stop_capture` now calls `ProcessingService::drainAndStopRealtime()` after
+`capture().stop()` (so the live evidence summary is finished), and that realtime stop reported a
+second monitoring capture change, "realtime processing stopped", on top of the camera close's
+"the camera stopped" — the refusal and the ended pins named the wrong reason. The drain/stop stays;
+`drainAndStopRealtime(false)` skips the second change when an active camera's stop already ended
+the capture (with no active camera the realtime stop still ends it). See
+[[services/ProcessingService]] and [[services/MonitoringCellStore]].
