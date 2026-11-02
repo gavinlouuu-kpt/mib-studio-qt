@@ -385,7 +385,7 @@ void ProcessingService::releaseProcessingCoreOperation() noexcept {
     activeSynchronousCoreOperations_.fetch_sub(1, std::memory_order_acq_rel);
 }
 
-void ProcessingService::stopRealtime() {
+void ProcessingService::stopRealtime(bool endsMonitoringCapture) {
     const bool wasRunning = rtRunning_.exchange(false, std::memory_order_acq_rel);
     if (!wasRunning && !realtimeThread_.joinable()) return;
     if (realtimeThread_.joinable()) realtimeThread_.join();
@@ -400,10 +400,11 @@ void ProcessingService::stopRealtime() {
     SPDLOG_INFO("ProcessingService: realtime processing stopped");
     // Stopping realtime ends the capture (#716 A6a review 3): the live cell store clears its
     // strip and keeps its pins' measurements only; images after the run belong to Review.
-    if (wasRunning) requestMonitoringCaptureChange("realtime processing stopped");
+    // A caller that already ended the capture for this stop (the camera closing) passes false.
+    if (wasRunning && endsMonitoringCapture) requestMonitoringCaptureChange("realtime processing stopped");
 }
 
-bool ProcessingService::drainAndStopRealtime() {
+bool ProcessingService::drainAndStopRealtime(bool endsMonitoringCapture) {
     const uint64_t end = rtStore_ ? rtStore_->committedCount() : 0;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     bool drained = false;
@@ -418,7 +419,7 @@ bool ProcessingService::drainAndStopRealtime() {
         if (drained || std::chrono::steady_clock::now() >= deadline) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    stopRealtime();
+    stopRealtime(endsMonitoringCapture);
     return drained;
 }
 

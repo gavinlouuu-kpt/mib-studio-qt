@@ -862,8 +862,16 @@ namespace backend::bridge
                                             BackendCommandType::Camera, message});
                 return {false, BackendCommandType::Camera, message};
             }
-            backend_.capture().stop();
-            backend_.processing().drainAndStopRealtime();
+            {
+                // Stopping an active camera ends the monitoring capture at once ("the camera
+                // stopped", from the camera-ready callback inside stop()). Realtime then drains
+                // and stops for the live evidence summary; that is part of the same stop, not a
+                // second capture change that would replace the reason (#716 A6a review 2-3).
+                // With no active camera, the realtime stop ends the capture itself.
+                const bool cameraEndsCapture = backend_.capture().isRunning();
+                backend_.capture().stop();
+                backend_.processing().drainAndStopRealtime(!cameraEndsCapture);
+            }
             emitEvent(makeCameraStatus(CameraState::Stopped));
             return {true, BackendCommandType::Camera, "Capture stopped"};
         }

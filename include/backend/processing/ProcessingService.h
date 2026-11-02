@@ -87,7 +87,11 @@ public:
     backend::evidence::RetainedImage
     readRunEvidenceImage(const backend::evidence::Identity& expected, uint64_t lease,
                          const std::string& set, const std::string& ordinal, bool mask = false);
-    bool drainAndStopRealtime();
+    // Drains the committed frames, then stops realtime. endsMonitoringCapture=false when the
+    // caller has already ended the monitoring capture for the same stop (the facade's
+    // stop_capture: the camera close reported "the camera stopped"), so the stop does not
+    // report a second capture change that would replace its reason.
+    bool drainAndStopRealtime(bool endsMonitoringCapture = true);
 
 
     // The pixel-to-micron factor (µm per pixel) a service starts with, and the
@@ -193,7 +197,7 @@ public:
 
     // Realtime processing API
     void startRealtime(std::shared_ptr<backend::playback::FrameStore> store);
-    void stopRealtime();
+    void stopRealtime(bool endsMonitoringCapture = true);
     bool isRealtimeRunning() const { return rtRunning_.load(std::memory_order_relaxed); }
     bool isRealtimeEnabled() const { return rtEnabled_.load(std::memory_order_relaxed); }
     void setRealtimeEnabled(bool on);
