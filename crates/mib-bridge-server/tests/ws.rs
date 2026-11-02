@@ -998,7 +998,11 @@ async fn scientific_reads_before_init_are_refused() {
     let (_server, addr, data) = start("science_preinit").await;
     let mut ws = connect(addr).await;
     let mut events = Vec::new();
-    assert!(call(&mut ws, 1, "fetch_live_evidence", json!({}), &mut events).await.is_err());
+    // Live evidence before init is the typed unavailable reply with its reason, not an error.
+    let Reply::Json(evidence) = call(&mut ws, 1, "fetch_live_evidence", json!({}), &mut events).await.unwrap() else {
+        panic!("expected the JSON unavailable reply")
+    };
+    assert_eq!(evidence, json!({ "available": false, "reason": "Backend is not initialized" }));
     for (id, kind) in [(2, "live-run"), (3, "live-epoch")] {
         let reply = call(&mut ws, id, "analysis_read", json!({"request":{"action":"snapshot","source":{"kind":kind}}}), &mut events).await.unwrap();
         let Reply::Json(value) = reply else { panic!("expected JSON refusal") };

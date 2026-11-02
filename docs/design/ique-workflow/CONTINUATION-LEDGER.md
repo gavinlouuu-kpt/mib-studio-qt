@@ -147,6 +147,10 @@ I's own stored/archive acceptance remains separately recorded above.
 I's evidence cxx function returns String, not Result: it therefore returns an
 unavailable JSON body natively, while the Rust command explicitly rejects pre-init
 calls. It does not throw across a non-Result FFI boundary.
+U-2b (on F's host): the Rust command's pre-init `Err` is reverted. F's facade reply
+`{"available":false,"reason":"Backend is not initialized"}` passes through unchanged, because
+the EvidenceResolver contract answers with an explicit unavailable reason, not an error;
+`scientific_reads_before_init_are_refused` now asserts that reply.
 
 ## Scientific namespace authority correction
 
