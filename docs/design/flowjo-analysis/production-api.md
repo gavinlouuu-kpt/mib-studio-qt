@@ -97,6 +97,12 @@ event ordinals are **not** saved image indices and E supplies no retained locato
 
 ## Cytoflow application jobs
 
+**Role (ADR 0016, 2026-11-02).** This job is a parity comparator, not the production
+authority: the native evaluator (`PopulationGraph`, `ColumnarEvaluation`) owns every
+population, including polygons. Cytoflow 1.3.2 runs only in CI parity tests and
+qualification runs; installers do not bundle it. The job remains for the t-SNE
+embedding below (scikit-learn 1.9.1, the one worker algorithm in the F ledger).
+
 Transport `analysis_job` (Review `review_analysis_job`) accepts:
 
 ```json

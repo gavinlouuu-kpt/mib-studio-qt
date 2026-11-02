@@ -62,8 +62,9 @@ are no production code changes to validate in those suites in this slice.
   #803/#804 sequencing before F implements shared production changes.
 - #808/#523 implementation: after agreement, implement source/workspace/worker
   adapter, including the two demonstrated semantics gaps and complete F-A–F-F.
-- Product/release owner: decide the pinned Cytoflow distribution plan before
-  shipping. Internal qualification remains permitted and was performed.
+- ~~Product/release owner: decide the pinned Cytoflow distribution plan before
+  shipping.~~ Superseded 2026-11-02 by ADR 0016: the native C++ code is the
+  production authority; Cytoflow and FlowKit are CI comparators and are not shipped.
 
 Coordination requests were posted to #808 and peers #806/#807/#717. No response
 or agreement is inferred from posting. No final composition, merge, deployment,

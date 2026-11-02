@@ -6,6 +6,11 @@ Tracking: #808/#523. This is an initial F-A/F-B slice, not complete FlowJo suppo
 
 ## Responsibility and boundaries
 
+**Engine decision (2026-11-02, ADR 0016).** The native C++ code is the single
+production analysis authority. Cytoflow 1.3.2 and FlowKit 1.3.2 are CI comparators
+only and are not bundled; the worker keeps t-SNE (scikit-learn 1.9.1) as its one
+production job. The Cytoflow paragraphs below describe the parity path.
+
 The portable C++ population core is the authority for inclusive optional scalar
 bounds, three-valued Boolean composition within parent/QC universes, exact keyed
 membership validation and counts with null empty denominators. It never computes
@@ -63,8 +68,8 @@ and durable reopen. Native ASan/UBSan and Rust clippy pass locally.
 The native interval/statistics slice is mounted in Studio/Review; the Cytoflow
 worker is not yet attached to app source submission. No live provider, qualified source reader adapter,
 workspace DAG/undo/redo, images, qualified advanced science or reports. Keep
-[[ReviewSession]] and acquisition exclusion intact. Cytoflow distribution remains
-a release decision, not an excuse to stop internal implementation.
+[[ReviewSession]] and acquisition exclusion intact. Cytoflow distribution no longer
+gates shipping (ADR 0016: comparator only, not bundled).
 
 ## Bounded native population graph
 

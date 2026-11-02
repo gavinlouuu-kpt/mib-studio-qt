@@ -2,6 +2,13 @@
 
 Status: native composition and bounded real-engine worker implemented; full integration incomplete. No F capability is fully accepted.
 
+**Engine (2026-11-02, decision D3, ADR 0016 `docs/decisions/0016-native-analysis-authority.md`).**
+The native C++ analysis code is the single production authority for F02–F11 and F13 in
+every host. Cytoflow 1.3.2 and FlowKit 1.3.2 are CI comparators, not bundled. The
+supervised worker runs only t-SNE (F07) with scikit-learn 1.9.1 (engine id
+`sklearn-tsne-1.9.1`, checked by `crates/mib-analysis-worker`). Rows below that say
+"real Cytoflow" describe parity evidence, not the production path. See the F-3 section.
+
 Backend evidence base: `0a58e201`; UI/design base: `71337496` (freshly fetched branch heads, not a reset). Paths under `tests/review/` unless otherwise shown. Test names below are inspected existing evidence, **not tests rerun in this audit**. Original board IDs and research hashes: [catalogue](evidence-catalogue.json). Each FJ maps to the corresponding #523 guide/research package; board coverage supplements rather than replaces FJ requirements.
 
 | ID / research | Original boards | Existing code / PR / test | Disposition | Owned implementation package | Remaining acceptance |
@@ -413,4 +420,30 @@ sources; independent numbers from scipy 1.18.1**.
 - **Remaining.** CIs for rank shifts and ANOVA effect sizes; repeated measures
   (paired > 2 groups, dose series within one unit) are refused, not modelled;
   no multiplicity correction; the I-6 view.
+
+### F-3 Engine decision applied (2026-11-02, `claude/808-f4-comparison-fits`)
+
+Decision D3 / ADR 0016 recorded in the F ledger and design docs (this ledger,
+[contracts](contracts.md), [production API](production-api.md),
+[acceptance handoff](acceptance-handoff.md)) and the AnalysisWorker vault note.
+
+| Role | Implementation | Version | Where it runs |
+|---|---|---|---|
+| Production authority (populations, statistics, transforms, overlays, comparison, fits, reports) | native C++ `src/backend/analysis/` | this repository | every host (Studio, Review, I views) |
+| Supervised worker job (F07 t-SNE only) | scikit-learn `TSNE` | 1.9.1 (`sklearn-tsne-1.9.1`) | `crates/mib-analysis-worker`; results bound to that runtime |
+| Polygon parity comparator | Cytoflow `PolygonOp` | 1.3.2 | CI (`analysis-ci.yml`, ignored tests), qualification; not bundled |
+| Rectangle / FCS comparator | FlowKit `RectangleGate` on its own `Sample` parser (flowio) | FlowKit 1.3.2, flowio 1.4.0 | optional `tools/flowjo_acceptance/fcs_comparator.py --flowkit` |
+| Inference reference values | scipy | 1.18.1 | `tools/analysis_inference/generate_reference.py` (offline) |
+
+- **FlowKit comparator.** `fcs_comparator.py --rect ... --flowkit` gates the
+  rectangle with FlowKit's GatingML gate. `analysis.fcs_reader`, with
+  `MIB_FCS_COMPARATOR_PYTHON` and `MIB_FCS_COMPARATOR_FLOWKIT` set, compares
+  both the comparator's own count and FlowKit's count with the native gate on
+  the synthetic 10,000-event FCS file: 2,525 = 2,525 = 2,525 here (scratch
+  venv). GatingML maxima are exclusive and MIB's inclusive, so the fixture has
+  no event on a bound. The FlowJo reference run with FlowKit is still pending
+  the private fixture.
+- **Remaining.** Run FlowKit on the FlowJo reference fixture; add the FlowKit
+  comparator to a CI lane; the distribution review for scikit-learn (the only
+  worker dependency left in a production path).
 
