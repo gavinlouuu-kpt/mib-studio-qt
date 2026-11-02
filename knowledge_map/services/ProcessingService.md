@@ -384,7 +384,14 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   AppBackend sets (`setMonitoringCaptureAuthority`, under its own mutex; a
   service without one moves the published epoch itself): `startRealtime()`
   (a new or restarted FrameStore: indices may restart), **`stopRealtime()`**
-  (stopping realtime ends the capture), and another ROI, from
+  (stopping realtime ends the capture; `stopRealtime(false)` /
+  `drainAndStopRealtime(false)` skip the change when the caller already
+  ended the capture for the same stop: the facade's `stop_capture` drains
+  and stops realtime right after a camera close reported "the camera
+  stopped", so that stays the one change and its reason; the facade asks
+  `AppBackend::monitoringCaptureEndedByCameraClose()` after `capture().stop()`,
+  which also covers a camera that dropped by itself and is Faulted, not
+  `isRunning()`), and another ROI, from
   `setRealtimeRoi()` or `resolvePendingRoi()` **while `rtMutex_` is held**,
   so the ROI and the epoch change together. **Tag at entry:** each realtime
   loop keeps a `MonitoringEntryCache`; when the published epoch moves it

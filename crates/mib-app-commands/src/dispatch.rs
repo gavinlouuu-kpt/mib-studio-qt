@@ -103,6 +103,11 @@ pub const COMMANDS: &[&str] = &[
     "fetch_stage_status",
     "fetch_review_metadata",
     "fetch_review_metrics_page",
+    "analyze_population",
+    "analysis_read",
+    "analysis_write",
+    "analysis_job",
+    "fetch_live_evidence",
     "fetch_review_image",
     "review_image_bytes",
     "fetch_review_frame_packet",
@@ -582,6 +587,35 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::pump_scan_addresses(state, a.com_port, a.baud_rate, a.start_address, a.end_address, a.timeout_ms).and_then(json)
         }
         "fetch_review_metadata" => crate::fetch_review_metadata(state).and_then(json),
+        "fetch_live_evidence" => crate::fetch_live_evidence(state).and_then(json),
+        "analysis_read" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: serde_json::Value }
+            let a: A = args(value)?;
+            crate::analysis_read(state, a.request).and_then(json)
+        }
+        "analysis_job" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: serde_json::Value }
+            let a: A = args(value)?;
+            crate::analysis_job(state, a.request).and_then(json)
+        }
+        "analysis_write" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: serde_json::Value }
+            let a: A = args(value)?;
+            crate::analysis_write(state, a.request).and_then(json)
+        }
+        "analyze_population" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: serde_json::Value }
+            let a: A = args(value)?;
+            crate::analyze_population(state, a.request).and_then(json)
+        }
         "fetch_review_metrics_page" => {
             #[derive(Deserialize)]
             struct A {
@@ -1529,7 +1563,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(47)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

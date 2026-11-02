@@ -20,12 +20,13 @@ pub mod preview_buffer;
 /// The one backend bridge a process owns. Every transport (the Tauri webview, the YOFO Studio
 /// WebSocket server) serialises its calls through this mutex.
 pub struct AppState {
+    pub analysis_jobs: Mutex<mib_analysis_worker::app::Service>,
     pub bridge: Mutex<cxx::UniquePtr<ffi::BackendBridge>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        AppState { bridge: Mutex::new(ffi::new_backend_bridge()) }
+        AppState { analysis_jobs: Mutex::new(Default::default()), bridge: Mutex::new(ffi::new_backend_bridge()) }
     }
 }
 
@@ -124,7 +125,10 @@ pub fn is_initialized(state: &AppState) -> Result<bool, String> {
 /// path; found by the Xvfb E2E run: the UI passed "" and init always failed).
 pub fn init(state: &AppState, data_dir: &str, resource_dir: &str) -> Result<bool, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().initialize_with_resources(data_dir, resource_dir))
+    let ok = guard.pin_mut().initialize_with_resources(data_dir, resource_dir);
+    drop(guard);
+    if ok { state.analysis_jobs.lock().map_err(|e| e.to_string())?.initialize(std::path::Path::new(data_dir)); }
+    Ok(ok)
 }
 
 pub fn configure_mock(
@@ -960,6 +964,24 @@ pub fn fetch_review_metadata(state: &AppState) -> Result<ReviewMetadata, String>
         recorded_images: dataset_info(m.recorded_images),
         file_path: m.file_path,
     })
+}
+
+/// Native analysis of the open review source, with the facade's idle fence.
+pub fn analysis_read(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().analysis_read(&request.to_string())).map_err(|e| e.to_string())
+}
+pub fn analysis_write(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().analysis_write(&request.to_string())).map_err(|e| e.to_string())
+}
+pub fn fetch_live_evidence(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_live_evidence()).map_err(|e| e.to_string())
+}
+pub fn analyze_population(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().analyze_population(&request.to_string())).map_err(|e| e.to_string())
 }
 
 /// Pull one bounded page of review metrics.
@@ -1987,6 +2009,17 @@ pub fn fetch_processing_stats(state: &AppState) -> Result<ProcessingStats, Strin
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scientific_numbers_preserve_native_double_bits() {
+        let raw = "[0.12000000000000001,0.24000000000000002,5.0]";
+        let value: serde_json::Value = serde_json::from_str(raw).unwrap();
+        for (i, expected) in [0.12000000000000001_f64,0.24000000000000002_f64,5.0].iter().enumerate() {
+            assert_eq!(value[i].as_f64().unwrap().to_bits(), expected.to_bits());
+        }
+        let again: serde_json::Value = serde_json::from_str(&value.to_string()).unwrap();
+        assert_eq!(again, value);
+    }
+
     use super::kind_name;
     use mib_bridge::ffi::{self, BridgeEventKind};
     use serial_test::serial;
@@ -2157,4 +2190,8 @@ mod method_calibration_tests {
         assert_eq!(serde_json::to_value(MethodCalibration::from(with_e)).unwrap()["calibration_reference"]["nominal_e_kpa"],
                    serde_json::json!(1.5));
     }
+}
+
+pub fn analysis_job(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    state.analysis_jobs.lock().map_err(|e| e.to_string())?.command(request, |q| analysis_read(state, q))
 }

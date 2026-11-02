@@ -448,6 +448,11 @@ namespace backend
         // recent detected cells and the operator's pins, read from the
         // monitoring ring off the hot path. Null before initialize().
         services::MonitoringCellStore* monitoringCells();
+        // True when the current monitoring capture began with a camera session closing ("the
+        // camera stopped") and nothing has changed the capture since: an explicit stop, or the
+        // camera dropping by itself (the capture thread released it; the lifecycle is Faulted).
+        // stop_capture then stops realtime without a second capture change (#821 review).
+        bool monitoringCaptureEndedByCameraClose() const;
         // Shared RS485 bus registry (pump, pulse generator); tests inject a
         // fake serial-port factory here.
         services::serialbus::SerialBusManager& serialBus();
@@ -661,6 +666,9 @@ namespace backend
         // The capture session whose close last advanced the monitoring capture: a close is
         // reported twice (stop() and the capture thread) and is one capture change (#716 A6a).
         std::atomic<std::uint64_t> monitoringClosedCaptureSession_{0};
+        // The capture epoch that close began (0 before the first close): while it is still the
+        // store's current capture, the monitoring capture of the closed session is already ended.
+        std::atomic<std::uint64_t> monitoringClosedCaptureEpoch_{0};
 
         // Where pipeline-timing CSVs are dumped (set in initialize()).
         std::string pipelineTimingDir_;
