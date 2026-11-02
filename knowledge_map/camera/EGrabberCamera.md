@@ -23,8 +23,12 @@
 - E02 (#806): `featureSession()` exposes the grabber's GenApi node map through
   `EGrabberFeaturePort` ([[FeatureControl]]) while the camera runs. Guard:
   `triggerMutex_` (pins `grabber_` against `stop()`, serializes with the trigger
-  thread). After any feature access `triggerLineApplied_` is cleared so the next
-  sort pulse re-selects `LineSelector` (device quirk). Source id
+  thread). Only a write to the Interface module or a selector-scoped describe
+  there (`ModuleWriteTracker`) clears `triggerLineApplied_`, so the next sort
+  pulse re-selects `LineSelector` (device quirk); reads leave it applied. The
+  facade refuses all feature I/O while the sort trigger is armed or running
+  (`TriggerService::runWhileTriggerIdle`), so no feature call lands between a
+  pulse's edges. Source id
   `egrabber:<interface>/<device>` or `egrabber:default`; evidence `device`. The
   SDK-less stub returns nullptr (unsupported). Not run on hardware yet.
 - On non-Windows builds (`MIB_HAS_EGRABBER=0`), compile as a safe stub that

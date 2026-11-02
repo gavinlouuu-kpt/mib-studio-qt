@@ -2433,10 +2433,17 @@ rust::String BackendBridge::run_quick_look(rust::Str request_json) {
 }
 
 // ABI 49 (#806 E-1/E-2): the camera's GenApi node map (bridge-contract.json camera_features).
-// JSON documents; tree and read are reads, write is a control command on the server.
-rust::String BackendBridge::camera_feature_tree(rust::Str request_json) {
+// JSON documents; tree and read are reads, write is a control command on the server. The tree
+// is a job (camera_features.job): start and fetch return at once, the walk runs on the
+// facade's worker, so the caller's bridge lock is never held for it.
+std::uint64_t BackendBridge::camera_feature_tree_start(rust::Str request_json) {
+    // Never throws to Rust: a failure to start is a job whose reply is the refusal.
+    return impl_->facade.startCameraFeatureTree(std::string(request_json));
+}
+
+rust::String BackendBridge::camera_feature_tree_fetch(std::uint64_t job_id) {
     try {
-        return rust::String(impl_->facade.cameraFeatureTreeJson(std::string(request_json)));
+        return rust::String(impl_->facade.fetchCameraFeatureTree(job_id));
     } catch (const std::exception& e) {
         return rust::String(::camera::features::featureRefusedJson(std::string("camera_feature_tree failed: ") + e.what()));
     } catch (...) {
@@ -2747,7 +2754,8 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
 // run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6); v42 calibration records
 // (#716 A4a); v43 the readiness report's method_calibration (#776); v44 run_quick_look (#716 A7a); v49 the
-// camera's GenApi node map, camera_feature_tree / camera_feature_read / camera_feature_write (#806 E-1/E-2; 47 is
+// camera's GenApi node map, camera_feature_tree_start / camera_feature_tree_fetch (the tree as a job) /
+// camera_feature_read / camera_feature_write (#806 E-1/E-2; 47 is
 // the F track's, 48 the I track's). All additive over v1 except that removal (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }

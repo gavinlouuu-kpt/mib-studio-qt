@@ -3,6 +3,11 @@
 //! hardware). No feature name is written here: every name comes from the enumerated tree.
 //! enumerate -> read -> write with readback -> refused write on a read-only node -> stale
 //! generation refused after a capture restart. Backend state is process-global: serial.
+//!
+//! Feature I/O is refused while the sort trigger is armed or running (it is bound and started
+//! with every capture session in the default boot): `feature_io_refused_while_the_sort_trigger_is_armed`
+//! proves that through the server; the round trip boots with the trigger service disabled
+//! (`MIB_DISABLED_SERVICES=trigger`), the only state in which a node map may be touched.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -98,9 +103,58 @@ fn request(session: &Value, feature: &str, value: Option<Value>) -> Value {
     json!({ "request": r })
 }
 
+/// Boots the backend with or without the sort trigger service (read at init).
+fn trigger_service(enabled: bool) {
+    if enabled {
+        std::env::remove_var("MIB_DISABLED_SERVICES");
+    } else {
+        std::env::set_var("MIB_DISABLED_SERVICES", "trigger");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn feature_io_refused_while_the_sort_trigger_is_armed() {
+    trigger_service(true);
+    let (server, addr, data) = start("camera_features_trigger").await;
+    let mut ws = connect(addr).await;
+    ok(&mut ws, 1, "init", json!({"dataDir": ""})).await;
+    ok(&mut ws, 2, "configure_mock",
+       json!({"frameDir": mock_frames(), "frameIntervalMs": 5, "loopFiles": true})).await;
+    let started = ok(&mut ws, 3, "start_capture", Value::Null).await;
+    assert_eq!(started["ok"], true, "{started}");
+    // The trigger binds to the capture camera; from then on every feature operation is refused
+    // before the device, with the reason (not an error reply, not an empty tree).
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let tree = loop {
+        let tree = ok(&mut ws, 4, "camera_feature_tree", json!({"request": {"modules": ["remote"]}})).await;
+        if tree["reason"].as_str().is_some_and(|r| r.contains("trigger")) {
+            break tree;
+        }
+        assert!(Instant::now() < deadline, "the trigger never armed: {tree}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(tree["outcome"], "refused", "{tree}");
+    assert_eq!(tree["modules"], json!([]), "nothing enumerated: {tree}");
+    let session = json!({"source": "mock", "generation": "1", "capability_revision": "1"});
+    let read = ok(&mut ws, 5, "camera_feature_read", request(&session, "Any", None)).await;
+    assert_eq!(read["outcome"], "refused", "{read}");
+    assert!(read["reason"].as_str().unwrap().contains("trigger"), "{read}");
+    let write = ok(&mut ws, 6, "camera_feature_write",
+                   request(&session, "Any", Some(json!({"type": "float", "value": 1.0})))).await;
+    assert_eq!(write["outcome"], "refused", "{write}");
+    assert!(write["reason"].as_str().unwrap().contains("trigger"), "{write}");
+    assert!(write["readback"].is_null(), "the device was not touched: {write}");
+    ok(&mut ws, 7, "stop_capture", Value::Null).await;
+    ws.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(data);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn mock_node_map_round_trip_through_the_server() {
+    trigger_service(false);
     let (server, addr, data) = start("camera_features").await;
     let mut ws = connect(addr).await;
     ok(&mut ws, 1, "init", json!({"dataDir": ""})).await;
@@ -217,5 +271,6 @@ async fn mock_node_map_round_trip_through_the_server() {
     ok(&mut ws, 20, "stop_capture", Value::Null).await;
     ws.close(None).await.unwrap();
     server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    trigger_service(true);
     let _ = std::fs::remove_dir_all(data);
 }

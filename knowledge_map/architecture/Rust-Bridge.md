@@ -527,13 +527,31 @@ Additive over ABI 44 (47 is the F track's, 48 the I track's, allocated provision
 `camera_feature_read {request: {session, module, feature, selector?}}` and
 `camera_feature_write {request: {..., value: {type, value}}}` enumerate and drive the active
 camera's node map ([[../camera/FeatureControl]]). Contract: `camera_features` (bounds,
-`commands`, `session`, `guard`, `access`, `outcomes`, `descriptor`, `tree`).
+`commands`, `session`, `guard`, `access`, `outcomes`, `descriptor`, `tree`, `job`).
 
-- **Path:** C++ `BackendFacade::cameraFeature{Tree,Read,Write}Json` -> `CaptureService::withCameraFeatures`
-  (capture guard) -> `ICamera::featureSession()->withPort` (camera port guard) -> cxx
-  `camera_feature_*(request_json) -> String` -> `mib-app-commands` `camera_feature_*(state, request)`
-  (a JSON object; non-object or over 16384 bytes is `INVALID_ARGUMENTS` before the backend) ->
-  dispatch (WebSocket server). No Tauri command or desktop view yet (E-3).
+- **Path:** C++ `BackendFacade::cameraFeature{Tree,Read,Write}Json` -> [writes: the
+  coordinator's idle transaction] -> `TriggerService::runWhileTriggerIdle` (pulse lock) ->
+  `CaptureService::withCameraFeatures` (capture guard, run-state gate) ->
+  `ICamera::featureSession()->withPort` (camera port guard) -> cxx `camera_feature_read` /
+  `camera_feature_write(request_json) -> String` and, for the tree, `camera_feature_tree_start(request_json)
+  -> u64` + `camera_feature_tree_fetch(job_id) -> String` -> `mib-app-commands`
+  `camera_feature_*(state, request)` (a JSON object; non-object or over 16384 bytes is
+  `INVALID_ARGUMENTS` before the backend) -> dispatch (WebSocket server). No Tauri command or
+  desktop view yet (E-3).
+- **The tree is a job (#806 review, finding 2):** a full walk describes thousands of nodes; holding
+  the global bridge mutex for it blocked frame pulls, status and experiment stop. The facade runs
+  the walk on its own worker; `mib-app-commands::camera_feature_tree` takes the bridge lock only to
+  start the job and for each fetch (poll every 5 ms, give up after `CAMERA_FEATURE_TREE_WAIT` =
+  300 s), and returns the tree document as before, so the WebSocket wire format is unchanged. One
+  walk is in flight: an identical request joins it, another is refused at once; the last 16 replies
+  are kept; shutdown cancels the walk at its next guarded step and joins it. The cxx surface changed
+  within the unmerged ABI 49 (`camera_feature_tree` -> `camera_feature_tree_start` /
+  `camera_feature_tree_fetch`).
+- **Refusals (#806 review, finding 1):** every feature command is `refused` (with the reason, no
+  device access) while the sort trigger is armed or running and while an experiment is
+  Starting/Active/Stopping; writes also while a frame recording or realtime processing runs or
+  autofocus is enabled. In the default boot the trigger runs with every capture session, so the
+  commands answer `refused` until the trigger service is disabled.
 - **Session:** the token `{source, generation, capability_revision}` (decimal strings) of an
   earlier reply; any difference is `stale`. A capture restart opens a new generation; a write that
   may have reached the device advances the revision.
@@ -544,11 +562,15 @@ camera's node map ([[../camera/FeatureControl]]). Contract: `camera_features` (b
   `abi_version_is_stable`; `dispatch.rs` abi pin; the generated `bridgeContract.ts`
   (`CAMERA_FEATURES`); `gen_bridge_contract.py` checks the numbers against the headers; the
   `eventAdapter.test.ts` / `runQuickLook.test.ts` pins.
-- **Tests:** `contract.rs` `camera_features_are_described`, `camera_features_without_a_session`;
+- **Tests:** `contract.rs` `camera_features_are_described`, `camera_features_without_a_session`
+  (start/fetch before init, unknown job);
   the server's `camera_feature_write_is_control_and_reads_are_open`; real server
-  `tests/camera_features.rs` (mock node map: enumerate, read, write with readback, stale old
-  revision, refused read-only and out-of-range writes, viewer denied, stale generation after a
-  capture restart); C++ `camera.feature_tree`, `camera.capture_features`.
+  `tests/camera_features.rs` (`feature_io_refused_while_the_sort_trigger_is_armed` in the default
+  boot; with `MIB_DISABLED_SERVICES=trigger` the mock node map round trip: enumerate, read, write
+  with readback, stale old revision, refused read-only and out-of-range writes, viewer denied,
+  stale generation after a capture restart); C++ `camera.feature_tree`, `camera.capture_features`,
+  `camera.trigger_feature_interlock`, `e2e.camera_feature_facade` (gates through the facade, the
+  tree job's in-flight-once rule).
 
 ## ABI 44: the run quick look (#716 A7a)
 

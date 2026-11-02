@@ -98,10 +98,34 @@ void TriggerService::start() {
         // A previous loop that exited is reaped before a new one is assigned.
         thread_.join();
     }
-    running_.store(true);
+    {
+        // Under pulseMutex_ so a camera feature operation running inside
+        // runWhileTriggerIdle() finishes before the trigger counts as running.
+        std::lock_guard<std::mutex> pulseLock(pulseMutex_);
+        running_.store(true);
+    }
     backend::diagnostics::CrashStateMirror::instance().trigger.running.store(true);
     thread_ = std::thread(&TriggerService::triggerLoop, this);
     SPDLOG_INFO("TriggerService started");
+}
+
+bool TriggerService::runWhileTriggerIdle(const std::function<void()>& fn, std::string& reason) {
+    // pulseMutex_ is held by the trigger thread across both edges of a pulse
+    // and by setCamera()/start(): deciding and running here under it leaves no
+    // window in which a pulse edge and a feature operation interleave.
+    std::lock_guard<std::mutex> pulseLock(pulseMutex_);
+    if (camera_.load(std::memory_order_acquire) != nullptr) {
+        reason = "Camera feature access is refused while the sort trigger output is armed on "
+                 "this camera: a node-map call between pulse edges would stretch the sort pulse.";
+        return false;
+    }
+    if (running_.load()) {
+        reason = "Camera feature access is refused while the sort trigger service is running: a "
+                 "node-map call could delay or stretch a sort pulse.";
+        return false;
+    }
+    fn();
+    return true;
 }
 
 void TriggerService::stop() {

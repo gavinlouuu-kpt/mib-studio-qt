@@ -20,6 +20,18 @@ namespace backend { namespace playback { class FrameStore; } }
 
 namespace backend::services {
 
+// E02 (#806): the run-state gate of a camera feature operation. Both checks are
+// evaluated by CaptureService::withCameraFeatures while it holds its camera
+// guard, immediately before the port is touched, so the decision and the
+// device access are one step. A non-empty string is the refusal reason.
+struct CameraFeatureGate {
+    // Refuses every operation (tree, read, write): outcome "refused", the port
+    // is never touched.
+    std::function<std::string()> refuseAll;
+    // Refuses writes only (reads stay open): FeatureControl's write gate.
+    std::function<std::string()> refuseWrites;
+};
+
 struct CaptureStats {
     std::atomic<uint64_t> framesProcessed{0};
     std::atomic<uint64_t> lastFrameRate{0};     // from StreamModule StatisticsFrameRate
@@ -131,9 +143,15 @@ public:
     // release) and the camera's own port guard. The CurrentSession token is
     // {camera source, this capture session's generation, capability revision};
     // the revision starts at 1 per generation and `fn` may advance it (stored
-    // back). Writes are authorized unless `writeBlockReason` is non-empty.
-    // Unsupported: the active camera has no GenApi node map. NoSession: no
-    // camera is active or its port is not open.
+    // back). `gate` is evaluated under the guard: refuseAll refuses the
+    // operation (Refused, the port is never touched), refuseWrites makes
+    // writes unauthorized. Unsupported: the active camera has no GenApi node
+    // map. NoSession: no camera is active or its port is not open.
+    ::camera::features::Access withCameraFeatures(
+        const std::function<void(::camera::features::Port&,
+                                 ::camera::features::CurrentSession&)>& fn,
+        std::string& reason, const CameraFeatureGate& gate);
+    // Same, with a fixed write-block reason (empty: writes authorized).
     ::camera::features::Access withCameraFeatures(
         const std::function<void(::camera::features::Port&,
                                  ::camera::features::CurrentSession&)>& fn,
