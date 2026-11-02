@@ -95,8 +95,8 @@ files**, with:
 - supervised, cancellable jobs.
 
 Every host (Studio, Review, the I views) asks it for answers. No science runs in
-TypeScript or in ad-hoc Python. Cytoflow's role (production engine or
-comparator) is an owner decision recorded in the plan.
+TypeScript or in ad-hoc Python. The native C++ code is that authority. Cytoflow and
+FlowKit are CI comparators only ([ADR 0016](../decisions/0016-native-analysis-authority.md)).
 
 | ID | Backend goal (true when done) | Authority | Proof |
 |---|---|---|---|

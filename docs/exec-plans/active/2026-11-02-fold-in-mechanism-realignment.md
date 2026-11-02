@@ -130,9 +130,8 @@ Each slice is one reviewed PR with the five layers above.
 - **D2:** Analysis code and ABI 47 / review ABI 9 belong to F (#810). I
   rebases onto it; next free ABI numbers are allocated in #716 before a
   slice uses them.
-- **D3:** F engine: native evaluator as the production authority with
-  Cytoflow as comparator, or Cytoflow as the production engine as #808 states.
-  Record in `docs/decisions/`.
+- **D3:** F engine. Decided: the native evaluator is the production authority
+  and Cytoflow is a comparator ([ADR 0016](../../decisions/0016-native-analysis-authority.md)).
 - **D4:** Accept the E objective above as part of #806.
 
 ### Untangle (blocks I and F review)
@@ -212,10 +211,10 @@ the bridge. No I slice is TypeScript only.
 - **F-2 Reference through MIB code.** FCS 3.x import (F15 read side) feeding
   the native evaluator. The FlowJo 10.8.1 fixture must reproduce 229,585 /
   190,705 through `PopulationGraph`, not a standalone Python recount.
-- **F-3 Engine decision applied (D3).** Either route production evaluation
-  through Cytoflow with native as comparator, or record the native decision
-  and keep Cytoflow parity tests in CI. Move t-SNE provenance (sklearn) into
-  the ledger explicitly.
+- **F-3 Engine decision applied (D3, ADR 0016).** Update the #808 ledger and
+  docs to name the native authority. Keep Cytoflow parity tests in CI and add
+  a FlowKit comparator on the reference fixture. Record t-SNE's sklearn
+  version in the ledger.
 - **F-4 Inference and fits (F09, I10).** Declared experimental unit,
   pairing and weighting, the model, and suspect-fit reasons, in native code
   or the worker, with independent numeric fixtures.
@@ -238,6 +237,24 @@ the bridge. No I slice is TypeScript only.
 
 ## Decision log
 
+- 2026-11-02: **D1–D4 decided** (owner delegated the decisions):
+  - **D1 accepted.** The five-layer definition of done is the ledger rule for
+    #806, #807 and #808. `.github/workflows/fold-in-goal-guard.yml` enforces
+    the visible part: a fold-in PR must name a goal ID, and a fold-in PR that
+    changes only views must say "UI probe".
+  - **D2 accepted.** F (#810) owns `src/backend/analysis`,
+    `crates/mib-analysis-worker`, the review analysis bridge and the bridge
+    ABI 47 / review ABI 9 contract text. I (#815) rebases onto #810 and
+    drops `6fc2f926`'s copies. I's own contract additions take the next free
+    numbers, allocated in #716 before use.
+  - **D3: native authority.** See [ADR 0016](../../decisions/0016-native-analysis-authority.md).
+    The native C++ analysis code is the single production authority.
+    Cytoflow and FlowKit are CI comparators and are not bundled. The worker
+    stays for qualified long jobs (t-SNE) with permissive dependencies. This
+    replaces #808's "Cytoflow as production engine".
+  - **D4 accepted.** The E objective is GenApi node-map driven (E track goal
+    and E02 in the backend goals).
+
 - 2026-11-02: Every objective is written as a backend goal with a headless
   proof, in `docs/architecture/fold-in-backend-goals.md`. A view is built only
   after its goal is met; anything earlier is a labelled UI probe and counts for
@@ -249,7 +266,7 @@ the bridge. No I slice is TypeScript only.
 
 ## Progress
 
-- [ ] D1–D4 recorded
+- [x] D1–D4 recorded (2026-11-02; ADR 0016; fold-in goal guard)
 - [ ] U-1, U-2
 - [ ] E-1, E-2, E-3, E-4, E-5
 - [ ] I-1, I-2, I-3, I-4, I-5, I-6, I-7
