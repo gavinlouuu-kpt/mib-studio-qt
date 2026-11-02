@@ -164,8 +164,8 @@ public:
     BridgeProcessingCoreStatus fetch_processing_core_status();
     BridgeDiscoveryStart start_device_discovery(const BridgeDiscoveryRequest& request);
     BridgeDiscoveryStart start_camera_discovery();
-    bool cancel_device_discovery(std::uint64_t job_id);
-    BridgeDiscoverySnapshot fetch_device_discovery(std::uint64_t job_id);
+    bool cancel_device_discovery(std::uint64_t job_id, rust::Str instance);
+    BridgeDiscoverySnapshot fetch_device_discovery(std::uint64_t job_id, rust::Str instance);
     BridgeCameraSelection fetch_camera_selection();
     // Central profile registry (schema v25, #398).
     bool set_registry_transport(

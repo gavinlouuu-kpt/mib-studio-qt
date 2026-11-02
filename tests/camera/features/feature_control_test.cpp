@@ -46,7 +46,7 @@ FakePort integerPort() {
     p.descriptor.increment = std::int64_t{4};
     return p;
 }
-CurrentSession session{{"source-A", 9007199254740993ULL, 7}, true, {}, {}};
+CurrentSession session{{"source-A", 9007199254740993ULL, 7, "instance-1"}, true, {}, {}};
 Request request{session.token, {Module::Remote, "Width", std::nullopt}};
 } // namespace
 int main() {
@@ -59,14 +59,16 @@ int main() {
                   std::get<std::int64_t>(*r.readback->value) == 11,
               "requested and readback separate");
     }
-    for (const auto which : {0, 1, 2}) {
+    for (const auto which : {0, 1, 2, 3}) {
         auto p = integerPort();
         auto stale = request;
         if (which == 0) stale.expected.source = "source-B";
         if (which == 1) --stale.expected.generation;
         if (which == 2) --stale.expected.capabilityRevision;
+        // E01: same source, generation and revision from another backend instance.
+        if (which == 3) stale.expected.instance = "instance-0";
         check(write(p, session, stale, std::int64_t{11}).outcome == Outcome::Stale,
-              "stale source/session/revision refused");
+              "stale instance/source/session/revision refused");
         check(p.writes == 0 && p.descriptions == 0, "stale request never reaches port");
     }
     {

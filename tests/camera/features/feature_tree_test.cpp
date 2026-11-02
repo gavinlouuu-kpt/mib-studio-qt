@@ -33,7 +33,7 @@ struct TestGuard : GuardedPort {
     int steps{0};
     int bumpGenerationAfter{-1};
     explicit TestGuard(Port& p) : port(p) {
-        current.token = {"source-under-test", 41, 1};
+        current.token = {"source-under-test", 41, 1, "instance-under-test"};
         current.writesAuthorized = true;
         current.evidence = "fixture/mock";
     }
@@ -404,6 +404,18 @@ void guardedWritesReadBackAndAdvanceTheRevision() {
     ++guard.current.token.generation;
     r = guardedRead(guard, Request{token3, {Module::Remote, targetName, std::nullopt}});
     check(r.outcome == Outcome::Stale, "older generation refused");
+
+    // E01 (E-4): a new backend instance restarts generations at 1. A token
+    // that matches the new session in source, generation and revision but
+    // was issued by the earlier instance is still stale.
+    const auto restarted = guard.current.token;
+    auto before = restarted;
+    before.instance = "instance-before-restart";
+    r = guardedRead(guard, Request{before, {Module::Remote, targetName, std::nullopt}});
+    check(r.outcome == Outcome::Stale && r.session.instance == restarted.instance,
+          "a token from an earlier backend instance is refused; the reply names the current one");
+    r = guardedRead(guard, Request{restarted, {Module::Remote, targetName, std::nullopt}});
+    check(r.outcome == Outcome::Read, "the current instance's token reads");
 }
 } // namespace
 

@@ -245,6 +245,9 @@ pub mod ffi {
         pub job_id: u64,
         pub rejection: u32,
         pub reason: String,
+        /// E01 (#806 E-4, additive in ABI 49): the backend instance that owns
+        /// `job_id`. Job IDs and generations restart in a new backend instance.
+        pub instance: String,
     }
 
     /// One discovered device (schema v14). `kind`, `identity_strength` and
@@ -297,6 +300,11 @@ pub mod ffi {
         pub valid: bool,
         pub job_id: u64,
         pub generation: u64,
+        /// E01 (ABI 49): the backend instance that owns `job_id`.
+        pub instance: String,
+        /// E01 (ABI 49): the fetch named an earlier backend instance; nothing
+        /// of the job is reported (`valid` false, `job_id` 0).
+        pub stale: bool,
         pub state: u32,
         pub complete: bool,
         pub overflow: bool,
@@ -1151,11 +1159,16 @@ pub mod ffi {
         fn start_camera_discovery(self: Pin<&mut BackendBridge>) -> BridgeDiscoveryStart;
 
         /// Request cancellation of a running job; false for unknown/ended
-        /// jobs. Never disconnects an established device.
-        fn cancel_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64) -> bool;
+        /// jobs. Never disconnects an established device. A non-empty
+        /// `instance` (E01, ABI 49) must name this backend instance, or the
+        /// cancel is refused and touches nothing.
+        fn cancel_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64, instance: &str)
+            -> bool;
 
-        /// Value snapshot of a job; never waits for a worker.
-        fn fetch_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64)
+        /// Value snapshot of a job; never waits for a worker. A non-empty
+        /// `instance` (E01, ABI 49) that names another backend instance
+        /// returns a `stale` snapshot.
+        fn fetch_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64, instance: &str)
             -> BridgeDiscoverySnapshot;
 
         /// Install the shell's HTTPS POST for the central profile registry

@@ -20,6 +20,11 @@ struct SessionToken {
     std::string source;
     std::uint64_t generation{0};
     std::uint64_t capabilityRevision{0};
+    // E01 (E-4): the backend instance that issued the token, a random UUID
+    // drawn when the capture service is constructed. Generations restart at 1
+    // in a new backend instance; this member is what tells a token issued
+    // before a backend restart from one issued after it. Empty is never current.
+    std::string instance;
     bool operator==(const SessionToken& other) const;
 };
 

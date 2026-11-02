@@ -504,13 +504,17 @@ fn start_camera_discovery(state: State<AppState>) -> Result<cmds::DiscoveryStart
 }
 
 #[tauri::command]
-fn fetch_device_discovery(state: State<AppState>, job_id: String) -> Result<cmds::DiscoverySnapshot, String> {
-    cmds::fetch_device_discovery(&state, job_id)
+fn fetch_device_discovery(
+    state: State<AppState>,
+    job_id: String,
+    instance: Option<String>,
+) -> Result<cmds::DiscoverySnapshot, String> {
+    cmds::fetch_device_discovery(&state, job_id, instance)
 }
 
 #[tauri::command]
-fn cancel_device_discovery(state: State<AppState>, job_id: String) -> Result<bool, String> {
-    cmds::cancel_device_discovery(&state, job_id)
+fn cancel_device_discovery(state: State<AppState>, job_id: String, instance: Option<String>) -> Result<bool, String> {
+    cmds::cancel_device_discovery(&state, job_id, instance)
 }
 
 #[tauri::command]

@@ -75,8 +75,12 @@ camera::features::Access withCameraFeatures(fn(Port&, CurrentSession&), reason, 
 `withCameraFeatures` is the feature commands' session guard
 ([[../camera/FeatureControl]]): `cameraMutex_` pins `activeCamera_`, the token is
 `{camera source, activeCameraGeneration_ (the capture generation that set the
-camera), featureRevision_}`; the revision restarts at 1 per generation and only
-advances (after a write that may have reached the device). `NoSession` without
+camera), featureRevision_, instanceId_}`; the revision restarts at 1 per generation and only
+advances (after a write that may have reached the device). `instanceId()` (E01, #806 E-4)
+is a random UUID v4 drawn at construction (`profiles::generateUuidV4`): generations
+restart at 1 in a new backend instance, so the instance is what makes a token from
+before a backend restart stale (`capture_camera_features_test` constructs a second
+`CaptureService` and shows its first token equals the old one in every other member). `NoSession` without
 an active camera or an open port; `Unsupported` when `featureSession()` is null.
 
 **`start()` returning true is request acceptance, not hardware readiness.**

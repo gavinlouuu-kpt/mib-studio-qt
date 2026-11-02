@@ -71,6 +71,16 @@ public:
     // Idempotent, non-blocking; scoped to that job. Never disconnects
     // established devices.
     void cancelDiscovery(std::uint64_t jobId);
+    // E01 (E-4): the checked forms. A request that names another backend
+    // instance (a job ID from before a backend restart, which a new instance
+    // may have reused) is refused: the cancel touches nothing and returns
+    // false; the snapshot is `stale` with jobId 0. cancelDiscovery returns
+    // true when it requested cancellation of a running job.
+    bool cancelDiscovery(std::uint64_t jobId, const std::string& instance);
+    DiscoverySnapshot discoverySnapshot(std::uint64_t jobId, const std::string& instance) const;
+
+    // E01 (E-4): this service instance's identity, drawn at construction.
+    const std::string& instanceId() const { return instanceId_; }
 
     // Value snapshot; never probes hardware or waits for a worker. Unknown or
     // evicted jobs return jobId 0 / Failed / InvalidRequest.
@@ -104,6 +114,7 @@ private:
     std::vector<IDeviceDiscoveryProvider*> selectProviders(const DiscoveryRequest& request) const;
     static std::string coalesceKey(const DiscoveryRequest& request);
 
+    const std::string instanceId_;
     mutable std::mutex mutex_;
     mutable std::condition_variable cv_;
     std::vector<std::unique_ptr<IDeviceDiscoveryProvider>> providers_;

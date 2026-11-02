@@ -139,6 +139,12 @@ public:
                                  ::camera::features::CurrentSession&)>& fn,
         std::string& reason, const std::string& writeBlockReason = {});
 
+    // E01 (E-4): this backend instance's identity, a random UUID drawn at
+    // construction. It is part of every feature session token, so a token
+    // issued before a backend restart (generations restart at 1) never
+    // matches a session of the new instance.
+    const std::string& instanceId() const { return instanceId_; }
+
     const CaptureStats& stats() const { return stats_; }
 
     // Consistent per-metric telemetry view (issue #368): every metric carries
@@ -182,6 +188,7 @@ private:
     CameraReadyCallback cameraReadyCallback_;
     ::camera::common::ICamera* activeCamera_{nullptr};
     std::mutex cameraMutex_;
+    const std::string instanceId_;
     // Guarded by cameraMutex_: the capture generation activeCamera_ belongs
     // to, and the GenApi capability revision of that generation (E02).
     uint64_t activeCameraGeneration_{0};

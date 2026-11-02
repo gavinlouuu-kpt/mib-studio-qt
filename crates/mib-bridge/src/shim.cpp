@@ -1625,6 +1625,7 @@ BridgeDiscoveryStart toBridge(const backend::bridge::BackendDiscoveryStart& in) 
     out.job_id = in.jobId;
     out.rejection = static_cast<std::uint32_t>(in.rejection);
     out.reason = rust::String(in.reason);
+    out.instance = rust::String(in.instance);
     return out;
 }
 
@@ -1659,8 +1660,8 @@ BridgeDiscoveryStart BackendBridge::start_camera_discovery() {
     return toBridge(impl_->facade.startDeviceDiscovery(req));
 }
 
-bool BackendBridge::cancel_device_discovery(std::uint64_t job_id) {
-    return impl_->facade.cancelDeviceDiscovery(job_id);
+bool BackendBridge::cancel_device_discovery(std::uint64_t job_id, rust::Str instance) {
+    return impl_->facade.cancelDeviceDiscovery(job_id, std::string(instance));
 }
 
 // ---- Central profile registry (schema v25, #398) ----
@@ -1981,10 +1982,15 @@ BridgeRegistryJob BackendBridge::fetch_registry_job(std::uint64_t job_id) {
     }
 }
 
-BridgeDiscoverySnapshot BackendBridge::fetch_device_discovery(std::uint64_t job_id) {
+BridgeDiscoverySnapshot BackendBridge::fetch_device_discovery(std::uint64_t job_id,
+                                                              rust::Str instance) {
     BridgeDiscoverySnapshot out{};
     backend::bridge::BackendDiscoverySnapshot snapshot;
-    if (!impl_->facade.fetchDeviceDiscovery(job_id, snapshot)) {
+    const bool found = impl_->facade.fetchDeviceDiscovery(job_id, snapshot, std::string(instance));
+    out.instance = rust::String(snapshot.instance);
+    out.stale = snapshot.stale;
+    // A stale reply (E01) still carries its reason in errors; an unknown job does not.
+    if (!found && !snapshot.stale) {
         out.valid = false;
         return out;
     }

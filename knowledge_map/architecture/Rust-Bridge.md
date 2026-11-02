@@ -520,7 +520,7 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
-## ABI 49: the camera's GenApi node map (#806 E-1/E-2, goal E02)
+## ABI 49: the camera's GenApi node map (#806 E-1/E-2/E-4, goals E02, E01)
 
 Additive over ABI 44 (47 is the F track's, 48 the I track's, allocated provisionally).
 `camera_feature_tree {request: {modules?, descriptors?, available_only?}}`,
@@ -534,9 +534,15 @@ camera's node map ([[../camera/FeatureControl]]). Contract: `camera_features` (b
   `camera_feature_*(request_json) -> String` -> `mib-app-commands` `camera_feature_*(state, request)`
   (a JSON object; non-object or over 16384 bytes is `INVALID_ARGUMENTS` before the backend) ->
   dispatch (WebSocket server). No Tauri command or desktop view yet (E-3).
-- **Session:** the token `{source, generation, capability_revision}` (decimal strings) of an
-  earlier reply; any difference is `stale`. A capture restart opens a new generation; a write that
-  may have reached the device advances the revision.
+- **Session:** the token `{instance, source, generation, capability_revision}` (decimal strings;
+  every member required) of an earlier reply; any difference is `stale`. A capture restart opens
+  a new generation; a write that may have reached the device advances the revision; `instance`
+  (E01, E-4, amended into ABI 49 before merge) is the backend instance, so a token from before a
+  backend restart is stale although generations restart at 1.
+- **Discovery instance (E01, E-4, additive within ABI 49):** `BridgeDiscoveryStart.instance`,
+  `BridgeDiscoverySnapshot.instance` / `.stale`; cxx `fetch_device_discovery(job_id, instance)` and
+  `cancel_device_discovery(job_id, instance)` (empty = the ABI 14 behaviour); the commands take an
+  optional `instance` (contract `camera_features.discovery_instance`).
 - **Control:** `camera_feature_write` is in the server's `CONTROL_COMMANDS`; tree and read are open
   to viewers.
 - **ABI touch points:** `bridge-contract.json` `abi_version` 49 and `camera_features`; `shim.cpp`
@@ -548,7 +554,10 @@ camera's node map ([[../camera/FeatureControl]]). Contract: `camera_features` (b
   the server's `camera_feature_write_is_control_and_reads_are_open`; real server
   `tests/camera_features.rs` (mock node map: enumerate, read, write with readback, stale old
   revision, refused read-only and out-of-range writes, viewer denied, stale generation after a
-  capture restart); C++ `camera.feature_tree`, `camera.capture_features`.
+  capture restart; `tokens_from_before_a_backend_restart_are_refused`: a second backend instance
+  whose token equals the first's except `instance`, the old token stale for read and write, the
+  old discovery job stale and its cancel refused); C++ `camera.feature_tree`,
+  `camera.capture_features`, `backend.device_discovery_service`.
 
 ## ABI 44: the run quick look (#716 A7a)
 

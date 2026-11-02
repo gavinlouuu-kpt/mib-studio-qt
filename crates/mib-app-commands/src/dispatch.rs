@@ -689,17 +689,19 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             #[derive(Deserialize)]
             struct A {
                 #[serde(rename = "jobId")] job_id: String,
+                #[serde(default)] instance: Option<String>,
             }
             let a: A = args(value)?;
-            crate::fetch_device_discovery(state, a.job_id).and_then(json)
+            crate::fetch_device_discovery(state, a.job_id, a.instance).and_then(json)
         }
         "cancel_device_discovery" => {
             #[derive(Deserialize)]
             struct A {
                 #[serde(rename = "jobId")] job_id: String,
+                #[serde(default)] instance: Option<String>,
             }
             let a: A = args(value)?;
-            crate::cancel_device_discovery(state, a.job_id).and_then(json)
+            crate::cancel_device_discovery(state, a.job_id, a.instance).and_then(json)
         }
         "fetch_camera_selection" => crate::fetch_camera_selection(state).and_then(json),
         "select_hardware_camera" => {

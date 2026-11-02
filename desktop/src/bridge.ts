@@ -415,6 +415,10 @@ export interface DiscoveryStart {
   /** DISCOVERY_ERROR_KINDS value when not accepted. */
   rejection: number;
   reason: string;
+  /** E01 (#806 E-4, ABI 49): the backend instance that owns job_id. Pass it
+   *  back to fetch/cancel so a job of an earlier backend instance (a restart
+   *  reuses job IDs) is refused by the backend as stale. */
+  instance: string;
 }
 
 /** One discovered device (schema v14). `kind` is DISCOVERY_DEVICE_KINDS,
@@ -459,6 +463,11 @@ export interface DiscoverySnapshot {
   valid: boolean;
   job_id: string;
   generation: string;
+  /** E01 (ABI 49): the backend instance that owns job_id. */
+  instance: string;
+  /** E01 (ABI 49): the fetch named an earlier backend instance; the backend
+   *  refused it and reports nothing of any job (valid false, job_id "0"). */
+  stale: boolean;
   state: number;
   complete: boolean;
   overflow: boolean;
@@ -950,18 +959,20 @@ export const bridge = {
   startDeviceDiscovery: (request: DiscoveryRequest) =>
     invoke<DiscoveryStart>("start_device_discovery", { request }),
   startCameraDiscovery: () => invoke<DiscoveryStart>("start_camera_discovery"),
-  fetchDeviceDiscovery: (jobId: string) =>
-    invoke<DiscoverySnapshot>("fetch_device_discovery", { jobId: decimalU64(jobId) }),
-  cancelDeviceDiscovery: (jobId: string) =>
-    invoke<boolean>("cancel_device_discovery", { jobId: decimalU64(jobId) }),
+  // `instance` (E01, ABI 49): the start reply's backend instance; the backend
+  // refuses a job of an earlier instance (stale snapshot / false).
+  fetchDeviceDiscovery: (jobId: string, instance?: string) =>
+    invoke<DiscoverySnapshot>("fetch_device_discovery", { jobId: decimalU64(jobId), instance: instance ?? null }),
+  cancelDeviceDiscovery: (jobId: string, instance?: string) =>
+    invoke<boolean>("cancel_device_discovery", { jobId: decimalU64(jobId), instance: instance ?? null }),
   /** Camera + framegrabber discovery as one awaited job (replaces the
    *  synchronous fetch_camera_discovery of schema v7). */
   discoverCameras: (opts?: PollOptions) =>
     discoverCameras(
       {
         start: () => invoke<DiscoveryStart>("start_camera_discovery"),
-        fetch: (jobId) => invoke<DiscoverySnapshot>("fetch_device_discovery", { jobId }),
-        cancel: (jobId) => invoke<boolean>("cancel_device_discovery", { jobId }),
+        fetch: (jobId, instance) => invoke<DiscoverySnapshot>("fetch_device_discovery", { jobId, instance }),
+        cancel: (jobId, instance) => invoke<boolean>("cancel_device_discovery", { jobId, instance }),
       },
       opts,
     ),

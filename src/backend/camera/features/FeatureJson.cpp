@@ -35,7 +35,8 @@ json valueJson(const std::optional<Value>& value) {
 
 json tokenJson(const SessionToken& token) {
     if (token.source.empty() && token.generation == 0) return nullptr;
-    return {{"source", token.source},
+    return {{"instance", token.instance},
+            {"source", token.source},
             {"generation", std::to_string(token.generation)},
             {"capability_revision", std::to_string(token.capabilityRevision)}};
 }
@@ -117,11 +118,15 @@ std::string text(const json& j, const char* name) {
 Request parseRequest(const json& j) {
     Request request;
     if (!j.contains("session") || !j.at("session").is_object())
-        throw std::invalid_argument("session {source, generation, capability_revision} is required.");
+        throw std::invalid_argument(
+            "session {instance, source, generation, capability_revision} is required.");
     const auto& s = j.at("session");
-    onlyKeys(s, {"source", "generation", "capability_revision"}, "session");
-    if (!s.contains("source") || !s.contains("generation") || !s.contains("capability_revision"))
-        throw std::invalid_argument("session needs source, generation and capability_revision.");
+    onlyKeys(s, {"instance", "source", "generation", "capability_revision"}, "session");
+    if (!s.contains("instance") || !s.contains("source") || !s.contains("generation") ||
+        !s.contains("capability_revision"))
+        throw std::invalid_argument(
+            "session needs instance, source, generation and capability_revision.");
+    request.expected.instance = text(s.at("instance"), "session.instance");
     request.expected.source = text(s.at("source"), "session.source");
     request.expected.generation = decimal(s.at("generation"), "session.generation");
     request.expected.capabilityRevision =

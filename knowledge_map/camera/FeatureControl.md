@@ -28,7 +28,9 @@ revision, because selectors and dependent nodes move access.
 `BackendFacade::cameraFeature{Tree,Read,Write}Json` → `CaptureService::withCameraFeatures`
 holds `cameraMutex_` (pins `activeCamera_` against release; the session token's
 generation is the capture generation that set `activeCamera_`; the capability
-revision starts at 1 per generation and is stored back after a write) → the
+revision starts at 1 per generation and is stored back after a write; the token's
+`instance` is `CaptureService::instanceId()`, drawn per backend instance, so a token
+from before a backend restart is stale although generations restart at 1, E01) → the
 camera's `FeatureSession::withPort` takes the camera's own port guard
 (`EGrabberCamera::triggerMutex_`, which already pins `grabber_` against `stop()`
 and serializes the trigger thread's `LineSelector`; `MockCamera::featureMutex_`).

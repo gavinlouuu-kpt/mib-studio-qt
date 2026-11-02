@@ -1205,6 +1205,8 @@ pub struct DiscoveryStart {
     job_id: u64,
     rejection: u32,
     reason: String,
+    /// E01 (ABI 49): the backend instance that owns `job_id`; pass it back to fetch/cancel.
+    instance: String,
 }
 
 /// One discovered device for the webview (schema v14).
@@ -1251,6 +1253,10 @@ pub struct DiscoverySnapshot {
     job_id: u64,
     #[serde(serialize_with = "event_transport::serialize_u64")]
     generation: u64,
+    /// E01 (ABI 49): the backend instance that owns `job_id`.
+    instance: String,
+    /// E01 (ABI 49): the fetch named an earlier backend instance (refused).
+    stale: bool,
     state: u32,
     complete: bool,
     overflow: bool,
@@ -1271,6 +1277,7 @@ impl From<ffi::BridgeDiscoveryStart> for DiscoveryStart {
             job_id: s.job_id,
             rejection: s.rejection,
             reason: s.reason,
+            instance: s.instance,
         }
     }
 }
@@ -1281,6 +1288,8 @@ impl From<ffi::BridgeDiscoverySnapshot> for DiscoverySnapshot {
             valid: s.valid,
             job_id: s.job_id,
             generation: s.generation,
+            instance: s.instance,
+            stale: s.stale,
             state: s.state,
             complete: s.complete,
             overflow: s.overflow,
@@ -1380,16 +1389,29 @@ pub fn start_camera_discovery(state: &AppState) -> Result<DiscoveryStart, String
     Ok(guard.pin_mut().start_camera_discovery().into())
 }
 
-/// Poll a discovery job's bounded snapshot (schema v14).
-pub fn fetch_device_discovery(state: &AppState, job_id: String) -> Result<DiscoverySnapshot, String> {
+/// Poll a discovery job's bounded snapshot (schema v14). `instance` (E01, ABI 49): the start
+/// reply's backend instance; when given, a job of an earlier backend instance is refused as
+/// `stale` instead of being matched by its (reused) job ID.
+pub fn fetch_device_discovery(
+    state: &AppState,
+    job_id: String,
+    instance: Option<String>,
+) -> Result<DiscoverySnapshot, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().fetch_device_discovery(parse_frame_index(&job_id)?).into())
+    let instance = instance.unwrap_or_default();
+    Ok(guard.pin_mut().fetch_device_discovery(parse_frame_index(&job_id)?, &instance).into())
 }
 
-/// Cancel a running discovery job (schema v14); false for unknown/ended jobs.
-pub fn cancel_device_discovery(state: &AppState, job_id: String) -> Result<bool, String> {
+/// Cancel a running discovery job (schema v14); false for unknown/ended jobs, and (E01,
+/// ABI 49) for a job of an earlier backend instance when `instance` is given.
+pub fn cancel_device_discovery(
+    state: &AppState,
+    job_id: String,
+    instance: Option<String>,
+) -> Result<bool, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().cancel_device_discovery(parse_frame_index(&job_id)?))
+    let instance = instance.unwrap_or_default();
+    Ok(guard.pin_mut().cancel_device_discovery(parse_frame_index(&job_id)?, &instance))
 }
 
 /// Pull the authoritative selected-device snapshot.

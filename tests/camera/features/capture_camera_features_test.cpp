@@ -181,6 +181,50 @@ int main() {
     MIB_EXPECT(bad.load() == 0 && replies.load() > 0, "only documented outcomes under races");
     capture.stop();
 
+    // E01 (E-4): a backend restart. A new CaptureService (as a new backend
+    // process constructs) restarts generations at 1, so its first token can
+    // equal session1 in source, generation and revision. The instance differs,
+    // and the earlier instance's token is refused as stale.
+    watchdog.mark("backend restart");
+    {
+        backend::services::CaptureService reborn;
+        reborn.setCameraFactory([&] {
+            ::camera::mock::MockCameraOptions o;
+            o.folder = dir.path();
+            o.frameInterval = std::chrono::microseconds(2000);
+            return std::make_unique<::camera::mock::MockCamera>(o);
+        });
+        MIB_EXPECT(!capture.instanceId().empty() && reborn.instanceId() != capture.instanceId(),
+                   "every backend instance draws its own instance id");
+        MIB_REQUIRE(startAndWait(reborn), "the new instance's capture starts");
+        CapturePort rebornPort(reborn);
+        const auto fresh = parse(features::featureTreeJson(rebornPort, R"({"modules":["remote"]})"));
+        MIB_REQUIRE(fresh["outcome"] == "read", fresh.dump());
+        const auto& current = fresh["session"];
+        MIB_EXPECT(current["source"] == session1["source"] &&
+                       current["generation"] == session1["generation"] &&
+                       current["capability_revision"] == session1["capability_revision"],
+                   "the restart reuses source, generation and revision: " + current.dump() +
+                       " vs " + session1.dump());
+        MIB_EXPECT(current["instance"] == reborn.instanceId() &&
+                       session1["instance"] == capture.instanceId(),
+                   "each token names its backend instance");
+        auto old = parse(features::featureReadJson(rebornPort, request(session1, writableFloat).dump()));
+        MIB_EXPECT(old["outcome"] == "stale" && old["session"] == current,
+                   "a token from before the restart is stale: " + old.dump());
+        auto oldWrite =
+            parse(features::featureWriteJson(rebornPort, request(session1, writableFloat, &value).dump()));
+        MIB_EXPECT(oldWrite["outcome"] == "stale" && oldWrite["readback"].is_null(),
+                   "a write under the old token never reaches the port: " + oldWrite.dump());
+        auto now = parse(features::featureReadJson(rebornPort, request(current, writableFloat).dump()));
+        MIB_EXPECT(now["outcome"] == "read", "the new instance's token reads: " + now.dump());
+        auto missing = session1;
+        missing.erase("instance");
+        auto bare = parse(features::featureReadJson(rebornPort, request(missing, writableFloat).dump()));
+        MIB_EXPECT(bare["outcome"] == "refused", "a token without instance is malformed: " + bare.dump());
+        reborn.stop();
+    }
+
     // A camera without GenApi reports unsupported, not an empty tree.
     watchdog.mark("unsupported");
     backend::services::CaptureService plain;
