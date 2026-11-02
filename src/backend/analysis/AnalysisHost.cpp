@@ -766,7 +766,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     .dump();
             }
             if (action == "gallery") {
-                if (!q.at("offset").is_number_unsigned() || q.at("offset").get<uint64_t>() > 10000)
+                // Any offset among the selected events; past the end is an empty page.
+                if (!q.at("offset").is_number_unsigned())
                     throw std::invalid_argument("Invalid gallery offset");
                 const auto offset = q.at("offset").get<std::size_t>();
                 Json keys = Json::array(), images = Json::array();

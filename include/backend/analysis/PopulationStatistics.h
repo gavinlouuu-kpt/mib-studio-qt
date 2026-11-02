@@ -1,5 +1,5 @@
 #pragma once
-#include "backend/analysis/Population.h"
+#include "backend/analysis/PopulationGraph.h"
 
 namespace backend::analysis {
 struct MeasurementRow {
@@ -24,11 +24,16 @@ struct PopulationStatistics {
 };
 // Exact finite raw values, not histogram estimates. Full keyed column coverage
 // required, including excluded rows. Null/nonfinite values count as missing.
-// Empty measured populations return null reductions. Maximum 10,000 rows.
+// Empty measured populations return null reductions. Keyed rows are bounded by
+// kMaxKeyedEvaluationEvents; full recordings use columnStatistics
+// (ColumnarEvaluation.h), which calls reduceMeasuredValues below.
 // Quantiles use Hyndman-Fan type 7; sample SD divides by n-1 (null n<2).
 // CV is 100*sampleSD/abs(mean), null at zero mean/nonrepresentable result.
 // Geometric mean requires every measured value >0; missing remains counted.
 // Does not assert completeness of a source snapshot or infer unobserved events.
 PopulationStatistics populationStatistics(const Membership& population,
                                           const MeasurementColumn& column);
+// The shared exact estimators over already-selected finite values (any order;
+// sorted in place). Sets measured, minimum..geometricMean of `result`.
+void reduceMeasuredValues(std::vector<double>& values, PopulationStatistics& result);
 } // namespace backend::analysis

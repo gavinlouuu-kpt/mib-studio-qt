@@ -4,8 +4,9 @@
 namespace backend::analysis {
 using Json = nlohmann::json;
 Json prepareAnalysisSource(const Json& source, const Json& strategy) {
-    if (source.at("schema") != "F-source/1" || source.at("rows").size() > 10000)
-        throw std::invalid_argument("Unsupported analysis source");
+    if (source.at("schema") != "F-source/1") throw std::invalid_argument("Unsupported analysis source");
+    if (source.at("rows").size() > kMaxJsonSourceEvents)
+        throw std::invalid_argument(jsonSourceBoundMessage());
     auto result = source;
     const auto stages = strategy.value("transforms", Json::array());
     if (!stages.is_array() || stages.size() > 8)

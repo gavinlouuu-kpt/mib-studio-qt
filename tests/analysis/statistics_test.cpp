@@ -93,8 +93,9 @@ int main() {
     MIB_EXPECT(!result.sampleStandardDeviation && !result.cvPercent && !result.geometricMean &&
                    result.p25 == -3,
                "singleton SD/CV null; negative geometric mean unavailable");
-    column.rows.resize(10001);
+    // The keyed path has an explicit bound (F-1); full recordings are columnar.
+    column.rows.resize(kMaxKeyedEvaluationEvents + 1);
     MIB_EXPECT(refused([&] { populationStatistics(population, column); }),
-               "budget refusal before allocation");
+               "keyed-row bound refusal before allocation");
     return mib::test::exitCode();
 }

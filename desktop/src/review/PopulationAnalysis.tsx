@@ -76,7 +76,7 @@ export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.ana
   const format = (n: number | null) => n === null ? "—" : String(n);
   return <details className="population-analysis">
     <summary>Population analysis · stored observations</summary>
-    <p>Inclusive interval across both valid and invalid observations. No scientific QC filter. Up to 10,000 observations; larger files are refused, never sampled.</p>
+    <p>Inclusive interval across both valid and invalid observations. No scientific QC filter. The whole file is evaluated natively in bounded chunks with exact membership and statistics; nothing is sampled.</p>
     <fieldset disabled={disabled || busy}>
       <legend>Interval gate</legend>
       <label>Measurement <select aria-label="Analysis measurement" value={feature} onChange={e => setFeature(e.target.value)}>
@@ -87,7 +87,7 @@ export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.ana
       <button onClick={() => void analyze()}>{busy ? "Analyzing…" : "Analyze population"}</button>
     </fieldset>
     <details><summary>Population graph recipe</summary>
-      <p>Interval, AND, OR and NOT nodes are evaluated by the native backend. Parent IDs restrict populations. Unknown measurements remain unknown under NOT. The selected measurement above controls the reduction, not graph membership.</p>
+      <p>Interval, polygon, ellipse, quadrant, AND, OR and NOT nodes are evaluated by the native backend over the whole file. Parent IDs restrict populations. Unknown measurements remain unknown under NOT. The selected measurement above controls the reduction, not graph membership.</p>
       <label><input type="checkbox" checked={graphEnabled} disabled={busy || disabled} onChange={e => setGraphEnabled(e.target.checked)} />Use graph instead of interval membership</label>
       <PopulationGraphEditor text={graphText} onChange={value=>{setGraphText(value);setSaved("");}} disabled={busy||disabled}/>
       <label>Advanced graph JSON<textarea aria-label="Population graph JSON" rows={14} style={{ display: "block", width: "min(100%, 48rem)", fontFamily: "monospace" }} value={graphText} disabled={busy || disabled} onChange={e => { setGraphText(e.target.value); setSaved(""); }} /></label>

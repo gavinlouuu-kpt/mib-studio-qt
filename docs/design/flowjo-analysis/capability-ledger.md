@@ -117,7 +117,7 @@ its absent-feature wording. No aggregate F01–F16 acceptance is claimed.
 
 | Rows | Current implemented evidence | Remaining implementation/qualification |
 |---|---|---|
-| F01 | Verified SHA256 relink (10 gates/images unchanged), retained-source labels/tags/groups library, duplicate detection, unit provenance | Fingerprinting beyond 64MiB; broader metadata workflow |
+| F01 | Verified SHA256 relink (10 gates/images unchanged), retained-source labels/tags/groups library, duplicate detection, unit provenance; streamed full-file SHA-256 at any size (F-1: 64 MiB cap removed, >64 MiB file proven) | Relink of a >64 MiB file through the workspace path (its JSON source is bounded at 100k events); asynchronous/cancellable fingerprint UI; broader metadata workflow |
 | F02 | Durable attributed manual tri-state QC, native eligibility/job propagation | Qualified automated scientific QC and biological validation |
 | F03 | Ordered linear/asinh/log10 derived columns, exact units/domain/null semantics, shared worker/native fingerprint | Compensation controls/estimation, Logicle, applicable fluorescence channels |
 | F04 | Persisted interval/polygon/ellipse/quadrant/Boolean DAG, rectangles, forms/scatter gestures, revisions and overrides | Rotated/fitted gates and full rendered interaction qualification |
@@ -248,3 +248,46 @@ The historical "E locator absent" gap is superseded by selective provider pin
 images/masks. Live lease fencing and separate archive full-file fingerprints guard
 pixel reads; epoch/retained scalar snapshots remain explicitly unavailable. This
 narrows F06/F13, not complete retention, hardware or full scientific qualification.
+
+### F-1 full-recording scale (2026-11-02, `claude/808-f1-full-scale`)
+
+Goals advanced: F01, F04, F05, F08, F16. Evidence class: **real backend, synthetic
+full-size MIB-schema file** (production `Hdf5Service` writer, imageless PL-style
+rows), headless native ctest. No real-instrument recording was available (the only
+MIB HDF5 asset in `env/assets.json`, `z-adjustment-50v`, is private), so no
+real-recording or hardware evidence is claimed.
+
+- **Removed caps.** 10,000 events (PopulationGraph, PopulationStatistics,
+  SourceAnalysis evaluate/freeze/archive, ParameterTransforms, ReviewSession,
+  gallery offsets) and 64 MiB (ReviewSession stored/run-archive fingerprints).
+- **New explicit bounds.** Columnar: ≤2^32−1 events, bitsets ≤256 MiB, exact
+  order statistics ≤2^26 values, 65,536-event chunks. Keyed (string-key) path:
+  ≤1,000,000 events / 16,777,216 node-events. F-source/1 JSON rows: ≤100,000
+  events. Each refusal names its bound.
+- **Mechanism.** `RecordingColumns` (chunked HDF5 columns) → `evaluateColumns`
+  (tri-state DAG per chunk) → `TriStateBits` membership keyed to source identity +
+  graph revision → `columnStatistics` / `columnHistogram` / `columnScatter` /
+  bounded event-reference pages. F-source/1 evaluation uses the same evaluator.
+- **Proof.** `review.population_scale`: 300,000 events (240,000 valid + 60,000
+  invalid), file > 64 MiB; interval + polygon + Boolean (AND/OR/NOT, parents,
+  missing values) populations exact against an independent oracle at every node;
+  exact n/mean/median/p05/p95; histogram sums to n; decimated scatter bounded;
+  selected page and a gallery page at offset 120,612 (of 120,632 selected) match
+  oracle ranks; membership reused; streamed SHA-256 equals an independent hash;
+  HDF5 reads never exceed the 4,096-event chunk in the direct run. Measured
+  (Release, Linux): output 120,632 selected / 5,559 unknown / 173,809 excluded;
+  membership 450,048 bytes for 6 populations; 5 chunks of 65,536; analysis peak
+  RSS growth 1.9 MiB (VmHWM after clear_refs; asserted < 64 MiB). Opening the
+  file in ReviewSession costs +174 MiB RSS for the per-row browse metadata,
+  which the analysis does not use. `analysis.columnar`:
+  columnar == keyed `evaluatePlan` at every node, chunk size 1/7/64/65,536 and QC
+  pattern; statistics bit-identical; bounds refuse.
+- **Remaining (not F-1 acceptance of the rows).** The workspace path
+  (`AnalysisHost` evaluate/report/plot/observations/jobs) still transports
+  sources as F-source/1 JSON rows, now bounded at 100,000 events: a columnar
+  source handle for saved strategies, reports and worker jobs is the next F-1
+  step. `ReviewSession::open` still materializes per-row browse metadata
+  (`ProcessedFrame` per event) for the review table. FlowJo reference
+  229,585 / 190,705 through `PopulationGraph` needs F-2 (FCS import, F15).
+  No real-recording run; F16 worker memory bound at full size unproven.
+

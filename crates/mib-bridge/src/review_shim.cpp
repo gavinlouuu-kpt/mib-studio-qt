@@ -843,8 +843,12 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // (#783): the identity's emodulus_lut also reads a regenerated file's
 // @emodulus_lut_json, named by emodulus_lut_provenance (snapshot | recorded |
 // host). v6 (#716 A7a): review_run_statistics, the run quick look's twin.
+// v8 population analysis, v9 source-bound strategies (#808). v10 (#808 F-1):
+// review_analyze_population evaluates the whole file natively in chunks with
+// bitset membership; rows is a bounded page, plus populations, histogram,
+// scatter, membershipKey and the streamed fingerprint at any file size.
 std::uint32_t review_bridge_abi_version() {
-    return 9;
+    return 10;
 }
 
 namespace {

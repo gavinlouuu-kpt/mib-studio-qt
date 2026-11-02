@@ -1843,6 +1843,18 @@ set_tests_properties(analysis.workspace_host_test PROPERTIES TIMEOUT 40 LABELS "
 mib_add_backend_test_executable(analysis_host_test analysis/analysis_host_test.cpp)
 add_test(NAME analysis.host COMMAND $<TARGET_FILE:mib_backend_tests> analysis_host_test)
 set_tests_properties(analysis.host PROPERTIES TIMEOUT 40 LABELS "analysis;persistence;stress")
+# F-1 (#808 F04/F05/F08/F16): the columnar full-recording evaluator equals the
+# keyed evaluator at every node and chunk size; explicit resource bounds refuse.
+mib_add_backend_test_executable(analysis_columnar_test analysis/columnar_test.cpp)
+add_test(NAME analysis.columnar COMMAND $<TARGET_FILE:mib_backend_tests> analysis_columnar_test)
+set_tests_properties(analysis.columnar PROPERTIES TIMEOUT 60 LABELS "analysis;backend;invariant")
+# F-1: a 300,000-event MIB experiment file (production writer, real schema)
+# gated by interval/polygon/Boolean populations through ReviewSession against
+# an independent oracle, with a stated chunk and peak-memory bound (F01: the
+# >64 MiB file fingerprints by streaming SHA-256).
+mib_add_backend_test_executable(review_population_scale_test review/review_population_scale_test.cpp)
+add_test(NAME review.population_scale COMMAND $<TARGET_FILE:mib_backend_tests> review_population_scale_test)
+set_tests_properties(review.population_scale PROPERTIES TIMEOUT 300 LABELS "review;analysis;backend;hdf5;roundtrip;performance")
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
 # The vendored PZ7035 ABI header, for tests that fake bridge registers

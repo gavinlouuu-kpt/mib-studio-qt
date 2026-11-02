@@ -700,12 +700,29 @@ attributes cannot be read. Their snapshot has `readError`, Unknown completion
 and an explanatory `completionReason`; `accountingSummary()` shows that reason
 instead of partial counts. Legacy files still have `hasAccounting == false`.
 
-## Bounded population analysis (#808)
+## Population analysis at full file size (#808, F-1 since review ABI 10)
 
-`analyzePopulation(requestJson)` reads both cached metadata sets and source path
-under the existing session mutex. It delegates inclusive interval membership and
-reductions to the portable analysis core, refuses unreadable/count-incomplete or
->10,000-row sources, and returns decimal counts/ordinals. No HDF5 reads/writes
-inside this operation. Call through ReviewJobs' lane fence and (Studio) facade's
-idle/recording fence. Fingerprint is null, evaluation keys ephemeral; this is not
-a durable EventSnapshot provider. See [[AnalysisWorker]].
+`analyzePopulation(requestJson)` holds the session mutex for the whole call. It
+refuses raw recordings and unreadable/count-incomplete metadata, compiles the
+graph (or the top-level interval as a one-node graph) with `PopulationGates`, and
+evaluates the **whole file** with the columnar evaluator: `RecordingColumns`
+(`src/backend/review/RecordingColumns.cpp`) reads area, deformability and
+youngsModulus from both metadata datasets in 65,536-row chunks through
+`Hdf5Service::readMetadataColumns` (no new HDF5 reader, no writes). Membership is
+a native `MembershipSet` of two-bit bitsets keyed to the source identity (open
+generation + size + write time, or the streamed SHA-256 when `fingerprint` is
+true) and the graph's content hash; the four most recent sets are cached in the
+session (`Impl::memberships`, cleared on open/close) so gallery pages and other
+reductions reuse them. Only bounded results return: counts, exact statistics,
+`populations` table, optional `histogram` / decimated `scatter`, a `rows` page
+(`page` {offset, limit ≤1000, membership}) and a 12-image gallery at any selected
+offset. The full-file SHA-256 (`Impl::fileHashLocked`) is streamed with no size
+cap, fenced against size/write-time, and cached per open generation; it also
+serves `snapshot` (F-source/1, JSON rows bounded at 100,000 events) and
+run-archive sources. Call through ReviewJobs' lane fence and (Studio) the
+facade's idle/recording fence. Evaluation keys are ephemeral (`snapshot` unique
+per call); not a durable EventSnapshot provider. Tests: `review.session`,
+`review.population_scale` (300,000 events, > 64 MiB). Open still materializes
+per-row browse metadata (`validMeta` / `invalidMeta`) for the review table; the
+analysis does not read it except for counts and gallery bounds. See
+[[AnalysisWorker]].

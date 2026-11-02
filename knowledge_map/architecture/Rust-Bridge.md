@@ -1031,7 +1031,11 @@ attach to):
   regenerated from #764 on has `has_snapshot` false with only these two
   set.
 - **Contract.** YOFO Review has its own versioned contract,
-  `contract/review-contract.json` (`review_abi_version` 6 since #716 A7a:
+  `contract/review-contract.json` (`review_abi_version` 10 since #808 F-1:
+  `review_analyze_population` evaluates the whole file natively in chunks,
+  `rows` becomes a bounded page, plus populations/histogram/scatter/
+  membershipKey and the streamed fingerprint at any size; 9 source-bound
+  strategies, 8 population analysis, 7 reserved for #804; 6 since #716 A7a:
   `review_run_statistics`, whose `review_run_statistics` bounds the generator
   checks against `RunStatistics.h`; 5 since #783: the identity's E-LUT record
   of a regenerated file and its provenance; 4 since #764: the reprocess reply

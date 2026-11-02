@@ -231,6 +231,9 @@ add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationGraph.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/Population.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationStatistics.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationGates.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/analysis/ColumnarEvaluation.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/RecordingColumns.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewSession.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/OverlayCompose.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ObjectCoordinates.cpp
