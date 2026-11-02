@@ -63,3 +63,20 @@ raw recording. No source-file write, automatic acquisition, or method apply is a
 `tools/ique_acceptance/workspace_ws.mjs` exercises the real app/SQLite lifecycle and
 accepts `recover` to verify export/import/relink receipts after an owned server restart.
 Use isolated QA data and do not take control from another client's runtime.
+
+## Native next-run derivation (2026-10-30)
+
+[[../current-state/recent/2026-10-23-workspace-transfer]] is extended by the native
+`NextRunPlanning` consumer of F `dbdcfd82`. Exact finding/comparison, retained source,
+strategy and method references resolve before a create-only draft. `derive` and
+`derivedReceipt` are native-only dispatcher actions, not public JSON capabilities.
+The same SQLite transaction fences the source head, writes the next-run document,
+and records an exact origin-request receipt. Retry precedes re-resolution so a lost
+reply survives later method/source changes. Production UI journals the entire request
+before send and never auto-replays. No hardware apply/start is involved.
+
+Exports traverse up to 64 finding/source/strategy dependencies. Public import still
+requires native provisioning; native hashes/sample content are checked, including
+when callers omit dependency entries. Reopen shows historical provenance; explicit
+`verify_next_run` is required for a current check. See
+`docs/design/ique-workflow/PRODUCTION-INTEGRATION.md` for literal request contracts.

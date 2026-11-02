@@ -219,6 +219,7 @@ mib_link_hdf5(mib_processing PUBLIC)
 add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/AnalysisHost.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/database/SqliteService.cpp
+    workspace/NextRunPlanning.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/workspace/WorkspaceStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/SourceAnalysis.cpp
     analysis/PopulationPlot.cpp

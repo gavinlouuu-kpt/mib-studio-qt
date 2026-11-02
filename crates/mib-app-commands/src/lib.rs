@@ -1835,7 +1835,7 @@ pub fn workspace_write(state: &AppState, request: String) -> Result<serde_json::
     workspace_request(state, request, true)
 }
 fn workspace_request(state: &AppState, request: String, write: bool) -> Result<serde_json::Value, String> {
-    if request.len() > 1_100_000 { return Err("Workspace request too large".into()); }
+    if request.len() > 2_200_000 { return Err("Workspace request too large".into()); }
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().workspace_request(&request, write)).map_err(|e| e.to_string())
 }

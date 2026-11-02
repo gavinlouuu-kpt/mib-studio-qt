@@ -59,7 +59,7 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
     if (!workspace_)
         return R"({"status":"unavailable","message":"Metadata database is not available"})";
     try {
-        if (request.size() > 1100000)
+        if (request.size() > 2200000)
             throw StoreError(StoreErrorCode::Invalid, "Workspace request too large");
         const auto q = json::parse(request, [](int depth, json::parse_event_t, json&) {
             if (depth > 68)
@@ -76,7 +76,11 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
                              "Analysis namespaces require the native analysis authority");
         const auto action = q.at("action").get<std::string>();
         std::set<std::string> keys{"action", "workspace_id"};
-        if (action == "list") {
+        if (analysisAuthority && (action == "derived_receipt" || (write && action == "derive"))) {
+            keys.insert("command_id");
+            keys.insert("origin_request");
+            if (action == "derive") keys.insert("document");
+        } else if (action == "list") {
             keys.insert("after");
             keys.insert("limit");
         } else if (action == "export_status") {
@@ -117,7 +121,10 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
         const auto id = action == "list" ? std::string{} : q.at("workspace_id").get<std::string>();
         // Public manifests may reference but cannot mint scientific authority records.
         if (write && !analysisAuthority && action == "import") {
-            const auto& payload = q.at("manifest").at("payload");
+            const auto manifest = q.at("manifest").is_string()
+                                      ? json::parse(q.at("manifest").get<std::string>())
+                                      : q.at("manifest");
+            const auto& payload = manifest.at("payload");
             if (payload.contains("dependencies")) {
                 const auto& deps = payload.at("dependencies");
                 if (!deps.is_array())
@@ -144,7 +151,8 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
             return json{{"status", "ok"},
                         {"workspace_id", s.workspaceId},
                         {"revision", s.revision},
-                        {"document", json::parse(s.documentJson)}};
+                        {"document", json::parse(s.documentJson)},
+                        {"document_json", s.documentJson}};
         };
         if (action == "list") {
             auto rows = json::array();
@@ -161,6 +169,16 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
             }
             return json{{"status", "ok"}, {"workspaces", rows}}.dump();
         }
+        if (analysisAuthority && action == "derived_receipt") {
+            auto prior = workspace_->derivedReceipt(id, q.at("command_id").get<std::string>(),
+                                                    q.at("origin_request").dump());
+            return prior ? snapshot(*prior).dump() : R"({"status":"not_found"})";
+        }
+        if (analysisAuthority && action == "derive")
+            return snapshot(workspace_->derive(id, q.at("command_id").get<std::string>(),
+                                               q.at("origin_request").dump(),
+                                               q.at("document").dump()))
+                .dump();
         if (action == "export")
             return workspace_->exportSnapshot(id, q.at("revision").get<std::string>(),
                                               q.at("job_id").get<std::string>());
@@ -168,7 +186,9 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
             return workspace_->exportStatus(id, q.at("job_id").get<std::string>());
         if (action == "import")
             return snapshot(workspace_->importSnapshot(id, q.at("command_id").get<std::string>(),
-                                                       q.at("manifest").dump()))
+                                                       q.at("manifest").is_string()
+                                                           ? q.at("manifest").get<std::string>()
+                                                           : q.at("manifest").dump()))
                 .dump();
         if (action == "attach_source" || action == "relink")
             return snapshot(workspace_->linkSource(id, q.at("expected_revision").get<std::string>(),

@@ -168,3 +168,64 @@ all four reserved strategy/source/finding/report prefixes and manifest dependenc
 minting, then creates the exact initial strategy through F's source-validated save,
 imports the workspace and reproduces native evaluation. No existing peer runtime
 or source data was modified. UI import instructions state the prerequisite.
+
+## Immutable F finding → next-run planning (2026-10-30)
+
+Implemented the remaining cross-track linkage using F `dbdcfd82`'s native retained
+source/comparison/finding provider slice. This is not a wholesale import of newer F
+features. I's scientific namespace, manifest provisioning and pre-init guards remain.
+
+- Production `resolve_finding`, `draft_from_finding`, `verify_next_run` operations
+  resolve exact native finding/strategy/retained-source/method records. Recompute F
+  comparison; retain comparison hash plus full finding/strategy document hashes,
+  exact sample/source/QC/method evidence. No browser graph or calculated scalar is
+  accepted as authority. Compatibility remains unknown; readiness not evaluated.
+- Source-head CAS is rechecked inside the create-only SQLite draft transaction.
+  Fresh experiment/recipe IDs, planning-only copy, immutable origin-request receipt.
+  Receipt retry survives later source-head and method changes; collision refuses.
+  Queue/reference/results are not copied and no apply/start command is issued.
+- Production Saved Plan form validates/creates explicitly, journals the complete
+  write before sending, and reconciles only on explicit retry after reload. Reopened
+  provenance is labelled historical and has explicit native re-verification.
+- Export follows finding → both native strategies/retained sources and upstream
+  template dependencies. Public import requires preexisting byte-identical native
+  records, checks finding/sample/strategy hashes, and refuses missing dependencies
+  even when omitted from the manifest. Native method files remain external.
+- Real HDF testing exposed default serde JSON float parsing changing a retained
+  double by one ULP. Shared app commands now enable `float_roundtrip`. Native
+  `manifest_json`/`document_json` preserve transfer bytes; downloads/imports use
+  the opaque manifest string, not browser numeric reserialization. Hash checks
+  remain exact, not approximate.
+
+### Observed validation
+
+- 567 workspace UI tests across 30 files pass, including full next-run request
+  journaling across remount with no automatic dispatch/apply/start; TypeScript and
+  isolated Vite build pass. This is automated DOM evidence, not rendered acceptance.
+- Five native suites pass: E live evidence, workspace store/host, F analysis host,
+  production workspace host. F host now includes retained-source/comparison/finding
+  provider cases plus I stale/missing/mismatched reference, receipt fault rollback,
+  method-change replay, native dependency export/import and recomputed-checksum
+  tampering refusal. Review statistics also passes.
+- Shared Rust double-bit regression passes for both observed problematic values.
+- `tools/ique_acceptance/finding_ws.mjs` passes on real isolated Studio/native SQLite:
+  stored HDF + actual E clean run archive → retained source/strategies → immutable
+  finding → fresh next-run draft → exact verification/export/import. Tests missing
+  finding, wrong hash, wrong sample strategy, stale source and changed method retry.
+- Restarted only the owned :18089 process. Secure WebSocket :18489 `recover` proves
+  original command receipt, full document, re-verification and export survive restart.
+  A separately owned fresh runtime refuses import without native dependencies.
+  HTTPS returns 200; original :18088, peer services and Tailscale handlers untouched.
+
+### Acceptance boundaries still open
+
+- Rendered browser click-through remains unverified (previous navigation policy
+  refusal); DOM tests and actual backend/WSS evidence are separately identified.
+- This slice is not full historical I01–I12 acceptance. Advanced fitting, reports,
+  calibrated scientific compatibility and retained-image product workflows are not
+  claimed by importing the bounded F finding provider. Later peer features need
+  explicit integration/qualification against their pinned contracts.
+- E reports Windows hardware available (`fd32a99e`); prior blanket hardware
+  unavailability is stale. This I slice does not qualify the full physical app
+  pipeline, calibrated E/LUT provenance, or retained images. TSan's prior startup
+  mapping failure is not a pass; it was not rerun for this slice.

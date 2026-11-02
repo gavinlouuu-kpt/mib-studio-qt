@@ -120,3 +120,70 @@ method configurations are not embedded in exports. Save finding is explicit.
 Use classic Review's native analysis workspace to create the pinned strategy first.
 Mock/offline runtime, no hardware. This is the real application/SQLite backend,
 with synthetic qualification data; not an alternate fixture UI.
+
+## Immutable finding → next-run planning (2026-10-30)
+
+Provider slice: F `dbdcfd82` retained source, comparison, immutable finding and their
+native analysis dependencies, integrated branch-locally. Public scientific namespace
+and manifest guards from I `628b7476` remain in force. No ABI change (Studio 47).
+
+`workspace_read` takes `args.request` as a JSON **string**:
+
+```json
+{"action":"resolve_finding","workspace_id":"existing","revision":"1","finding":{"findingId":"finding-id","revision":"1","contentHash":"sha256:..."},"sample_index":0,"profile_base":"/profiles"}
+```
+
+The source workspace must still be at the pinned head. Native code resolves the
+exact finding, recomputes its comparison from retained source/strategy authority,
+selects the explicit zero-based sample, checks recipe strategy and method pins,
+and rechecks the method. Missing/mismatched dependencies fail closed. The F finding
+hash covers comparison content; I additionally records the complete finding-document
+hash (including request/note), strategy-document hash, source identity/fingerprint,
+QC fingerprint, sample reference and exact resolved method provenance.
+
+`workspace_write` (controller only) adds a create-only draft:
+
+```json
+{"action":"draft_from_finding","workspace_id":"new-workspace","command_id":"unique-command","source_workspace_id":"existing","source_revision":"1","finding":{"findingId":"finding-id","revision":"1","contentHash":"sha256:..."},"sample_index":0,"profile_base":"/profiles","experiment_id":"new-uuid","recipe_id":"another-new-uuid"}
+```
+
+The transaction rechecks source head and atomically creates the draft/command receipt.
+Exact retries return the original result even after the source head or method changes;
+changed request bytes under that command identity refuse. Drafts copy only sample-sheet
+planning declarations, recipe and annotation display. Queue/run/reference/results are
+not copied; no apply/start call exists. Recipe lineage links the prior recipe/finding.
+`next_run_evidence` is recorded history, not a permanent validity or compatibility claim.
+
+`workspace_read` action `verify_next_run` with `workspace_id`, exact `revision` and
+`profile_base` re-resolves the saved native dependencies and compares recorded hashes,
+sample, analysis and method evidence. This read does not require the original workspace
+head to remain current, and does not apply anything. Generic workspace JSON alone is
+never presented as current verification.
+
+Exports include the transitive finding/strategy/retained-source closure, bounded to
+64 dependencies and 1 MiB. Import requires native dependencies already present and
+byte-identical; it checks recorded finding/sample/strategy hashes against native
+records. Missing native dependencies refuse even if a manifest omits their entries.
+There is no public namespace bypass or browser-authored scientific authority.
+Profile files and original HDF/image files remain external. Retained scalar evidence
+is not retained images or calibration/LUT provenance.
+
+Production click path: Experiment → Plan → Saved workspace plan → Plan next run from
+an immutable finding. Enter finding ID/hash/sample index, explicitly validate, then
+validate/create. Creation uses the existing pending-write session journal. Reload does
+not automatically retry, load settings, or start a run. Reopening displays recorded
+provenance and offers an explicit verification action.
+
+### Lossless transfer representation
+
+Real retained measurements exposed a transport round-trip defect: default Rust JSON
+float parsing changed `0.12000000000000001` to `0.12`. The shared app-command crate now
+enables serde_json `float_roundtrip`, with a bit-pattern regression test. Workspace
+snapshots additionally return `document_json`; production UI prefers those native
+bytes before editing. Exports return `manifest_json` (opaque native JSON text), which
+the production download preserves verbatim. Import's `manifest` accepts that string
+as well as the legacy object. Consumers must use the string for numeric scientific
+payloads: parsing/re-serializing in JavaScript can change numeric spelling (`5.0` to
+`5`) and invalidate the native checksum even when the floating-point value is equal.
+The manifest content limit remains 1 MiB; request envelope permits 2.2 MB for escaping.
+No approximate numeric equality or relaxed checksum was introduced.

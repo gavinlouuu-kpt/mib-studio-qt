@@ -2,6 +2,7 @@
 #include "backend/analysis/AnalysisReports.h"
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
+#include "backend/workspace/NextRunPlanning.h"
 #include "support/assert.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
@@ -634,6 +635,144 @@ int main() {
                      {"note", "descriptive evidence"}};
         const auto savedFinding = call(finding);
         MIB_EXPECT(savedFinding["status"] == "ok", "persist immutable finding");
+        // I consumer: actual persisted F strategy, retained sources and finding authority.
+        auto workspace = [&](const json& q, bool write = true) {
+            return json::parse(db.workspaceRequest(q.dump(), write));
+        };
+        json doc{
+            {"schema_version", 1},
+            {"title", "Original"},
+            {"plan",
+             {{"experimentId", "11111111-1111-1111-1111-111111111111"},
+              {"format", "single"},
+              {"operator", {{"id", "qa"}, {"name", "QA"}}},
+              {"rows", json::array({{{"ref", "S1"},
+                                     {"sample", "QA"},
+                                     {"condition", "before"},
+                                     {"experimentalUnit", "unit-a"},
+                                     {"concentrationValue", ""},
+                                     {"concentrationUnit", ""},
+                                     {"channel", ""},
+                                     {"medium", ""},
+                                     {"temperatureC", ""},
+                                     {"notes", ""},
+                                     {"free", json::array()}}})}}},
+            {"recipe",
+             {{"id", "22222222-2222-2222-2222-222222222222"},
+              {"revision", "1"},
+              {"analysis_plan", {{"id", "plan"}, {"revision", "1"}}},
+              {"method", {{"id", "method"}, {"revision", "method-sha"}, {"source", "local"}}}}},
+            {"run_observation", {{"running", true}}},
+            {"findings", json::array({"historical"})}};
+        MIB_REQUIRE(workspace({{"action", "commit"},
+                               {"workspace_id", "origin"},
+                               {"command_id", "origin"},
+                               {"expected_revision", nullptr},
+                               {"document", doc}})["status"] == "ok",
+                    "save source workspace");
+        json methodReply{{"status", "ok"},
+                         {"method",
+                          {{"status", "resolved"},
+                           {"content_sha256", "method-sha"},
+                           {"id", "method"},
+                           {"revision", "method-sha"}}}};
+        auto planning = [&](const json& q, bool write = true) {
+            return json::parse(backend::workspace::nextRunPlanning(
+                db, q.dump(), write, [&](const json& req) { return call(req, false); },
+                [&](const json&) { return methodReply; }));
+        };
+        json draft{{"action", "draft_from_finding"},
+                   {"workspace_id", "next-run"},
+                   {"command_id", "next-command"},
+                   {"source_workspace_id", "origin"},
+                   {"source_revision", "1"},
+                   {"finding",
+                    {{"findingId", "finding-one"},
+                     {"revision", "1"},
+                     {"contentHash", savedFinding.at("document").at("contentHash")}}},
+                   {"sample_index", 0},
+                   {"profile_base", ""},
+                   {"experiment_id", "33333333-3333-3333-3333-333333333333"},
+                   {"recipe_id", "44444444-4444-4444-4444-444444444444"}};
+        MIB_EXPECT(planning(draft, false)["status"] == "invalid", "viewer cannot derive");
+        auto bad = draft;
+        bad["finding"]["contentHash"] = "sha256:wrong";
+        MIB_EXPECT(planning(bad)["status"] == "invalid", "finding hash mismatch refuses");
+        bad = draft;
+        bad["finding"]["findingId"] = "missing";
+        MIB_EXPECT(planning(bad)["status"] == "invalid", "missing native finding refuses");
+        bad = draft;
+        bad["sample_index"] = 1;
+        MIB_EXPECT(planning(bad)["status"] == "invalid", "different strategy sample refuses");
+        MIB_REQUIRE(
+            db.execute("CREATE TRIGGER fail_derived BEFORE INSERT ON workspace_commands WHEN "
+                       "NEW.workspace_id='next-run' BEGIN SELECT RAISE(ABORT,'fault'); END"),
+            "inject derived receipt fault");
+        MIB_EXPECT(planning(draft)["status"] == "storage", "derived receipt fault is explicit");
+        MIB_EXPECT(workspace({{"action", "read"}, {"workspace_id", "next-run"}}, false)["status"] ==
+                       "not_found",
+                   "failed receipt rolls back entire new draft");
+        MIB_REQUIRE(db.execute("DROP TRIGGER fail_derived"), "remove receipt fault");
+        const auto created = planning(draft);
+        MIB_REQUIRE(created["status"] == "ok", created.dump());
+        MIB_EXPECT(!created["document"].contains("run_observation") &&
+                       !created["document"].contains("findings"),
+                   "new draft does not copy execution/results");
+        MIB_EXPECT(created["document"]["next_run_evidence"]["applied"] == false,
+                   "planning never applies");
+        json verify{{"action", "verify_next_run"},
+                    {"workspace_id", "next-run"},
+                    {"revision", "1"},
+                    {"profile_base", ""}};
+        MIB_EXPECT(planning(verify, false)["verified"] == true,
+                   "reopened exact next-run evidence resolves");
+        const auto exported = workspace({{"action", "export"},
+                                         {"workspace_id", "next-run"},
+                                         {"revision", "1"},
+                                         {"job_id", "next-export"}});
+        MIB_REQUIRE(exported["status"] == "ok", exported.dump());
+        MIB_EXPECT(exported["manifest"]["payload"]["dependencies"].size() == 5,
+                   "export includes finding, both strategies, both retained sources");
+        json nextImport{{"action", "import"},
+                        {"workspace_id", "imported-next"},
+                        {"command_id", "import-next"},
+                        {"manifest", exported.at("manifest")}};
+        MIB_EXPECT(workspace(nextImport)["status"] == "ok",
+                   "native dependencies permit exact import");
+        auto tampered = nextImport;
+        tampered["workspace_id"] = "tampered";
+        tampered["manifest"]["payload"]["document"]["next_run_evidence"]["sample"]["value"] = 999;
+        tampered["manifest"]["sha256"] =
+            backend::analysis::contentHash(tampered["manifest"]["payload"]).substr(7);
+        MIB_EXPECT(workspace(tampered)["status"] == "invalid",
+                   "recomputed manifest checksum cannot forge native finding evidence");
+        {
+            backend::services::SqliteService fresh;
+            MIB_REQUIRE(fresh.initialize((temp.path() / "fresh.sqlite3").string()),
+                        "fresh database");
+            MIB_EXPECT(json::parse(fresh.workspaceRequest(nextImport.dump(), true))["status"] ==
+                           "invalid",
+                       "fresh import cannot mint native finding/source/strategy");
+        }
+        MIB_EXPECT(workspace({{"action", "commit"},
+                              {"workspace_id", "origin"},
+                              {"command_id", "advance"},
+                              {"expected_revision", "1"},
+                              {"document", doc}})["status"] == "ok",
+                   "advance source head");
+        methodReply["method"]["status"] = "unavailable";
+        MIB_EXPECT(planning(draft) == created,
+                   "lost reply returns immutable receipt after source and method change");
+        bad = draft;
+        bad["workspace_id"] = "another";
+        bad["command_id"] = "another";
+        MIB_EXPECT(planning(bad)["status"] == "conflict", "new draft refuses stale source");
+        bad = draft;
+        bad["profile_base"] = "changed";
+        MIB_EXPECT(planning(bad)["status"] == "invalid",
+                   "command collision cannot alias changed input");
+        MIB_EXPECT(planning(verify, false)["status"] == "invalid",
+                   "reverification refuses unavailable method");
         json library{{"title", "Two source study"},
                      {"groups", {"control", "treated"}},
                      {"preferences", {{"decimalDigits", 3}}},

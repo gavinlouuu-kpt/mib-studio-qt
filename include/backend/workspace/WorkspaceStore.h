@@ -46,6 +46,10 @@ public:
                              const std::string& sourceId) const;
     // null expectedRevision is create-only. Complete logical document is atomically replaced.
     // Successful command replay returns its original revision even if the head advanced.
+    std::optional<Snapshot> derivedReceipt(const std::string& id, const std::string& command,
+                                           const std::string& request) const;
+    Snapshot derive(const std::string& id, const std::string& command, const std::string& request,
+                    const std::string& document);
     Snapshot commit(const std::string& workspaceId,
                     const std::optional<std::string>& expectedRevision,
                     const std::string& commandId, const std::string& documentJson);
