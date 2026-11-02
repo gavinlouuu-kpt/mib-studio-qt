@@ -159,6 +159,9 @@ pub const COMMANDS: &[&str] = &[
     "calibration_record_get",
     "calibration_apply",
     "run_quick_look",
+    "camera_feature_tree",
+    "camera_feature_read",
+    "camera_feature_write",
     "trigger_set_pulse_duration",
     "trigger_manual_pulse",
     "trigger_periodic_start",
@@ -728,17 +731,19 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             #[derive(Deserialize)]
             struct A {
                 #[serde(rename = "jobId")] job_id: String,
+                #[serde(default)] instance: Option<String>,
             }
             let a: A = args(value)?;
-            crate::fetch_device_discovery(state, a.job_id).and_then(json)
+            crate::fetch_device_discovery(state, a.job_id, a.instance).and_then(json)
         }
         "cancel_device_discovery" => {
             #[derive(Deserialize)]
             struct A {
                 #[serde(rename = "jobId")] job_id: String,
+                #[serde(default)] instance: Option<String>,
             }
             let a: A = args(value)?;
-            crate::cancel_device_discovery(state, a.job_id).and_then(json)
+            crate::cancel_device_discovery(state, a.job_id, a.instance).and_then(json)
         }
         "fetch_camera_selection" => crate::fetch_camera_selection(state).and_then(json),
         "select_hardware_camera" => {
@@ -850,6 +855,23 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             }
             let a: A = args(value)?;
             crate::run_quick_look(state, a.paths, a.reference).and_then(json)
+        }
+        // ABI 49 (#806 E-1/E-2): the camera's GenApi node map. `request` is the contract's JSON
+        // object; tree and read are reads, write is a control command on the server.
+        "camera_feature_tree" | "camera_feature_read" | "camera_feature_write" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A {
+                #[serde(default)]
+                request: Value,
+            }
+            let a: A = args(value)?;
+            match name {
+                "camera_feature_tree" => crate::camera_feature_tree(state, a.request),
+                "camera_feature_read" => crate::camera_feature_read(state, a.request),
+                _ => crate::camera_feature_write(state, a.request),
+            }
+            .and_then(json)
         }
         "monitoring_cell_unpin" => {
             #[derive(Deserialize)]

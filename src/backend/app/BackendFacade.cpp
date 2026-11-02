@@ -44,6 +44,8 @@
 
 #include <cstring>
 #include <cmath>
+#include <deque>
+#include <mutex>
 #include <thread>
 #include "backend/playback/FrameStore.h"
 #include "backend/playback/PlaybackService.h"
@@ -52,6 +54,7 @@
 #include "backend/services/AutofocusService.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/CaptureService.h"
+#include "backend/camera/features/FeatureJson.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/TriggerService.h"
 #include "backend/services/PulseGeneratorService.h"
@@ -219,6 +222,47 @@ namespace backend::bridge
         }
     } // namespace
 
+    // E02 (#806): the camera feature tree job. One enumeration in flight; finished
+    // replies kept for the last kKeep jobs. The worker runs cameraFeatureTreeJson
+    // with `cancel` set at shutdown, so a long walk ends at its next guarded step.
+    struct BackendFacade::FeatureTreeJobs
+    {
+        static constexpr std::size_t kKeep = 16;
+        std::mutex mutex;
+        std::thread worker;
+        std::uint64_t nextId{1};
+        std::uint64_t running{0};
+        std::string runningRequest;
+        std::deque<std::pair<std::uint64_t, std::string>> done;
+        std::atomic<bool> cancel{false};
+        bool closed{false};
+
+        // Caller holds `mutex`.
+        std::uint64_t finished(std::string reply)
+        {
+            const auto id = nextId++;
+            keep(id, std::move(reply));
+            return id;
+        }
+        void keep(std::uint64_t id, std::string reply)
+        {
+            done.emplace_back(id, std::move(reply));
+            while (done.size() > kKeep) done.pop_front();
+        }
+        // Stops accepting jobs, cancels the walk and joins the worker.
+        void close()
+        {
+            std::thread joinable;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                closed = true;
+                cancel.store(true);
+                joinable = std::move(worker);
+            }
+            if (joinable.joinable()) joinable.join();
+        }
+    };
+
     BackendFacade::BackendFacade(AppBackend &backend)
         : backend_(backend), review_(std::make_shared<review::ReviewSession>()),
           // The review lanes report through the facade's operations: Started
@@ -241,7 +285,8 @@ namespace backend::bridge
               review::ReviewJobsOptions::forFacade(review::ReviewJobHost{
                   [this](review::ReviewJobKind kind, const std::string &message, CancelFlag &cancel) {
                       return beginOperation(operationKindOf(kind), &cancel, message);
-                  }})))
+                  }}))),
+          featureTreeJobs_(std::make_unique<FeatureTreeJobs>())
     {
     }
 
@@ -252,6 +297,8 @@ namespace backend::bridge
 
     BackendFacade::~BackendFacade()
     {
+        // A camera feature tree walk left running: cancelled and joined.
+        featureTreeJobs_->close();
         // Review jobs left running without shutdown(): cancelled and joined
         // before the session closes (before #512 S7 a joinable job thread
         // here ended the process).
@@ -374,6 +421,9 @@ namespace backend::bridge
         backend_.experiment().setStatusCallback({});
         backend_.experiment().setClosedRunStatisticsReader({});
         cancelAllOperations("Backend shutdown");
+        // The camera feature tree job (E02): cancelled at its next guarded step
+        // and joined before capture is torn down.
+        featureTreeJobs_->close();
         // The review lanes (#512 S7): their jobs observe the (now set) cancel
         // flags, clean partial outputs and report; joined so no callback
         // fires after destruction. Then the pump scans and stage waiters.
@@ -3105,6 +3155,8 @@ namespace backend::bridge
             out.valid = s.jobId != 0;
             out.jobId = s.jobId;
             out.generation = s.generation;
+            out.instance = s.instance;
+            out.stale = s.stale;
             out.state = static_cast<int>(s.state);
             out.complete = s.complete;
             out.overflow = s.overflow;
@@ -3142,16 +3194,21 @@ namespace backend::bridge
         out.jobId = start.jobId;
         out.rejection = static_cast<int>(start.rejection);
         out.reason = start.reason;
+        out.instance = start.instance;
         return out;
     }
 
-    bool BackendFacade::cancelDeviceDiscovery(std::uint64_t jobId)
+    bool BackendFacade::cancelDeviceDiscovery(std::uint64_t jobId, const std::string &instance)
     {
         if (!initialized_)
         {
             return false;
         }
         auto &service = backend_.deviceDiscovery();
+        if (!instance.empty())
+        {
+            return service.cancelDiscovery(jobId, instance);
+        }
         const auto snapshot = service.discoverySnapshot(jobId);
         if (snapshot.jobId == 0 || discovery::isTerminal(snapshot.state))
         {
@@ -3161,14 +3218,17 @@ namespace backend::bridge
         return true;
     }
 
-    bool BackendFacade::fetchDeviceDiscovery(std::uint64_t jobId, BackendDiscoverySnapshot &out) const
+    bool BackendFacade::fetchDeviceDiscovery(std::uint64_t jobId, BackendDiscoverySnapshot &out,
+                                             const std::string &instance) const
     {
         out = BackendDiscoverySnapshot{};
         if (!initialized_)
         {
             return false;
         }
-        out = toSnapshot(backend_.deviceDiscovery().discoverySnapshot(jobId));
+        const auto &service = backend_.deviceDiscovery();
+        out = toSnapshot(instance.empty() ? service.discoverySnapshot(jobId)
+                                          : service.discoverySnapshot(jobId, instance));
         return out.valid;
     }
 
@@ -4236,6 +4296,160 @@ std::string BackendFacade::fetchCameraGeometryJson() const {
         {"min_height", g.minHeight},
         {"session", session},
     }.dump();
+}
+
+namespace {
+// E02: the facade's view of the camera as a GuardedPort. Every step runs
+//   [writes: the coordinator's idle transaction, so Start is excluded]
+//   -> TriggerService::runSerializedWithPulses (the pulse lock, always: no
+//      feature operation between a pulse's edges; refused while pulses are
+//      queued or firing)
+//   -> CaptureService::withCameraFeatures (the capture guard; the gate below is
+//      evaluated there, before the port)
+//   -> the camera's own port guard.
+// Every refusal is decided under those locks, never before taking them, and
+// none touches the device.
+class CaptureFeaturePort final : public ::camera::features::GuardedPort {
+public:
+    CaptureFeaturePort(AppBackend &backend, bool write, const std::atomic<bool> *cancel = nullptr)
+        : backend_(backend), write_(write), cancel_(cancel) {}
+
+    ::camera::features::Access run(
+        const std::function<void(::camera::features::Port &, ::camera::features::CurrentSession &)> &fn,
+        std::string &reason) override {
+        using ::camera::features::Access;
+        if (cancel_ && cancel_->load()) {
+            reason = "The backend is shutting down.";
+            return Access::Refused;
+        }
+        Access access = Access::Refused;
+        const auto guarded = [&] {
+            if (!backend_.trigger().runSerializedWithPulses(
+                    [&] { access = backend_.capture().withCameraFeatures(fn, reason, gate()); }, reason))
+                access = Access::Refused;
+        };
+        if (!write_) {
+            guarded();
+            return access;
+        }
+        auto &experiment = backend_.experiment();
+        if (!experiment.withIdleConfiguration(guarded)) {
+            reason = std::string("Feature writes are refused while the experiment is ") +
+                     app::toString(experiment.stateNow()) + ".";
+            return Access::Refused;
+        }
+        return access;
+    }
+
+private:
+    services::CameraFeatureGate gate() {
+        services::CameraFeatureGate g;
+        // Refused while sorting is possible, i.e. a pulse could become pending at
+        // any moment: a run from Starting to Stopping, realtime processing (its
+        // target selection feeds the trigger) or autofocus running. Queued pulses
+        // are refused by runSerializedWithPulses.
+        g.refuseAll = [this]() -> std::string {
+            const auto run = backend_.experiment().stateNow();
+            if (run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
+                run == app::ExperimentRunState::Stopping)
+                return std::string("Camera feature access is refused while the experiment is ") +
+                       app::toString(run) + ".";
+            if (backend_.processing().isRealtimeRunning())
+                return "Camera feature access is refused while realtime processing is running: its target "
+                       "selection drives sort pulses.";
+            if (backend_.autofocus().isEnabled())
+                return "Camera feature access is refused while autofocus is running.";
+            return {};
+        };
+        // Writes also: a frame recording records the camera's configuration.
+        g.refuseWrites = [this]() -> std::string {
+            if (backend_.isFrameRecording())
+                return "Feature writes are refused while a frame recording is running.";
+            return {};
+        };
+        return g;
+    }
+
+    AppBackend &backend_;
+    bool write_;
+    const std::atomic<bool> *cancel_;
+};
+} // namespace
+
+std::string BackendFacade::cameraFeatureTreeJson(const std::string &requestJson) {
+    if (!initialized_) return ::camera::features::featureRefusedJson("Backend not initialized");
+    CaptureFeaturePort port(backend_, false, &featureTreeJobs_->cancel);
+    return ::camera::features::featureTreeJson(port, requestJson);
+}
+
+std::string BackendFacade::cameraFeatureReadJson(const std::string &requestJson) {
+    if (!initialized_) return ::camera::features::featureRefusedJson("Backend not initialized");
+    CaptureFeaturePort port(backend_, false);
+    return ::camera::features::featureReadJson(port, requestJson);
+}
+
+std::string BackendFacade::cameraFeatureWriteJson(const std::string &requestJson) {
+    if (!initialized_) return ::camera::features::featureRefusedJson("Backend not initialized");
+    CaptureFeaturePort port(backend_, true);
+    return ::camera::features::featureWriteJson(port, requestJson);
+}
+
+std::uint64_t BackendFacade::startCameraFeatureTree(const std::string &requestJson) {
+    auto &jobs = *featureTreeJobs_;
+    std::thread previous;
+    {
+        std::lock_guard<std::mutex> lock(jobs.mutex);
+        if (!initialized_ || jobs.closed)
+            return jobs.finished(::camera::features::featureRefusedJson("Backend not initialized"));
+        if (jobs.running != 0) {
+            if (jobs.runningRequest == requestJson) return jobs.running; // join the walk in flight
+            return jobs.finished(::camera::features::featureRefusedJson(
+                "A camera feature tree enumeration is already running (job " + std::to_string(jobs.running) +
+                "); request the tree again when it finishes."));
+        }
+        // The last worker has finished (running == 0); reap it outside the lock,
+        // which its last step takes.
+        previous = std::move(jobs.worker);
+    }
+    if (previous.joinable()) previous.join();
+    std::lock_guard<std::mutex> lock(jobs.mutex);
+    if (jobs.closed)
+        return jobs.finished(::camera::features::featureRefusedJson("The backend is shutting down."));
+    if (jobs.running != 0) {
+        if (jobs.runningRequest == requestJson) return jobs.running;
+        return jobs.finished(::camera::features::featureRefusedJson(
+            "A camera feature tree enumeration is already running (job " + std::to_string(jobs.running) +
+            "); request the tree again when it finishes."));
+    }
+    const auto id = jobs.nextId++;
+    jobs.running = id;
+    jobs.runningRequest = requestJson;
+    jobs.worker = std::thread([this, id, requestJson] {
+        std::string reply;
+        try {
+            reply = cameraFeatureTreeJson(requestJson);
+        } catch (const std::exception &e) {
+            reply = ::camera::features::featureRefusedJson(std::string("camera_feature_tree failed: ") + e.what());
+        } catch (...) {
+            reply = ::camera::features::featureRefusedJson("camera_feature_tree failed");
+        }
+        auto &j = *featureTreeJobs_;
+        std::lock_guard<std::mutex> done(j.mutex);
+        j.keep(id, std::move(reply));
+        j.running = 0;
+        j.runningRequest.clear();
+    });
+    return id;
+}
+
+std::string BackendFacade::fetchCameraFeatureTree(std::uint64_t jobId) {
+    auto &jobs = *featureTreeJobs_;
+    std::lock_guard<std::mutex> lock(jobs.mutex);
+    for (const auto &[id, reply] : jobs.done)
+        if (id == jobId) return reply;
+    if (jobId != 0 && jobs.running == jobId) return {};
+    return ::camera::features::featureRefusedJson("Unknown or expired camera feature tree job " +
+                                                   std::to_string(jobId) + ".");
 }
 
 std::string BackendFacade::fetchPreviewBufferJson() const {

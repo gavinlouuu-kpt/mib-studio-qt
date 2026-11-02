@@ -3,9 +3,9 @@
 // workspace never actuates. The whole App runs over a mocked transport that records every backend
 // command. Opening the workspace, visiting every stage, going back to the classic view and opening
 // the classic Connect tab from Prepare must leave the backend command log as it was: no command
-// that the idle app does not already send in its steady state, except two reads (Prepare's
-// readiness read, always without a path, and Align's camera geometry read-back), and nothing that
-// acts or writes. Align's camera mode switch, which the classic Camera & Alignment tab does on
+// that the idle app does not already send in its steady state, except reads (Prepare's
+// readiness read, always without a path, Align's camera geometry read-back and Align's read of
+// the camera's GenApi feature tree, camera_feature_tree), and nothing that acts or writes. Align's camera mode switch, which the classic Camera & Alignment tab does on
 // entry, happens only when the operator presses its button.
 // A control proves the harness sees actuation: the classic Camera & Alignment tab does switch
 // the camera mode, on the desktop (set_camera_overview) and on the PZ7035 (set_instrument_mode).
@@ -308,8 +308,9 @@ describe.each<Variant>(["desktop", "pz7035"])("workspace navigation never actuat
 
     const navigation = await navigateWorkspace();
     expect(navigation.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
-    // Two reads are added: Prepare's gates and Align's camera read-back (the classic tab's poll).
-    expect([...namesIn(navigation)].filter((n) => !namesIn(idle).has(n)).sort()).toEqual(["calibration_records_list", "fetch_camera_geometry", "fetch_experiment_readiness"]);
+    // Reads are added: Prepare's gates, Align's camera read-back (the classic tab's poll) and Align's
+    // read of the camera's GenApi feature tree (#806 E-3: a read, never a write).
+    expect([...namesIn(navigation)].filter((n) => !namesIn(idle).has(n)).sort()).toEqual(["calibration_records_list", "camera_feature_tree", "fetch_camera_geometry", "fetch_experiment_readiness"]);
     expect(readinessReads(navigation).length).toBeGreaterThan(0);
     for (const r of readinessReads(navigation)) expect(r.args).toEqual({ outputPath: "" });
 
@@ -328,7 +329,7 @@ describe.each<Variant>(["desktop", "pz7035"])("workspace navigation never actuat
     // Prepare (and then the classic Connect tab) poll the checklist devices: reads only.
     const added = [...namesIn(navigation)].filter((n) => !namesIn(idle).has(n));
     expect(added.length).toBeGreaterThan(0);
-    for (const n of added) expect(n.startsWith("fetch_") || PREPARE_READS.includes(n)).toBe(true);
+    for (const n of added) expect(n.startsWith("fetch_") || PREPARE_READS.includes(n) || n === "camera_feature_tree").toBe(true);
     for (const r of readinessReads(navigation)) expect(r.args).toEqual({ outputPath: "" });
   });
 
@@ -340,7 +341,7 @@ describe.each<Variant>(["desktop", "pz7035"])("workspace navigation never actuat
     await advance(6000);
     const visit = log.splice(0);
     expect(visit.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
-    for (const n of [...namesIn(visit)].filter((n) => !namesIn(idle).has(n))) expect(["fetch_camera_geometry", ...PREPARE_READS]).toContain(n);
+    for (const n of [...namesIn(visit)].filter((n) => !namesIn(idle).has(n))) expect(["fetch_camera_geometry", "camera_feature_tree", ...PREPARE_READS]).toContain(n);
     const notice = host.querySelector("[data-testid=align-mode]")!;
     expect(notice.textContent).toContain(variant === "pz7035" ? "Mode · unknown" : "Experiment window");
     const action = variant === "pz7035" ? "Switch to Align" : "Show the full sensor";

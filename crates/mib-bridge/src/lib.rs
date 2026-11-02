@@ -245,6 +245,9 @@ pub mod ffi {
         pub job_id: u64,
         pub rejection: u32,
         pub reason: String,
+        /// E01 (#806 E-4, additive in ABI 49): the backend instance that owns
+        /// `job_id`. Job IDs and generations restart in a new backend instance.
+        pub instance: String,
     }
 
     /// One discovered device (schema v14). `kind`, `identity_strength` and
@@ -297,6 +300,11 @@ pub mod ffi {
         pub valid: bool,
         pub job_id: u64,
         pub generation: u64,
+        /// E01 (ABI 49): the backend instance that owns `job_id`.
+        pub instance: String,
+        /// E01 (ABI 49): the fetch named an earlier backend instance; nothing
+        /// of the job is reported (`valid` false, `job_id` 0).
+        pub stale: bool,
         pub state: u32,
         pub complete: bool,
         pub overflow: bool,
@@ -1155,11 +1163,16 @@ pub mod ffi {
         fn start_camera_discovery(self: Pin<&mut BackendBridge>) -> BridgeDiscoveryStart;
 
         /// Request cancellation of a running job; false for unknown/ended
-        /// jobs. Never disconnects an established device.
-        fn cancel_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64) -> bool;
+        /// jobs. Never disconnects an established device. A non-empty
+        /// `instance` (E01, ABI 49) must name this backend instance, or the
+        /// cancel is refused and touches nothing.
+        fn cancel_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64, instance: &str)
+            -> bool;
 
-        /// Value snapshot of a job; never waits for a worker.
-        fn fetch_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64)
+        /// Value snapshot of a job; never waits for a worker. A non-empty
+        /// `instance` (E01, ABI 49) that names another backend instance
+        /// returns a `stale` snapshot.
+        fn fetch_device_discovery(self: Pin<&mut BackendBridge>, job_id: u64, instance: &str)
             -> BridgeDiscoverySnapshot;
 
         /// Install the shell's HTTPS POST for the central profile registry
@@ -1387,6 +1400,19 @@ pub mod ffi {
         /// cache miss is computed only while the instrument is idle and no review job runs,
         /// otherwise deferred. `{"ok": false, ...}` before init and for a refused request.
         fn run_quick_look(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
+        /// ABI 49 (#806 E-1/E-2): the active camera's GenApi node map, enumerated from the
+        /// device (bridge-contract.json `camera_features.tree`). A read, run as a job so no
+        /// bridge call blocks for the walk: start returns a job id at once (a start with the
+        /// same request as the walk in flight joins it; another request while one runs gets a
+        /// job whose reply is already a refusal), fetch returns "" while the job runs and the
+        /// tree reply once it has finished (`camera_features.job`).
+        fn camera_feature_tree_start(self: Pin<&mut BackendBridge>, request_json: &str) -> u64;
+        fn camera_feature_tree_fetch(self: Pin<&mut BackendBridge>, job_id: u64) -> String;
+        /// ABI 49: one feature's descriptor by name under the session token (`camera_features`).
+        fn camera_feature_read(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
+        /// ABI 49: a typed write by name with readback; requested, readback, refused, stale,
+        /// unsupported and unknown_write_outcome stay distinct (`camera_features.outcomes`).
+        fn camera_feature_write(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
 
         /// Set the sorter trigger pulse duration in microseconds.
         fn trigger_set_pulse_duration(self: Pin<&mut BackendBridge>, pulse_us: i32)

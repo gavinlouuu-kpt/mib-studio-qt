@@ -503,6 +503,13 @@ export const RUN_QUICK_LOOK = {
   "schema_version": 1
 } as const;
 
+export const CAMERA_FEATURES = {
+  "request_max_bytes": 16384,
+  "schema_version": 1,
+  "max_categories_per_module": 2048,
+  "max_features_per_module": 8192
+} as const;
+
 export const RECIPES = {
   "schema_version": 1,
   "list_max": 100,

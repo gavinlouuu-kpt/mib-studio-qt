@@ -1229,6 +1229,8 @@ pub struct DiscoveryStart {
     job_id: u64,
     rejection: u32,
     reason: String,
+    /// E01 (ABI 49): the backend instance that owns `job_id`; pass it back to fetch/cancel.
+    instance: String,
 }
 
 /// One discovered device for the webview (schema v14).
@@ -1275,6 +1277,10 @@ pub struct DiscoverySnapshot {
     job_id: u64,
     #[serde(serialize_with = "event_transport::serialize_u64")]
     generation: u64,
+    /// E01 (ABI 49): the backend instance that owns `job_id`.
+    instance: String,
+    /// E01 (ABI 49): the fetch named an earlier backend instance (refused).
+    stale: bool,
     state: u32,
     complete: bool,
     overflow: bool,
@@ -1295,6 +1301,7 @@ impl From<ffi::BridgeDiscoveryStart> for DiscoveryStart {
             job_id: s.job_id,
             rejection: s.rejection,
             reason: s.reason,
+            instance: s.instance,
         }
     }
 }
@@ -1305,6 +1312,8 @@ impl From<ffi::BridgeDiscoverySnapshot> for DiscoverySnapshot {
             valid: s.valid,
             job_id: s.job_id,
             generation: s.generation,
+            instance: s.instance,
+            stale: s.stale,
             state: s.state,
             complete: s.complete,
             overflow: s.overflow,
@@ -1404,16 +1413,29 @@ pub fn start_camera_discovery(state: &AppState) -> Result<DiscoveryStart, String
     Ok(guard.pin_mut().start_camera_discovery().into())
 }
 
-/// Poll a discovery job's bounded snapshot (schema v14).
-pub fn fetch_device_discovery(state: &AppState, job_id: String) -> Result<DiscoverySnapshot, String> {
+/// Poll a discovery job's bounded snapshot (schema v14). `instance` (E01, ABI 49): the start
+/// reply's backend instance; when given, a job of an earlier backend instance is refused as
+/// `stale` instead of being matched by its (reused) job ID.
+pub fn fetch_device_discovery(
+    state: &AppState,
+    job_id: String,
+    instance: Option<String>,
+) -> Result<DiscoverySnapshot, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().fetch_device_discovery(parse_frame_index(&job_id)?).into())
+    let instance = instance.unwrap_or_default();
+    Ok(guard.pin_mut().fetch_device_discovery(parse_frame_index(&job_id)?, &instance).into())
 }
 
-/// Cancel a running discovery job (schema v14); false for unknown/ended jobs.
-pub fn cancel_device_discovery(state: &AppState, job_id: String) -> Result<bool, String> {
+/// Cancel a running discovery job (schema v14); false for unknown/ended jobs, and (E01,
+/// ABI 49) for a job of an earlier backend instance when `instance` is given.
+pub fn cancel_device_discovery(
+    state: &AppState,
+    job_id: String,
+    instance: Option<String>,
+) -> Result<bool, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().cancel_device_discovery(parse_frame_index(&job_id)?))
+    let instance = instance.unwrap_or_default();
+    Ok(guard.pin_mut().cancel_device_discovery(parse_frame_index(&job_id)?, &instance))
 }
 
 /// Pull the authoritative selected-device snapshot.
@@ -1940,6 +1962,63 @@ pub fn run_quick_look(
     let request = quick_look_request(&paths, reference.as_ref())?;
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().run_quick_look(&request.to_string())).map_err(|e| e.to_string())
+}
+
+/// ABI 49 (#806 E-1/E-2): the camera feature commands (bridge-contract.json `camera_features`).
+/// `request` is the JSON object the contract describes (null = `{}`); a non-object or a request over
+/// `request_max_bytes` is an error reply and nothing reaches the backend, which checks the rest.
+pub const CAMERA_FEATURE_REQUEST_MAX_BYTES: usize = 16384;
+
+fn camera_feature_request(request: &serde_json::Value) -> Result<String, String> {
+    let text = match request {
+        serde_json::Value::Null => "{}".to_string(),
+        serde_json::Value::Object(_) => request.to_string(),
+        _ => return Err("INVALID_ARGUMENTS: request must be a JSON object".into()),
+    };
+    if text.len() > CAMERA_FEATURE_REQUEST_MAX_BYTES {
+        return Err(format!("INVALID_ARGUMENTS: request exceeds {CAMERA_FEATURE_REQUEST_MAX_BYTES} bytes"));
+    }
+    Ok(text)
+}
+
+/// How long `camera_feature_tree` waits for its enumeration job before giving up (the job keeps
+/// its reply; a later identical request joins it while it runs).
+pub const CAMERA_FEATURE_TREE_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+/// Poll interval for the tree job; the bridge lock is taken only for each short fetch.
+const CAMERA_FEATURE_TREE_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// ABI 49: the active camera's GenApi node map, enumerated from the device (a read). The walk
+/// runs as a backend job (`camera_features.job`): the bridge lock is held only to start it and
+/// for each fetch, never for the walk, so frame pulls, status and experiment stop keep running.
+/// The reply is the tree document itself, as if the call were synchronous.
+pub fn camera_feature_tree(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let text = camera_feature_request(&request)?;
+    let job = state.bridge.lock().map_err(|e| e.to_string())?.pin_mut().camera_feature_tree_start(&text);
+    let deadline = std::time::Instant::now() + CAMERA_FEATURE_TREE_WAIT;
+    loop {
+        let reply = state.bridge.lock().map_err(|e| e.to_string())?.pin_mut().camera_feature_tree_fetch(job);
+        if !reply.is_empty() {
+            return serde_json::from_str(&reply).map_err(|e| e.to_string());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!("camera_feature_tree: enumeration job {job} did not finish in time"));
+        }
+        std::thread::sleep(CAMERA_FEATURE_TREE_POLL);
+    }
+}
+
+/// ABI 49: one feature's descriptor by name under the session token (a read).
+pub fn camera_feature_read(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let text = camera_feature_request(&request)?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().camera_feature_read(&text)).map_err(|e| e.to_string())
+}
+
+/// ABI 49: a typed write by name with readback (a control command on the WebSocket server).
+pub fn camera_feature_write(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let text = camera_feature_request(&request)?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().camera_feature_write(&text)).map_err(|e| e.to_string())
 }
 
 /// The owned crop (`layer` "image", pull kind 5) or its mask ("mask", pull kind 6) of a pinned

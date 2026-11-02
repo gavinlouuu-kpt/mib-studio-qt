@@ -25,6 +25,20 @@
   (`addObserver`/`removeObserver`; removal blocks until an in-flight call
   returns), `shutdownDiscovery()` (terminal: refuse jobs, cancel, join every
   worker). States `Queued -> Running -> Completed | Cancelled | Failed`.
+- **Backend instance (E01, #806 E-4).** `instanceId()` is a random UUID v4 drawn at
+  construction; `StartResult.instance` and every `DiscoverySnapshot.instance` carry it.
+  Job IDs and generations restart at 1 in a new backend instance, so a client's
+  `{jobId, generation}` from before a restart could name a new job. The checked forms
+  `discoverySnapshot(jobId, instance)` and `cancelDiscovery(jobId, instance) -> bool`
+  refuse another instance: the snapshot is `stale` (jobId 0, state Failed, one
+  `InvalidRequest` error naming the restart, `instance` = the current one) and the
+  cancel returns false touching nothing. Stale is its own flag, never a provider
+  error kind: `MissingSdk` (missing producer), `Busy` and `OpenFailed` stay distinct.
+  Bridge: optional `instance` on `fetch_device_discovery` / `cancel_device_discovery`
+  (ABI 49, additive); `desktop/src/discovery.ts` passes the start's instance and stops
+  on a stale reply. Tests: `device_discovery_service_test` (restart reusing job ID and
+  generation), `contract.rs`, real server `camera_features.rs`
+  `tokens_from_before_a_backend_restart_are_refused`.
 - **Bounds.** Requests are validated before any work (kinds non-empty,
   retries ≤ 10, delays ≤ 60 s, deadline ≤ 10 min, serial address range
   sane). Limits: 256 candidates, 64 errors, 16 retained terminal jobs, 4

@@ -112,10 +112,13 @@ import { Workspace, workspaceReadsPrepare } from "./workspace/Workspace";
 import { initialWorkspaceStage, readLanding, writeLanding } from "./workspace/landing";
 import type { ExperimentSubView } from "./workspace/ExperimentView";
 import type { FrameSink } from "./workspace/AlignView";
-import type { RoiKind } from "./workspace/alignControls";
+import { alignLockedReason, type RoiKind } from "./workspace/alignControls";
 import type { WriteResult } from "./workspace/quickControlModel";
 import { VIEWER_ONLY_REASON, ViewerGate, useViewerOnly, viewerReason } from "./components/ViewerGate";
 import "./App.css";
+
+// Align's SFNC quick controls and feature tree (#806 E-3): the bridge's GenApi node-map commands.
+const ALIGN_CAMERA_FEATURES = { tree: bridge.cameraFeatureTree, write: bridge.cameraFeatureWrite };
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
 const SIDEBAR_KEY = "mib.sidebar.collapsed";
@@ -1805,7 +1808,8 @@ export default function App() {
               subscribeFrames: subscribeAlignFrames,
               onSwitchMode: switchFromWorkspace,
               writeRoi: writeAlignRoi,
-              lockedReason: !ready ? "the backend is not initialized" : expActive ? "an experiment is active" : "",
+              features: ALIGN_CAMERA_FEATURES,
+              lockedReason: alignLockedReason(ready, expActive, viewerOnly),
             }}
             preflightInput={preflightInput}
             zStage={zStage}

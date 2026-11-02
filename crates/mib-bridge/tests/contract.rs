@@ -126,7 +126,11 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    // v48 (#807 I) workspace_read/workspace_write; v49 is allocated to #806 E feature control.
+    // v48 (#807 I) workspace_read/workspace_write.
+    // v49 (#806 E-1/E-2; 47 is the F track's, 48 the I track's) camera_feature_tree_start /
+    // camera_feature_tree_fetch (the tree as a job) / camera_feature_read / camera_feature_write:
+    // the camera's GenApi node map enumerated from the device, typed access by name under the
+    // capture session token, serialized with sort pulses and refused while sorting is possible.
     // v50 (#807 I02) recipe_list/get/create/derive/diff/apply_preview (the native recipe provider).
     assert_eq!(ffi::bridge_abi_version(), 50);
 }
@@ -150,6 +154,53 @@ fn recipes_are_described() {
                           ("rules", "method content changed for this revision")] {
         assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "recipes.{key} mentions {needle}");
     }
+}
+
+// ABI 49 (#806 E-1/E-2): the contract describes the camera feature commands, bounds and outcomes.
+#[test]
+fn camera_features_are_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["camera_features"];
+    for (key, value) in [("request_max_bytes", 16384), ("schema_version", 1),
+                         ("max_categories_per_module", 2048), ("max_features_per_module", 8192)] {
+        assert_eq!(c[key], serde_json::json!(value), "camera_features.{key} (pinned in shim.cpp)");
+    }
+    for (key, needle) in [("$comment", "No hand-kept list"), ("commands", "camera_feature_tree"),
+                          ("commands", "camera_feature_write (control"), ("session", "stale"),
+                          ("session", "capability_revision"), ("guard", "one node per guarded step"),
+                          ("access", "re-read"), ("access", "@rollbackSelectors"),
+                          ("outcomes", "unknown_write_outcome"), ("outcomes", "requested"),
+                          ("outcomes", "never an empty tree"), ("tree", "uncategorized"),
+                          ("descriptor", "absent is never a default"),
+                          // E01 (#806 E-4): the backend instance in the token and in discovery.
+                          ("session", "instance"), ("session", "backend restart"),
+                          ("commands", "{instance, source, generation"),
+                          ("discovery_instance", "stale"), ("discovery_instance", "MissingSdk"),
+                          ("guard", "pulseMutex_"), ("guard", "never before taking them"),
+                          ("access", "while sorting is possible"), ("access", "merely started and bound with nothing queued is not a refusal"), ("guard", "serialized with sort pulses"),
+                          ("access", "starting, active or stopping"), ("access", "realtime processing"),
+                          ("access", "autofocus"), ("tree", "never an empty enumerated tree"),
+                          ("job", "camera_feature_tree_start"), ("job", "never for the walk"),
+                          ("job", "One enumeration is in flight")] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "camera_features.{key} mentions {needle}");
+    }
+}
+
+// ABI 49: before a camera session exists the commands answer, never fail the transport.
+#[test]
+#[serial]
+fn camera_features_without_a_session() {
+    let mut backend = ffi::new_backend_bridge();
+    let parse = |s: String| -> serde_json::Value { serde_json::from_str(&s).unwrap() };
+    // The tree is a job; before init its reply is already a refusal, and a fetch never blocks.
+    let job = backend.pin_mut().camera_feature_tree_start("{}");
+    let tree = parse(backend.pin_mut().camera_feature_tree_fetch(job).to_string());
+    assert_eq!(tree["outcome"], "refused", "{tree}");
+    let unknown = parse(backend.pin_mut().camera_feature_tree_fetch(job + 1000).to_string());
+    assert_eq!(unknown["outcome"], "refused", "an unknown job is refused: {unknown}");
+    let read = parse(backend.pin_mut().camera_feature_read("{\"bad\":1}").to_string());
+    assert_eq!(read["outcome"], "refused", "{read}");
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.
@@ -954,8 +1005,9 @@ fn camera_discovery_and_selection_contract() {
     assert!(start.accepted && start.job_id != 0, "camera discovery job refused: {}", start.reason);
     let deadline = Instant::now() + Duration::from_secs(30);
     let snapshot = loop {
-        let s = bridge.pin_mut().fetch_device_discovery(start.job_id);
-        assert!(s.valid, "discovery snapshot invalid for job {}", start.job_id);
+        let s = bridge.pin_mut().fetch_device_discovery(start.job_id, &start.instance);
+        assert!(s.valid && !s.stale, "discovery snapshot invalid for job {}", start.job_id);
+        assert_eq!(s.instance, start.instance, "every snapshot names the backend instance");
         // 2 Completed, 3 Cancelled, 4 Failed (contract discovery_job_states).
         if s.state >= 2 {
             break s;
@@ -975,8 +1027,14 @@ fn camera_discovery_and_selection_contract() {
         snapshot.candidates.iter().any(|c| c.camera_type == 2 && c.synthetic && c.kind == 0),
         "mock camera entry missing from discovery"
     );
-    assert!(!bridge.pin_mut().cancel_device_discovery(start.job_id), "cancel of an ended job is refused");
-    assert!(!bridge.pin_mut().fetch_device_discovery(987_654_321).valid, "unknown job is invalid");
+    assert!(!bridge.pin_mut().cancel_device_discovery(start.job_id, ""), "cancel of an ended job is refused");
+    assert!(!bridge.pin_mut().fetch_device_discovery(987_654_321, "").valid, "unknown job is invalid");
+    // E01 (ABI 49): a job ID named with another backend instance is stale, not this job.
+    assert_eq!(start.instance.len(), 36, "the instance is a UUID: {}", start.instance);
+    let foreign = bridge.pin_mut().fetch_device_discovery(start.job_id, "00000000-0000-4000-8000-000000000000");
+    assert!(foreign.stale && !foreign.valid && foreign.job_id == 0, "earlier instance refused");
+    assert_eq!(foreign.instance, start.instance, "the stale reply names the current instance");
+    assert!(!bridge.pin_mut().cancel_device_discovery(start.job_id, "00000000-0000-4000-8000-000000000000"));
     // A refused request reports a contract discovery_error_kinds value.
     let empty = ffi::BridgeDiscoveryRequest::default();
     let refused = bridge.pin_mut().start_device_discovery(&empty);

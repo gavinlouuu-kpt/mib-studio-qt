@@ -574,6 +574,11 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionSdkReal.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mindvision/MindVisionApply.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/camera/mock/MockCamera.cpp
+    # E02 (#806): GenApi typed feature control, node-map enumeration, fake node map, JSON.
+    ${PROJECT_SOURCE_DIR}/src/backend/camera/features/FeatureControl.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/camera/features/FeatureTree.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/camera/features/FakeNodeMap.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/camera/features/FeatureJson.cpp
 )
 
 if(MIB_HAS_ARAVIS)

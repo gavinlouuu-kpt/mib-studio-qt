@@ -364,7 +364,7 @@ describe("stages only navigate", () => {
     expect(onSwitchMode).not.toHaveBeenCalled();
     expect(writeRoi).not.toHaveBeenCalled();
     expect(subscribeFrames).toHaveBeenCalledTimes(1); // the one sink for the classic preview's frames
-    await act(async () => button("All features · classic view").click());
+    await act(async () => button("Classic view").click());
     expect(onExit).toHaveBeenCalledTimes(1);
   });
 

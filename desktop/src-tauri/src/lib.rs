@@ -521,13 +521,17 @@ fn start_camera_discovery(state: State<AppState>) -> Result<cmds::DiscoveryStart
 }
 
 #[tauri::command]
-fn fetch_device_discovery(state: State<AppState>, job_id: String) -> Result<cmds::DiscoverySnapshot, String> {
-    cmds::fetch_device_discovery(&state, job_id)
+fn fetch_device_discovery(
+    state: State<AppState>,
+    job_id: String,
+    instance: Option<String>,
+) -> Result<cmds::DiscoverySnapshot, String> {
+    cmds::fetch_device_discovery(&state, job_id, instance)
 }
 
 #[tauri::command]
-fn cancel_device_discovery(state: State<AppState>, job_id: String) -> Result<bool, String> {
-    cmds::cancel_device_discovery(&state, job_id)
+fn cancel_device_discovery(state: State<AppState>, job_id: String, instance: Option<String>) -> Result<bool, String> {
+    cmds::cancel_device_discovery(&state, job_id, instance)
 }
 
 #[tauri::command]
@@ -698,6 +702,30 @@ fn run_quick_look(
     reference: Option<cmds::QuickLookReference>,
 ) -> Result<serde_json::Value, String> {
     cmds::run_quick_look(&state, paths, reference)
+}
+
+// ABI 49 (#806 E-1/E-2/E-3): the camera's GenApi node map (bridge-contract.json camera_features).
+// Tree and read are reads; write is a camera control. The backend decides every outcome.
+// The tree is a backend job polled by mib-app-commands (camera_features.job): it waits off the
+// main thread, and the bridge lock is held only for each short fetch, never for the walk.
+#[tauri::command]
+async fn camera_feature_tree(app: tauri::AppHandle, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        cmds::camera_feature_tree(&state, request)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn camera_feature_read(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::camera_feature_read(&state, request)
+}
+
+#[tauri::command]
+fn camera_feature_write(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::camera_feature_write(&state, request)
 }
 
 #[tauri::command]
@@ -991,6 +1019,9 @@ pub fn run() {
             calibration_record_get,
             calibration_apply,
             run_quick_look,
+            camera_feature_tree,
+            camera_feature_read,
+            camera_feature_write,
             trigger_set_pulse_duration,
             trigger_manual_pulse,
             trigger_periodic_start,

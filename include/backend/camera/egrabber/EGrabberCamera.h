@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/camera/common/ICamera.h"
+#include "backend/camera/features/FeatureSession.h"
 
 #ifndef MIB_HAS_EGRABBER
 #define MIB_HAS_EGRABBER 0
@@ -23,7 +24,7 @@ namespace camera::common {
  * The code path mirrors the official SDK sample
  * `egrabber-snippets/samples/310-high-frame-rate.cpp`.
  */
-class EGrabberCamera : public ICamera {
+class EGrabberCamera : public ICamera, private ::camera::features::FeatureSession {
 public:
     EGrabberCamera();
     EGrabberCamera(int interfaceIndex, int deviceIndex);
@@ -47,7 +48,19 @@ public:
     void configureTriggerOutput(const std::string& lineSelector) override;
     bool setTriggerOutput(bool high) override;
 
+    // E02 (E-2): the grabber's GenApi node map through EGrabberFeaturePort
+    // (#812). nullptr when the SDK is not compiled in (unsupported, not empty).
+    ::camera::features::FeatureSession* featureSession() override;
+
 private:
+    // FeatureSession. Guard: triggerMutex_, the lock that already pins grabber_
+    // against stop() and serializes the trigger thread's InterfaceModule
+    // selector writes. Open only between a successful start() and stop().
+    std::string source() const override;
+    std::string evidence() const override { return "device"; }
+    bool withPort(const std::function<void(::camera::features::Port&)>& fn,
+                  std::string& reason) override;
+
     void replenishPendingFrames();
 
     CameraConfig config_{};

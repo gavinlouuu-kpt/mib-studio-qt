@@ -520,6 +520,68 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 49: the camera's GenApi node map (#806 E-1/E-2/E-3/E-4, goals E02, E01)
+
+Additive over ABI 44 (47 is the F track's, 48 the I track's, allocated provisionally).
+`camera_feature_tree {request: {modules?, descriptors?, available_only?}}`,
+`camera_feature_read {request: {session, module, feature, selector?}}` and
+`camera_feature_write {request: {..., value: {type, value}}}` enumerate and drive the active
+camera's node map ([[../camera/FeatureControl]]). Contract: `camera_features` (bounds,
+`commands`, `session`, `guard`, `access`, `outcomes`, `descriptor`, `tree`, `job`).
+
+- **Path:** C++ `BackendFacade::cameraFeature{Tree,Read,Write}Json` -> [writes: the
+  coordinator's idle transaction] -> `TriggerService::runSerializedWithPulses` (pulse lock) ->
+  `CaptureService::withCameraFeatures` (capture guard, run-state gate) ->
+  `ICamera::featureSession()->withPort` (camera port guard) -> cxx `camera_feature_read` /
+  `camera_feature_write(request_json) -> String` and, for the tree, `camera_feature_tree_start(request_json)
+  -> u64` + `camera_feature_tree_fetch(job_id) -> String` -> `mib-app-commands`
+  `camera_feature_*(state, request)` (a JSON object; non-object or over 16384 bytes is
+  `INVALID_ARGUMENTS` before the backend) -> dispatch (WebSocket server) and the Tauri commands
+  `camera_feature_tree` / `_read` / `_write` (E-3); `bridge.ts` `cameraFeatureTree` /
+  `cameraFeatureRead` / `cameraFeatureWrite`.
+- **The tree is a job (#806 review, finding 2):** a full walk describes thousands of nodes; holding
+  the global bridge mutex for it blocked frame pulls, status and experiment stop. The facade runs
+  the walk on its own worker; `mib-app-commands::camera_feature_tree` takes the bridge lock only to
+  start the job and for each fetch (poll every 5 ms, give up after `CAMERA_FEATURE_TREE_WAIT` =
+  300 s), and returns the tree document as before, so the WebSocket and Tauri wire format is
+  unchanged. One walk is in flight: an identical request joins it, another is refused at once; the
+  last 16 replies are kept; shutdown cancels the walk at its next guarded step and joins it. The
+  cxx surface changed within the unmerged ABI 49 (`camera_feature_tree` ->
+  `camera_feature_tree_start` / `camera_feature_tree_fetch`).
+- **Pulses (#806 review, finding 1):** serialized with sort pulses always; refused while sorting is possible. Every feature command runs under
+  the trigger's pulse lock and is `refused` (with the reason, no device access) only while sort
+  pulses are queued or firing (or periodic test pulses run), an experiment is
+  Starting/Active/Stopping, or realtime processing or autofocus runs; writes also while a frame
+  recording runs. A started, bound trigger with nothing queued is not a refusal, so the commands
+  work in the default boot.
+- **Session:** the token `{instance, source, generation, capability_revision}` (decimal strings;
+  every member required) of an earlier reply; any difference is `stale`. A capture restart opens
+  a new generation; a write that may have reached the device advances the revision; `instance`
+  (E01, E-4, amended into ABI 49 before merge) is the backend instance, so a token from before a
+  backend restart is stale although generations restart at 1.
+- **Discovery instance (E01, E-4, additive within ABI 49):** `BridgeDiscoveryStart.instance`,
+  `BridgeDiscoverySnapshot.instance` / `.stale`; cxx `fetch_device_discovery(job_id, instance)` and
+  `cancel_device_discovery(job_id, instance)` (empty = the ABI 14 behaviour); the commands take an
+  optional `instance` (contract `camera_features.discovery_instance`).
+- **Control:** `camera_feature_write` is in the server's `CONTROL_COMMANDS`; tree and read are open
+  to viewers.
+- **ABI touch points:** `bridge-contract.json` `abi_version` 49 and `camera_features`; `shim.cpp`
+  `bridge_abi_version()` and static_asserts on `FeatureJson.h` / `FeatureTree.h`; `contract.rs`
+  `abi_version_is_stable`; `dispatch.rs` abi pin; the generated `bridgeContract.ts`
+  (`CAMERA_FEATURES`); `gen_bridge_contract.py` checks the numbers against the headers; the
+  `eventAdapter.test.ts` / `runQuickLook.test.ts` pins.
+- **Tests:** `contract.rs` `camera_features_are_described`, `camera_features_without_a_session`
+  (start/fetch before init, unknown job);
+  the server's `camera_feature_write_is_control_and_reads_are_open`; real server
+  `tests/camera_features.rs`, all in the default boot (`feature_io_refused_while_pulses_are_imminent`:
+  periodic test pulses refuse, stopping them reopens; the mock node map round trip: enumerate, read, write
+  with readback, stale old revision, refused read-only and out-of-range writes, viewer denied,
+  stale generation after a capture restart; `tokens_from_before_a_backend_restart_are_refused`: a
+  second backend instance whose token equals the first's except `instance`, the old token stale for
+  read and write, the old discovery job stale and its cancel refused); C++ `camera.feature_tree`,
+  `camera.capture_features`, `backend.device_discovery_service`, `camera.trigger_feature_interlock`,
+  `e2e.camera_feature_facade` (gates through the facade, the tree job's in-flight-once rule).
+
 ## ABI 44: the run quick look (#716 A7a)
 
 Additive over ABI 43. `run_quick_look {paths: 1..32, reference?: {path, run_id, start_generation?}}`

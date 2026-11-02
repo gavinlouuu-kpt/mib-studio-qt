@@ -1,4 +1,5 @@
 #include "backend/discovery/DeviceDiscoveryService.h"
+#include "backend/profiles/InstrumentIdentity.h"
 
 #include <algorithm>
 #include <exception>
@@ -213,7 +214,7 @@ void boundErrors(std::vector<DiscoveryError>& errors)
 
 // ---- lifecycle -------------------------------------------------------------
 
-DeviceDiscoveryService::DeviceDiscoveryService() = default;
+DeviceDiscoveryService::DeviceDiscoveryService() : instanceId_(backend::profiles::generateUuidV4()) {}
 
 DeviceDiscoveryService::~DeviceDiscoveryService()
 {
@@ -364,6 +365,7 @@ DeviceDiscoveryService::selectProviders(const DiscoveryRequest& request) const
 StartResult DeviceDiscoveryService::startDiscovery(const DiscoveryRequest& request)
 {
     StartResult result;
+    result.instance = instanceId_;
     if (const auto problem = validate(request)) {
         result.rejection = ErrorKind::InvalidRequest;
         result.reason = *problem;
@@ -424,6 +426,7 @@ StartResult DeviceDiscoveryService::startDiscovery(const DiscoveryRequest& reque
     job->key = key;
     job->snapshot.jobId = job->id;
     job->snapshot.generation = job->id;
+    job->snapshot.instance = instanceId_;
     job->snapshot.state = JobState::Queued;
     job->snapshot.maxAttempts = request.retry.maxRetries + 1;
     job->snapshot.kinds = request.kinds;
@@ -455,11 +458,45 @@ DiscoverySnapshot DeviceDiscoveryService::discoverySnapshot(std::uint64_t jobId)
     const auto it = jobs_.find(jobId);
     if (it == jobs_.end()) {
         DiscoverySnapshot unknown;
+        unknown.instance = instanceId_;
         unknown.state = JobState::Failed;
         unknown.errors.push_back({"", ErrorKind::InvalidRequest, "unknown discovery job", ""});
         return unknown;
     }
-    return it->second->snapshot;
+    auto snapshot = it->second->snapshot;
+    snapshot.instance = instanceId_;
+    return snapshot;
+}
+
+DiscoverySnapshot DeviceDiscoveryService::discoverySnapshot(std::uint64_t jobId,
+                                                            const std::string& instance) const
+{
+    if (instance == instanceId_) return discoverySnapshot(jobId);
+    DiscoverySnapshot stale;
+    stale.instance = instanceId_;
+    stale.stale = true;
+    stale.state = JobState::Failed;
+    stale.errors.push_back({"", ErrorKind::InvalidRequest,
+                            "stale discovery reply: job " + std::to_string(jobId) +
+                                " belongs to an earlier backend instance; start a new scan",
+                            ""});
+    return stale;
+}
+
+bool DeviceDiscoveryService::cancelDiscovery(std::uint64_t jobId, const std::string& instance)
+{
+    if (instance != instanceId_) {
+        SPDLOG_INFO("DeviceDiscoveryService: cancel of job {} refused: earlier backend instance",
+                    jobId);
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        const auto it = jobs_.find(jobId);
+        if (it == jobs_.end() || it->second->done) return false;
+    }
+    cancelDiscovery(jobId);
+    return true;
 }
 
 bool DeviceDiscoveryService::waitForTerminal(std::uint64_t jobId,

@@ -309,5 +309,66 @@ int main()
         service.shutdownDiscovery(); // idempotent
     }
 
+    // ---- E01 (#806 E-4): a backend restart reuses job ID and generation ----
+    // A new service instance (a restarted backend) numbers jobs from 1 again,
+    // so a client still holding {jobId 1, generation 1} from before the
+    // restart would match the new job. The instance makes it stale: the
+    // checked fetch reports nothing of the new job and the checked cancel
+    // touches nothing.
+    {
+        watchdog.mark("restart reuses job id");
+        std::string before;
+        std::uint64_t beforeJob = 0, beforeGeneration = 0;
+        {
+            DeviceDiscoveryService first;
+            auto* mv = new ScriptedProvider("mv", DeviceKind::Camera);
+            mv->result.candidates = {makeCandidate(DeviceKind::Camera, "mv", "SN-BEFORE", "", 0)};
+            first.registerProvider(std::unique_ptr<ScriptedProvider>(mv));
+            const auto start = first.startDiscovery(cameraRequest());
+            MIB_REQUIRE(start.accepted && start.instance == first.instanceId(), "start names its instance");
+            MIB_REQUIRE(first.waitForTerminal(start.jobId, 5000ms), "first job terminates");
+            const auto snap = first.discoverySnapshot(start.jobId, start.instance);
+            MIB_EXPECT(!snap.stale && snap.instance == start.instance && snap.candidates.size() == 1,
+                       "the owning instance's checked fetch is the job");
+            before = start.instance;
+            beforeJob = start.jobId;
+            beforeGeneration = snap.generation;
+        }
+        DeviceDiscoveryService second;
+        auto* blocker = new ScriptedProvider("mv", DeviceKind::Camera);
+        blocker->block = true;
+        blocker->result.candidates = {makeCandidate(DeviceKind::Camera, "mv", "SN-AFTER", "", 0)};
+        second.registerProvider(std::unique_ptr<ScriptedProvider>(blocker));
+        MIB_EXPECT(!second.instanceId().empty() && second.instanceId() != before,
+                   "every service instance draws its own instance id");
+        const auto start = second.startDiscovery(cameraRequest());
+        MIB_REQUIRE(start.accepted && start.jobId == beforeJob, "the restart reuses the job id");
+        MIB_REQUIRE(blocker->waitUntilEntered(2000ms), "new job running");
+        MIB_EXPECT(second.discoverySnapshot(start.jobId).generation == beforeGeneration,
+                   "and the generation");
+
+        const auto stale = second.discoverySnapshot(beforeJob, before);
+        MIB_EXPECT(stale.stale && stale.jobId == 0 && stale.candidates.empty() &&
+                       stale.instance == second.instanceId(),
+                   "a fetch naming the earlier instance is stale and reports nothing of the new job");
+        MIB_EXPECT(!stale.errors.empty() && stale.errors[0].kind == ErrorKind::InvalidRequest,
+                   "stale is not busy, missing producer or a provider error");
+        MIB_EXPECT(!second.cancelDiscovery(beforeJob, before),
+                   "a cancel naming the earlier instance is refused");
+        MIB_EXPECT(second.discoverySnapshot(start.jobId).state == JobState::Running &&
+                       !blocker->sawCancel.load(),
+                   "the refused cancel left the new job running");
+        const auto current = second.discoverySnapshot(start.jobId, start.instance);
+        MIB_EXPECT(!current.stale && current.jobId == start.jobId, "the current instance's fetch is the job");
+
+        blocker->release();
+        MIB_REQUIRE(second.waitForTerminal(start.jobId, 5000ms), "new job terminates");
+        const auto done = second.discoverySnapshot(start.jobId, start.instance);
+        MIB_EXPECT(done.state == JobState::Completed && done.candidates.size() == 1 &&
+                       done.candidates[0].stableIdentity == "SN-AFTER",
+                   "the new job's own result");
+        MIB_EXPECT(!second.cancelDiscovery(start.jobId, start.instance), "cancel of an ended job is false");
+    }
+
     return mib::test::exitCode();
 }

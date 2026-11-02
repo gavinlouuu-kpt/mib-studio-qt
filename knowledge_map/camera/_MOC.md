@@ -12,3 +12,5 @@
 - [[AravisCamera]] — optional Aravis Fake/GenICam consumer (copied Mono8 first slice)
 
 **Up**: [[../README|Vault home]] · **See also**: [[../services/CaptureService]]
+
+- [[FeatureControl]] — isolated session-bound typed scalar operations; not yet wired

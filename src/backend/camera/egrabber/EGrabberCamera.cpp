@@ -1,6 +1,8 @@
 #include "backend/camera/egrabber/EGrabberCamera.h"
 #if MIB_HAS_EGRABBER
 #include "backend/camera/egrabber/GenTLHolder.h"
+#include "backend/camera/features/EGrabberFeaturePort.h"
+#include "backend/camera/features/ModuleWriteTracker.h"
 #endif
 
 #include <spdlog/spdlog.h>
@@ -476,6 +478,45 @@ bool EGrabberCamera::setTriggerOutput(bool high) {
     }
 }
 
+::camera::features::FeatureSession* EGrabberCamera::featureSession() { return this; }
+
+std::string EGrabberCamera::source() const {
+    return hasSelection_ ? "egrabber:" + std::to_string(selectedInterfaceIndex_) + "/" +
+                               std::to_string(selectedDeviceIndex_)
+                         : std::string("egrabber:default");
+}
+
+bool EGrabberCamera::withPort(const std::function<void(::camera::features::Port&)>& fn,
+                              std::string& reason) {
+    // triggerMutex_ pins grabber_ (stop() resets it under this lock) and
+    // serializes node-map access with setTriggerOutput(). It is held for one
+    // feature operation only; tree enumeration re-takes it per node. The
+    // facade runs every feature operation under the trigger's pulse lock
+    // (TriggerService::runSerializedWithPulses), so no operation lands between
+    // a pulse's edges, and refuses it while sorting is possible.
+    std::lock_guard<std::mutex> triggerLock(triggerMutex_);
+    if (!running_.load(std::memory_order_acquire) || !grabber_) {
+        reason = "The eGrabber session is not open; start capture first.";
+        return false;
+    }
+    ::camera::features::EGrabberFeaturePort<EGrabber<CallbackOnDemand>> port(*grabber_);
+    // Device quirk (Coaxlink): the trigger pulse relies on the Interface
+    // module's LineSelector staying where setTriggerOutput() put it. Only an
+    // operation that could move it (a write to the Interface module, or a
+    // selector-scoped describe there, which relies on SDK rollback) makes the
+    // next pulse re-select its line; reads elsewhere leave it applied.
+    ::camera::features::ModuleWriteTracker tracked(port, ::camera::features::Module::Interface);
+    struct Reselect {
+        const ::camera::features::ModuleWriteTracker& tracked;
+        bool& applied;
+        ~Reselect() {
+            if (tracked.touched()) applied = false;
+        }
+    } reselect{tracked, triggerLineApplied_};
+    fn(tracked);
+    return true;
+}
+
 #else
 
 EGrabberCamera::EGrabberCamera() = default;
@@ -545,6 +586,18 @@ void EGrabberCamera::configureTriggerOutput(const std::string& lineSelector) {
 
 bool EGrabberCamera::setTriggerOutput(bool high) {
     (void)high;
+    return false;
+}
+
+// Without the SDK there is no node map: report unsupported, never empty.
+::camera::features::FeatureSession* EGrabberCamera::featureSession() { return nullptr; }
+
+std::string EGrabberCamera::source() const { return "egrabber:unavailable"; }
+
+bool EGrabberCamera::withPort(const std::function<void(::camera::features::Port&)>& fn,
+                              std::string& reason) {
+    (void)fn;
+    reason = "EGrabber SDK is not compiled into this build.";
     return false;
 }
 
