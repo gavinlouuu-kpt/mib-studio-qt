@@ -36,6 +36,7 @@
 
 namespace backend::services { class ProcessingService; }
 namespace backend::monitoring { struct DensityPoint; }
+namespace backend::analysis { class EventColumns; }
 
 namespace backend::review
 {
@@ -333,6 +334,10 @@ namespace backend::review
         // claimed the file is Deferred (kRunStatisticsDeferredMessage), never
         // an error and nothing is read. Synchronous; never writes.
         std::string analyzePopulation(const std::string& requestJson);
+        // F-1b: ReviewSession::withRecordingColumns, gated on the lanes like
+        // analyzePopulation (throws std::invalid_argument while a job runs).
+        void withRecordingColumns(const std::string& path, const std::string& expectedFingerprint,
+                                  const std::function<void(const analysis::EventColumns&)>& use);
         RunStatisticsResult runStatistics(const std::string &path, const std::string &computedAt);
         // #717 B3b: one record reprocessed with the processing kernel, next
         // to its stored values (ReprocessResult). Never writes. The inputs

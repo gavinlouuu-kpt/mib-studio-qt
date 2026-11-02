@@ -47,6 +47,7 @@ if(MIB_ANALYSIS_HOST_TESTS)
     find_package(Threads REQUIRED)
     add_library(mib_analysis_host STATIC
         "${MIB_ROOT}/src/backend/analysis/SourceAnalysis.cpp"
+        "${MIB_ROOT}/src/backend/analysis/SourceCore.cpp"
         "${MIB_ROOT}/src/backend/analysis/ParameterTransforms.cpp"
         "${MIB_ROOT}/src/backend/analysis/PopulationPlot.cpp"
         "${MIB_ROOT}/src/backend/analysis/PopulationScatter.cpp"

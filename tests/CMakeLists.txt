@@ -1855,6 +1855,13 @@ set_tests_properties(analysis.columnar PROPERTIES TIMEOUT 60 LABELS "analysis;ba
 mib_add_backend_test_executable(review_population_scale_test review/review_population_scale_test.cpp)
 add_test(NAME review.population_scale COMMAND $<TARGET_FILE:mib_backend_tests> review_population_scale_test)
 set_tests_properties(review.population_scale PROPERTIES TIMEOUT 300 LABELS "review;analysis;backend;hdf5;roundtrip;performance")
+# F-1b: the analysis workspace path (AnalysisHost) over two 255k/260k-event
+# recordings: columnar source handles, saved strategy + report + plot +
+# retained file-pinned sources + comparison against an independent oracle,
+# row/columnar parity, paged browse metadata and a stated memory bound.
+mib_add_backend_test_executable(review_workspace_scale_test review/review_workspace_scale_test.cpp)
+add_test(NAME review.workspace_scale COMMAND $<TARGET_FILE:mib_backend_tests> review_workspace_scale_test)
+set_tests_properties(review.workspace_scale PROPERTIES TIMEOUT 300 LABELS "review;analysis;backend;hdf5;roundtrip;performance")
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
 # The vendored PZ7035 ABI header, for tests that fake bridge registers

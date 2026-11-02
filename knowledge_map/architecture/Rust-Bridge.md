@@ -1034,7 +1034,9 @@ attach to):
   `contract/review-contract.json` (`review_abi_version` 10 since #808 F-1:
   `review_analyze_population` evaluates the whole file natively in chunks,
   `rows` becomes a bounded page, plus populations/histogram/scatter/
-  membershipKey and the streamed fingerprint at any size; 9 source-bound
+  membershipKey and the streamed fingerprint at any size; #808 F-1b added,
+  without a version change, `columnar: true` (the F-source/2 handle) and the
+  shim's column resolver for the analysis workspace; 9 source-bound
   strategies, 8 population analysis, 7 reserved for #804; 6 since #716 A7a:
   `review_run_statistics`, whose `review_run_statistics` bounds the generator
   checks against `RunStatistics.h`; 5 since #783: the identity's E-LUT record

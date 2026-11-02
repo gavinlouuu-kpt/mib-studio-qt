@@ -221,6 +221,7 @@ add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/database/SqliteService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/workspace/WorkspaceStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/SourceAnalysis.cpp
+    analysis/SourceCore.cpp
     analysis/PopulationPlot.cpp
     analysis/PopulationScatter.cpp
     analysis/ParameterTransforms.cpp

@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <list>
 #include <set>
 #include <sstream>
 
@@ -43,6 +44,33 @@ namespace backend::review
             case ReviewDataset::InvalidMask: return "/invalid_frames/masks";
             }
             return nullptr;
+        }
+
+        // F-1b: the stored measurements of an experiment file as a columnar
+        // source handle (F-source/2). Identity and units are those the
+        // F-source/1 row form always had, so saved bindings stay valid.
+        nlohmann::json storedColumnarDescriptor(const std::string &path, const std::string &fileHash,
+                                                std::uint64_t validRows, std::uint64_t invalidRows)
+        {
+            using Json = nlohmann::json;
+            return Json{{"schema", analysis::kColumnarSourceSchema},
+                        {"storage", "columnar"},
+                        {"sourceKey", "sha256:" + fileHash},
+                        {"fingerprint", "sha256:" + fileHash},
+                        {"fingerprintKind", "full-file-sha256"},
+                        {"scope", "stored"},
+                        {"path", path},
+                        {"parameters", {{"area", "pixel2"}, {"deformability", "dimensionless"}, {"youngsModulus", "kPa"}}},
+                        {"segments", Json::array({Json{{"set", "valid"}, {"count", std::to_string(validRows)}},
+                                                  Json{{"set", "invalid"}, {"count", std::to_string(invalidRows)}}})},
+                        {"events", std::to_string(validRows + invalidRows)},
+                        {"populationComplete", true},
+                        {"finalized", true},
+                        {"retention",
+                         "file-pinned: columns are re-read from the file and its full-file SHA-256 "
+                         "re-verified on every evaluation; no rows are copied"},
+                        {"provenance", {{"processing", nullptr}, {"calibration", nullptr}, {"mechanics", nullptr},
+                            {"semantics", "stored measurements; no recomputation or compatibility inferred from missing provenance"}}}};
         }
 
         bool isMaskDataset(ReviewDataset dataset)
@@ -209,8 +237,22 @@ namespace backend::review
         bool recording{false};
         std::filesystem::file_time_type openedWriteTime{};
         std::uintmax_t openedSize{0};
-        std::vector<services::ProcessedFrame> validMeta;
-        std::vector<services::ProcessedFrame> invalidMeta;
+        // F-1b: browse metadata is paged, not held (a 300k-row file cost
+        // ~174 MiB of ProcessedFrame rows at open). The row counts are read at
+        // open; rows are read on demand in kMetaPageRows pages, the last
+        // kMetaPagesCached kept (LRU), and full passes stream page by page.
+        static constexpr std::uint64_t kMetaPageRows = 1024;
+        static constexpr std::size_t kMetaPagesCached = 8;
+        static constexpr std::uint64_t kMetaScanRows = 4096;
+        std::uint64_t validRows{0};
+        std::uint64_t invalidRows{0};
+        struct MetaPage
+        {
+            bool valid{true};
+            std::uint64_t page{0};
+            std::vector<services::ProcessedFrame> rows;
+        };
+        mutable std::list<MetaPage> metaPages;
         bool validMetaReadable{false};
         bool invalidMetaReadable{false};
         std::vector<std::string> validFields, invalidFields;
@@ -229,6 +271,81 @@ namespace backend::review
         };
         std::vector<CachedMembership> memberships;
         static constexpr std::size_t kMembershipCacheEntries = 4;
+        // F-1b: full-file SHA-256 of files lent as columns while another file
+        // is open (retained file-pinned sources), keyed to path + size + mtime.
+        struct ForeignHash
+        {
+            std::string path;
+            std::uintmax_t size{0};
+            std::filesystem::file_time_type time{};
+            std::string hash;
+        };
+        std::vector<ForeignHash> foreignHashes;
+
+        std::uint64_t rowCount(bool valid) const { return valid ? validRows : invalidRows; }
+
+        bool readRangeLocked(bool valid, std::uint64_t start, std::uint64_t count,
+                             std::vector<services::ProcessedFrame> &out) const
+        {
+            if (recording) return valid && reader.readRecordingMetadataRange(start, count, out);
+            return reader.readMetadataRange(valid, start, count, out);
+        }
+
+        // One stored row (no pixels) through the page cache; nullptr when the
+        // index is outside the set or its page cannot be read. The pointer is
+        // valid until the next rowLocked call that loads a page.
+        const services::ProcessedFrame *rowLocked(bool valid, std::uint64_t index) const
+        {
+            if (index >= rowCount(valid)) return nullptr;
+            const std::uint64_t page = index / kMetaPageRows;
+            const auto offset = static_cast<std::size_t>(index - page * kMetaPageRows);
+            for (auto it = metaPages.begin(); it != metaPages.end(); ++it)
+                if (it->valid == valid && it->page == page)
+                {
+                    metaPages.splice(metaPages.begin(), metaPages, it);
+                    return offset < metaPages.front().rows.size() ? &metaPages.front().rows[offset] : nullptr;
+                }
+            MetaPage loaded;
+            loaded.valid = valid;
+            loaded.page = page;
+            if (!readRangeLocked(valid, page * kMetaPageRows, kMetaPageRows, loaded.rows)) return nullptr;
+            metaPages.push_front(std::move(loaded));
+            while (metaPages.size() > kMetaPagesCached) metaPages.pop_back();
+            return offset < metaPages.front().rows.size() ? &metaPages.front().rows[offset] : nullptr;
+        }
+
+        // Every row of a set in order, kMetaScanRows at a time, without
+        // caching; false when a page cannot be read or `visit` stops.
+        template <typename Visit>
+        bool scanRowsLocked(bool valid, Visit &&visit) const
+        {
+            std::vector<services::ProcessedFrame> chunk;
+            const std::uint64_t total = rowCount(valid);
+            for (std::uint64_t start = 0; start < total; start += kMetaScanRows)
+            {
+                if (!readRangeLocked(valid, start, kMetaScanRows, chunk) || chunk.empty()) return false;
+                for (std::size_t i = 0; i < chunk.size() && start + i < total; ++i)
+                    if (!visit(start + i, chunk[i])) return false;
+            }
+            return true;
+        }
+
+        // The open set's row count, verified readable: the whole compound
+        // row type on the first page and every row of the analysis members
+        // in bounded chunks (what readValidMetadata's one read proved).
+        bool verifyRowsLocked(bool valid, std::uint64_t count) const
+        {
+            if (count == 0) return true;
+            std::vector<services::ProcessedFrame> first;
+            if (!reader.readMetadataRange(valid, 0, kMetaPageRows, first) || first.empty()) return false;
+            std::uint64_t seen = 0;
+            const bool ok = reader.readMetadataColumns(
+                valid, 0, [&](const services::Hdf5Service::MetadataColumnRow *, std::size_t n) {
+                    seen += n;
+                    return true;
+                });
+            return ok && seen == count;
+        }
 
         // Streaming SHA-256 of the open file (no size cap), fenced against
         // change since open; cached for the open generation.
@@ -260,8 +377,9 @@ namespace backend::review
             meta.fileOpen = true;
             meta.filePath = path;
             meta.recordingFile = recording;
-            validMeta.clear();
-            invalidMeta.clear();
+            validRows = 0;
+            invalidRows = 0;
+            metaPages.clear();
             validMetaReadable = true;
             if (recording)
             {
@@ -269,7 +387,7 @@ namespace backend::review
                 reader.readRecordingInfo(meta.startTimeNs, meta.endTimeNs, total, meta.filteredFrames,
                                          &meta.multiImageEnabled, &meta.multiImageCount);
                 if (meta.multiImageCount == 0) meta.multiImageCount = 1;
-                reader.readRecordingMetadata(validMeta);
+                validRows = reader.recordingMetadataRowCount().value_or(0);
                 meta.totalValid = total;
             }
             else
@@ -279,15 +397,20 @@ namespace backend::review
                 reader.readExperimentInfo(meta.startTimeNs, meta.endTimeNs, totalValid, totalInvalid, &meta.roi);
                 meta.totalValid = totalValid;
                 meta.totalInvalid = totalInvalid;
-                const bool validRead = reader.readValidMetadata(validMeta);
                 // An absent valid set is empty, not unreadable (the facade's
                 // charts rule before #512 S5, when they opened their own reader).
-                const auto validPresent = reader.metadataDatasetPresent(true);
-                validMetaReadable = validPresent.has_value() && (!*validPresent || validRead);
-                const bool invalidRead = reader.readInvalidMetadata(invalidMeta);
-                const auto invalidPresent = reader.metadataDatasetPresent(false);
-                invalidMetaReadable =
-                    invalidPresent.has_value() && (!*invalidPresent || invalidRead);
+                // F-1b: counted and verified readable here; rows are paged.
+                const auto readable = [&](bool valid, std::uint64_t &rows) {
+                    const auto present = reader.metadataDatasetPresent(valid);
+                    if (!present.has_value()) return false;
+                    if (!*present) return true;
+                    const auto count = reader.metadataRowCount(valid);
+                    if (!count || !verifyRowsLocked(valid, *count)) return false;
+                    rows = *count;
+                    return true;
+                };
+                validMetaReadable = readable(true, validRows);
+                invalidMetaReadable = readable(false, invalidRows);
                 validFields.clear(); invalidFields.clear();
                 validFieldsReadable = reader.readMetadataFieldNames(true, validFields);
                 invalidFieldsReadable = reader.readMetadataFieldNames(false, invalidFields);
@@ -404,14 +527,14 @@ namespace backend::review
                 const std::size_t room = kObjectSpaceMaskCheckMaxRecords - votes.size();
                 const DatasetInfo &masks = valid ? meta.validMasks : meta.invalidMasks;
                 if (room == 0 || !masks.present) continue;
-                const auto &frames = set(valid);
-                const std::size_t n = std::min<std::size_t>(frames.size(), static_cast<std::size_t>(masks.count));
+                const std::uint64_t n = std::min<std::uint64_t>(rowCount(valid), masks.count);
                 std::vector<std::size_t> candidates;
-                for (std::size_t i = 0; i < n; ++i)
-                {
-                    const auto &v = frames[i].validation;
-                    if (v.bboxWidth > 0 && v.bboxHeight > 0) candidates.push_back(i);
-                }
+                scanRowsLocked(valid, [&](std::uint64_t i, const services::ProcessedFrame &frame) {
+                    if (i >= n) return false;
+                    const auto &v = frame.validation;
+                    if (v.bboxWidth > 0 && v.bboxHeight > 0) candidates.push_back(static_cast<std::size_t>(i));
+                    return true;
+                });
                 for (const std::size_t position : maskCheckSample(candidates.size(), room))
                 {
                     const std::size_t index = candidates[position];
@@ -421,7 +544,13 @@ namespace backend::review
                         votes.emplace_back(std::nullopt);
                         continue;
                     }
-                    const auto &v = frames[index].validation;
+                    const auto *row = rowLocked(valid, index);
+                    if (!row)
+                    {
+                        votes.emplace_back(std::nullopt);
+                        continue;
+                    }
+                    const auto v = row->validation;
                     StoredObject object;
                     object.box = cv::Rect2d(v.bboxX, v.bboxY, v.bboxWidth, v.bboxHeight);
                     object.areaPx = v.area;
@@ -430,11 +559,6 @@ namespace backend::review
                 }
             }
             return maskCheckVerdict(votes);
-        }
-
-        const std::vector<services::ProcessedFrame> &set(bool valid) const
-        {
-            return valid ? validMeta : invalidMeta;
         }
 
         std::string imagesPath(bool valid) const
@@ -453,8 +577,9 @@ namespace backend::review
         bool composeFrameLocked(bool valid, std::uint64_t index, OverlayMode mode, bool roiOverlay,
                                 cv::Mat &out) const
         {
-            const auto &frames = set(valid);
-            if (index >= frames.size()) return false;
+            const auto *row = rowLocked(valid, index);
+            if (!row) return false;
+            const auto validation = row->validation;
             cv::Mat original;
             if (!reader.readImageByIndex(imagesPath(valid), static_cast<std::size_t>(index), original) ||
                 original.empty())
@@ -468,7 +593,7 @@ namespace backend::review
                 reader.readImageByIndex(maskPath, static_cast<std::size_t>(index), mask);
                 mask = toGray(mask);
             }
-            out = composeOverlay(original, mask, &frames[index].validation, recording ? OverlayMode::None : mode);
+            out = composeOverlay(original, mask, &validation, recording ? OverlayMode::None : mode);
             if (roiOverlay && !recording) drawRoiOverlay(out, meta.roi, original.cols, original.rows);
             return !out.empty();
         }
@@ -476,7 +601,7 @@ namespace backend::review
         bool readSeriesLocked(std::uint64_t index, std::vector<cv::Mat> &images) const
         {
             images.clear();
-            if (index >= validMeta.size()) return false;
+            if (index >= validRows) return false;
             if (recording)
             {
                 if (!meta.multiImageEnabled || meta.multiImageCount <= 1) return true;
@@ -503,8 +628,9 @@ namespace backend::review
             path.clear();
             recording = false;
             meta = ReviewMetadata{};
-            validMeta.clear();
-            invalidMeta.clear();
+            validRows = 0;
+            invalidRows = 0;
+            metaPages.clear();
             validMetaReadable = false;
             cachedFileHash.clear();
             memberships.clear();
@@ -581,8 +707,8 @@ namespace backend::review
         }
         if (!impl_->loadLocked(path, error)) return false;
         SPDLOG_INFO("ReviewSession: opened {} ({} file, valid {}, invalid {}, factor {}{})", path,
-                    impl_->recording ? "recording" : "experiment", impl_->validMeta.size(),
-                    impl_->invalidMeta.size(), impl_->factor(),
+                    impl_->recording ? "recording" : "experiment", impl_->validRows,
+                    impl_->invalidRows, impl_->factor(),
                     impl_->meta.pixelToMicronFromFile ? " from file" : " fallback");
         return true;
     }
@@ -780,7 +906,71 @@ namespace backend::review
     std::uint64_t ReviewSession::frameCount(bool valid) const
     {
         std::scoped_lock lock(impl_->mutex);
-        return impl_->set(valid).size();
+        return impl_->rowCount(valid);
+    }
+
+    void ReviewSession::withRecordingColumns(const std::string& path, const std::string& expectedFingerprint,
+                                             const std::function<void(const analysis::EventColumns&)>& use) const {
+        const auto refuse = [](const std::string& message) { throw std::invalid_argument(message); };
+        std::scoped_lock lock(impl_->mutex);
+        if (impl_->open && path == impl_->path) {
+            if (impl_->recording) refuse("A raw recording has no stored measurements");
+            if (!impl_->validMetaReadable || !impl_->invalidMetaReadable)
+                refuse("Object metadata is unreadable; incomplete populations are not analyzed");
+            if (impl_->meta.totalValid != impl_->validRows || impl_->meta.totalInvalid != impl_->invalidRows)
+                refuse("Stored counts and readable rows disagree; source coverage is incomplete");
+            if ("sha256:" + impl_->fileHashLocked() != expectedFingerprint)
+                refuse("Source fingerprint changed; refresh the source explicitly");
+            RecordingColumns columns(impl_->reader, impl_->validRows, impl_->invalidRows, impl_->validFields,
+                                     impl_->invalidFields);
+            use(columns);
+            (void)impl_->fileHashLocked(); // throws when the file changed during the read
+            return;
+        }
+        // Another file (a retained, file-pinned source): its own reader.
+        std::error_code ec;
+        const auto size = std::filesystem::file_size(path, ec);
+        if (ec) refuse("Pinned source file is unavailable: " + path);
+        const auto time = std::filesystem::last_write_time(path, ec);
+        if (ec) refuse("Pinned source file is unavailable: " + path);
+        std::string hash;
+        auto& hashes = impl_->foreignHashes;
+        for (const auto& entry : hashes)
+            if (entry.path == path && entry.size == size && entry.time == time) hash = entry.hash;
+        if (hash.empty()) {
+            std::string error;
+            hash = processing::fileSha256(path, &error, {});
+            if (hash.empty()) refuse("Source fingerprint failed: " + error);
+            hashes.insert(hashes.begin(), Impl::ForeignHash{path, size, time, hash});
+            if (hashes.size() > 8) hashes.pop_back();
+        }
+        if ("sha256:" + hash != expectedFingerprint)
+            refuse("Pinned source file no longer matches its fingerprint: " + path);
+        services::Hdf5Service reader;
+        struct Close {
+            services::Hdf5Service& reader;
+            ~Close() { reader.closeFile(); }
+        } close{reader};
+        if (!reader.loadFile(path)) refuse("Pinned source file cannot be opened: " + path);
+        if (reader.isRecordingFile()) refuse("A raw recording has no stored measurements");
+        std::uint64_t start = 0, end = 0;
+        std::size_t totalValid = 0, totalInvalid = 0;
+        reader.readExperimentInfo(start, end, totalValid, totalInvalid);
+        const auto validRows = reader.metadataRowCount(true);
+        const auto invalidRows = reader.metadataRowCount(false);
+        if (!validRows || !invalidRows)
+            refuse("Object metadata is unreadable; incomplete populations are not analyzed");
+        if (totalValid != *validRows || totalInvalid != *invalidRows)
+            refuse("Stored counts and readable rows disagree; source coverage is incomplete");
+        std::vector<std::string> validFields, invalidFields;
+        if ((*validRows && !reader.readMetadataFieldNames(true, validFields)) ||
+            (*invalidRows && !reader.readMetadataFieldNames(false, invalidFields)))
+            refuse("Measurement schema is unreadable");
+        RecordingColumns columns(reader, *validRows, *invalidRows, validFields, invalidFields);
+        use(columns);
+        if (std::filesystem::file_size(path, ec) != size || ec ||
+            std::filesystem::last_write_time(path, ec) != time || ec)
+            refuse("Pinned source file changed during the read");
     }
 
     std::string ReviewSession::analyzePopulation(const std::string& requestJson) const {
@@ -796,7 +986,9 @@ namespace backend::review
                 "graph", "galleryOffset", "snapshot", "sourceKind", "galleryKeys",
                 "expectedFingerprint", "expectedFileFingerprint", "mask",
                 // Review ABI 10 (F-1): bounded columnar results.
-                "page", "histogram", "scatter", "fingerprint"};
+                "page", "histogram", "scatter", "fingerprint",
+                // Review ABI 10, additive (F-1b): the F-source/2 handle.
+                "columnar"};
             if (!request.is_object() || !request.contains("feature") || !request.contains("minimum") ||
                 !request.contains("maximum") || !request.contains("expectedPath"))
                 return refuse("Expected feature, minimum, maximum and expectedPath");
@@ -872,15 +1064,18 @@ namespace backend::review
                 return refuse(
                     "Object metadata is unreadable; incomplete populations are not analyzed");
             // Never certify missing observations as a complete file population.
-            if (impl_->meta.totalValid != impl_->validMeta.size() ||
-                impl_->meta.totalInvalid != impl_->invalidMeta.size())
+            if (impl_->meta.totalValid != impl_->validRows ||
+                impl_->meta.totalInvalid != impl_->invalidRows)
                 return refuse(
                     "Stored counts and readable rows disagree; source coverage is incomplete");
             for (const bool valid : {true, false})
-                if (!impl_->set(valid).empty() &&
+                if (impl_->rowCount(valid) != 0 &&
                     !(valid ? impl_->validFieldsReadable : impl_->invalidFieldsReadable))
                     return refuse("Measurement schema is unreadable");
-            const bool freeze = request.value("snapshot", false);
+            // Review ABI 10, additive (F-1b): `columnar` returns the source as an
+            // F-source/2 handle (no rows) for the analysis host.
+            const bool columnarHandle = request.value("columnar", false);
+            const bool freeze = request.value("snapshot", false) || columnarHandle;
             const bool wantFingerprint = freeze || request.value("fingerprint", false);
             std::string fileHash;
             if (wantFingerprint) {
@@ -905,7 +1100,7 @@ namespace backend::review
                     const auto ordinal = std::stoull(ordinalText);
                     if (std::to_string(ordinal) != ordinalText) return refuse("Invalid gallery ordinal");
                     const bool valid = ref.at(1) == "valid";
-                    if (ordinal >= impl_->set(valid).size()) return refuse("Gallery ordinal outside source");
+                    if (ordinal >= impl_->rowCount(valid)) return refuse("Gallery ordinal outside source");
                     Json item{{"key", key}, {"set", ref.at(1)}, {"ordinal", ordinalText}, {"pixels", nullptr}};
                     cv::Mat image;
                     if (impl_->composeFrameLocked(valid, ordinal, OverlayMode::None, false, image) && !image.empty()) {
@@ -917,41 +1112,21 @@ namespace backend::review
                 return Json{{"ok", true}, {"source", {{"schema", "F-gallery/1"},
                     {"fingerprint", "sha256:" + fileHash}, {"images", images}}}}.dump();
             }
+            if (columnarHandle)
+                return Json{{"ok", true},
+                            {"source", storedColumnarDescriptor(impl_->path, fileHash, impl_->validRows,
+                                                                impl_->invalidRows)}}.dump();
             if (freeze) {
                 // F-source/1 is a JSON row transport with an explicit bound;
-                // larger recordings are analysed natively below (no freeze).
-                if (impl_->validMeta.size() + impl_->invalidMeta.size() > kMaxJsonSourceEvents)
+                // larger recordings are analysed natively (columnar handle).
+                if (impl_->validRows + impl_->invalidRows > kMaxJsonSourceEvents)
                     return refuse(jsonSourceBoundMessage());
-                Json sourceRows = Json::array();
-                for (const bool valid : {true, false}) {
-                    const auto& source = impl_->set(valid);
-                    const auto& fields = valid ? impl_->validFields : impl_->invalidFields;
-                    const auto set = valid ? "valid" : "invalid";
-                    for (std::size_t i = 0; i < source.size(); ++i) {
-                        const auto& v = source[i].validation;
-                        const auto ordinal = std::to_string(i);
-                        Json measures = Json::object();
-                        for (const auto& entry : std::vector<std::pair<std::string, double>>{
-                            {"area", v.area}, {"deformability", v.deformability}, {"youngsModulus", v.youngsModulus}}) {
-                            const bool present = std::find(fields.begin(), fields.end(), entry.first) != fields.end();
-                            measures[entry.first] = present && std::isfinite(entry.second) &&
-                                (entry.first != "youngsModulus" || entry.second > 0)
-                                ? Json(entry.second) : Json(nullptr);
-                        }
-                        const auto exact = Json::array({"sha256:" + fileHash, set, ordinal}).dump();
-                        sourceRows.push_back({{"key", exact}, {"set", set}, {"ordinal", ordinal},
-                            {"measurements", measures}, {"scientificQc", "unknown"},
-                            {"image", {{"available", nullptr}, {"sourceFingerprint", "sha256:" + fileHash}, {"set", set}, {"ordinal", ordinal}}}});
-                    }
-                }
-                Json source{{"schema", "F-source/1"}, {"sourceKey", "sha256:" + fileHash},
-                    {"fingerprint", "sha256:" + fileHash}, {"fingerprintKind", "full-file-sha256"},
-                    {"scope", "stored"}, {"path", impl_->path},
-                    {"parameters", {{"area", "pixel2"}, {"deformability", "dimensionless"}, {"youngsModulus", "kPa"}}},
-                    {"rows", sourceRows}, {"populationComplete", true}, {"finalized", true},
-                    {"provenance", {{"processing", nullptr}, {"calibration", nullptr}, {"mechanics", nullptr},
-                        {"semantics", "stored measurements; no recomputation or compatibility inferred from missing provenance"}}}};
-                return Json{{"ok", true}, {"source", source}}.dump();
+                RecordingColumns stored(impl_->reader, impl_->validRows, impl_->invalidRows,
+                                        impl_->validFields, impl_->invalidFields);
+                return Json{{"ok", true},
+                            {"source", materializeColumnarSource(storedColumnarDescriptor(
+                                           impl_->path, fileHash, impl_->validRows, impl_->invalidRows),
+                                       stored)}}.dump();
             }
 
             // ---- F-1 columnar evaluation of the whole file ------------------
@@ -959,7 +1134,7 @@ namespace backend::review
             // population DAG is evaluated chunk by chunk into two-bit
             // membership; only bounded results leave this function.
             const ResourceBounds bounds{};
-            RecordingColumns columns(impl_->reader, impl_->validMeta.size(), impl_->invalidMeta.size(),
+            RecordingColumns columns(impl_->reader, impl_->validRows, impl_->invalidRows,
                                      impl_->validFields, impl_->invalidFields);
             const auto graphRevision = contentHash(graphJson);
             const std::string sourceIdentity =
@@ -1092,8 +1267,8 @@ namespace backend::review
                 {"feature", feature},
                 {"unit", statistics.unit},
                 {"qcPolicy", "none"},
-                {"valid", std::to_string(impl_->validMeta.size())},
-                {"invalid", std::to_string(impl_->invalidMeta.size())},
+                {"valid", std::to_string(impl_->validRows)},
+                {"invalid", std::to_string(impl_->invalidRows)},
                 {"selected", std::to_string(statistics.selected)},
                 {"excluded", std::to_string(statistics.excluded)},
                 {"unknown", std::to_string(statistics.unknownMembership)},
@@ -1201,14 +1376,16 @@ namespace backend::review
         rows.clear();
         totalOut = 0;
         if (!impl_->open) return false;
-        const auto& source = impl_->set(valid);
-        totalOut = source.size();
-        if (offset >= source.size()) return true;
-        const std::uint64_t end = std::min<std::uint64_t>(source.size(), offset + count);
-        rows.reserve(static_cast<std::size_t>(end - offset));
+        const std::uint64_t total = impl_->rowCount(valid);
+        totalOut = total;
+        if (offset >= total) return true;
+        const std::uint64_t end = offset + std::min<std::uint64_t>(total - offset, count);
+        std::vector<services::ProcessedFrame> frames;
+        if (!impl_->readRangeLocked(valid, offset, end - offset, frames)) return false;
+        rows.reserve(frames.size());
         const double f = impl_->factor();
-        for (std::uint64_t i = offset; i < end; ++i)
-            rows.push_back(rowFromFrame(source[i], i, f));
+        for (std::size_t k = 0; k < frames.size(); ++k)
+            rows.push_back(rowFromFrame(frames[k], offset + k, f));
         return true;
     }
 
@@ -1226,14 +1403,18 @@ namespace backend::review
         std::scoped_lock lock(impl_->mutex);
         if (!impl_->open) return refuse("No review file is open");
         if (impl_->recording) return refuse("A raw recording has no records");
-        const auto& source = impl_->set(valid);
         const double f = impl_->factor();
-        for (std::uint64_t i = 0; i < source.size(); ++i) {
-            if (source[i].validation.trackId != trackId) continue;
-            ++out.total;
-            if (out.rows.size() >= max) continue;
-            out.positions.push_back(i);
-            out.rows.push_back(rowFromFrame(source[i], i, f));
+        // F-1b: an O(n) pass over the paged rows, chunk by chunk.
+        if (!impl_->scanRowsLocked(valid, [&](std::uint64_t i, const services::ProcessedFrame& frame) {
+                if (frame.validation.trackId != trackId) return true;
+                ++out.total;
+                if (out.rows.size() >= max) return true;
+                out.positions.push_back(i);
+                out.rows.push_back(rowFromFrame(frame, i, f));
+                return true;
+            })) {
+            out = TrackRows{};
+            return refuse("The stored records could not be read");
         }
         out.truncated = out.total > out.rows.size();
         return true;
@@ -1251,13 +1432,15 @@ namespace backend::review
         std::scoped_lock lock(impl_->mutex);
         if (!impl_->open) return refuse("No review file is open");
         if (impl_->recording) return refuse("A raw recording has no stored records to reprocess");
-        const auto &source = impl_->set(valid);
-        if (index >= source.size())
+        const std::uint64_t records = impl_->rowCount(valid);
+        if (index >= records)
             return refuse("No record " + std::to_string(index) + " in the " + (valid ? "valid" : "invalid") +
-                          " set (" + std::to_string(source.size()) + " records)");
+                          " set (" + std::to_string(records) + " records)");
         const auto &meta = impl_->meta;
         out.pixelToMicron = impl_->factor();
-        out.stored = rowFromFrame(source[static_cast<std::size_t>(index)], index, out.pixelToMicron);
+        const auto *storedRow = impl_->rowLocked(valid, index);
+        if (!storedRow) return refuse("Record " + std::to_string(index) + " could not be read");
+        out.stored = rowFromFrame(*storedRow, index, out.pixelToMicron);
         cv::Mat image;
         if (!impl_->reader.readImageByIndex(impl_->imagesPath(valid), static_cast<std::size_t>(index), image) ||
             image.empty())
@@ -1317,15 +1500,12 @@ namespace backend::review
         frames.clear();
         totalOut = 0;
         if (!impl_->open) return false;
-        const auto &source = impl_->set(valid);
-        totalOut = source.size();
-        if (offset >= source.size()) return true;
+        const std::uint64_t total = impl_->rowCount(valid);
+        totalOut = total;
+        if (offset >= total) return true;
         // Overflow-safe end (offset + count may wrap for a huge count).
-        const std::uint64_t remaining = source.size() - offset;
-        const std::uint64_t end = offset + std::min<std::uint64_t>(remaining, count);
-        frames.assign(source.begin() + static_cast<std::ptrdiff_t>(offset),
-                      source.begin() + static_cast<std::ptrdiff_t>(end));
-        return true;
+        const std::uint64_t remaining = total - offset;
+        return impl_->readRangeLocked(valid, offset, std::min<std::uint64_t>(remaining, count), frames);
     }
 
     ReviewSession::ValidSet ReviewSession::validSet() const
@@ -1337,16 +1517,22 @@ namespace backend::review
         out.filePath = impl_->path;
         out.recordingFile = impl_->recording;
         out.metadataReadable = impl_->validMetaReadable;
-        out.frames = impl_->validMeta;
+        // The whole set on request (the facade's charts): read now, not held.
+        if (impl_->validRows > 0 && !impl_->readRangeLocked(true, 0, impl_->validRows, out.frames))
+        {
+            out.frames.clear();
+            out.metadataReadable = false;
+        }
         return out;
     }
 
     bool ReviewSession::frameMeta(bool valid, std::uint64_t index, services::ProcessedFrame &out) const
     {
         std::scoped_lock lock(impl_->mutex);
-        const auto &source = impl_->set(valid);
-        if (!impl_->open || index >= source.size()) return false;
-        out = source[index];
+        if (!impl_->open) return false;
+        const auto *row = impl_->rowLocked(valid, index);
+        if (!row) return false;
+        out = *row;
         return true;
     }
 
@@ -1401,12 +1587,12 @@ namespace backend::review
     {
         std::scoped_lock lock(impl_->mutex);
         count = 0;
-        if (!impl_->open || index >= impl_->validMeta.size()) return false;
+        if (!impl_->open || index >= impl_->validRows) return false;
         if (impl_->recording)
         {
             if (impl_->meta.multiImageEnabled && impl_->meta.multiImageCount > 1)
             {
-                const std::uint64_t available = impl_->validMeta.size() - index;
+                const std::uint64_t available = impl_->validRows - index;
                 count = std::min<std::uint64_t>(impl_->meta.multiImageCount, available);
                 if (count <= 1) count = 0;
             }
@@ -1431,7 +1617,10 @@ namespace backend::review
             impl_->reader.readImageByIndex(maskPath, static_cast<std::size_t>(index), mask);
             mask = toGray(mask);
         }
-        cv::Mat composed = composeOverlay(images[k], mask, &impl_->validMeta[index].validation,
+        const auto *row = impl_->rowLocked(true, index);
+        if (!row) return false;
+        const auto validation = row->validation;
+        cv::Mat composed = composeOverlay(images[k], mask, &validation,
                                           impl_->recording ? OverlayMode::None : mode);
         if (roiOverlay && !impl_->recording) drawRoiOverlay(composed, impl_->meta.roi, images[k].cols, images[k].rows);
         packImage(composed, index, out);
@@ -1444,14 +1633,14 @@ namespace backend::review
         out = ThumbnailStrip{};
         std::scoped_lock lock(impl_->mutex);
         if (!impl_->open || size == 0 || size > 1024) return false;
-        const auto &frames = impl_->set(valid);
+        const std::uint64_t records = impl_->rowCount(valid);
         out.valid = true;
         out.offset = offset;
         out.size = size;
         const bool colour = (!impl_->recording && (mode != OverlayMode::None || roiOverlay));
         out.channels = colour ? 3 : 1;
-        if (offset >= frames.size()) return true;
-        const std::uint64_t end = std::min<std::uint64_t>(frames.size(), offset + count);
+        if (offset >= records) return true;
+        const std::uint64_t end = offset + std::min<std::uint64_t>(records - offset, count);
         const std::size_t tileBytes = static_cast<std::size_t>(size) * size * out.channels;
         out.data.resize(tileBytes * static_cast<std::size_t>(end - offset));
         for (std::uint64_t i = offset; i < end; ++i)
@@ -1481,16 +1670,21 @@ namespace backend::review
         const double f = impl_->factor();
         data.pixelToMicron = f;
         const double areaFactor = f * f;
-        for (std::size_t i = 0; i < impl_->validMeta.size(); ++i)
+        // F-1b: streamed page by page from the file, not from held rows.
+        if (!impl_->scanRowsLocked(true, [&](std::uint64_t i, const services::ProcessedFrame &frame) {
+                if (!frame.validation.isValid) return true;
+                data.frameIndex.push_back(frame.index);
+                data.validPosition.push_back(static_cast<std::size_t>(i));
+                data.areaUm2.push_back(frame.validation.area * areaFactor);
+                data.deformability.push_back(frame.validation.deformability);
+                data.targetGroup.push_back(frame.validation.isTargetGroup ? 1 : 0);
+                data.ringRatio.push_back(frame.validation.ringRatio);
+                return true;
+            }))
         {
-            const auto &frame = impl_->validMeta[i];
-            if (!frame.validation.isValid) continue;
-            data.frameIndex.push_back(frame.index);
-            data.validPosition.push_back(i);
-            data.areaUm2.push_back(frame.validation.area * areaFactor);
-            data.deformability.push_back(frame.validation.deformability);
-            data.targetGroup.push_back(frame.validation.isTargetGroup ? 1 : 0);
-            data.ringRatio.push_back(frame.validation.ringRatio);
+            ScatterData empty;
+            empty.pixelToMicron = f;
+            return empty;
         }
         return data;
     }
@@ -1560,9 +1754,10 @@ namespace backend::review
     bool ReviewSession::loadFrameForDisplay(bool valid, std::uint64_t index, services::ProcessedFrame &out) const
     {
         std::scoped_lock lock(impl_->mutex);
-        const auto &frames = impl_->set(valid);
-        if (!impl_->open || index >= frames.size()) return false;
-        out = frames[index];
+        if (!impl_->open) return false;
+        const auto *row = impl_->rowLocked(valid, index);
+        if (!row) return false;
+        out = *row;
         cv::Mat original;
         if (impl_->reader.readImageByIndex(impl_->imagesPath(valid), static_cast<std::size_t>(index), original))
         {

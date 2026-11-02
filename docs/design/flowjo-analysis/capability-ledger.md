@@ -291,3 +291,43 @@ real-recording or hardware evidence is claimed.
   229,585 / 190,705 through `PopulationGraph` needs F-2 (FCS import, F15).
   No real-recording run; F16 worker memory bound at full size unproven.
 
+
+### F-1b workspace path at full scale (2026-11-02, `claude/808-f1b-f2`)
+
+Goals advanced: F01, F04, F05, F08, F12, F16. Evidence class: **real backend,
+synthetic full-size MIB-schema files** (production `Hdf5Service` writer), headless
+native ctest. No real-instrument recording, no hardware.
+
+- **Mechanism.** Stored files resolve to an **F-source/2 columnar handle**
+  (descriptor, no rows; same fingerprint/sourceKey/parameters/scope as before, so
+  saved bindings stay valid). `AnalysisHost` takes a `ColumnResolver`; both hosts
+  lend `RecordingColumns` through `ReviewJobs::withRecordingColumns` (session
+  lock, coverage check, full-file SHA-256 re-verified; a non-open file through a
+  short-lived reader). One core (`SourceCore`) serves row and columnar sources:
+  evaluate, report (one membership pass), plot, scatter (bounded heap, identical
+  sample), gallery (bitset rank lookup), overlay, comparison, library, report
+  batches. `observations` (≤65,536 events) and `jobInput` (≤100,000) materialize
+  rows and refuse above, naming the bound. Retained stored sources are small
+  file-pinned handles; a changed file is refused.
+- **Browse memory.** `ReviewSession` no longer holds a `ProcessedFrame` per row:
+  counts at open, 1,024-row pages (8 cached), streamed passes for scatter/track
+  rows. Open RSS: **+7.9 MiB at 300,000 events** (was +174 MiB), +7.1 MiB at
+  255,000 (asserted < 24 MiB, after `malloc_trim`).
+- **Proof.** `review.workspace_scale`: rows vs columnar parity (evaluation with
+  a log10 transform and good-only QC, density histogram, seeded scatter) on 2,200
+  events; on 255,000 (A) and 260,000 (B) events a saved interval + polygon +
+  Boolean strategy's 4-population report (selected/unknown/excluded, n, mean,
+  median, p05, p95, denominator), 48-bin plot and a gallery at the last selected
+  ranks equal an independent oracle; the strategy applied to B, both retained,
+  and an independent-design comparison (A not open) gives oracle means
+  133.778052045 / 133.635478269 and their difference. Peak RSS growth of the
+  whole save → report → plot → gallery → retain → apply → compare sequence:
+  **15.9 MiB** (VmHWM after clear_refs; asserted < 64 MiB). Each recording is
+  lent once per comparison. `review.population_scale` additionally asserts the
+  open bound. Bridge: `review_bridge` source-bound strategy test now runs on the
+  columnar handle.
+- **Remaining.** Worker jobs (`jobInput`, Cytoflow parity/t-SNE) still take rows
+  ≤100,000 events (F16 memory bound at full size unproven); observation export is
+  bounded at 65,536 events; run-archive and live sources stay inline (≤100k by
+  design); no real-recording run; the desktop view shows no FCS/columnar-specific
+  affordance yet.

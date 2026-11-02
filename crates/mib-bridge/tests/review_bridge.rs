@@ -807,7 +807,10 @@ fn source_bound_strategy_survives_bridge_reopen_and_rejects_source_switch() {
     let descriptor = json!({"kind":"stored","path":path});
     let snapshot: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"snapshot","source":descriptor}).to_string())).unwrap();
     assert_eq!(snapshot["status"],"ok", "{snapshot}");
-    assert_eq!(snapshot["source"]["rows"].as_array().unwrap().len(),14);
+    // F-1b: a stored file resolves to a columnar handle (F-source/2), no rows.
+    assert_eq!(snapshot["source"]["schema"],"F-source/2", "{snapshot}");
+    assert_eq!(snapshot["source"]["events"],"14");
+    assert!(snapshot["source"].get("rows").is_none());
     let mut binding = json!({});
     for k in ["fingerprint","sourceKey","parameters","scope"] { binding[k]=snapshot["source"][k].clone(); }
     let save = json!({"action":"save","planId":"plan","expectedRevision":null,"commandId":"first","feature":"area","source":descriptor,"sourceBinding":binding,
@@ -829,7 +832,13 @@ fn source_bound_strategy_survives_bridge_reopen_and_rejects_source_switch() {
     let gallery: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"gallery","planId":"plan","revision":"1","source":descriptor,"offset":0}).to_string())).unwrap();
     assert_eq!(gallery["status"],"ok", "{gallery}");
     assert_eq!(gallery["images"].as_array().unwrap().len(),10);
-    let selected: Vec<_> = result["evaluation"]["rows"].as_array().unwrap().iter().filter(|r| r["membership"]=="selected").map(|r| r["key"].clone()).collect();
+    assert!(result["evaluation"].get("rows").is_none(), "columnar evaluation returns bounded results only");
+    assert_eq!(result["evaluation"]["membershipStorage"],"native-bitset");
+    // Every-row membership only through the bounded observation export (materialized rows).
+    let observations: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"observations","planId":"plan","revision":"1","source":descriptor}).to_string())).unwrap();
+    assert_eq!(observations["status"],"ok", "{observations}");
+    assert_eq!(observations["artifact"]["rows"].as_array().unwrap().len(),14);
+    let selected: Vec<_> = observations["artifact"]["rows"].as_array().unwrap().iter().filter(|r| r["membership"]=="selected").map(|r| r["key"].clone()).collect();
     let image_keys: Vec<_> = gallery["images"].as_array().unwrap().iter().map(|r| r["key"].clone()).collect();
     assert_eq!(selected,image_keys);
     assert!(gallery["images"].as_array().unwrap().iter().all(|r| r["pixels"].as_array().unwrap().len()==4096));
@@ -845,7 +854,7 @@ fn source_bound_strategy_survives_bridge_reopen_and_rejects_source_switch() {
     let polygon_read:Value=serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"read","planId":"polygon","revision":"1"}).to_string())).unwrap();
     assert_eq!(polygon_read["document"]["graph"],polygon_save["graph"]);
     let polygon_result:Value=serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"evaluate","planId":"polygon","revision":"1","source":descriptor}).to_string())).unwrap();
-    assert_eq!(polygon_result["evaluation"]["rows"],result["evaluation"]["rows"]);
+    for k in ["selected","excluded","unknown","mean"] { assert_eq!(polygon_result["evaluation"][k],result["evaluation"][k]); }
     let polygon_gallery:Value=serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"gallery","planId":"polygon","revision":"1","source":descriptor,"offset":0}).to_string())).unwrap();
     assert_eq!(polygon_gallery["images"],gallery["images"]);
     let other = root.join("other.h5").to_string_lossy().into_owned();

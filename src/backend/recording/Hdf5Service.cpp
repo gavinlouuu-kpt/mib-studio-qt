@@ -2370,8 +2370,13 @@ namespace backend::services
         return true;
     }
 
+    // Reads rows [start, start + count) of a metadata dataset (count clipped
+    // to the extent; kAllRows = every row from start). F-1b pages browse
+    // metadata through this instead of holding every row.
+    static constexpr hsize_t kAllRows = ~static_cast<hsize_t>(0);
     static bool readMetadataDataset(hid_t fileId, const std::string& datasetPath,
-                                    std::vector<ProcessedFrame>& frames)
+                                    std::vector<ProcessedFrame>& frames,
+                                    hsize_t start = 0, hsize_t count = kAllRows)
     {
         // Check if dataset exists
         htri_t exists = linkExists(fileId, datasetPath.c_str());
@@ -2404,7 +2409,14 @@ namespace backend::services
         H5Sget_simple_extent_dims(dataspaceId, dims, nullptr);
         H5Sclose(dataspaceId);
 
-        hsize_t numFrames = dims[0];
+        const hsize_t total = dims[0];
+        if (start > total)
+        {
+            H5Tclose(fileTypeId);
+            H5Dclose(datasetId);
+            return false;
+        }
+        const hsize_t numFrames = std::min<hsize_t>(count, total - start);
         if (numFrames == 0)
         {
             H5Tclose(fileTypeId);
@@ -2412,6 +2424,24 @@ namespace backend::services
             frames.clear();
             return true;
         }
+        // One selection for every member pass: rows [start, start + numFrames).
+        hid_t fileSpace = H5Dget_space(datasetId);
+        hid_t memSpace = H5Screate_simple(1, &numFrames, nullptr);
+        if (fileSpace < 0 || memSpace < 0 ||
+            H5Sselect_hyperslab(fileSpace, H5S_SELECT_SET, &start, nullptr, &numFrames, nullptr) < 0)
+        {
+            if (fileSpace >= 0) H5Sclose(fileSpace);
+            if (memSpace >= 0) H5Sclose(memSpace);
+            H5Tclose(fileTypeId);
+            H5Dclose(datasetId);
+            SPDLOG_ERROR("Failed to select metadata rows of {}", datasetPath);
+            return false;
+        }
+        struct SpaceGuard
+        {
+            hid_t a, b;
+            ~SpaceGuard() { H5Sclose(a); H5Sclose(b); }
+        } spaceGuard{fileSpace, memSpace};
 
         // Read metadata
         std::vector<ProcessedFrameMetadataRecord> metadata(numFrames);
@@ -2447,7 +2477,7 @@ namespace backend::services
         }
 
         hid_t baseMemTypeId = createProcessedFrameMetadataType(true, false, false, false);
-        herr_t status = H5Dread(datasetId, baseMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
+        herr_t status = H5Dread(datasetId, baseMemTypeId, memSpace, fileSpace, H5P_DEFAULT, metadata.data());
         H5Tclose(baseMemTypeId);
         if (status < 0)
         {
@@ -2462,7 +2492,7 @@ namespace backend::services
         if (hasObjectId || hasObjectCount)
         {
             hid_t objectMemTypeId = createProcessedFrameMetadataType(false, true, false, false);
-            status = H5Dread(datasetId, objectMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
+            status = H5Dread(datasetId, objectMemTypeId, memSpace, fileSpace, H5P_DEFAULT, metadata.data());
             H5Tclose(objectMemTypeId);
             if (status < 0)
             {
@@ -2480,7 +2510,7 @@ namespace backend::services
         if (hasTrackId || hasTrackFirstFrame || hasTrackLastFrame || hasTrackObservationCount)
         {
             hid_t trackingMemTypeId = createProcessedFrameMetadataType(false, false, true, false);
-            status = H5Dread(datasetId, trackingMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
+            status = H5Dread(datasetId, trackingMemTypeId, memSpace, fileSpace, H5P_DEFAULT, metadata.data());
             H5Tclose(trackingMemTypeId);
             if (status < 0)
             {
@@ -2495,7 +2525,7 @@ namespace backend::services
         if (H5Tget_member_index(fileTypeId, "plIdentity") >= 0)
         {
             hid_t plMemTypeId = createProcessedFrameMetadataType(false, false, false, true);
-            status = H5Dread(datasetId, plMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
+            status = H5Dread(datasetId, plMemTypeId, memSpace, fileSpace, H5P_DEFAULT, metadata.data());
             H5Tclose(plMemTypeId);
             if (status < 0)
             {
@@ -3740,6 +3770,105 @@ namespace backend::services {
         if (fileSpace >= 0) H5Sclose(fileSpace);
         H5Dclose(dataset);
         return ok;
+    }
+
+    std::optional<std::uint64_t> Hdf5Service::metadataRowCount(bool valid) const
+    {
+        if (!isFileOpen()) return std::nullopt;
+        const char* path = valid ? "/valid_frames/metadata" : "/invalid_frames/metadata";
+        const htri_t exists = linkExists(impl_->fileId_, path);
+        if (exists < 0) return std::nullopt;
+        if (exists == 0) return std::uint64_t{0};
+        const hid_t dataset = H5Dopen2(impl_->fileId_, path, H5P_DEFAULT);
+        if (dataset < 0) return std::nullopt;
+        const hid_t space = H5Dget_space(dataset);
+        hsize_t dims[1] = {0};
+        const bool ok = space >= 0 && H5Sget_simple_extent_ndims(space) == 1 &&
+                        H5Sget_simple_extent_dims(space, dims, nullptr) == 1;
+        if (space >= 0) H5Sclose(space);
+        H5Dclose(dataset);
+        if (!ok) return std::nullopt;
+        return static_cast<std::uint64_t>(dims[0]);
+    }
+
+    bool Hdf5Service::readMetadataRange(bool valid, std::uint64_t start, std::uint64_t count,
+                                        std::vector<ProcessedFrame>& frames) const
+    {
+        frames.clear();
+        if (!isFileOpen()) return false;
+        const char* path = valid ? "/valid_frames/metadata" : "/invalid_frames/metadata";
+        if (!readMetadataDataset(impl_->fileId_, path, frames, static_cast<hsize_t>(start),
+                                 static_cast<hsize_t>(count)))
+            return false;
+        for (auto& f : frames)
+        {
+            f.originalImage.release();
+            f.processedImage.release();
+        }
+        return true;
+    }
+
+    std::optional<std::uint64_t> Hdf5Service::recordingMetadataRowCount() const
+    {
+        if (!isFileOpen()) return std::nullopt;
+        const char* path = "/recorded_frames/metadata";
+        const htri_t exists = linkExists(impl_->fileId_, path);
+        if (exists <= 0) return std::nullopt;
+        const hid_t dataset = H5Dopen2(impl_->fileId_, path, H5P_DEFAULT);
+        if (dataset < 0) return std::nullopt;
+        const hid_t space = H5Dget_space(dataset);
+        hsize_t dims[1] = {0};
+        const bool ok = space >= 0 && H5Sget_simple_extent_dims(space, dims, nullptr) == 1;
+        if (space >= 0) H5Sclose(space);
+        H5Dclose(dataset);
+        if (!ok) return std::nullopt;
+        return static_cast<std::uint64_t>(dims[0]);
+    }
+
+    bool Hdf5Service::readRecordingMetadataRange(std::uint64_t start, std::uint64_t count,
+                                                 std::vector<ProcessedFrame>& frames) const
+    {
+        frames.clear();
+        if (!isFileOpen()) return false;
+        const auto total = recordingMetadataRowCount();
+        if (!total || start > *total) return false;
+        const hsize_t first = static_cast<hsize_t>(start);
+        const hsize_t rows = static_cast<hsize_t>(std::min<std::uint64_t>(count, *total - start));
+        if (rows == 0) return true;
+        struct RecMeta
+        {
+            uint64_t index;
+            uint64_t timestampNs;
+            uint64_t width;
+            uint64_t height;
+        };
+        const hid_t dataset = H5Dopen2(impl_->fileId_, "/recorded_frames/metadata", H5P_DEFAULT);
+        if (dataset < 0) return false;
+        const hid_t type = H5Tcreate(H5T_COMPOUND, sizeof(RecMeta));
+        H5Tinsert(type, "index", HOFFSET(RecMeta, index), H5T_NATIVE_UINT64);
+        H5Tinsert(type, "timestampNs", HOFFSET(RecMeta, timestampNs), H5T_NATIVE_UINT64);
+        H5Tinsert(type, "width", HOFFSET(RecMeta, width), H5T_NATIVE_UINT64);
+        H5Tinsert(type, "height", HOFFSET(RecMeta, height), H5T_NATIVE_UINT64);
+        const hid_t fileSpace = H5Dget_space(dataset);
+        const hid_t memSpace = H5Screate_simple(1, &rows, nullptr);
+        std::vector<RecMeta> entries(static_cast<std::size_t>(rows));
+        const bool ok = fileSpace >= 0 && memSpace >= 0 &&
+                        H5Sselect_hyperslab(fileSpace, H5S_SELECT_SET, &first, nullptr, &rows, nullptr) >= 0 &&
+                        H5Dread(dataset, type, memSpace, fileSpace, H5P_DEFAULT, entries.data()) >= 0;
+        if (memSpace >= 0) H5Sclose(memSpace);
+        if (fileSpace >= 0) H5Sclose(fileSpace);
+        H5Tclose(type);
+        H5Dclose(dataset);
+        if (!ok) return false;
+        frames.reserve(entries.size());
+        for (const auto& e : entries)
+        {
+            ProcessedFrame frame;
+            frame.index = e.index;
+            frame.timestampNs = e.timestampNs;
+            frames.push_back(std::move(frame));
+        }
+        return true;
     }
 
     bool Hdf5Service::saveChartSnapshot(const std::string& datasetPath, const cv::Mat& image)

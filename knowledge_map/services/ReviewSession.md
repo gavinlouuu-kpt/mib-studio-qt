@@ -722,7 +722,44 @@ serves `snapshot` (F-source/1, JSON rows bounded at 100,000 events) and
 run-archive sources. Call through ReviewJobs' lane fence and (Studio) the
 facade's idle/recording fence. Evaluation keys are ephemeral (`snapshot` unique
 per call); not a durable EventSnapshot provider. Tests: `review.session`,
-`review.population_scale` (300,000 events, > 64 MiB). Open still materializes
-per-row browse metadata (`validMeta` / `invalidMeta`) for the review table; the
-analysis does not read it except for counts and gallery bounds. See
-[[AnalysisWorker]].
+`review.population_scale` (300,000 events, > 64 MiB). See [[AnalysisWorker]].
+
+## Paged browse metadata and lent columns (#808 F-1b)
+
+**Open no longer holds per-row metadata.** `readMetadataLocked` records each
+set's row count (`validRows` / `invalidRows`, via
+`Hdf5Service::metadataRowCount`) and proves it readable (the whole compound type
+on the first 1,024-row page, every row of the analysis members through
+`readMetadataColumns`); an unreadable set reads as 0 rows and
+`*MetaReadable == false`, as before. Rows are read on demand:
+
+- `rowLocked(valid, i)`: through an LRU of 8 pages × 1,024 rows
+  (`kMetaPageRows`, `kMetaPagesCached`, ≈5 MiB at most): `frameMeta`,
+  `loadFrameForDisplay`, `reprocessInputs`, overlay composition
+  (`composeFrameLocked`, `fetchSeriesImage`), the mask-check sample.
+- `readRangeLocked`: one hyperslab per call: `metricsPage`, `framesPage`,
+  `validSet()` (the facade charts' whole set, read when asked, not held).
+- `scanRowsLocked`: 4,096-row passes, nothing cached: `trackRows`,
+  `scatter()`, the object-coordinates mask check.
+
+Recording files page `/recorded_frames/metadata` the same way
+(`readRecordingMetadataRange`). Measured at 255,000 events: open RSS growth
+below the asserted 24 MiB bound (was +174 MiB at 300,000).
+
+**Columnar source handle.** `analyzePopulation` with `columnar: true` (review
+ABI 10, additive) returns the open stored file as an F-source/2 handle
+(`storedColumnarDescriptor`: full-file SHA-256 identity, the F-source/1 units
+`pixel2` / `dimensionless` / `kPa`, segments valid + invalid, no rows).
+`snapshot: true` alone still returns F-source/1 rows (≤100,000), now
+materialized from `RecordingColumns` (`materializeColumnarSource`), byte-identical
+to the former row-by-row freeze.
+
+**`withRecordingColumns(path, expectedFingerprint, use)`** lends
+`RecordingColumns` to the analysis host under the session mutex after checking
+coverage (counts vs readable rows) and the full-file SHA-256. The open file uses
+the session reader (hash cached per open generation, re-fenced after the read);
+any other path — a retained, file-pinned handle — gets a short-lived reader
+(probeRuns' rule), its hash cached by path + size + write time
+(`Impl::foreignHashes`, 8 entries). `ReviewJobs::withRecordingColumns` adds the
+lane fence. Both hosts (`BackendFacade::analysisRequestJson`, review shim) pass
+it as the `AnalysisHost` column resolver. Test: `review.workspace_scale`.

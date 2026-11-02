@@ -1071,11 +1071,20 @@ rust::String mib_review_bridge::ReviewBridge::review_analysis_request(rust::Str 
 
         if ((kind != "stored" && kind != "run-archive") || descriptor.size() != 2)
             throw std::invalid_argument("Review supports stored or run-archive sources only");
-        const auto result = nlohmann::json::parse(impl_->jobs->analyzePopulation(nlohmann::json{
-            {"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr},
-            {"maximum", nullptr}, {"snapshot", true}, {"sourceKind", kind}}.dump()));
+        // F-1b: a stored file is a columnar handle (F-source/2, no rows).
+        nlohmann::json lookup{{"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr},
+                              {"maximum", nullptr}, {"snapshot", true}, {"sourceKind", kind}};
+        if (kind == "stored") lookup["columnar"] = true;
+        const auto result = nlohmann::json::parse(impl_->jobs->analyzePopulation(lookup.dump()));
         if (!result.value("ok", false)) throw std::invalid_argument(result.value("message", "Source refused"));
         return result.at("source");
     };
-    return rust::String(backend::analysis::analysisRequest(impl_->analysisDatabase, toStd(request), write, source));
+    auto columns = [this](const nlohmann::json& source, const backend::analysis::ColumnVisitor& use) {
+        if (source.value("scope", std::string{}) != "stored")
+            throw std::invalid_argument("Review lends columns for stored experiment files only");
+        impl_->jobs->withRecordingColumns(source.at("path").get<std::string>(),
+                                          source.at("fingerprint").get<std::string>(), use);
+    };
+    return rust::String(backend::analysis::analysisRequest(impl_->analysisDatabase, toStd(request), write, source,
+                                                           {}, columns));
 }
