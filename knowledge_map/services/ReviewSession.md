@@ -700,12 +700,71 @@ attributes cannot be read. Their snapshot has `readError`, Unknown completion
 and an explanatory `completionReason`; `accountingSummary()` shows that reason
 instead of partial counts. Legacy files still have `hasAccounting == false`.
 
-## Bounded population analysis (#808)
+## Population analysis at full file size (#808, F-1 since review ABI 10)
 
-`analyzePopulation(requestJson)` reads both cached metadata sets and source path
-under the existing session mutex. It delegates inclusive interval membership and
-reductions to the portable analysis core, refuses unreadable/count-incomplete or
->10,000-row sources, and returns decimal counts/ordinals. No HDF5 reads/writes
-inside this operation. Call through ReviewJobs' lane fence and (Studio) facade's
-idle/recording fence. Fingerprint is null, evaluation keys ephemeral; this is not
-a durable EventSnapshot provider. See [[AnalysisWorker]].
+`analyzePopulation(requestJson)` holds the session mutex for the whole call. It
+refuses raw recordings and unreadable/count-incomplete metadata, compiles the
+graph (or the top-level interval as a one-node graph) with `PopulationGates`, and
+evaluates the **whole file** with the columnar evaluator: `RecordingColumns`
+(`src/backend/review/RecordingColumns.cpp`) reads area, deformability and
+youngsModulus from both metadata datasets in 65,536-row chunks through
+`Hdf5Service::readMetadataColumns` (no new HDF5 reader, no writes). Membership is
+a native `MembershipSet` of two-bit bitsets keyed to the source identity (open
+generation + size + write time, or the streamed SHA-256 when `fingerprint` is
+true) and the graph's content hash; the four most recent sets are cached in the
+session (`Impl::memberships`, cleared on open/close) so gallery pages and other
+reductions reuse them. Because that identity names the size and write time
+recorded at open, every evaluation first re-stats the file (`Impl::unchangedLocked`,
+the check `fileHashLocked` uses) before any cache lookup or column read, and again
+after the reductions: an in-place rewrite clears the cache and is refused
+("Source changed since open; reopen…"), never answered from the old membership
+(`review.population_rewrite`). Only bounded results return: counts, exact statistics,
+`populations` table, optional `histogram` / decimated `scatter`, a `rows` page
+(`page` {offset, limit ≤1000, membership}) and a 12-image gallery at any selected
+offset. The full-file SHA-256 (`Impl::fileHashLocked`) is streamed with no size
+cap, fenced against size/write-time, and cached per open generation; it also
+serves `snapshot` (F-source/1, JSON rows bounded at 100,000 events) and
+run-archive sources. Call through ReviewJobs' lane fence and (Studio) the
+facade's idle/recording fence. Evaluation keys are ephemeral (`snapshot` unique
+per call); not a durable EventSnapshot provider. Tests: `review.session`,
+`review.population_scale` (300,000 events, > 64 MiB). See [[AnalysisWorker]].
+
+## Paged browse metadata and lent columns (#808 F-1b)
+
+**Open no longer holds per-row metadata.** `readMetadataLocked` records each
+set's row count (`validRows` / `invalidRows`, via
+`Hdf5Service::metadataRowCount`) and proves it readable (the whole compound type
+on the first 1,024-row page, every row of the analysis members through
+`readMetadataColumns`); an unreadable set reads as 0 rows and
+`*MetaReadable == false`, as before. Rows are read on demand:
+
+- `rowLocked(valid, i)`: through an LRU of 8 pages × 1,024 rows
+  (`kMetaPageRows`, `kMetaPagesCached`, ≈5 MiB at most): `frameMeta`,
+  `loadFrameForDisplay`, `reprocessInputs`, overlay composition
+  (`composeFrameLocked`, `fetchSeriesImage`), the mask-check sample.
+- `readRangeLocked`: one hyperslab per call: `metricsPage`, `framesPage`,
+  `validSet()` (the facade charts' whole set, read when asked, not held).
+- `scanRowsLocked`: 4,096-row passes, nothing cached: `trackRows`,
+  `scatter()`, the object-coordinates mask check.
+
+Recording files page `/recorded_frames/metadata` the same way
+(`readRecordingMetadataRange`). Measured at 255,000 events: open RSS growth
+below the asserted 24 MiB bound (was +174 MiB at 300,000).
+
+**Columnar source handle.** `analyzePopulation` with `columnar: true` (review
+ABI 10, additive) returns the open stored file as an F-source/2 handle
+(`storedColumnarDescriptor`: full-file SHA-256 identity, the F-source/1 units
+`pixel2` / `dimensionless` / `kPa`, segments valid + invalid, no rows).
+`snapshot: true` alone still returns F-source/1 rows (≤100,000), now
+materialized from `RecordingColumns` (`materializeColumnarSource`), byte-identical
+to the former row-by-row freeze.
+
+**`withRecordingColumns(path, expectedFingerprint, use)`** lends
+`RecordingColumns` to the analysis host under the session mutex after checking
+coverage (counts vs readable rows) and the full-file SHA-256. The open file uses
+the session reader (hash cached per open generation, re-fenced after the read);
+any other path — a retained, file-pinned handle — gets a short-lived reader
+(probeRuns' rule), its hash cached by path + size + write time
+(`Impl::foreignHashes`, 8 entries). `ReviewJobs::withRecordingColumns` adds the
+lane fence. Both hosts (`BackendFacade::analysisRequestJson`, review shim) pass
+it as the `AnalysisHost` column resolver. Test: `review.workspace_scale`.

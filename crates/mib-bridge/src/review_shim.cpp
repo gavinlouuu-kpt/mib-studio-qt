@@ -1,5 +1,6 @@
 #include "backend/analysis/EvidenceGallery.h"
 #include "backend/analysis/AnalysisHost.h"
+#include "backend/analysis/FcsReader.h"
 #include "backend/database/SqliteService.h"
 // C++ side of the review bridge (ADR 0014). See review_shim.h.
 #include "mib-bridge/src/review_shim.h"
@@ -843,8 +844,12 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // (#783): the identity's emodulus_lut also reads a regenerated file's
 // @emodulus_lut_json, named by emodulus_lut_provenance (snapshot | recorded |
 // host). v6 (#716 A7a): review_run_statistics, the run quick look's twin.
+// v8 population analysis, v9 source-bound strategies (#808). v10 (#808 F-1):
+// review_analyze_population evaluates the whole file natively in chunks with
+// bitset membership; rows is a bounded page, plus populations, histogram,
+// scatter, membershipKey and the streamed fingerprint at any file size.
 std::uint32_t review_bridge_abi_version() {
-    return 9;
+    return 10;
 }
 
 namespace {
@@ -1065,13 +1070,25 @@ rust::String mib_review_bridge::ReviewBridge::review_analysis_request(rust::Str 
             return response.at("source");
         }
 
+        // F-2 (F15): an FCS 3.0/3.1 file through the native reader, as a columnar handle.
+        if (kind == "fcs") return backend::analysis::fcsSourceDescriptor(descriptor);
         if ((kind != "stored" && kind != "run-archive") || descriptor.size() != 2)
-            throw std::invalid_argument("Review supports stored or run-archive sources only");
-        const auto result = nlohmann::json::parse(impl_->jobs->analyzePopulation(nlohmann::json{
-            {"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr},
-            {"maximum", nullptr}, {"snapshot", true}, {"sourceKind", kind}}.dump()));
+            throw std::invalid_argument("Review supports stored, run-archive or fcs sources only");
+        // F-1b: a stored file is a columnar handle (F-source/2, no rows).
+        nlohmann::json lookup{{"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr},
+                              {"maximum", nullptr}, {"snapshot", true}, {"sourceKind", kind}};
+        if (kind == "stored") lookup["columnar"] = true;
+        const auto result = nlohmann::json::parse(impl_->jobs->analyzePopulation(lookup.dump()));
         if (!result.value("ok", false)) throw std::invalid_argument(result.value("message", "Source refused"));
         return result.at("source");
     };
-    return rust::String(backend::analysis::analysisRequest(impl_->analysisDatabase, toStd(request), write, source));
+    auto columns = [this](const nlohmann::json& source, const backend::analysis::ColumnVisitor& use) {
+        if (source.value("scope", std::string{}) == "fcs") return backend::analysis::lendFcsColumns(source, use);
+        if (source.value("scope", std::string{}) != "stored")
+            throw std::invalid_argument("Review lends columns for stored experiment files and FCS files only");
+        impl_->jobs->withRecordingColumns(source.at("path").get<std::string>(),
+                                          source.at("fingerprint").get<std::string>(), use);
+    };
+    return rust::String(backend::analysis::analysisRequest(impl_->analysisDatabase, toStd(request), write, source,
+                                                           {}, columns));
 }

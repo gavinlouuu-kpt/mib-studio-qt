@@ -2,6 +2,12 @@
 
 Status: proposed for #806/#807/#808 and existing #512/#717 owners; not an ABI reservation.
 
+**Engine decision (2026-11-02, ADR 0016 (`docs/decisions/0016-native-analysis-authority.md`, decision D3 of the fold-in realignment plan)).** The native C++ analysis code is the
+single production authority for populations, statistics, transforms, overlays,
+comparison, fits and reports. Cytoflow and FlowKit are CI comparators only and are
+not bundled; the supervised worker keeps only qualified long jobs (t-SNE, scikit-learn
+1.9.1). Statements below that give Cytoflow a production role are superseded.
+
 ## Ownership and versioning
 
 Reuse the generated `bridge-contract.json` / `review-contract.json` authority.
@@ -40,7 +46,8 @@ Unknown fields are explicit null/status, never fabricated identifiers or zero.
    revisions, per-sample override/base revisions, parent universe, explicit QC and
    missing-value policies, gate DAG and parameter/evaluation-space bindings.
    Validate cycles, dangling references, units, geometry and source capabilities
-   before dispatch. MIB composes populations; real Cytoflow supplies qualified operations.
+   before dispatch. MIB composes populations and evaluates every operation natively (ADR 0016);
+   Cytoflow (polygon) and FlowKit (rectangle) only cross-check it in CI.
 4. **AnalysisResult**: job/result IDs, complete input revision key, exact membership
    handle, evaluable/unknown/excluded counts and denominator, metric definitions/units,
    engine/dependency pins and validity reasons. Reject stale results rather than
@@ -80,10 +87,10 @@ a declared representative observation, not objectId-based deduplication.
 - #512/#717: confirm ownership windows for bridge/session/job edits and #803/#804
   sequencing. F's current change owns only its new documentation and qualification
   harness, not shared service/bridge files or App.tsx.
-- Owner/release maintainer: record a Cytoflow distribution plan for the pinned
-  GPL-2.0-or-later candidate and dependencies. Process isolation is not an approval.
-  This blocks shipping, not isolated internal qualification. No engine substitution
-  or FCS-only fallback is proposed.
+- ~~Owner/release maintainer: record a Cytoflow distribution plan.~~ Superseded by
+  ADR 0016: Cytoflow is a CI comparator, not shipped, so it no longer gates
+  distribution. A worker algorithm proposed for production (today only t-SNE via
+  scikit-learn 1.9.1, BSD-3-Clause) still needs a distribution review.
 
 The F coordinator has acknowledged the compatible logical E/I proposals on #808.
 Exact shared public ABI and file ownership remains coordinated separately.

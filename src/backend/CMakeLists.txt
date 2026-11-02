@@ -223,16 +223,22 @@ add_library(mib_review_core STATIC
     workspace/RecipeProvider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/workspace/WorkspaceStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/SourceAnalysis.cpp
+    analysis/SourceCore.cpp
+    analysis/FcsReader.cpp
     analysis/PopulationPlot.cpp
     analysis/PopulationScatter.cpp
     analysis/ParameterTransforms.cpp
     analysis/AnalysisComparison.cpp
+    analysis/AnalysisInference.cpp
     analysis/AnalysisReports.cpp
     analysis/AnalysisOverlay.cpp
     analysis/AnalysisLibrary.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationGraph.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/Population.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationStatistics.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationGates.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/analysis/ColumnarEvaluation.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/RecordingColumns.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewSession.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/OverlayCompose.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ObjectCoordinates.cpp

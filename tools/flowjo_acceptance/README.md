@@ -146,3 +146,20 @@ On the P5 host select `-Dfmt_DIR=/usr/lib/x86_64-linux-gnu/cmake/fmt` to pair th
 system spdlog with system fmt rather than the unrelated /usr/local installation.
 The existing analysis CI now enables this host target and all real worker/scheduler
 tests, including seeded embedding; that updated remote CI has not yet been run.
+
+## Native reference acceptance (F-2)
+
+`verify_reference.py` above recounts the reference in Python. The same gate now
+runs through MIB's own code: the native FCS reader (`FcsReader.cpp`), the
+F-source/2 handle and the columnar population evaluator, with both 4,096-bin
+exports compared bin by bin:
+
+```sh
+MIB_FLOWJO_REFERENCE_ROOT=/path/to/flowjo-windows-10.8.1 \
+  ctest --test-dir build/linux-backend -R analysis.flowjo_reference --output-on-failure
+```
+
+Without the variable (or the fixture) the test exits 77 and CTest reports it as
+**Skipped**, never Passed. Optional independent comparator (never production,
+ADR 0016): set `MIB_FCS_COMPARATOR_PYTHON` to a Python with `fcsparser` or
+`flowio` installed; `fcs_comparator.py` then recounts the rectangle.

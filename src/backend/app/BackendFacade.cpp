@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include "backend/analysis/AnalysisHost.h"
+#include "backend/analysis/FcsReader.h"
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
 #include "backend/app/BackendFacade.h"
@@ -4788,10 +4789,16 @@ std::string backend::bridge::BackendFacade::analysisRequestJson(const std::strin
             if (descriptor.size() != 1) throw std::invalid_argument("Unexpected live source fields");
             return backend::analysis::freezeEvidence(kind == "live-run" ? backend_.processing().runLiveEvidence() : backend_.processing().liveEvidence(), kind);
         }
+        // F-2 (F15): an FCS 3.0/3.1 file through the native reader, as a columnar handle.
+        if (kind == "fcs") return backend::analysis::fcsSourceDescriptor(descriptor);
         if (kind != "stored" && kind != "run-archive") throw std::invalid_argument("Unsupported source kind");
         if (descriptor.size() != 2) throw std::invalid_argument("Expected source kind and path");
-        const auto response = Json::parse(analyzePopulationJson(Json{{"expectedPath", descriptor.at("path")},
-            {"feature", "area"}, {"minimum", nullptr}, {"maximum", nullptr}, {"snapshot", true}, {"sourceKind", kind}}.dump()));
+        // F-1b: a stored file is a columnar handle (F-source/2, no rows); the
+        // run archive stays an inline F-source/1 (bounded at 4 MiB).
+        Json lookup{{"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr},
+                    {"maximum", nullptr}, {"snapshot", true}, {"sourceKind", kind}};
+        if (kind == "stored") lookup["columnar"] = true;
+        const auto response = Json::parse(analyzePopulationJson(lookup.dump()));
         if (!response.value("ok", false)) throw std::invalid_argument(response.value("message", "Source refused"));
         return response.at("source");
     };
@@ -4811,5 +4818,13 @@ std::string backend::bridge::BackendFacade::analysisRequestJson(const std::strin
         }
         return Json{{"status", "unavailable"}, {"message", "Exact method revision is not in the verified registry cache"}};
     };
-    return backend::analysis::analysisRequest(backend_.sqlite(), request, write, source, method);
+    auto columns = [this](const Json& source, const backend::analysis::ColumnVisitor& use) {
+        if (source.value("scope", std::string{}) == "fcs") return backend::analysis::lendFcsColumns(source, use);
+        if (source.value("scope", std::string{}) != "stored")
+            throw std::invalid_argument("This host lends columns for stored experiment files only");
+        if (!reviewJobs_) throw std::invalid_argument("Review is unavailable in this host");
+        reviewJobs_->withRecordingColumns(source.at("path").get<std::string>(),
+                                          source.at("fingerprint").get<std::string>(), use);
+    };
+    return backend::analysis::analysisRequest(backend_.sqlite(), request, write, source, method, columns);
 }

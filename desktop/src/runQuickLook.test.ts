@@ -1,4 +1,5 @@
 // Bridge ABI 44 / review ABI 6 (#716 A7a): the run quick look client against a mocked transport.
+// Pins the current contract versions (bridge ABI 47, review ABI 10; #808 F-2 refreshed the stale 46 / 8).
 // The golden reply (crates/mib-bridge/contract/fixtures/run-quick-look-v1.json, the review bridge's
 // output on the parity fixture, pinned by crates/mib-bridge/tests/review_bridge.rs) decodes as the
 // backend sent it; anything off contract is rejected; a malformed request never reaches the
@@ -20,7 +21,7 @@ const reference = { path: "/data/runs/fixture_3.h5", run_id: "33333333-3333-4333
 
 it("pins the contract's versions and bounds", () => {
   expect(BRIDGE_ABI_VERSION).toBe(50);
-  expect(REVIEW_ABI_VERSION).toBe(9);
+  expect(REVIEW_ABI_VERSION).toBe(10);
   expect(RUN_QUICK_LOOK).toEqual({ max_paths: 32, path_max_bytes: 4096, run_id_max_bytes: 128, overlay_max_points: 2000,
     low_n_valid_rows: 200, cache_entries: 64, schema_version: 1 });
   expect(REVIEW_RUN_STATISTICS).toEqual({ max_paths: 32, path_max_bytes: 4096 });

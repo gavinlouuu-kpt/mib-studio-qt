@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 #include <unordered_set>
 
 namespace backend::analysis {
@@ -55,9 +56,13 @@ evaluatePlan(const PopulationPlan& plan, const Membership& universe, const Membe
     const auto order = validatePlan(plan);
     if (universe.revision.plan != plan.revision)
         throw std::invalid_argument("Plan revision does not match snapshot inputs");
-    if (universe.rows.size() > 10000 ||
-        (!plan.nodes.empty() && universe.rows.size() > 1000000 / plan.nodes.size()))
-        throw std::invalid_argument("Population evaluation budget exceeded");
+    if (universe.rows.size() > kMaxKeyedEvaluationEvents ||
+        (!plan.nodes.empty() && universe.rows.size() > kMaxKeyedNodeEvents / plan.nodes.size()))
+        throw std::invalid_argument(
+            "Keyed population evaluation exceeds its explicit bound (" +
+            std::to_string(kMaxKeyedEvaluationEvents) + " events, " +
+            std::to_string(kMaxKeyedNodeEvents) +
+            " node-events); full recordings use the columnar evaluator");
     std::vector<std::string> keys;
     for (const auto& row : universe.rows)
         keys.push_back(row.key);

@@ -61,7 +61,10 @@ Read `{"action":"snapshot","source":...}` returns `source` (`F-source/1`).
 Source descriptors: `{kind:"stored",path}`, `{kind:"run-archive",path}`;
 Studio also `{kind:"live-run"}` and `{kind:"live-epoch"}`.
 Stored files must already be open through the normal Review path. Full-file SHA256
-is fenced against opened size/write-time, capped at 64 MiB and 10,000 observations.
+is streamed (any file size; cached per open generation) and fenced against opened
+size/write-time. F-source/1 carries every event as a JSON row and is bounded at
+100,000 events with an explicit refusal (F-1 replaced the 64 MiB / 10,000 caps);
+larger recordings are analysed by the columnar `review-population/1` path below.
 No pathname-only or partial fingerprint. Native E leases fence reads; E batch
 watermark is exclusive and distinct from event ordinal. Live/run-archive projection
 fingerprints exclude access scope/finalized flag and preserve exact rows/coverage.
@@ -85,7 +88,7 @@ targetRevision; original revisions remain immutable.
 
 ## Pinned gallery
 
-Read action `gallery` takes the evaluate fields plus unsigned `offset` (0..10000).
+Read action `gallery` takes the evaluate fields plus unsigned `offset` (any; past the end is empty).
 It returns up to 12 selected exact keys, source fingerprint, plan/revision and
 pixels (64×64 grayscale bytes) or null. Stored images are read under the existing
 Review lane/session locks after another exact fingerprint check. Source changes
@@ -93,6 +96,12 @@ refuse the whole request. E live/archive rows explicitly return unavailable imag
 event ordinals are **not** saved image indices and E supplies no retained locator.
 
 ## Cytoflow application jobs
+
+**Role (ADR 0016, 2026-11-02).** This job is a parity comparator, not the production
+authority: the native evaluator (`PopulationGraph`, `ColumnarEvaluation`) owns every
+population, including polygons. Cytoflow 1.3.2 runs only in CI parity tests and
+qualification runs; installers do not bundle it. The job remains for the t-SNE
+embedding below (scikit-learn 1.9.1, the one worker algorithm in the F ledger).
 
 Transport `analysis_job` (Review `review_analysis_job`) accepts:
 
@@ -543,7 +552,7 @@ Live images use `freezeEvidence`'s lease callback, verify the evaluated projecti
 fingerprint, read through `ProcessingService::readRunEvidenceImage`, and fence the
 lease again before release. Advancing sources can require refresh. Archive images
 use the normally opened Review reader under its mutex and additionally pin the full
-file SHA256 before/after reading (64 MiB file cap). A scalar archive fingerprint is
+file SHA256 before/after reading (streamed, any file size). A scalar archive fingerprint is
 not an image-content fingerprint. Gallery results expose `fileFingerprint`.
 
 Per-image statuses preserve available/missing/evicted/refused. Epoch-only and
@@ -575,3 +584,34 @@ JS normalization of 5.0 to5 can legitimately fail their checksum. No checksum
 is recomputed or weakened to conceal a transport mutation. Batch references remain
 references-only, not imported scientific authority. The scalar/manifest hash format
 is unchanged. Reproduce via `tools/flowjo_acceptance/manifest-transport-parity.mjs`.
+
+## Full-recording columnar evaluation (F-1, review ABI 10)
+
+`review_analyze_population` (Studio `analyze_population`) evaluates the whole open
+experiment file natively. `RecordingColumns` reads area, deformability and
+youngsModulus from `/valid_frames/metadata` then `/invalid_frames/metadata` in
+bounded chunks (`Hdf5Service::readMetadataColumns`, 65,536 events per read);
+`evaluateColumns` evaluates the population DAG chunk by chunk with the unchanged
+tri-state composition (node = parent AND eligibility AND predicate); each
+population is a two-bit-per-event bitset (`TriStateBits`) in a `MembershipSet`
+keyed to the source identity (open generation, or the streamed SHA-256 with
+`fingerprint: true`) and the graph's content hash, cached for reuse (4 entries).
+The same compiler (`PopulationGates`) and evaluator serve F-source/1 evaluation, so
+both hosts share one authority; `analysis.columnar` proves columnar == keyed at
+every node, chunk size and QC pattern.
+
+Only bounded results cross the bridge: counts, exact statistics (n, mean, median,
+type-7 p05/p25/p75/p95, SD, CV, geometric mean; the same `reduceMeasuredValues`
+function, over every selected finite value — no sketch), a `populations` table,
+optional `histogram` {minimum, maximum, bins ≤256, feature?}, optional decimated
+`scatter` {x, y, maxPoints ≤65,536} (deterministic stride, display only), a page of
+event references (`page` {offset, limit ≤1000, membership}; `rows` is that page,
+default 256) and the 12-image gallery at any selected offset.
+
+Resource bounds (refusal names the bound, never sampling): ≤4,294,967,295 events;
+all bitsets of one evaluation ≤256 MiB (2 bits × events × populations); ≤2^26
+selected values held for exact order statistics (512 MiB); per-chunk working set
+≈ 65,536 × (48 B HDF5 row + 8 B per column + 1 B per population). Evidence:
+`review.population_scale` (300,000 events, production writer schema, file > 64 MiB)
+— see the F-1 entry in the capability ledger.
+

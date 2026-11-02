@@ -833,4 +833,17 @@ choose stored area/deformability and inclusive optional bounds. The real backend
 returns both-set membership counts and exact raw-value reductions. Results clear
 on source/gate changes; late replies cannot replace a new source. Limits and
 legacy missingness are explicit; no saved strategy or live/polygon UI claim.
+Since review ABI 10 (#808 F-1) `review_analyze_population` evaluates the whole
+file natively in chunks (no 10,000-event cap) and returns only bounded results:
+`rows` is a page (`page` {offset, limit ≤1000, membership}), plus `populations`,
+optional `histogram` / decimated `scatter`, `membershipKey` and, with
+`fingerprint: true`, the streamed full-file SHA-256 (no 64 MiB cap). The view
+does not read `rows`, so its display is unchanged apart from the limits text.
 See [[../services/AnalysisWorker]].
+Since #808 F-1b (review ABI 10, additive) the Review analysis workspace resolves a
+stored source to an F-source/2 columnar handle (`columnar: true`) and lends its
+chunked columns through `ReviewJobs::withRecordingColumns`, so saved strategies,
+reports, plots, comparisons and overlays run on the full file; evaluation replies
+carry no per-event `rows` for stored files (the UI reads only the binding fields
+of `snapshot`). Browse metadata is paged in `ReviewSession` (open no longer holds
+every row).

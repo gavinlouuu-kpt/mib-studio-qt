@@ -2,6 +2,13 @@
 
 Status: native composition and bounded real-engine worker implemented; full integration incomplete. No F capability is fully accepted.
 
+**Engine (2026-11-02, decision D3, ADR 0016 `docs/decisions/0016-native-analysis-authority.md`).**
+The native C++ analysis code is the single production authority for F02–F11 and F13 in
+every host. Cytoflow 1.3.2 and FlowKit 1.3.2 are CI comparators, not bundled. The
+supervised worker runs only t-SNE (F07) with scikit-learn 1.9.1 (engine id
+`sklearn-tsne-1.9.1`, checked by `crates/mib-analysis-worker`). Rows below that say
+"real Cytoflow" describe parity evidence, not the production path. See the F-3 section.
+
 Backend evidence base: `0a58e201`; UI/design base: `71337496` (freshly fetched branch heads, not a reset). Paths under `tests/review/` unless otherwise shown. Test names below are inspected existing evidence, **not tests rerun in this audit**. Original board IDs and research hashes: [catalogue](evidence-catalogue.json). Each FJ maps to the corresponding #523 guide/research package; board coverage supplements rather than replaces FJ requirements.
 
 | ID / research | Original boards | Existing code / PR / test | Disposition | Owned implementation package | Remaining acceptance |
@@ -117,7 +124,7 @@ its absent-feature wording. No aggregate F01–F16 acceptance is claimed.
 
 | Rows | Current implemented evidence | Remaining implementation/qualification |
 |---|---|---|
-| F01 | Verified SHA256 relink (10 gates/images unchanged), retained-source labels/tags/groups library, duplicate detection, unit provenance | Fingerprinting beyond 64MiB; broader metadata workflow |
+| F01 | Verified SHA256 relink (10 gates/images unchanged), retained-source labels/tags/groups library, duplicate detection, unit provenance; streamed full-file SHA-256 at any size (F-1: 64 MiB cap removed, >64 MiB file proven) | Relink of a >64 MiB file through the workspace path (its JSON source is bounded at 100k events); asynchronous/cancellable fingerprint UI; broader metadata workflow |
 | F02 | Durable attributed manual tri-state QC, native eligibility/job propagation | Qualified automated scientific QC and biological validation |
 | F03 | Ordered linear/asinh/log10 derived columns, exact units/domain/null semantics, shared worker/native fingerprint | Compensation controls/estimation, Logicle, applicable fluorescence channels |
 | F04 | Persisted interval/polygon/ellipse/quadrant/Boolean DAG, rectangles, forms/scatter gestures, revisions and overrides | Rotated/fitted gates and full rendered interaction qualification |
@@ -248,3 +255,215 @@ The historical "E locator absent" gap is superseded by selective provider pin
 images/masks. Live lease fencing and separate archive full-file fingerprints guard
 pixel reads; epoch/retained scalar snapshots remain explicitly unavailable. This
 narrows F06/F13, not complete retention, hardware or full scientific qualification.
+
+### F-1 full-recording scale (2026-11-02, `claude/808-f1-full-scale`)
+
+Goals advanced: F01, F04, F05, F08, F16. Evidence class: **real backend, synthetic
+full-size MIB-schema file** (production `Hdf5Service` writer, imageless PL-style
+rows), headless native ctest. No real-instrument recording was available (the only
+MIB HDF5 asset in `env/assets.json`, `z-adjustment-50v`, is private), so no
+real-recording or hardware evidence is claimed.
+
+- **Removed caps.** 10,000 events (PopulationGraph, PopulationStatistics,
+  SourceAnalysis evaluate/freeze/archive, ParameterTransforms, ReviewSession,
+  gallery offsets) and 64 MiB (ReviewSession stored/run-archive fingerprints).
+- **New explicit bounds.** Columnar: ≤2^32−1 events, bitsets ≤256 MiB, exact
+  order statistics ≤2^26 values, 65,536-event chunks. Keyed (string-key) path:
+  ≤1,000,000 events / 16,777,216 node-events. F-source/1 JSON rows: ≤100,000
+  events. Each refusal names its bound.
+- **Mechanism.** `RecordingColumns` (chunked HDF5 columns) → `evaluateColumns`
+  (tri-state DAG per chunk) → `TriStateBits` membership keyed to source identity +
+  graph revision → `columnStatistics` / `columnHistogram` / `columnScatter` /
+  bounded event-reference pages. F-source/1 evaluation uses the same evaluator.
+- **Proof.** `review.population_scale`: 300,000 events (240,000 valid + 60,000
+  invalid), file > 64 MiB; interval + polygon + Boolean (AND/OR/NOT, parents,
+  missing values) populations exact against an independent oracle at every node;
+  exact n/mean/median/p05/p95; histogram sums to n; decimated scatter bounded;
+  selected page and a gallery page at offset 120,612 (of 120,632 selected) match
+  oracle ranks; membership reused; streamed SHA-256 equals an independent hash;
+  HDF5 reads never exceed the 4,096-event chunk in the direct run. Measured
+  (Release, Linux): output 120,632 selected / 5,559 unknown / 173,809 excluded;
+  membership 450,048 bytes for 6 populations; 5 chunks of 65,536; analysis peak
+  RSS growth 1.9 MiB (VmHWM after clear_refs; asserted < 64 MiB). Opening the
+  file in ReviewSession costs +174 MiB RSS for the per-row browse metadata,
+  which the analysis does not use. `analysis.columnar`:
+  columnar == keyed `evaluatePlan` at every node, chunk size 1/7/64/65,536 and QC
+  pattern; statistics bit-identical; bounds refuse.
+- **Remaining (not F-1 acceptance of the rows).** The workspace path
+  (`AnalysisHost` evaluate/report/plot/observations/jobs) still transports
+  sources as F-source/1 JSON rows, now bounded at 100,000 events: a columnar
+  source handle for saved strategies, reports and worker jobs is the next F-1
+  step. `ReviewSession::open` still materializes per-row browse metadata
+  (`ProcessedFrame` per event) for the review table. FlowJo reference
+  229,585 / 190,705 through `PopulationGraph` needs F-2 (FCS import, F15).
+  No real-recording run; F16 worker memory bound at full size unproven.
+
+
+### F-1b workspace path at full scale (2026-11-02, `claude/808-f1b-f2`)
+
+Goals advanced: F01, F04, F05, F08, F12, F16. Evidence class: **real backend,
+synthetic full-size MIB-schema files** (production `Hdf5Service` writer), headless
+native ctest. No real-instrument recording, no hardware.
+
+- **Mechanism.** Stored files resolve to an **F-source/2 columnar handle**
+  (descriptor, no rows; same fingerprint/sourceKey/parameters/scope as before, so
+  saved bindings stay valid). `AnalysisHost` takes a `ColumnResolver`; both hosts
+  lend `RecordingColumns` through `ReviewJobs::withRecordingColumns` (session
+  lock, coverage check, full-file SHA-256 re-verified; a non-open file through a
+  short-lived reader). One core (`SourceCore`) serves row and columnar sources:
+  evaluate, report (one membership pass), plot, scatter (bounded heap, identical
+  sample), gallery (bitset rank lookup), overlay, comparison, library, report
+  batches. `observations` (≤65,536 events) and `jobInput` (≤100,000) materialize
+  rows and refuse above, naming the bound. Retained stored sources are small
+  file-pinned handles; a changed file is refused.
+- **Browse memory.** `ReviewSession` no longer holds a `ProcessedFrame` per row:
+  counts at open, 1,024-row pages (8 cached), streamed passes for scatter/track
+  rows. Open RSS: **+7.9 MiB at 300,000 events** (was +174 MiB), +7.1 MiB at
+  255,000 (asserted < 24 MiB, after `malloc_trim`).
+- **Proof.** `review.workspace_scale`: rows vs columnar parity (evaluation with
+  a log10 transform and good-only QC, density histogram, seeded scatter) on 2,200
+  events; on 255,000 (A) and 260,000 (B) events a saved interval + polygon +
+  Boolean strategy's 4-population report (selected/unknown/excluded, n, mean,
+  median, p05, p95, denominator), 48-bin plot and a gallery at the last selected
+  ranks equal an independent oracle; the strategy applied to B, both retained,
+  and an independent-design comparison (A not open) gives oracle means
+  133.778052045 / 133.635478269 and their difference. Peak RSS growth of the
+  whole save → report → plot → gallery → retain → apply → compare sequence:
+  **15.9 MiB** (VmHWM after clear_refs; asserted < 64 MiB). Each recording is
+  lent once per comparison. `review.population_scale` additionally asserts the
+  open bound. Bridge: `review_bridge` source-bound strategy test now runs on the
+  columnar handle.
+- **Remaining.** Worker jobs (`jobInput`, Cytoflow parity/t-SNE) still take rows
+  ≤100,000 events (F16 memory bound at full size unproven); observation export is
+  bounded at 65,536 events; run-archive and live sources stay inline (≤100k by
+  design); no real-recording run; the desktop view shows no FCS/columnar-specific
+  affordance yet.
+
+### F-2 FCS import feeding the native evaluator (2026-11-02, `claude/808-f1b-f2`)
+
+Goals advanced: F15 (read side), F04. Evidence class: **real backend, synthetic
+FCS files written by the test**; the FlowJo reference acceptance is implemented
+but **was not run here** (private fixture absent: `analysis.flowjo_reference`
+reports SKIPPED, exit 77, never a pass).
+
+- **Mechanism.** Native `FcsReader` (FCS 3.0/3.1 HEADER, TEXT with delimiter
+  escapes, supplemental TEXT, `$BEGINDATA/$ENDDATA`; list mode F/D/I with
+  `$BYTEORD`, `$PnB`, `$PnR` masking, `$PnE` log decoding, optional `$PnG`) →
+  `FcsColumns` (chunked DATA reads) → F-source/2 handle (scope `fcs`, full-file
+  SHA-256, explicit units, `import` block listing unapplied constructs) → the same
+  `ColumnarEvaluation` / `AnalysisHost` path as MIB recordings. Both hosts
+  resolve `{kind: fcs, path}` and lend `scope: fcs`. No Python in the path.
+- **Unsupported (refused):** FCS2.0, `$MODE` C/U, `$DATATYPE` A, packed integer
+  widths, mixed byte orders, F/D width mismatch, truncated DATA. **Reported, not
+  applied:** compensation (F03), `$PnCALIBRATION`, `$PnD`, `$TIMESTEP`, `$PnE` on
+  float data, extra data sets, ANALYSIS segment, `$PnG` unless `applyGain`.
+- **Proof.** `analysis.fcs_reader`: tokenizer escapes (keywords and values, `|`
+  and form-feed delimiters, odd/duplicate refusal); F big-endian (250,000 events,
+  lowercase keywords), D little-endian with DATA offsets only in TEXT, I with
+  8/16/32-bit, masking, log decoding and gain — every value equals the
+  independent writer's; seven refusals; a rectangle gate over 250,000 events
+  (62,507 selected) through `evaluateSource` and a saved strategy report through
+  `AnalysisHost` equal the oracle; a changed file is refused. Optional comparator
+  `tools/flowjo_acceptance/fcs_comparator.py` (fcsparser 0.2.8, else flowio;
+  both pip-installable here) agreed with the native reader on event count and sum
+  when `MIB_FCS_COMPARATOR_PYTHON` pointed at a scratch venv; it is not in the
+  production path or the default CI run.
+- **Reference acceptance (pending fixture).** `analysis.flowjo_reference` with
+  `MIB_FLOWJO_REFERENCE_ROOT`: SHA-256 pins, 229,585 events, 190,705 in the
+  documented rectangle through PopulationGraph semantics, zero boundary events,
+  both 4,096-bin exports compared bin by bin (`ResourceBounds::maxHistogramBins`
+  raised for this tool only), optional comparator recount.
+- **Review fixes (#823).** `$PnR` masking is closed-form and bounded by the bit
+  width (a 64-bit `$PnR` in (2^63, 2^64) hung the reader); "no mask" is
+  `std::nullopt`, so `$PnR` 1 masks to 0 per FCS 3.1. `lendFcsColumns` fences the
+  file's size and write time before and after the scan; the descriptor's
+  `retention` text no longer claims a per-evaluation re-hash (the SHA-256 is
+  recomputed only when size or write time changed; a rewrite preserving both is
+  not detected). Columnar sources take up to 1,024 parameters (was 64, while the
+  reader accepted 1,024), with lazy columns. Proof: `analysis.fcs_hardening`.
+- **Remaining.** Run the reference on a host with the fixture; FCS export of
+  units/transforms and GatingML (F-6); compensation/Logicle (F03); `$TIMESTEP`
+  scaling; a review-bridge test of the `fcs` kind; a desktop affordance for
+  choosing an FCS source.
+
+### F-4 Comparison and concentration-response fits (2026-11-02, `claude/808-f4-comparison-fits`)
+
+Goals advanced: F09, and the fit authority behind I09/I10. Evidence class:
+**real backend (AnalysisHost, pinned revisions, exact statistics) on synthetic
+sources; independent numbers from scipy 1.18.1**.
+
+- **Mechanism.** `AnalysisInference.cpp` (pure C++: incomplete beta/gamma,
+  t/F/chi-square/normal, tests, Levenberg-Marquardt 4PL/3PL) under
+  `compareSpec` / `fitSpec` in `AnalysisComparison.cpp`; host read actions
+  `comparisonSpec` and `concentrationFit`; `evaluate` gains the optional
+  `metric {population, parameter}`. Results bind each unit value to its
+  planId, revision, graphFingerprint and sourceFingerprint and carry a
+  contentHash. Review ABI stays 10 (additive to the unmerged contract).
+- **Declared inputs.** Experimental unit per source (shared units in a group
+  are technical replicates, averaged), groups (first is the reference), design
+  unpaired or paired by unit id, inference none/parametric/rank/both,
+  confidence level; fits: model 4PL or 3PL (hill 1), concentration unit, scale
+  log10 or linear, weighting none or inverse-variance of replicate units,
+  design independent-units.
+- **Compatibility.** Excluded with reasons: different parameters or units,
+  different parameter preprocessing, different processing core/contract,
+  calibration or E-LUT identity (source provenance; unknown matches only
+  unknown), missing metric (refused evaluation, absent population, no finite
+  statistic), repeated source fingerprint; fits also exclude other
+  concentration units and concentrations <= 0.
+- **Rules.** >= 3 independent units per group (paired: complete pairs);
+  otherwise `insufficient`, no test, no p-value. Fits: no fit with <= p unit
+  points, < p distinct concentrations, constant response or unweighable
+  replicates; suspect when not converged, EC50 outside the tested range, EC50
+  CI wider than the tested range, < 5 concentrations, a parameter at a bound,
+  or a singular covariance.
+- **Proof.** `analysis.inference` (Welch on unequal variances, Mann-Whitney
+  with ties and exact, paired t, Wilcoxon exact (Darwin) and with ties/zeros,
+  ANOVA and Kruskal-Wallis on the McDonald mussel data, 4PL unweighted /
+  weighted / 3PL / linear-scale EC50 vs `curve_fit`, suspect, insufficient);
+  `analysis.comparison_spec` (the same numbers through `AnalysisHost`, seven
+  exclusion reasons, insufficient units, technical replicates, fit unit
+  exclusion, suspect and insufficient fits). Generator:
+  `tools/analysis_inference/generate_reference.py` (outside production).
+- **Remaining.** CIs for rank shifts and ANOVA effect sizes; repeated measures
+  (paired > 2 groups, dose series within one unit) are refused, not modelled;
+  no multiplicity correction; the I-6 view.
+- **Review fixes (#824).** Degenerate inputs (zero within-group or
+  paired-difference variance, every paired difference zero, all values tied, or a
+  non-finite intermediate near 1e200 / 1e308) give test `status: undefined` with
+  `undefinedReason` and null statistic, p-value and CI, never p = 0 or 1; the
+  comparison is `undefined` only when no requested test is defined. Fit suspect
+  flags no longer depend on the reporting scale (the CI-width rule uses the log10
+  interval; a linear Wald CI reaching <= 0 is flagged), a damping blow-up is
+  `termination: stalled`, inverse-variance weights from < 3 replicates are
+  flagged, and one confidence rule (0.5, 0.999] covers comparisons and fits.
+  Proof: `analysis.inference` (n = 3, effect sizes and Hodges-Lehmann vs
+  scipy/numpy, degenerate and overflow cases, bounded hill `atBound`, the
+  linear-scale review dataset) and `analysis.comparison_spec`.
+
+### F-3 Engine decision applied (2026-11-02, `claude/808-f4-comparison-fits`)
+
+Decision D3 / ADR 0016 recorded in the F ledger and design docs (this ledger,
+[contracts](contracts.md), [production API](production-api.md),
+[acceptance handoff](acceptance-handoff.md)) and the AnalysisWorker vault note.
+
+| Role | Implementation | Version | Where it runs |
+|---|---|---|---|
+| Production authority (populations, statistics, transforms, overlays, comparison, fits, reports) | native C++ `src/backend/analysis/` | this repository | every host (Studio, Review, I views) |
+| Supervised worker job (F07 t-SNE only) | scikit-learn `TSNE` | 1.9.1 (`sklearn-tsne-1.9.1`) | `crates/mib-analysis-worker`; results bound to that runtime |
+| Polygon parity comparator | Cytoflow `PolygonOp` | 1.3.2 | CI (`analysis-ci.yml`, ignored tests), qualification; not bundled |
+| Rectangle / FCS comparator | FlowKit `RectangleGate` on its own `Sample` parser (flowio) | FlowKit 1.3.2, flowio 1.4.0 | optional `tools/flowjo_acceptance/fcs_comparator.py --flowkit` |
+| Inference reference values | scipy | 1.18.1 | `tools/analysis_inference/generate_reference.py` (offline) |
+
+- **FlowKit comparator.** `fcs_comparator.py --rect ... --flowkit` gates the
+  rectangle with FlowKit's GatingML gate. `analysis.fcs_reader`, with
+  `MIB_FCS_COMPARATOR_PYTHON` and `MIB_FCS_COMPARATOR_FLOWKIT` set, compares
+  both the comparator's own count and FlowKit's count with the native gate on
+  the synthetic 10,000-event FCS file: 2,525 = 2,525 = 2,525 here (scratch
+  venv). GatingML maxima are exclusive and MIB's inclusive, so the fixture has
+  no event on a bound. The FlowJo reference run with FlowKit is still pending
+  the private fixture.
+- **Remaining.** Run FlowKit on the FlowJo reference fixture; add the FlowKit
+  comparator to a CI lane; the distribution review for scikit-learn (the only
+  worker dependency left in a production path).
+

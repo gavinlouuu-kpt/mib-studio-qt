@@ -103,7 +103,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   return <section aria-label="Source-bound analysis workspace">
     <h4>Source-bound backend strategies</h4>
     <details><summary>Discover saved strategies and snapshots</summary><AnalysisCatalog read={read} disabled={disabled||busy} kind="strategy"/><AnalysisCatalog read={read} disabled={disabled||busy} kind="source"/></details>
-    <p>Strategies are immutable revisions in the application metadata database. Saving does not alter a recording or apply a hardware method. Stored-file fingerprints are limited to 64 MiB; larger files are explicitly refused.</p>
+    <p>Strategies are immutable revisions in the application metadata database. Saving does not alter a recording or apply a hardware method. Stored-file fingerprints are a streamed SHA-256 of the whole file, at any size. Saved strategies carry sources as JSON rows, bounded at 100,000 events; larger recordings are refused here (never sampled) and analysed natively in Population analysis.</p>
     <fieldset disabled={disabled || busy}>
       <label>Analysis source <select aria-label="Strategy source" value={kind} onChange={e => setKind(e.target.value)}>
         <option value="retained">Retained immutable snapshot</option><option value="stored">Stored observations</option><option value="run-archive">Archived E run events</option>

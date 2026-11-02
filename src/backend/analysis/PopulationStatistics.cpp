@@ -7,8 +7,10 @@
 namespace backend::analysis {
 PopulationStatistics populationStatistics(const Membership& population,
                                           const MeasurementColumn& column) {
-    if (population.rows.size() > 10000 || column.rows.size() > 10000)
-        throw std::invalid_argument("Statistics event budget exceeded");
+    if (population.rows.size() > kMaxKeyedEvaluationEvents ||
+        column.rows.size() > kMaxKeyedEvaluationEvents)
+        throw std::invalid_argument(
+            "Keyed statistics exceed the explicit keyed-row bound; use the columnar evaluator");
     if (column.feature.empty() || column.unit.empty() || !(population.revision == column.revision))
         throw std::invalid_argument("Unqualified measurement column");
     std::vector<std::string> keys;
@@ -41,8 +43,12 @@ PopulationStatistics populationStatistics(const Membership& population,
         }
         values.push_back(*value);
     }
+    reduceMeasuredValues(values, result);
+    return result;
+}
+void reduceMeasuredValues(std::vector<double>& values, PopulationStatistics& result) {
     result.measured = values.size();
-    if (values.empty()) return result;
+    if (values.empty()) return;
     std::sort(values.begin(), values.end());
     result.minimum = values.front();
     result.maximum = values.back();
@@ -102,7 +108,5 @@ PopulationStatistics populationStatistics(const Membership& population,
             finite(std::clamp(std::exp(logs), static_cast<long double>(values.front()),
                               static_cast<long double>(values.back())));
     }
-
-    return result;
 }
 } // namespace backend::analysis
