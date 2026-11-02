@@ -1,4 +1,5 @@
 #include "backend/camera/features/FakeNodeMap.h"
+#include "backend/camera/features/FeatureTree.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -7,6 +8,11 @@ namespace camera::features {
 
 namespace {
 bool sameType(const Value& a, const Value& b) { return a.index() == b.index(); }
+// A module the fixture does not define is absent, not an empty node map.
+[[noreturn]] void absent(Module module) {
+    throw ModuleAbsent(std::string("Module ") + toString(module) +
+                       " is not present in this node map.");
+}
 } // namespace
 
 void FakeNodeMap::addCategory(Module module, const std::string& name, NodeInfo info,
@@ -149,7 +155,8 @@ void FakeNodeMap::write(const Address& address, const Value& value) {
 
 std::vector<std::string> FakeNodeMap::categories(Module module, bool) {
     const auto m = modules_.find(module);
-    return m == modules_.end() ? std::vector<std::string>{} : m->second.categoryOrder;
+    if (m == modules_.end()) absent(module);
+    return m->second.categoryOrder;
 }
 
 std::vector<std::string> FakeNodeMap::categoriesOf(Module module, const std::string& category,
@@ -173,7 +180,7 @@ std::vector<std::string> FakeNodeMap::featuresOf(Module module, const std::strin
 
 std::vector<std::string> FakeNodeMap::features(Module module, bool availableOnly) {
     const auto m = modules_.find(module);
-    if (m == modules_.end()) return {};
+    if (m == modules_.end()) absent(module);
     std::vector<std::string> out;
     for (const auto& name : m->second.featureOrder)
         if (!availableOnly || available(module, m->second.nodes.at(name))) out.push_back(name);

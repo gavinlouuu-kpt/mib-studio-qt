@@ -16,8 +16,10 @@ namespace camera::features {
 // Service-side access to the current camera session's port. The implementation
 // (CaptureService) holds its session guard for the whole call, builds the
 // CurrentSession (token = source + capture generation + capability revision)
-// and stores back any revision `fn` advances.
-enum class Access { Ran, NoSession, Unsupported };
+// and stores back any revision `fn` advances. Refused: the guard declined the
+// operation before touching the device (the sort trigger is armed, a run is in
+// progress) and `reason` says why; replies carry outcome "refused".
+enum class Access { Ran, NoSession, Unsupported, Refused };
 class GuardedPort {
 public:
     virtual ~GuardedPort() = default;

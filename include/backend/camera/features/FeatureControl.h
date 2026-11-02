@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <variant>
 #include <vector>
@@ -85,6 +86,15 @@ struct NodeInfo {
 // asks for everything the module exposes (access is then per descriptor). A
 // port without introspection keeps canEnumerate() false and the enumeration
 // calls throw, so a caller reports "unsupported", never an empty tree.
+// Thrown by a Port's enumeration calls when the node map has no such module
+// at all, as opposed to a module that is present but failed to enumerate.
+// FeatureTree reports such a module as absent (enumerated false with the
+// reason), never as an empty enumerated tree.
+class ModuleAbsent : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class Port {
 public:
     virtual ~Port() = default;

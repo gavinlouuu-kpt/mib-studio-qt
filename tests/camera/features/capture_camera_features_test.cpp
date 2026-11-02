@@ -105,7 +105,12 @@ int main() {
     const auto& remote = tree["modules"][0];
     MIB_EXPECT(remote["module"] == "remote" && remote["enumerated"] == true, "remote enumerated");
     MIB_EXPECT(!remote["roots"].empty() && !remote["categories"].empty(), "categories present");
-    MIB_EXPECT(tree["modules"][1]["enumerated"] == true, "an empty module is enumerated");
+    // The mock's node map has no stream module: absent, never an empty enumerated tree.
+    const auto& stream = tree["modules"][1];
+    MIB_EXPECT(stream["module"] == "stream" && stream["enumerated"] == false &&
+                   stream["categories"].empty() && stream["features"].empty() &&
+                   stream["reason"].get<std::string>().rfind("Absent: ", 0) == 0,
+               "an absent module is reported absent: " + stream.dump());
 
     // Discover a writable float and a read-only feature from the tree.
     std::string writableFloat, readOnly;
@@ -144,6 +149,50 @@ int main() {
     CapturePort blocked(capture, "recording");
     auto block = parse(features::featureWriteJson(blocked, request(session2, writableFloat, &value).dump()));
     MIB_EXPECT(block["outcome"] == "refused" && block["reason"] == "recording", "write gate");
+
+    // The gate is evaluated under the camera guard: refuseAll refuses every
+    // operation before the port, refuseWrites only writes.
+    {
+        int evaluations = 0;
+        backend::services::CameraFeatureGate gate;
+        gate.refuseAll = [&] {
+            ++evaluations;
+            return std::string("run in progress");
+        };
+        struct GatedPort final : features::GuardedPort {
+            backend::services::CaptureService& c;
+            const backend::services::CameraFeatureGate& g;
+            bool touched{false};
+            GatedPort(backend::services::CaptureService& cs, const backend::services::CameraFeatureGate& gg)
+                : c(cs), g(gg) {}
+            features::Access run(const std::function<void(features::Port&, features::CurrentSession&)>& fn,
+                                 std::string& reason) override {
+                return c.withCameraFeatures(
+                    [&](features::Port& p, features::CurrentSession& s) {
+                        touched = true;
+                        fn(p, s);
+                    },
+                    reason, g);
+            }
+        } gated(capture, gate);
+        auto t = parse(features::featureTreeJson(gated, "{}"));
+        auto r = parse(features::featureReadJson(gated, request(session2, writableFloat).dump()));
+        auto w = parse(features::featureWriteJson(gated, request(session2, writableFloat, &value).dump()));
+        MIB_EXPECT(t["outcome"] == "refused" && t["reason"] == "run in progress" && t["modules"].empty(),
+                   "refuseAll refuses the tree: " + t.dump());
+        MIB_EXPECT(r["outcome"] == "refused" && r["reason"] == "run in progress" && r["readback"].is_null(),
+                   "refuseAll refuses a read: " + r.dump());
+        MIB_EXPECT(w["outcome"] == "refused" && w["reason"] == "run in progress" && w["readback"].is_null(),
+                   "refuseAll refuses a write: " + w.dump());
+        MIB_EXPECT(!gated.touched && evaluations == 3, "the port is never touched; one decision per operation");
+        gate.refuseAll = {};
+        gate.refuseWrites = [] { return std::string("realtime"); };
+        r = parse(features::featureReadJson(gated, request(session2, writableFloat).dump()));
+        w = parse(features::featureWriteJson(gated, request(session2, writableFloat, &value).dump()));
+        MIB_EXPECT(r["outcome"] == "read", "refuseWrites leaves reads open: " + r.dump());
+        MIB_EXPECT(w["outcome"] == "refused" && w["reason"] == "realtime" && w["session"] == session2,
+                   "refuseWrites refuses the write without advancing the revision: " + w.dump());
+    }
 
     auto malformed = parse(features::featureWriteJson(port, R"({"session":{"source":"x"}})"));
     MIB_EXPECT(malformed["outcome"] == "refused", "malformed request refused before the port");

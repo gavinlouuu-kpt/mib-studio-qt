@@ -10,6 +10,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -48,6 +49,17 @@ public:
 
     // Currently bound session generation (0 when no camera is bound).
     uint64_t boundGeneration() const { return boundGeneration_.load(std::memory_order_acquire); }
+
+    // E02 (#806) feature I/O interlock. Runs `fn` while holding pulseMutex_,
+    // the lock the trigger thread holds for a whole pulse (rising edge, busy
+    // wait, falling edge), and only when the trigger is idle: the service is
+    // not running and no camera is bound for trigger output (armed). Otherwise
+    // `fn` is not called, `reason` says why, and false is returned. Because the
+    // decision and `fn` share pulseMutex_, no camera feature operation can run
+    // between a pulse's edges, and none can start while the trigger is armed
+    // (setCamera() and start() take the same lock). Lock order: pulseMutex_
+    // before the capture session guard and the camera's own port guard.
+    bool runWhileTriggerIdle(const std::function<void()>& fn, std::string& reason);
 
     // Called by ProcessingService callback when a frame has target-group ownership.
     // Metadata carries trigger owner identity; one trigger request is expected

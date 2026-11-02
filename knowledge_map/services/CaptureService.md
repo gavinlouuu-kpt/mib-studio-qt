@@ -69,6 +69,7 @@ CaptureLifecycleState waitForState({...}, timeout);
 bool softTriggerActiveCamera();  // one software ACQUISITION trigger on the
                                  // live camera (not the sort pulse)
 // E02 (#806): GenApi access to the active camera under cameraMutex_.
+camera::features::Access withCameraFeatures(fn(Port&, CurrentSession&), reason, const CameraFeatureGate& gate);
 camera::features::Access withCameraFeatures(fn(Port&, CurrentSession&), reason, writeBlockReason);
 ```
 
@@ -82,6 +83,12 @@ restart at 1 in a new backend instance, so the instance is what makes a token fr
 before a backend restart stale (`capture_camera_features_test` constructs a second
 `CaptureService` and shows its first token equals the old one in every other member). `NoSession` without
 an active camera or an open port; `Unsupported` when `featureSession()` is null.
+`CameraFeatureGate` (#806 review) is evaluated under `cameraMutex_`, before the
+port: `refuseAll` returns `Refused` with its reason (the facade: experiment
+Starting/Active/Stopping), `refuseWrites` makes writes unauthorized (frame
+recording, realtime processing, autofocus). The facade calls this inside
+`TriggerService::runWhileTriggerIdle`, so the lock order is `pulseMutex_` →
+`cameraMutex_` → the camera's port guard; nothing takes them the other way.
 
 **`start()` returning true is request acceptance, not hardware readiness.**
 `lifecycleSnapshot().cameraReady` (true only between a successful

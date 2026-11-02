@@ -2,6 +2,7 @@
 #if MIB_HAS_EGRABBER
 #include "backend/camera/egrabber/GenTLHolder.h"
 #include "backend/camera/features/EGrabberFeaturePort.h"
+#include "backend/camera/features/ModuleWriteTracker.h"
 #endif
 
 #include <spdlog/spdlog.h>
@@ -489,20 +490,30 @@ bool EGrabberCamera::withPort(const std::function<void(::camera::features::Port&
                               std::string& reason) {
     // triggerMutex_ pins grabber_ (stop() resets it under this lock) and
     // serializes node-map access with setTriggerOutput(). It is held for one
-    // feature operation only; tree enumeration re-takes it per node so a
-    // pulse is delayed by at most one describe.
+    // feature operation only; tree enumeration re-takes it per node. The
+    // facade refuses feature I/O altogether while the sort trigger is armed
+    // or running (TriggerService::runWhileTriggerIdle), so no operation lands
+    // between a pulse's edges.
     std::lock_guard<std::mutex> triggerLock(triggerMutex_);
     if (!running_.load(std::memory_order_acquire) || !grabber_) {
         reason = "The eGrabber session is not open; start capture first.";
         return false;
     }
-    // Device quirk (Coaxlink): the trigger pulse relies on the Interface
-    // module's LineSelector staying where setTriggerOutput() put it. A typed
-    // write may move it, and selector-scoped reads rely on SDK rollback, so the
-    // next pulse re-selects its line.
-    triggerLineApplied_ = false;
     ::camera::features::EGrabberFeaturePort<EGrabber<CallbackOnDemand>> port(*grabber_);
-    fn(port);
+    // Device quirk (Coaxlink): the trigger pulse relies on the Interface
+    // module's LineSelector staying where setTriggerOutput() put it. Only an
+    // operation that could move it (a write to the Interface module, or a
+    // selector-scoped describe there, which relies on SDK rollback) makes the
+    // next pulse re-select its line; reads elsewhere leave it applied.
+    ::camera::features::ModuleWriteTracker tracked(port, ::camera::features::Module::Interface);
+    struct Reselect {
+        const ::camera::features::ModuleWriteTracker& tracked;
+        bool& applied;
+        ~Reselect() {
+            if (tracked.touched()) applied = false;
+        }
+    } reselect{tracked, triggerLineApplied_};
+    fn(tracked);
     return true;
 }
 

@@ -126,9 +126,10 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    // v49 (#806 E-1/E-2; 47 is the F track's, 48 the I track's) camera_feature_tree /
-    // camera_feature_read / camera_feature_write: the camera's GenApi node map enumerated from the
-    // device, typed access by name under the capture session token.
+    // v49 (#806 E-1/E-2; 47 is the F track's, 48 the I track's) camera_feature_tree_start /
+    // camera_feature_tree_fetch (the tree as a job) / camera_feature_read / camera_feature_write:
+    // the camera's GenApi node map enumerated from the device, typed access by name under the
+    // capture session token, refused while the sort trigger is armed or a run is in progress.
     assert_eq!(ffi::bridge_abi_version(), 49);
 }
 
@@ -152,7 +153,13 @@ fn camera_features_are_described() {
                           // E01 (#806 E-4): the backend instance in the token and in discovery.
                           ("session", "instance"), ("session", "backend restart"),
                           ("commands", "{instance, source, generation"),
-                          ("discovery_instance", "stale"), ("discovery_instance", "MissingSdk")] {
+                          ("discovery_instance", "stale"), ("discovery_instance", "MissingSdk"),
+                          ("guard", "pulseMutex_"), ("guard", "never before taking them"),
+                          ("access", "trigger output is armed or the trigger service is running"),
+                          ("access", "starting, active or stopping"), ("access", "realtime processing"),
+                          ("access", "autofocus"), ("tree", "never an empty enumerated tree"),
+                          ("job", "camera_feature_tree_start"), ("job", "never for the walk"),
+                          ("job", "One enumeration is in flight")] {
         assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "camera_features.{key} mentions {needle}");
     }
 }
@@ -163,8 +170,12 @@ fn camera_features_are_described() {
 fn camera_features_without_a_session() {
     let mut backend = ffi::new_backend_bridge();
     let parse = |s: String| -> serde_json::Value { serde_json::from_str(&s).unwrap() };
-    let tree = parse(backend.pin_mut().camera_feature_tree("{}").to_string());
+    // The tree is a job; before init its reply is already a refusal, and a fetch never blocks.
+    let job = backend.pin_mut().camera_feature_tree_start("{}");
+    let tree = parse(backend.pin_mut().camera_feature_tree_fetch(job).to_string());
     assert_eq!(tree["outcome"], "refused", "{tree}");
+    let unknown = parse(backend.pin_mut().camera_feature_tree_fetch(job + 1000).to_string());
+    assert_eq!(unknown["outcome"], "refused", "an unknown job is refused: {unknown}");
     let read = parse(backend.pin_mut().camera_feature_read("{\"bad\":1}").to_string());
     assert_eq!(read["outcome"], "refused", "{read}");
 }

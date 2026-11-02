@@ -33,6 +33,9 @@ public:
             },
             reason);
         if (access == Access::Unsupported) return fail(Outcome::Unsupported, reason);
+        // Refused before touching the device (trigger armed, a run in progress): the
+        // walk ends with nothing partial, whether or not it had started.
+        if (access == Access::Refused) return fail(Outcome::Refused, reason);
         if (access == Access::NoSession)
             return fail(pinned_ ? Outcome::Stale : Outcome::Refused,
                         pinned_ ? "The camera session closed during enumeration: " + reason
@@ -71,14 +74,22 @@ bool enumerateModule(Walker& walker, Module module, const TreeOptions& options,
     tree.module = module;
     std::vector<std::string> categoryNames;
     std::string moduleError;
+    std::string moduleAbsent;
     if (!walker.step([&](Port& port) {
             try {
                 categoryNames = port.categories(module, options.availableOnly);
+            } catch (const ModuleAbsent& e) {
+                moduleAbsent = e.what();
             } catch (const std::exception& e) {
                 moduleError = e.what();
             }
         }))
         return false;
+    if (!moduleAbsent.empty()) {
+        // Not in this node map at all: absent, never an empty enumerated module.
+        tree.reason = "Absent: " + moduleAbsent;
+        return true;
+    }
     if (!moduleError.empty()) {
         tree.reason = "Categories could not be enumerated: " + moduleError;
         return true;
@@ -131,13 +142,19 @@ bool enumerateModule(Walker& walker, Module module, const TreeOptions& options,
     if (!walker.step([&](Port& port) {
             try {
                 all = port.features(module, options.availableOnly);
+            } catch (const ModuleAbsent& e) {
+                moduleAbsent = e.what();
             } catch (const std::exception& e) {
                 moduleError = e.what();
             }
         }))
         return false;
-    if (!moduleError.empty()) {
-        tree.reason = "Features could not be enumerated: " + moduleError;
+    if (!moduleAbsent.empty() || !moduleError.empty()) {
+        // A module that listed categories but then vanished is not enumerated either.
+        tree.reason = moduleAbsent.empty() ? "Features could not be enumerated: " + moduleError
+                                           : "Absent: " + moduleAbsent;
+        tree.roots.clear();
+        tree.categories.clear();
         return true;
     }
     for (const auto& name : all) {
@@ -191,10 +208,21 @@ bool reachedDevice(Outcome outcome) {
 Result noSessionResult(Access access, const Request& request, const std::string& reason) {
     Result r;
     r.address = request.address;
-    r.outcome = access == Access::Unsupported ? Outcome::Unsupported : Outcome::Stale;
-    r.reason = access == Access::Unsupported
-                   ? reason
-                   : "No open camera session matches the request: " + reason;
+    switch (access) {
+    case Access::Unsupported:
+        r.outcome = Outcome::Unsupported;
+        r.reason = reason;
+        break;
+    case Access::Refused:
+        // The guard refused before touching the device; the token is not judged.
+        r.outcome = Outcome::Refused;
+        r.reason = reason;
+        break;
+    default:
+        r.outcome = Outcome::Stale;
+        r.reason = "No open camera session matches the request: " + reason;
+        break;
+    }
     return r;
 }
 

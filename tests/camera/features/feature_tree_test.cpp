@@ -3,6 +3,7 @@
 // tree the service returns can only have come from the port.
 #include "backend/camera/features/FakeNodeMap.h"
 #include "backend/camera/features/FeatureTree.h"
+#include "backend/camera/features/ModuleWriteTracker.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -32,6 +33,7 @@ struct TestGuard : GuardedPort {
     Access mode{Access::Ran};
     int steps{0};
     int bumpGenerationAfter{-1};
+    int refuseAfter{-1}; // refuse (trigger armed, run started) from this step on
     explicit TestGuard(Port& p) : port(p) {
         current.token = {"source-under-test", 41, 1, "instance-under-test"};
         current.writesAuthorized = true;
@@ -40,8 +42,14 @@ struct TestGuard : GuardedPort {
     Access run(const std::function<void(Port&, CurrentSession&)>& fn,
                std::string& reason) override {
         if (mode != Access::Ran) {
-            reason = mode == Access::Unsupported ? "no node map" : "no session";
+            reason = mode == Access::Unsupported ? "no node map"
+                     : mode == Access::Refused   ? "trigger armed"
+                                                 : "no session";
             return mode;
+        }
+        if (refuseAfter >= 0 && steps >= refuseAfter) {
+            reason = "trigger armed";
+            return Access::Refused;
         }
         if (bumpGenerationAfter >= 0 && steps == bumpGenerationAfter) ++current.token.generation;
         ++steps;
@@ -208,9 +216,13 @@ void enumerationMatchesTheNodeMapExactly() {
                   "feature info from the node map");
         }
     }
-    check(tree.modules[2].enumerated && tree.modules[2].categories.empty() &&
-              tree.modules[2].features.empty(),
-          "an empty module is enumerated and empty, not unsupported");
+    // Interface is not in this node map: absent, never an empty enumerated module.
+    check(!tree.modules[2].enumerated && tree.modules[2].categories.empty() &&
+              tree.modules[2].features.empty() && tree.modules[2].roots.empty(),
+          "an absent module is not enumerated");
+    check(tree.modules[2].reason.rfind("Absent: ", 0) == 0 &&
+              tree.modules[2].reason.find("interface") != std::string::npos,
+          "an absent module says it is absent");
     // Per-node guard steps: the guard is never held across the whole walk.
     const int nodes = 9 + 40 + 3 + 7;
     check(guard.steps >= nodes, "one guarded step per node");
@@ -247,6 +259,26 @@ void enumerationRefusesStaleAndUnsupported() {
         TestGuard guard(map);
         guard.mode = Access::NoSession;
         check(enumerate(guard, {}).outcome == Outcome::Refused, "no session: refused");
+    }
+    {
+        // The guard refuses before the port (the sort trigger is armed): refused
+        // with the guard's reason, nothing enumerated.
+        TestGuard guard(map);
+        guard.mode = Access::Refused;
+        const auto tree = enumerate(guard, {});
+        check(tree.outcome == Outcome::Refused && tree.reason == "trigger armed" &&
+                  tree.modules.empty(),
+              "a guard refusal refuses the tree");
+    }
+    {
+        // A refusal mid-walk (the trigger armed, a run started) ends the walk:
+        // refused, nothing partial reported as current.
+        TestGuard guard(map);
+        guard.refuseAfter = 5;
+        const auto tree = enumerate(guard, {});
+        check(tree.outcome == Outcome::Refused && tree.reason == "trigger armed" &&
+                  tree.modules.empty() && guard.steps == 5,
+              "a refusal mid-walk ends it with nothing partial");
     }
     {
         PlainPort plain;
@@ -419,11 +451,76 @@ void guardedWritesReadBackAndAdvanceTheRevision() {
 }
 } // namespace
 
+// Guard refusals of single operations: refused with the guard's reason, the
+// port untouched, the revision unchanged.
+void guardedOperationsRefusedBeforeThePort() {
+    FakeNodeMap map;
+    std::mt19937 rng(9);
+    const auto e = populate(map, Module::Remote, rng, 2, 4);
+    TestGuard guard(map);
+    guard.mode = Access::Refused;
+    Request request;
+    request.expected = guard.current.token;
+    request.address = {Module::Remote, e.featureOrder[0], std::nullopt};
+    const auto read = guardedRead(guard, request);
+    check(read.outcome == Outcome::Refused && read.reason == "trigger armed" && !read.readback,
+          "a refused read reaches nothing");
+    const auto written = guardedWrite(guard, request, Value{1.0});
+    check(written.outcome == Outcome::Refused && written.reason == "trigger armed" &&
+              written.requested == Value{1.0} && map.writes() == 0,
+          "a refused write reaches nothing and keeps the request apart");
+    check(guard.current.token.capabilityRevision == 1, "a refusal does not advance the revision");
+}
+
+// ModuleWriteTracker: only a write to the watched module, or a selector-scoped
+// describe there, counts as an operation that could move its selectors.
+void moduleWriteTrackerCountsOnlySelectorMovers() {
+    std::mt19937 rng(17);
+    const auto iface = name(rng, "I", 0), remote = name(rng, "R", 0);
+    FakeNodeMap map;
+    map.addFeature(Module::Interface, numeric(iface, 1.0));
+    map.addFeature(Module::Remote, numeric(remote, 1.0));
+    {
+        ModuleWriteTracker tracked(map, Module::Interface);
+        tracked.describe({Module::Interface, iface, std::nullopt});
+        tracked.categories(Module::Interface, false);
+        tracked.features(Module::Interface, false);
+        tracked.describe({Module::Remote, remote, std::nullopt});
+        tracked.write({Module::Remote, remote, std::nullopt}, Value{2.0});
+        check(!tracked.touched(), "reads and other modules leave the watched selectors alone");
+        check(map.writes() == 1, "the decorator forwards writes");
+    }
+    {
+        ModuleWriteTracker tracked(map, Module::Interface);
+        tracked.write({Module::Interface, iface, std::nullopt}, Value{3.0});
+        check(tracked.touched(), "a write to the watched module counts");
+    }
+    {
+        ModuleWriteTracker tracked(map, Module::Interface);
+        try {
+            tracked.describe({Module::Interface, iface, std::string("Sel0")});
+        } catch (const std::exception&) {
+            // The fixture node has no selector; the attempt still counts.
+        }
+        check(tracked.touched(), "a selector-scoped describe of the watched module counts");
+    }
+    {
+        ModuleWriteTracker tracked(map, Module::Interface);
+        try {
+            tracked.write({Module::Interface, "NoSuchNode", std::nullopt}, Value{1.0});
+        } catch (const std::exception&) {
+        }
+        check(tracked.touched(), "a write that threw still counts (it may have been submitted)");
+    }
+}
+
 int main() {
     enumerationMatchesTheNodeMapExactly();
     enumerationRefusesStaleAndUnsupported();
     enumerationRecordsSdkFailuresAndLimits();
     guardedWritesReadBackAndAdvanceTheRevision();
+    guardedOperationsRefusedBeforeThePort();
+    moduleWriteTrackerCountsOnlySelectorMovers();
     std::cout << "feature tree checks passed: " << checks << '\n';
     return 0;
 }
