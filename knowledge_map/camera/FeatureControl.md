@@ -28,7 +28,7 @@ revision, because selectors and dependent nodes move access.
 
 `BackendFacade::cameraFeature{Tree,Read,Write}Json` (facade `CaptureFeaturePort`)
 → for a write, `ExperimentCoordinator::withIdleConfiguration` (Start is excluded
-for the whole write) → `TriggerService::runWhileTriggerIdle`
+for the whole write) → `TriggerService::runSerializedWithPulses`
 ([[../services/TriggerService]]: `pulseMutex_`, held by the trigger thread across
 a whole pulse) → `CaptureService::withCameraFeatures`
 holds `cameraMutex_` (pins `activeCamera_` against release; the session token's
@@ -44,22 +44,19 @@ mid-walk is `refused` with no modules.
 
 **Refusals (#806 review, finding 1).** A feature call between a sort pulse's two
 `setTriggerOutput` edges would stretch the pulse to an SDK call and sort the wrong
-cell. So every feature operation (tree, read, write) is refused, with outcome
-`refused`, a reason and no device access, while the sort trigger output is armed
-(a camera bound for trigger output) or the trigger service is running, and while
-an experiment is Starting, Active or Stopping. Writes are also refused while a
-frame recording or realtime processing runs or autofocus is enabled
-(`configApplyBlocker` minus capture), and when the coordinator is not idle. Each
-check is made under the locks above (`runWhileTriggerIdle` holds `pulseMutex_`
+cell. The rule: **serialized with sort pulses always; refused while sorting is possible**. Every feature operation (tree, read,
+write) runs under the trigger's pulse lock, so it can never fall between a pulse's
+edges. It is refused, with outcome `refused`, a reason and no device access, only
+while a pulse is pending or imminent: sort pulses queued or a dequeued pulse not
+yet finished (or periodic test pulses on), an experiment Starting, Active or
+Stopping, realtime processing running (its target selection feeds the trigger) or
+autofocus running. A trigger service that is merely started and bound with nothing
+queued is not a refusal, so in the default boot feature I/O works whenever nothing
+is being sorted. Writes are also refused while a frame recording runs and when the
+coordinator is not idle. Each check is made under the locks above (`runSerializedWithPulses` holds `pulseMutex_`
 for the whole operation; the run-state gate, `services::CameraFeatureGate`, is
 evaluated inside `withCameraFeatures` before the port), so there is no
 check-then-act gap. `GuardedPort::run` returns `Access::Refused` for these.
-
-**Consequence (owner decision, stated here so it is not mistaken for a bug):**
-in the default boot `AppBackend` binds and starts the trigger service with every
-capture session, so feature I/O is refused whenever capture runs, unless the
-trigger service is disabled (`MIB_DISABLED_SERVICES=trigger`). Using the node map
-on a sorting rig needs an explicit disarm, which is not built.
 
 Device quirk (Coaxlink): `EGrabberCamera::withPort` wraps the port in a
 `ModuleWriteTracker` for the Interface module and clears `triggerLineApplied_`
@@ -105,12 +102,15 @@ retried. Refusals before the device: see *Refusals* above.
   modules; `ModuleWriteTracker`), `camera.capture_features` (CaptureService +
   MockCamera + JSON, the run-state gate under the guard, stop/start stress for the
   TSan lane).
-- `camera.trigger_feature_interlock`: refused while armed or running; a
-  contention stress (pulse thread binding, pulsing and unbinding vs a feature
-  thread) shows no feature operation between a pulse's edges on one timeline.
+- `camera.trigger_feature_interlock`: runs when idle, bound, or started and
+  bound with nothing queued; refused while pulses are queued or periodic test
+  pulses run; a contention stress (bursts of pulses on a started, bound trigger
+  vs a feature thread) shows no feature operation between a pulse's edges on one
+  timeline and no pulse lost.
 - `e2e.camera_feature_facade`: through `BackendFacade` with the real
-  `AppBackend`: trigger armed refuses tree/read/write; experiment
-  Starting/Active/Stopping refuse all three; frame recording and autofocus refuse
+  `AppBackend` in the default boot: tree, read and write succeed with the
+  trigger started and bound; experiment Starting/Active/Stopping, realtime
+  processing, queued pulses and autofocus refuse; a frame recording refuses
   writes; the tree job's in-flight-once rule.
 - `tools/egrabber_acceptance` builds the SDK-free core (UBSan workflow); with
   `-DEGRABBER_INCLUDE_DIR` the adapter test checks the composed query strings

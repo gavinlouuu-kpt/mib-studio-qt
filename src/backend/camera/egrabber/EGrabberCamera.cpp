@@ -491,9 +491,9 @@ bool EGrabberCamera::withPort(const std::function<void(::camera::features::Port&
     // triggerMutex_ pins grabber_ (stop() resets it under this lock) and
     // serializes node-map access with setTriggerOutput(). It is held for one
     // feature operation only; tree enumeration re-takes it per node. The
-    // facade refuses feature I/O altogether while the sort trigger is armed
-    // or running (TriggerService::runWhileTriggerIdle), so no operation lands
-    // between a pulse's edges.
+    // facade runs every feature operation under the trigger's pulse lock
+    // (TriggerService::runSerializedWithPulses), so no operation lands between
+    // a pulse's edges, and refuses it while sorting is possible.
     std::lock_guard<std::mutex> triggerLock(triggerMutex_);
     if (!running_.load(std::memory_order_acquire) || !grabber_) {
         reason = "The eGrabber session is not open; start capture first.";

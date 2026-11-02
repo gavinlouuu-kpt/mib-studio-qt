@@ -1074,11 +1074,13 @@ namespace backend::bridge
         // read/write by name under CaptureService's camera guard. Every reply carries
         // the session token {source, generation, capability_revision}; a request from
         // an older token is refused as stale. A camera without GenApi is "unsupported".
-        // Every operation (tree, read, write) is refused, without touching the device,
-        // while the sort trigger is armed or running (TriggerService::runWhileTriggerIdle
-        // holds the pulse lock for the whole operation) and while an experiment is
-        // starting, active or stopping. Writes are also refused while a frame recording
-        // or realtime processing runs or autofocus is enabled, and run inside the
+        // Every operation (tree, read, write) is serialized with sort pulses
+        // (TriggerService::runSerializedWithPulses holds the pulse lock for the whole
+        // operation, so none lands between a pulse's edges) and is refused, without
+        // touching the device, while sorting is possible: sort pulses queued or firing,
+        // an experiment starting, active or stopping, realtime processing or autofocus
+        // running. A started, bound trigger with nothing queued is not a refusal. Writes
+        // are also refused while a frame recording runs, and run inside the
         // coordinator's idle transaction, so Start cannot begin under a write. All of
         // these are decided under the guards, never before taking them.
         // cameraFeatureTreeJson is synchronous (native callers and tests); the bridge

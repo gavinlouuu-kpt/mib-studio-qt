@@ -1,18 +1,18 @@
 // trigger_feature_interlock_test (#806 E02 review, finding 1)
 //
 // Camera feature I/O must never land between a sort pulse's edges (it would
-// stretch the pulse to an SDK call and sort the wrong cell) and is refused
-// while the sort trigger is armed or running. TriggerService::runWhileTriggerIdle
-// decides and runs under pulseMutex_, the lock the trigger thread holds across
-// a whole pulse:
-//   1. armed (a camera bound for trigger output) or running: refused with a
-//      reason, the feature operation never runs and the port is never touched;
-//      idle: it runs;
-//   2. contention: a pulse thread binds/starts the trigger, drives pulses and
-//      unbinds/stops it in a loop while a feature thread keeps attempting node
-//      map operations on the same camera. On one shared timeline no feature
+// stretch the pulse to an SDK call and sort the wrong cell). Every feature
+// operation runs under TriggerService::runSerializedWithPulses, i.e. under
+// pulseMutex_, the lock the trigger thread holds across a whole pulse, and is
+// refused only while a pulse is pending or imminent:
+//   1. idle, bound, or started and bound with nothing queued: it runs; queued
+//      pulses or the periodic test generator: refused with a reason, the port
+//      is never touched;
+//   2. contention: with the trigger started and bound, a pulse thread queues
+//      bursts of pulses while a feature thread keeps attempting node-map
+//      operations on the same camera. On one shared timeline no feature
 //      operation ever falls between a rising and its falling edge (and no edge
-//      falls inside a feature operation); both regimes (refused and ran) occur.
+//      falls inside a feature operation), every pulse fires, none is dropped.
 
 #include "backend/camera/features/FakeNodeMap.h"
 #include "backend/camera/features/FeatureSession.h"
@@ -22,6 +22,7 @@
 #include "support/watchdog.h"
 
 #include <atomic>
+#include <cstdio>
 #include <chrono>
 #include <functional>
 #include <mutex>
@@ -112,7 +113,7 @@ bool waitFor(const std::function<bool()>& pred, std::chrono::milliseconds timeou
 // camera's port guard, bracketed on the timeline and widened by a short spin.
 bool featureOp(TriggerService& trigger, InterlockCamera& camera, Timeline& timeline,
                std::string& reason) {
-    return trigger.runWhileTriggerIdle(
+    return trigger.runSerializedWithPulses(
         [&] {
             std::string why;
             camera.featureSession()->withPort(
@@ -132,7 +133,7 @@ bool featureOp(TriggerService& trigger, InterlockCamera& camera, Timeline& timel
 int main() {
     mib::test::Watchdog wd(90);
 
-    // ---- 1. Armed or running: refused before the port; idle: runs. --------
+    // ---- 1. Refused only while pulses are pending or imminent. ------------
     {
         wd.mark("refusal");
         Timeline timeline;
@@ -142,27 +143,45 @@ int main() {
         MIB_EXPECT(featureOp(trigger, camera, timeline, reason) && camera.portCalls == 1,
                    "an idle trigger lets the feature operation run");
 
+        // Bound for trigger output (not started), nothing queued: not a refusal.
         trigger.setCamera(&camera, 7);
-        reason.clear();
-        MIB_EXPECT(!featureOp(trigger, camera, timeline, reason), "armed: refused");
-        MIB_EXPECT(reason.find("armed") != std::string::npos, "the refusal says armed: " + reason);
-        MIB_EXPECT(camera.portCalls == 1, "a refused operation never reaches the port");
-
-        trigger.start();
-        reason.clear();
-        MIB_EXPECT(!featureOp(trigger, camera, timeline, reason) && camera.portCalls == 1,
-                   "armed and running: refused");
-
-        trigger.setCamera(nullptr);
-        reason.clear();
-        MIB_EXPECT(!featureOp(trigger, camera, timeline, reason), "running without a camera: refused");
-        MIB_EXPECT(reason.find("running") != std::string::npos, "the refusal says running: " + reason);
-        MIB_EXPECT(camera.portCalls == 1, "still no port access");
-
-        trigger.stop();
-        reason.clear();
         MIB_EXPECT(featureOp(trigger, camera, timeline, reason) && camera.portCalls == 2,
-                   "stopped and unbound: runs again");
+                   "a bound trigger with nothing queued is not a refusal");
+
+        // Queued pulses (the loop is not running, so they stay queued): refused.
+        trigger.onTargetGroupResult(target(1));
+        reason.clear();
+        MIB_EXPECT(!featureOp(trigger, camera, timeline, reason), "queued pulses: refused");
+        MIB_EXPECT(reason.find("pending") != std::string::npos, "the refusal says pending: " + reason);
+        MIB_EXPECT(camera.portCalls == 2, "a refused operation never reaches the port");
+
+        // Starting the loop drains the queue (the pulse fires); afterwards a started,
+        // bound trigger with nothing queued runs the operation.
+        trigger.start();
+        MIB_REQUIRE(waitFor([&] { return trigger.getTriggerCount() == 1; }, std::chrono::seconds(10)),
+                    "the queued pulse fires");
+        MIB_REQUIRE(waitFor([&] {
+                        std::string r;
+                        return featureOp(trigger, camera, timeline, r);
+                    },
+                    std::chrono::seconds(10)),
+                    "started and bound with nothing queued: runs");
+
+        // Periodic test pulses are imminent: refused while on.
+        trigger.startPeriodicTest(1000);
+        reason.clear();
+        MIB_EXPECT(!featureOp(trigger, camera, timeline, reason) &&
+                       reason.find("periodic") != std::string::npos,
+                   "periodic test pulses: refused, " + reason);
+        trigger.stopPeriodicTest();
+        MIB_REQUIRE(waitFor([&] {
+                        std::string r;
+                        return featureOp(trigger, camera, timeline, r);
+                    },
+                    std::chrono::seconds(10)),
+                    "periodic test off: runs again");
+        trigger.setCamera(nullptr);
+        trigger.stop();
     }
 
     // ---- 2. Contention: no feature operation between a pulse's edges. -----
@@ -171,6 +190,8 @@ int main() {
         Timeline timeline;
         InterlockCamera camera(timeline);
         TriggerService trigger;
+        trigger.setCamera(&camera, 1);
+        trigger.start();
         std::atomic<bool> done{false};
         std::atomic<int> ran{0}, refused{0};
         std::thread feature([&] {
@@ -185,22 +206,20 @@ int main() {
         uint64_t frame = 0, fired = 0;
         for (int cycle = 0; cycle < 150; ++cycle) {
             wd.mark("contention cycle");
-            trigger.setCamera(&camera, static_cast<uint64_t>(cycle + 1));
-            trigger.start();
             const auto before = trigger.getTriggerCount();
             for (int p = 0; p < 4; ++p) trigger.onTargetGroupResult(target(++frame));
             MIB_REQUIRE(waitFor([&] { return trigger.getTriggerCount() >= before + 4; },
                                 std::chrono::seconds(10)),
                         "the pulses of the cycle fire");
             fired += trigger.getTriggerCount() - before;
-            trigger.setCamera(nullptr);
-            trigger.stop();
             // An idle window in which feature operations may run.
             const int ranBefore = ran.load();
             waitFor([&] { return ran.load() > ranBefore; }, std::chrono::milliseconds(200));
         }
         done = true;
         feature.join();
+        trigger.setCamera(nullptr);
+        trigger.stop();
 
         bool inPulse = false, inOp = false, interleaved = false;
         int rising = 0, ops = 0;
@@ -226,8 +245,11 @@ int main() {
         }
         MIB_EXPECT(!interleaved, "no feature operation between a pulse's edges, no edge inside one");
         MIB_EXPECT(rising > 0 && static_cast<uint64_t>(rising) == fired, "every pulse is on the timeline");
-        MIB_EXPECT(ops == ran.load() && ops > 0, "feature operations ran in the idle windows");
-        MIB_EXPECT(refused.load() > 0, "feature operations were refused while the trigger was armed");
+        MIB_EXPECT(ops == ran.load() && ops > 0, "feature operations ran between bursts");
+        MIB_EXPECT(trigger.getDroppedPulseCount() == 0 && trigger.getDroppedRequestCount() == 0,
+                   "no pulse was lost to feature I/O");
+        std::printf("contention: %d pulses, %d feature ops ran, %d refused while pulses were pending\n",
+                    rising, ran.load(), refused.load());
     }
     return mib::test::exitCode();
 }

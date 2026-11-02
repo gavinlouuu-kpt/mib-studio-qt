@@ -98,30 +98,30 @@ void TriggerService::start() {
         // A previous loop that exited is reaped before a new one is assigned.
         thread_.join();
     }
-    {
-        // Under pulseMutex_ so a camera feature operation running inside
-        // runWhileTriggerIdle() finishes before the trigger counts as running.
-        std::lock_guard<std::mutex> pulseLock(pulseMutex_);
-        running_.store(true);
-    }
+    running_.store(true);
     backend::diagnostics::CrashStateMirror::instance().trigger.running.store(true);
     thread_ = std::thread(&TriggerService::triggerLoop, this);
     SPDLOG_INFO("TriggerService started");
 }
 
-bool TriggerService::runWhileTriggerIdle(const std::function<void()>& fn, std::string& reason) {
-    // pulseMutex_ is held by the trigger thread across both edges of a pulse
-    // and by setCamera()/start(): deciding and running here under it leaves no
-    // window in which a pulse edge and a feature operation interleave.
+bool TriggerService::runSerializedWithPulses(const std::function<void()>& fn, std::string& reason) {
+    // pulseMutex_ is held by the trigger thread across both edges of a pulse:
+    // running `fn` under it means a feature operation and a pulse never
+    // interleave. Refuse only when a pulse is pending or imminent, so a node-map
+    // call never delays one that is waiting.
     std::lock_guard<std::mutex> pulseLock(pulseMutex_);
-    if (camera_.load(std::memory_order_acquire) != nullptr) {
-        reason = "Camera feature access is refused while the sort trigger output is armed on "
-                 "this camera: a node-map call between pulse edges would stretch the sort pulse.";
+    bool queued = false;
+    {
+        std::lock_guard<std::mutex> lk(triggerMutex_);
+        queued = !pendingRequests_.empty();
+    }
+    if (queued || firing_.load()) {
+        reason = "Camera feature access is refused while sort pulses are pending: a node-map call "
+                 "would delay them.";
         return false;
     }
-    if (running_.load()) {
-        reason = "Camera feature access is refused while the sort trigger service is running: a "
-                 "node-map call could delay or stretch a sort pulse.";
+    if (periodicRunning_.load()) {
+        reason = "Camera feature access is refused while periodic test pulses are running.";
         return false;
     }
     fn();
@@ -364,7 +364,13 @@ void TriggerService::triggerLoop() {
             if (!running_.load()) break;
             pending = pendingRequests_.front();
             pendingRequests_.pop_front();
+            firing_.store(true); // under triggerMutex_: never a gap with the queue check
         }
+        // Clears firing_ when this request's pulse (or drop) is done, whatever path ends it.
+        struct FiringDone {
+            std::atomic<bool>& f;
+            ~FiringDone() { f.store(false); }
+        } firingDone{firing_};
 
         // Own the camera for the whole pulse: setCamera() blocks on this
         // mutex, so the pointer loaded below stays valid until we release it.

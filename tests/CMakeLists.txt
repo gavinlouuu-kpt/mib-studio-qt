@@ -435,14 +435,14 @@ mib_add_backend_test_executable(capture_camera_features_test camera/features/cap
 mib_backend_test_link(capture_camera_features_test PRIVATE Threads::Threads)
 add_test(NAME camera.capture_features COMMAND $<TARGET_FILE:mib_backend_tests> capture_camera_features_test)
 set_tests_properties(camera.capture_features PROPERTIES LABELS "camera;genapi;concurrency;stress" TIMEOUT 90)
-# #806 E02 review: feature I/O is refused while the sort trigger is armed or running and never
-# lands between a pulse's edges (TriggerService::runWhileTriggerIdle; contention stress).
+# #806 E02 review: feature I/O never lands between a pulse's edges and is refused only while pulses are
+# pending or imminent (TriggerService::runSerializedWithPulses; contention stress).
 mib_add_backend_test_executable(trigger_feature_interlock_test backend/trigger_feature_interlock_test.cpp)
 mib_backend_test_link(trigger_feature_interlock_test PRIVATE Threads::Threads)
 add_test(NAME camera.trigger_feature_interlock COMMAND $<TARGET_FILE:mib_backend_tests> trigger_feature_interlock_test)
 set_tests_properties(camera.trigger_feature_interlock PROPERTIES LABELS "camera;genapi;trigger;concurrency;stress;safety" TIMEOUT 120)
-# #806 E02 review: the facade's feature gates driven through backend state (trigger armed, experiment
-# Starting/Active/Stopping, frame recording, autofocus) and the tree job's in-flight-once rule.
+# #806 E02 review: the facade's feature gates driven through backend state (default boot succeeds; experiment
+# Starting/Active/Stopping, realtime processing, queued pulses, autofocus, frame recording) and the tree job's in-flight-once rule.
 mib_add_backend_test_executable(camera_feature_facade_test backend/camera_feature_facade_test.cpp)
 mib_backend_test_link(camera_feature_facade_test PRIVATE Threads::Threads)
 add_test(NAME e2e.camera_feature_facade COMMAND $<TARGET_FILE:mib_backend_tests> camera_feature_facade_test)
