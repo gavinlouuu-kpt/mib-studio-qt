@@ -2,6 +2,13 @@
 
 Status: native composition and bounded real-engine worker implemented; full integration incomplete. No F capability is fully accepted.
 
+**Engine (2026-11-02, decision D3, ADR 0016 `docs/decisions/0016-native-analysis-authority.md`).**
+The native C++ analysis code is the single production authority for F02–F11 and F13 in
+every host. Cytoflow 1.3.2 and FlowKit 1.3.2 are CI comparators, not bundled. The
+supervised worker runs only t-SNE (F07) with scikit-learn 1.9.1 (engine id
+`sklearn-tsne-1.9.1`, checked by `crates/mib-analysis-worker`). Rows below that say
+"real Cytoflow" describe parity evidence, not the production path. See the F-3 section.
+
 Backend evidence base: `0a58e201`; UI/design base: `71337496` (freshly fetched branch heads, not a reset). Paths under `tests/review/` unless otherwise shown. Test names below are inspected existing evidence, **not tests rerun in this audit**. Original board IDs and research hashes: [catalogue](evidence-catalogue.json). Each FJ maps to the corresponding #523 guide/research package; board coverage supplements rather than replaces FJ requirements.
 
 | ID / research | Original boards | Existing code / PR / test | Disposition | Owned implementation package | Remaining acceptance |
@@ -378,3 +385,85 @@ reports SKIPPED, exit 77, never a pass).
   units/transforms and GatingML (F-6); compensation/Logicle (F03); `$TIMESTEP`
   scaling; a review-bridge test of the `fcs` kind; a desktop affordance for
   choosing an FCS source.
+
+### F-4 Comparison and concentration-response fits (2026-11-02, `claude/808-f4-comparison-fits`)
+
+Goals advanced: F09, and the fit authority behind I09/I10. Evidence class:
+**real backend (AnalysisHost, pinned revisions, exact statistics) on synthetic
+sources; independent numbers from scipy 1.18.1**.
+
+- **Mechanism.** `AnalysisInference.cpp` (pure C++: incomplete beta/gamma,
+  t/F/chi-square/normal, tests, Levenberg-Marquardt 4PL/3PL) under
+  `compareSpec` / `fitSpec` in `AnalysisComparison.cpp`; host read actions
+  `comparisonSpec` and `concentrationFit`; `evaluate` gains the optional
+  `metric {population, parameter}`. Results bind each unit value to its
+  planId, revision, graphFingerprint and sourceFingerprint and carry a
+  contentHash. Review ABI stays 10 (additive to the unmerged contract).
+- **Declared inputs.** Experimental unit per source (shared units in a group
+  are technical replicates, averaged), groups (first is the reference), design
+  unpaired or paired by unit id, inference none/parametric/rank/both,
+  confidence level; fits: model 4PL or 3PL (hill 1), concentration unit, scale
+  log10 or linear, weighting none or inverse-variance of replicate units,
+  design independent-units.
+- **Compatibility.** Excluded with reasons: different parameters or units,
+  different parameter preprocessing, different processing core/contract,
+  calibration or E-LUT identity (source provenance; unknown matches only
+  unknown), missing metric (refused evaluation, absent population, no finite
+  statistic), repeated source fingerprint; fits also exclude other
+  concentration units and concentrations <= 0.
+- **Rules.** >= 3 independent units per group (paired: complete pairs);
+  otherwise `insufficient`, no test, no p-value. Fits: no fit with <= p unit
+  points, < p distinct concentrations, constant response or unweighable
+  replicates; suspect when not converged, EC50 outside the tested range, EC50
+  CI wider than the tested range, < 5 concentrations, a parameter at a bound,
+  or a singular covariance.
+- **Proof.** `analysis.inference` (Welch on unequal variances, Mann-Whitney
+  with ties and exact, paired t, Wilcoxon exact (Darwin) and with ties/zeros,
+  ANOVA and Kruskal-Wallis on the McDonald mussel data, 4PL unweighted /
+  weighted / 3PL / linear-scale EC50 vs `curve_fit`, suspect, insufficient);
+  `analysis.comparison_spec` (the same numbers through `AnalysisHost`, seven
+  exclusion reasons, insufficient units, technical replicates, fit unit
+  exclusion, suspect and insufficient fits). Generator:
+  `tools/analysis_inference/generate_reference.py` (outside production).
+- **Remaining.** CIs for rank shifts and ANOVA effect sizes; repeated measures
+  (paired > 2 groups, dose series within one unit) are refused, not modelled;
+  no multiplicity correction; the I-6 view.
+- **Review fixes (#824).** Degenerate inputs (zero within-group or
+  paired-difference variance, every paired difference zero, all values tied, or a
+  non-finite intermediate near 1e200 / 1e308) give test `status: undefined` with
+  `undefinedReason` and null statistic, p-value and CI, never p = 0 or 1; the
+  comparison is `undefined` only when no requested test is defined. Fit suspect
+  flags no longer depend on the reporting scale (the CI-width rule uses the log10
+  interval; a linear Wald CI reaching <= 0 is flagged), a damping blow-up is
+  `termination: stalled`, inverse-variance weights from < 3 replicates are
+  flagged, and one confidence rule (0.5, 0.999] covers comparisons and fits.
+  Proof: `analysis.inference` (n = 3, effect sizes and Hodges-Lehmann vs
+  scipy/numpy, degenerate and overflow cases, bounded hill `atBound`, the
+  linear-scale review dataset) and `analysis.comparison_spec`.
+
+### F-3 Engine decision applied (2026-11-02, `claude/808-f4-comparison-fits`)
+
+Decision D3 / ADR 0016 recorded in the F ledger and design docs (this ledger,
+[contracts](contracts.md), [production API](production-api.md),
+[acceptance handoff](acceptance-handoff.md)) and the AnalysisWorker vault note.
+
+| Role | Implementation | Version | Where it runs |
+|---|---|---|---|
+| Production authority (populations, statistics, transforms, overlays, comparison, fits, reports) | native C++ `src/backend/analysis/` | this repository | every host (Studio, Review, I views) |
+| Supervised worker job (F07 t-SNE only) | scikit-learn `TSNE` | 1.9.1 (`sklearn-tsne-1.9.1`) | `crates/mib-analysis-worker`; results bound to that runtime |
+| Polygon parity comparator | Cytoflow `PolygonOp` | 1.3.2 | CI (`analysis-ci.yml`, ignored tests), qualification; not bundled |
+| Rectangle / FCS comparator | FlowKit `RectangleGate` on its own `Sample` parser (flowio) | FlowKit 1.3.2, flowio 1.4.0 | optional `tools/flowjo_acceptance/fcs_comparator.py --flowkit` |
+| Inference reference values | scipy | 1.18.1 | `tools/analysis_inference/generate_reference.py` (offline) |
+
+- **FlowKit comparator.** `fcs_comparator.py --rect ... --flowkit` gates the
+  rectangle with FlowKit's GatingML gate. `analysis.fcs_reader`, with
+  `MIB_FCS_COMPARATOR_PYTHON` and `MIB_FCS_COMPARATOR_FLOWKIT` set, compares
+  both the comparator's own count and FlowKit's count with the native gate on
+  the synthetic 10,000-event FCS file: 2,525 = 2,525 = 2,525 here (scratch
+  venv). GatingML maxima are exclusive and MIB's inclusive, so the fixture has
+  no event on a bound. The FlowJo reference run with FlowKit is still pending
+  the private fixture.
+- **Remaining.** Run FlowKit on the FlowJo reference fixture; add the FlowKit
+  comparator to a CI lane; the distribution review for scikit-learn (the only
+  worker dependency left in a production path).
+

@@ -15,7 +15,9 @@
 //     changed file is refused by its full-file fingerprint.
 // Optional comparator (never the production path): with
 // MIB_FCS_COMPARATOR_PYTHON set, tools/flowjo_acceptance/fcs_comparator.py
-// (fcsparser and/or flowio) re-reads the float file and must agree.
+// (fcsparser and/or flowio) re-reads the float file and must agree; with
+// MIB_FCS_COMPARATOR_FLOWKIT also set (F-3), FlowKit gates the same rectangle
+// with its own GatingML RectangleGate and must select the native count.
 #include "backend/analysis/AnalysisHost.h"
 #include "backend/analysis/FcsReader.h"
 #include "backend/analysis/SourceAnalysis.h"
@@ -333,7 +335,21 @@ int main() {
         }
         MIB_REQUIRE(fcs::write(copy, s, 10000, data), "comparator file");
         const auto script = std::string(MIB_SOURCE_DIR) + "/tools/flowjo_acceptance/fcs_comparator.py";
-        const auto command = std::string(python) + " -I " + script + " " + copy + " FSC-A";
+        // Native rectangle on the comparator file (values sit off the bounds:
+        // GatingML max is exclusive, MIB's inclusive).
+        const Json graph{{"id", "rect"}, {"revision", "1"}, {"output", "rect"},
+                         {"nodes", Json::array({Json{{"id", "fsc"}, {"parent", ""}, {"kind", "interval"},
+                                                     {"feature", "FSC-A"}, {"minimum", 50000}, {"maximum", 150000}},
+                                                Json{{"id", "rect"}, {"parent", "fsc"}, {"kind", "interval"},
+                                                     {"feature", "SSC-A"}, {"minimum", 10000}, {"maximum", 50000}}})}};
+        const auto native = backend::analysis::evaluateSource(
+            backend::analysis::fcsSourceDescriptor(Json{{"kind", "fcs"}, {"path", copy}}),
+            Json{{"graph", graph}, {"feature", "FSC-A"}}, backend::analysis::lendFcsColumns);
+        const auto nativeRect = std::stoll(native.at("selected").get<std::string>());
+        const bool flowkit = std::getenv("MIB_FCS_COMPARATOR_FLOWKIT") != nullptr;
+        const auto command = std::string(python) + " -I " + script + " " + copy +
+                             " FSC-A --rect FSC-A 50000 150000 SSC-A 10000 50000" +
+                             (flowkit ? " --flowkit" : "");
         FILE* pipe = popen(command.c_str(), "r");
         std::string output;
         char buffer[4096];
@@ -343,6 +359,11 @@ int main() {
         MIB_EXPECT(status == 0 && parsed.is_object() && parsed.at("events") == 10000 &&
                        std::abs(parsed.at("sum").get<double>() - sum) <= 1e-9 * sum,
                    "independent comparator agrees with the native reader: " + output);
+        MIB_EXPECT(parsed.is_object() && parsed.value("rectangle", Json(nullptr)) == nativeRect,
+                   "comparator rectangle count equals the native gate: " + output);
+        if (flowkit)
+            MIB_EXPECT(parsed.is_object() && parsed.value("flowkitRectangle", Json(nullptr)) == nativeRect,
+                       "FlowKit's RectangleGate selects the native population: " + output);
         std::printf("F-2: comparator %s\n", output.c_str());
     } else {
         std::printf("F-2: optional comparator not configured (MIB_FCS_COMPARATOR_PYTHON unset); native checks only\n");

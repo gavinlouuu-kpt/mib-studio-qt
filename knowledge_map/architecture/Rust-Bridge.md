@@ -1037,7 +1037,9 @@ attach to):
   membershipKey and the streamed fingerprint at any size; #808 F-1b added,
   without a version change, `columnar: true` (the F-source/2 handle) and the
   shim's column resolver for the analysis workspace, and #808 F-2 the `fcs`
-  source kind (native FCS import, `lendFcsColumns`); 9 source-bound
+  source kind (native FCS import, `lendFcsColumns`), and #808 F-4 the read
+  actions `comparisonSpec` / `concentrationFit` plus the optional `metric`
+  field of `evaluate` (analysis_workspace.comparison_fits); 9 source-bound
   strategies, 8 population analysis, 7 reserved for #804; 6 since #716 A7a:
   `review_run_statistics`, whose `review_run_statistics` bounds the generator
   checks against `RunStatistics.h`; 5 since #783: the identity's E-LUT record

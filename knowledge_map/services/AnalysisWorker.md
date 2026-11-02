@@ -6,6 +6,11 @@ Tracking: #808/#523. This is an initial F-A/F-B slice, not complete FlowJo suppo
 
 ## Responsibility and boundaries
 
+**Engine decision (2026-11-02, ADR 0016).** The native C++ code is the single
+production analysis authority. Cytoflow 1.3.2 and FlowKit 1.3.2 are CI comparators
+only and are not bundled; the worker keeps t-SNE (scikit-learn 1.9.1) as its one
+production job. The Cytoflow paragraphs below describe the parity path.
+
 The portable C++ population core is the authority for inclusive optional scalar
 bounds, three-valued Boolean composition within parent/QC universes, exact keyed
 membership validation and counts with null empty denominators. It never computes
@@ -63,8 +68,8 @@ and durable reopen. Native ASan/UBSan and Rust clippy pass locally.
 The native interval/statistics slice is mounted in Studio/Review; the Cytoflow
 worker is not yet attached to app source submission. No live provider, qualified source reader adapter,
 workspace DAG/undo/redo, images, qualified advanced science or reports. Keep
-[[ReviewSession]] and acquisition exclusion intact. Cytoflow distribution remains
-a release decision, not an excuse to stop internal implementation.
+[[ReviewSession]] and acquisition exclusion intact. Cytoflow distribution no longer
+gates shipping (ADR 0016: comparator only, not bundled).
 
 ## Bounded native population graph
 
@@ -282,3 +287,51 @@ tests `tests/analysis/fcs_reader_test.cpp` (`analysis.fcs_reader`),
   files through the same evaluator as MIB recordings.
 - **Histogram bins.** `ResourceBounds::maxHistogramBins` (default 256, the display
   hosts' bound) lets the acceptance compare FlowJo's 4,096-bin exports.
+
+## Comparison and concentration-response fits (F-4, F09 / I09 / I10)
+
+The native inference authority (ADR 0016; no TypeScript or Python in the path):
+
+- `include/backend/analysis/AnalysisInference.h` / `src/backend/analysis/AnalysisInference.cpp`:
+  pure C++ distributions (regularized incomplete beta and gamma, normal, t
+  quantile by bisection) and tests on unit-level values: Welch t, Mann-Whitney U
+  (exact null distribution when untied and both n <= 50, else normal
+  approximation with tie and 0.5 continuity correction), paired t, Wilcoxon
+  signed-rank (zeros dropped; exact when untied and n <= 50, else normal
+  approximation with tie correction), one-way ANOVA, Kruskal-Wallis; and
+  `fitLogistic`: 4PL / 3PL (hill 1) by Levenberg-Marquardt (three starts,
+  bounds |hill| <= 10, logEC50 within 3 decades of the tested range), covariance
+  s^2 (J'WJ)^-1, t CIs, EC50 CI on log10 or linear scale, residuals, R^2,
+  optional 1/variance-of-replicate-units weights.
+- `compareSpec` / `fitSpec` (`AnalysisComparison.cpp`): parse
+  `F-comparison-spec/1` and `F-fit-spec/1`, evaluate each pinned sample through
+  the host (`evaluate` with the optional `metric {population, parameter}`, which
+  adds `sourceParameters` / `sourceProvenance`), exclude incompatible sources
+  with reasons (parameters/units, preprocessing fingerprint, processing core,
+  calibration, E-LUT, missing metric, repeated source), average technical
+  replicates per unit, and run inference only when declared and every group has
+  >= 3 units (`kMinimumUnitsPerGroup`; can be raised, not lowered), otherwise
+  `insufficient` with reasons and no p-value. Fits with fewer points than
+  parameters + 1, fewer distinct concentrations than parameters, no response
+  variation, or unweighable replicates return `insufficient` and no parameters;
+  suspect reasons: stalled (damping > 1e16, `termination: stalled`) or not
+  converged, EC50 outside the tested range, EC50 CI wider than the range (judged
+  on the log10 interval in both reporting scales), linear-scale EC50 CI reaching
+  <= 0, fewer than 5 concentrations, inverse-variance weights from fewer than 3
+  replicates per concentration, parameter at bound, singular covariance.
+- Each test reports `status` `computed` or `undefined` (zero within-group or
+  paired-difference variance, all values tied, every paired difference zero, or a
+  non-finite intermediate) with `undefinedReason` and null statistic / p-value /
+  CI; never p = 0 or 1 for a degenerate input. Confidence levels follow one rule,
+  `checkConfidenceLevel` (0.5, 0.999].
+- Host actions `comparisonSpec` / `concentrationFit` (read endpoint; reply
+  carries `contentHash`). The descriptive `compare` (F-analysis-comparison/1)
+  stays for existing findings.
+- Proof: `analysis.inference` (scipy values from
+  `tools/analysis_inference/generate_reference.py` → `tests/analysis/inference_reference.h`)
+  and `analysis.comparison_spec` (the same numbers through `AnalysisHost`, plus
+  exclusions, insufficient units, technical replicates, suspect and insufficient
+  fits).
+- Remaining: no CI for rank-test shifts or ANOVA effect sizes; repeated-measures
+  (paired > 2 groups) and dose series within one unit are refused, not modelled;
+  no multiplicity correction; no I-6 view yet.
