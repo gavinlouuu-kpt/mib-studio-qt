@@ -25,3 +25,16 @@ hardware.
 Evidence class: **real backend, headless** (native `workspace.recipe_provider` on the real metadata
 host; `ws.rs` against the real backend with the mock camera). No rig run; registry-cache methods
 are exercised only through stubs.
+
+**Review fixes (#825).** Adoption no longer copies workspace lineage unchecked: a lineage parent
+must already be a provider recipe (a self-parent or the id being derived refuses; a cycle cannot
+form), a lineage finding must be known to the analysis authority, and dropped references are
+recorded in the adopted recipe's `adoption_notes`. A public `recipe_derive` refuses a finding the
+analysis authority does not know (`RecipeHost::finding` = analysis `readFinding`). The child and
+the adopted pair validate before any write, so a refused derive writes nothing. The method diff
+now compares `content_sha256`: the same revision with another hash is different ("method content
+changed for this revision"), a missing hash unknown. Additive reply-shape changes, still ABI 50:
+`adoption_notes?` on a recipe and `content_sha256` in the method item's `left`/`right`; the
+contract text, `contract.rs` `recipes_are_described`, `recipeModel.ts` and `RecipeLibrary` (shows
+the notes) follow. Tests: `workspace.recipe_provider` (bogus finding, self-parent, derived-id
+parent, cycle, dangling finding, refused derive with an unchanged catalog, content-hash diff).

@@ -1592,6 +1592,11 @@ namespace backend::bridge
         host.plan = [analysisRead](const std::string& id, const std::string& revision) {
             return J::parse(analysisRead(J{{"action", "read"}, {"planId", id}, {"revision", revision}}.dump()));
         };
+        // A finding reference (derive, adopted lineage) must be known to F's analysis authority.
+        host.finding = [analysisRead](const std::string& id, const std::string& revision) {
+            return J::parse(
+                analysisRead(J{{"action", "readFinding"}, {"findingId", id}, {"revision", revision}}.dump()));
+        };
         host.now = [] { return app::utcIsoFromUnixMs(app::WallClock::nowNs() / 1'000'000ull); };
         auto policy = [](workspace::RecipeMethodFacts& f, const std::string& config) {
             app::CalibrationMethodSpec spec;

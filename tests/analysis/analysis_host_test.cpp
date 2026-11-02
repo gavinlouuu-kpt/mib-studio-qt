@@ -696,6 +696,9 @@ int main() {
         recipeHost.plan = [&](const std::string& id, const std::string& revision) {
             return call(json{{"action", "read"}, {"planId", id}, {"revision", revision}}, false);
         };
+        recipeHost.finding = [&](const std::string& id, const std::string& revision) {
+            return call(json{{"action", "readFinding"}, {"findingId", id}, {"revision", revision}}, false);
+        };
         recipeHost.instrument = [] { return backend::workspace::RecipeInstrumentState{}; };
         recipeHost.now = [] { return std::string("2026-11-02T00:00:00.000Z"); };
         const backend::workspace::RecipeProvider recipes(recipeHost);

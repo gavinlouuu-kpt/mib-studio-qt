@@ -2,7 +2,10 @@
 // (SqliteService / WorkspaceStore on a temp app.sqlite3) with stub method, analysis-plan and
 // instrument authorities. Round-trip + fault-injection: immutability, derive lineage, the
 // compatibility diff (equal / different / unknown with reasons), apply preview without side
-// effects, namespace reservation and exact command replay.
+// effects, namespace reservation and exact command replay. #825 review regressions: a finding
+// must be known to the analysis authority, adopted workspace lineage is checked (no self-parent,
+// no cycle, no dangling reference), a refused derive writes nothing, and a method content hash
+// change under one revision is a method difference.
 #include "backend/database/SqliteService.h"
 #include "backend/workspace/RecipeProvider.h"
 #include "support/assert.h"
@@ -12,6 +15,7 @@
 #include <nlohmann/json.hpp>
 
 #include <map>
+#include <set>
 #include <string>
 
 using nlohmann::json;
@@ -26,6 +30,8 @@ struct World {
     std::map<std::string, RecipeMethodFacts> methods;
     // Analysis authority: key "id@revision" -> document.
     std::map<std::string, json> plans;
+    // Finding authority (analysis readFinding): keys "id@revision".
+    std::set<std::string> findings;
     RecipeInstrumentState instrument;
     int instrumentReads{0};
     int storeWrites{0};
@@ -49,6 +55,12 @@ struct World {
             const auto it = plans.find(id + "@" + revision);
             if (it == plans.end()) return json{{"status", "not_found"}, {"message", "no such plan"}};
             return json{{"status", "ok"}, {"planId", id}, {"revision", revision}, {"document", it->second}};
+        };
+        host.finding = [this](const std::string& id, const std::string& revision) {
+            if (!findings.count(id + "@" + revision))
+                return json{{"status", "not_found"}, {"message", "no such finding"}};
+            return json{{"status", "ok"}, {"findingId", id}, {"revision", revision},
+                        {"document", {{"type", "F-analysis-finding/1"}}}};
         };
         host.instrument = [this] {
             ++instrumentReads;
@@ -91,6 +103,7 @@ int main() {
     w.methods["local:cells:rev-b"] = local("rev-b", "cfg-b", std::nullopt, "required");
     w.plans["plan-1@1"] = json{{"type", "F-analysis-strategy/1"}, {"method", nullptr}};
     w.plans["plan-1@2"] = json{{"type", "F-analysis-strategy/1"}};
+    w.findings.insert("finding-1@1");
     w.plans["bound@1"] = json{{"method", {{"method_id", "other"}, {"revision_id", "x"}}}};
     w.instrument.generation = "7";
     w.instrument.methodSource = "local";
@@ -340,6 +353,140 @@ int main() {
                "an already-applied method needs no selection");
     MIB_EXPECT(call({{"action", "recipe_get"}, {"recipe_id", "r-original"}, {"revision", "1"}}, false)["recipe"] == original,
                "after create, derive, diff and apply preview the original is unchanged");
+
+    // --- #825 review: findings, adoption lineage, refused derives, method content ---------------
+    auto catalog = [&] { return call({{"action", "recipe_list"}, {"limit", 100}}, false); };
+    auto has = [](const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; };
+    auto message = [](const json& r) { return r.value("message", std::string{}); };
+    {
+        // M2: a public derive names a finding the analysis authority must know.
+        const auto before = catalog();
+        const auto writes = w.storeWrites;
+        auto bogus = derive;
+        bogus["command_id"] = "cmd-bogus";
+        bogus["recipe_id"] = "r-bogus";
+        bogus["finding"] = {{"id", "bogus"}, {"revision", "77"}};
+        const auto r = call(bogus);
+        MIB_EXPECT(r["status"] == "not_found" && has(message(r), "bogus @ 77") &&
+                       has(message(r), "not known to the analysis authority"),
+                   "a bogus finding is refused: " + r.dump());
+        MIB_EXPECT(catalog() == before && w.storeWrites == writes, "the refused derive wrote nothing");
+    }
+    // In-process adoption (NextRunPlanning draft_from_finding) of a user-written workspace recipe.
+    auto workspaceRecipe = [](const std::string& id, const json& lineageRecipe, const json& lineageFinding) {
+        return json{{"schema_version", 1}, {"id", id}, {"revision", "1"}, {"title", "Workspace " + id},
+                    {"question", "why " + id},
+                    {"method", {{"source", "local"}, {"id", "beads"}, {"revision", "rev-a"}}},
+                    {"analysis_plan", {{"id", "plan-1"}, {"revision", "1"}}},
+                    {"lineage", {{"recipe", lineageRecipe}, {"finding", lineageFinding}}}};
+    };
+    auto adoptDerive = [&](const std::string& child, const json& doc) {
+        return p.handle({{"action", "recipe_derive"}, {"command_id", "cmd-" + child}, {"recipe_id", child},
+                         {"parent", {{"id", doc.at("id")}, {"revision", "1"}}}, {"parent_document", doc}},
+                        true, true);
+    };
+    auto get = [&](const std::string& id) {
+        return call({{"action", "recipe_get"}, {"recipe_id", id}, {"revision", "1"}}, false);
+    };
+    auto ref = [](const std::string& id) { return json{{"id", id}, {"revision", "1"}}; };
+    {
+        // M1: self-parent and the id being derived are refused; nothing is written.
+        const auto before = catalog();
+        const auto writes = w.storeWrites;
+        auto r = adoptDerive("child-c", workspaceRecipe("ws-c", ref("ws-c"), nullptr));
+        MIB_EXPECT(r["status"] == "invalid" && has(message(r), "names itself as its parent"),
+                   "a self-parent is refused: " + r.dump());
+        r = adoptDerive("child-d", workspaceRecipe("ws-d", ref("child-d"), nullptr));
+        MIB_EXPECT(r["status"] == "invalid" && has(message(r), "names the recipe being derived"),
+                   "the id being derived as parent is refused: " + r.dump());
+        MIB_EXPECT(catalog() == before && w.storeWrites == writes && get("ws-c")["status"] == "not_found" &&
+                       get("ws-d")["status"] == "not_found",
+                   "refused adoptions wrote nothing");
+
+        // A cycle ws-a <-> ws-b cannot be adopted: ws-b is no provider recipe when ws-a is adopted.
+        r = adoptDerive("child-a", workspaceRecipe("ws-a", ref("ws-b"), nullptr));
+        MIB_REQUIRE(r["status"] == "ok", r.dump());
+        auto a = get("ws-a")["recipe"];
+        MIB_EXPECT(a["lineage"]["recipe"].is_null() && a["adoption_notes"].size() == 1 &&
+                       has(a["adoption_notes"][0].get<std::string>(),
+                           "lineage not adopted: parent not in provider (ws-b @ 1)"),
+                   "a parent outside the provider is dropped with the reason: " + a.dump());
+        MIB_EXPECT(a["method"]["content_sha256"] == "rev-a", "the adopted pair was validated: " + a.dump());
+        r = adoptDerive("child-b", workspaceRecipe("ws-b", ref("ws-a"), nullptr));
+        MIB_REQUIRE(r["status"] == "ok", r.dump());
+        const auto b = get("ws-b")["recipe"];
+        MIB_EXPECT(b["lineage"]["recipe"] == ref("ws-a") && b["adoption_notes"].empty(),
+                   "a provider parent is adopted: " + b.dump());
+        std::set<std::string> seen;
+        std::string at = "child-b";
+        while (!at.empty() && seen.insert(at).second) {
+            const auto node = get(at);
+            MIB_REQUIRE(node["status"] == "ok", "lineage resolves in the provider: " + at + " " + node.dump());
+            const auto& parent = node["recipe"]["lineage"]["recipe"];
+            at = parent.is_null() ? std::string{} : parent["id"].get<std::string>();
+        }
+        MIB_EXPECT(at.empty() && seen == std::set<std::string>({"child-b", "ws-b", "ws-a"}),
+                   "provider lineage ends without a cycle");
+
+        // A dangling finding is dropped with the reason; a known one is kept.
+        r = adoptDerive("child-e", workspaceRecipe("ws-e", nullptr, ref("ghost")));
+        MIB_REQUIRE(r["status"] == "ok", r.dump());
+        const auto e = get("ws-e")["recipe"];
+        MIB_EXPECT(e["lineage"]["finding"].is_null() && e["adoption_notes"].size() == 1 &&
+                       has(e["adoption_notes"][0].get<std::string>(), "lineage not adopted: finding ghost @ 1"),
+                   "a dangling finding is dropped with the reason: " + e.dump());
+        r = adoptDerive("child-f", workspaceRecipe("ws-f", nullptr, ref("finding-1")));
+        MIB_REQUIRE(r["status"] == "ok", r.dump());
+        MIB_EXPECT(get("ws-f")["recipe"]["lineage"]["finding"] == ref("finding-1"), "a known finding is kept");
+    }
+    {
+        // m1: a derive refused after adoption validated writes nothing, the parent included.
+        const auto before = catalog();
+        const auto writes = w.storeWrites;
+        auto q = json{{"action", "recipe_derive"}, {"command_id", "cmd-child-g"}, {"recipe_id", "child-g"},
+                      {"parent", ref("ws-g")}, {"analysis_plan", {{"id", "plan-1"}, {"revision", "9"}}},
+                      {"parent_document", workspaceRecipe("ws-g", nullptr, nullptr)}};
+        auto r = p.handle(q, true, true);
+        MIB_EXPECT(r["status"] == "not_found", "the child's plan is refused: " + r.dump());
+        auto unresolved = workspaceRecipe("ws-h", nullptr, nullptr);
+        unresolved["method"]["revision"] = "missing";
+        r = adoptDerive("child-h", unresolved);
+        MIB_EXPECT(r["status"] == "unavailable", "the adopted pair is validated: " + r.dump());
+        MIB_EXPECT(catalog() == before && w.storeWrites == writes && get("ws-g")["status"] == "not_found" &&
+                       get("ws-h")["status"] == "not_found",
+                   "refused derives wrote nothing, not even the adopted parent");
+    }
+    {
+        // m2: the same method revision with another content hash is a different method.
+        const json same{{"source", "local"}, {"id", "beads"}, {"revision", "rev-a"}};
+        auto make = [&](const std::string& id, const json& method) {
+            return call({{"action", "recipe_create"}, {"command_id", "cmd-" + id}, {"recipe_id", id},
+                         {"title", id}, {"method", method}, {"analysis_plan", {{"id", "plan-1"}, {"revision", "1"}}}});
+        };
+        MIB_REQUIRE(make("r-h1", same)["status"] == "ok", "r-h1");
+        w.methods["local:beads:rev-a"].contentSha256 = "rev-a-v2";
+        MIB_REQUIRE(make("r-h2", same)["status"] == "ok", "r-h2");
+        auto d2 = diff({{"recipe_id", "r-h2"}, {"revision", "1"}}, "r-h1");
+        auto m = status(d2["items"], "method");
+        MIB_EXPECT(m["status"] == "different" && has(m["reason"].get<std::string>(), "method content changed for this revision") &&
+                       m["left"]["content_sha256"] == "rev-a" && m["right"]["content_sha256"] == "rev-a-v2",
+                   "recipe vs recipe: content differs under one revision: " + d2.dump());
+        d2 = diff("instrument", "r-h1");
+        m = status(d2["items"], "method");
+        MIB_EXPECT(m["status"] == "different" && has(m["reason"].get<std::string>(), "method content changed for this revision") &&
+                       m["right"]["content_sha256"] == "rev-a-v2",
+                   "recipe vs instrument: the authority's content changed: " + d2.dump());
+        d2 = diff("instrument", "r-h2");
+        MIB_EXPECT(status(d2["items"], "method")["status"] == "equal", "the current content is equal: " + d2.dump());
+        w.methods["local:beads:rev-a"].contentSha256 = "rev-a";
+        w.methods["local:nohash:n1"] = local("", "cfg-a", 2);
+        const json nohash{{"source", "local"}, {"id", "nohash"}, {"revision", "n1"}};
+        MIB_REQUIRE(make("r-n1", nohash)["status"] == "ok" && make("r-n2", nohash)["status"] == "ok", "no-hash recipes");
+        d2 = diff({{"recipe_id", "r-n2"}, {"revision", "1"}}, "r-n1");
+        m = status(d2["items"], "method");
+        MIB_EXPECT(m["status"] == "unknown" && has(m["reason"].get<std::string>(), "recorded no method content hash"),
+                   "a missing hash is unknown, with why: " + d2.dump());
+    }
 
     // --- restart: recipes survive and stay immutable ------------------------------------------
     {

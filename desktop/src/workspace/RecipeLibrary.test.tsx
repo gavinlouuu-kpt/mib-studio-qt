@@ -104,6 +104,17 @@ it("refuses a preview reply that claims to have applied, and shows backend refus
   expect(host.textContent).toContain("not_found: Recipe r-original @ 1 not found");
 });
 
+it("shows the provider's adoption notes as returned (#825)", async () => {
+  const adopted = { ...recipe("ws-a"), adoption_notes: ["lineage not adopted: parent not in provider (ws-b @ 1)"] };
+  b.recipeList.mockResolvedValue({ status: "ok", recipes: [adopted], next_after: null });
+  b.recipeGet.mockResolvedValue({ status: "ok", recipe: adopted });
+  act(() => root.render(<RecipeLibrary controlHeld />));
+  await click("List recipes");
+  await click("beads @ rev-a");
+  expect(host.querySelector("[data-testid=recipe-adoption-notes]")!.textContent)
+    .toBe("lineage not adopted: parent not in provider (ws-b @ 1)");
+});
+
 it("production recipe code imports no fixture", () => {
   for (const source of [librarySource, pairingSource, planSource, modelSource]) expect(source).not.toMatch(/fixtures?\//);
 });

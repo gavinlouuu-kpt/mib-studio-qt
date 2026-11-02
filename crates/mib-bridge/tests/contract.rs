@@ -143,7 +143,11 @@ fn recipes_are_described() {
     assert_eq!(c["namespace"], "recipe/");
     for (key, needle) in [("commands", "recipe_apply_preview"), ("commands", "hardware_actuated: false"),
                           ("commands", "control-only"), ("rules", "create-only"),
-                          ("rules", "never changed by it"), ("rules", "unknown only with a reason")] {
+                          ("rules", "never changed by it"), ("rules", "unknown only with a reason"),
+                          // #825 review: verified findings and lineage, no partial writes, content hash.
+                          ("recipe", "adoption_notes"), ("rules", "known to F's analysis authority"),
+                          ("rules", "a refused derive writes nothing"),
+                          ("rules", "method content changed for this revision")] {
         assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "recipes.{key} mentions {needle}");
     }
 }

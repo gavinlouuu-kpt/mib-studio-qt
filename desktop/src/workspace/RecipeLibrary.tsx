@@ -78,6 +78,9 @@ export function RecipeLibrary({ controlHeld }: { controlHeld: boolean }) {
       <RecipePairing recipe={pairingView(selected)} contextRevision={null} compatibility={null} diff={diff}
         onCopy={controlHeld && !blocked ? () => void write({ kind: "derive", request: { command_id: mintExperimentId(), recipe_id: mintExperimentId(),
           parent: { id: selected.id, revision: selected.revision }, ...base } }) : undefined} />
+      {!!selected.adoption_notes?.length && <Notice tone="info" title="Adopted from a saved workspace">
+        <ul data-testid="recipe-adoption-notes">{selected.adoption_notes.map(n => <li key={n}>{n}</li>)}</ul>
+      </Notice>}
       <Button disabled={blocked} onClick={() => void compare("instrument")}>Compare with the instrument</Button>
       {selected.lineage.recipe && <Button disabled={blocked} onClick={() => void compare({ recipe_id: selected.lineage.recipe!.id, revision: selected.lineage.recipe!.revision })}>Compare with the parent recipe</Button>}
       <Button disabled={blocked} onClick={() => void previewApply()}>Preview apply</Button>

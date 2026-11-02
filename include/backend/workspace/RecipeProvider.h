@@ -73,6 +73,9 @@ struct RecipeHost {
         method;
     // F's analysis authority: the reply of analysis read {planId, revision}.
     std::function<nlohmann::json(const std::string& planId, const std::string& revision)> plan;
+    // F's analysis authority on a finding: the reply of analysis readFinding {findingId, revision}
+    // ({status ok, findingId, revision, document} or a refusal). Unset: findings are unavailable.
+    std::function<nlohmann::json(const std::string& findingId, const std::string& revision)> finding;
     std::function<RecipeInstrumentState()> instrument;
     std::function<std::string()> now; // UTC ISO-8601
 };

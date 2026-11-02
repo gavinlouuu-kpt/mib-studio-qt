@@ -157,41 +157,91 @@ struct Side {
     RecipeMethodFacts facts;
     Calibration calibration;
     std::optional<RecipeInstrumentState> instrument;
+    std::string storedContent;  // the content_sha256 the recipe recorded; empty: not recorded
+    bool contentChanged{false}; // the method authority's content for the revision differs from it
 };
+
+J contentOf(const Side& s) { return s.storedContent.empty() ? J(nullptr) : J(s.storedContent); }
+
+// The method revision identity, then its content: the same {source, id, revision} with another
+// content hash is a different method ("method content changed for this revision").
+constexpr const char* kContentChanged = "method content changed for this revision";
 
 J methodItem(const Side& l, const Side& r) {
     const auto& m = l.method;
+    J left = m;
+    left["content_sha256"] = contentOf(l);
     if (!r.instrument) {
-        const bool same = m == r.method;
-        return item("method", same ? "equal" : "different",
-                    same ? "Both pin " + describe(m)
-                         : l.label + " pins " + describe(m) + "; " + r.label + " pins " +
-                               describe(r.method),
-                    m, r.method);
+        J right = r.method;
+        right["content_sha256"] = contentOf(r);
+        if (m != r.method)
+            return item("method", "different",
+                        l.label + " pins " + describe(m) + "; " + r.label + " pins " +
+                            describe(r.method),
+                        left, right);
+        for (const Side* s : {&l, &r})
+            if (s->storedContent.empty())
+                return item("method", "unknown",
+                            "Both pin " + describe(m) + ", but " + s->label +
+                                " recorded no method content hash",
+                            left, right);
+        if (l.storedContent != r.storedContent)
+            return item("method", "different",
+                        std::string(kContentChanged) + ": both pin " + describe(m) + ", " + l.label +
+                            " recorded content " + shortHash(l.storedContent) + " and " + r.label +
+                            " " + shortHash(r.storedContent),
+                        left, right);
+        return item("method", "equal",
+                    "Both pin " + describe(m) + " (content " + shortHash(l.storedContent) + ")", left,
+                    right);
     }
     const auto& s = *r.instrument;
     J right = {{"source", s.methodSource}, {"id", s.methodId}, {"revision", s.methodRevision},
                {"named", s.methodNamed}, {"modified", s.methodModified}};
     if (s.methodSource == "none")
-        return item("method", "different", "No method is applied on the instrument", m, right);
+        return item("method", "different", "No method is applied on the instrument", left, right);
     if (!s.methodNamed)
         return item("method", "unknown",
                     "The applied configuration does not name a method revision (it was applied "
                     "outside the registry and the local profile store)",
-                    m, right);
+                    left, right);
     const auto source = s.methodSource == "central" ? "registry" : "local";
     if (s.methodModified)
         return item("method", "different",
                     "The applied configuration was changed after local profile " + s.methodId +
                         " was applied",
-                    m, right);
+                    left, right);
     const bool same = m.at("source") == source && m.at("id") == s.methodId &&
                       m.at("revision") == s.methodRevision;
-    return item("method", same ? "equal" : "different",
-                same ? "The instrument runs " + describe(m)
-                     : "Recipe pins " + describe(m) + "; the instrument runs " + source + " " +
-                           s.methodId + " @ " + s.methodRevision,
-                m, right);
+    if (!same)
+        return item("method", "different",
+                    "Recipe pins " + describe(m) + "; the instrument runs " + source + " " +
+                        s.methodId + " @ " + s.methodRevision,
+                    left, right);
+    // The instrument runs the revision as the method authority holds it now.
+    right["content_sha256"] = (l.facts.resolved || l.contentChanged) && !l.facts.contentSha256.empty()
+                                  ? J(l.facts.contentSha256)
+                                  : J(nullptr);
+    if (l.contentChanged)
+        return item("method", "different",
+                    std::string(kContentChanged) + ": the instrument runs " + describe(m) +
+                        ", whose content is no longer the " + shortHash(l.storedContent) + " " +
+                        l.label + " recorded",
+                    left, right);
+    if (l.storedContent.empty())
+        return item("method", "unknown",
+                    "The instrument runs " + describe(m) + ", but " + l.label +
+                        " recorded no method content hash",
+                    left, right);
+    if (right.at("content_sha256").is_null())
+        return item("method", "unknown",
+                    "The instrument runs " + describe(m) +
+                        ", but the method authority gives no content hash for it: " +
+                        (l.facts.resolved ? std::string("none exposed") : l.facts.reason),
+                    left, right);
+    return item("method", "equal",
+                "The instrument runs " + describe(m) + " (content " + shortHash(l.storedContent) + ")",
+                left, right);
 }
 
 J profileItem(const Side& l, const Side& r) {
@@ -386,6 +436,28 @@ J RecipeProvider::handle(const J& q, bool write, bool internal) const {
                                             str(r.at("revision")) + " not found");
             return *s;
         };
+        // F's analysis authority on a finding reference {id, revision}: "ok", or the refusal
+        // status ("not_found" for a finding it does not know, "unavailable") with `why`.
+        auto verifyFinding = [&](const J& ref, std::string& why) -> std::string {
+            if (!host_.finding) {
+                why = "no analysis authority is available to verify findings";
+                return "unavailable";
+            }
+            const auto reply = host_.finding(str(ref.at("id")), str(ref.at("revision")));
+            const auto status = reply.value("status", std::string{"unavailable"});
+            if (status != "ok") {
+                why = reply.value("message", status);
+                return status == "not_found" || status == "invalid" ? "not_found" : "unavailable";
+            }
+            if (reply.value("findingId", J(nullptr)) != ref.at("id") ||
+                reply.value("revision", J(nullptr)) != ref.at("revision") ||
+                !reply.contains("document") || !reply.at("document").is_object() ||
+                reply.at("document").value("type", std::string{}) != "F-analysis-finding/1") {
+                why = "the analysis authority returned a different record";
+                return "not_found";
+            }
+            return "ok";
+        };
         auto validatePair = [&](const J& method, const J& plan, const std::string& base) {
             auto facts = host_.method(method, base);
             if (!facts.resolved)
@@ -423,9 +495,14 @@ J RecipeProvider::handle(const J& q, bool write, bool internal) const {
         };
         // Create-only write with an exact replay: the same command and request return the stored
         // recipe; any other request for an existing identity is a conflict (recipes are immutable).
-        auto writeRecipe = [&](const std::string& id, const std::string& command,
-                               const std::string& requestSha,
-                               const std::function<J()>& build) -> J {
+        // `build` validates and returns the document; `beforeCommit` runs only once it has passed
+        // (an adopted parent is written there, so a refused derive writes nothing).
+        std::function<J(const std::string&, const std::string&, const std::string&,
+                        const std::function<J()>&, const std::function<void()>&)>
+            writeRecipe;
+        writeRecipe = [&](const std::string& id, const std::string& command,
+                          const std::string& requestSha, const std::function<J()>& build,
+                          const std::function<void()>& beforeCommit) -> J {
             auto replay = [&]() -> std::optional<J> {
                 const auto existing = storeRead(id, std::nullopt);
                 if (!existing) return std::nullopt;
@@ -438,6 +515,7 @@ J RecipeProvider::handle(const J& q, bool write, bool internal) const {
             if (auto prior = replay()) return J{{"status", "ok"}, {"replayed", true}, {"recipe", *prior}};
             J doc = build();
             doc["origin"] = {{"command_id", command}, {"request_sha256", requestSha}};
+            if (beforeCommit) beforeCommit();
             const auto reply = host_.store(J{{"action", "commit"},
                                              {"workspace_id", kNamespace + id},
                                              {"expected_revision", nullptr},
@@ -459,9 +537,11 @@ J RecipeProvider::handle(const J& q, bool write, bool internal) const {
             const auto& m = s.document.at("method");
             side.method = J{{"source", m.at("source")}, {"id", m.at("id")}, {"revision", m.at("revision")}};
             side.facts = host_.method(side.method, base);
-            if (side.facts.resolved && m.contains("content_sha256") &&
-                m.at("content_sha256").is_string() && !str(m.at("content_sha256")).empty() &&
-                side.facts.contentSha256 != str(m.at("content_sha256"))) {
+            if (m.contains("content_sha256") && m.at("content_sha256").is_string())
+                side.storedContent = str(m.at("content_sha256"));
+            if (side.facts.resolved && !side.storedContent.empty() &&
+                side.facts.contentSha256 != side.storedContent) {
+                side.contentChanged = true;
                 side.facts.resolved = false;
                 side.facts.reason = "the method authority's content for this revision differs "
                                     "from the hash recorded when the recipe was created";
@@ -539,7 +619,7 @@ J RecipeProvider::handle(const J& q, bool write, bool internal) const {
                          {"analysis_plan", plan},
                          {"lineage", {{"recipe", nullptr}, {"finding", nullptr}}},
                          {"basis", basis()}};
-            });
+            }, {});
         }
         if (action == "recipe_derive") {
             if (!write) refuse("invalid", "Deriving a recipe requires the control-only write endpoint");
@@ -554,7 +634,25 @@ J RecipeProvider::handle(const J& q, bool write, bool internal) const {
                 refuse("invalid", "A derived recipe needs a fresh identity");
             const auto base = text(q, "profile_base", 4096, "");
             const auto finding = q.contains("finding") ? revisionRef(q.at("finding"), "finding") : J(nullptr);
+            // A finding is a reference into F's analysis authority, not just a well-formed pair.
+            if (!finding.is_null()) {
+                std::string why;
+                const auto known = verifyFinding(finding, why);
+                if (known != "ok")
+                    refuse(known.c_str(), "Finding " + str(finding.at("id")) + " @ " +
+                                              str(finding.at("revision")) +
+                                              " is not known to the analysis authority: " + why);
+            }
             // In-process planning: adopt the exact inline recipe of a saved workspace revision.
+            // Workspace documents are user-written, so none of it becomes provider truth
+            // unchecked: the pair is validated as recipe_create does, a lineage parent must already
+            // be a provider recipe (never the recipe itself or the one being derived), and a
+            // lineage finding must be known to the analysis authority. A reference that is not
+            // adopted is dropped with its reason in adoption_notes. The adopted parent is written
+            // only after the child has validated too, so a refused derive writes nothing.
+            J parentDoc;
+            std::optional<J> adopted;
+            std::string adoptSha;
             if (internal && q.contains("parent_document") &&
                 !storeRead(str(parentRef.at("id")), std::nullopt)) {
                 const auto& p = q.at("parent_document");
@@ -566,38 +664,62 @@ J RecipeProvider::handle(const J& q, bool write, bool internal) const {
                 if (str(parentRef.at("revision")) != "1")
                     refuse("invalid", "Only revision 1 workspace recipes can be adopted");
                 J lineage = {{"recipe", nullptr}, {"finding", nullptr}};
-                if (p.contains("lineage") && p.at("lineage").is_object())
-                    for (const auto* k : {"recipe", "finding"})
-                        if (p.at("lineage").contains(k) && p.at("lineage").at(k).is_object())
-                            lineage[k] = revisionRef(p.at("lineage").at(k), k);
-                const auto facts = host_.method(pm, base);
+                J notes = J::array();
+                const bool hasLineage = p.contains("lineage") && p.at("lineage").is_object();
+                if (hasLineage && p.at("lineage").contains("recipe") && p.at("lineage").at("recipe").is_object()) {
+                    const auto ref = revisionRef(p.at("lineage").at("recipe"), "lineage.recipe");
+                    const auto rid = str(ref.at("id"));
+                    if (rid == str(parentRef.at("id")))
+                        refuse("invalid", "Workspace recipe " + rid +
+                                              " names itself as its parent; its lineage cannot be adopted");
+                    if (rid == id)
+                        refuse("invalid", "Workspace recipe " + str(parentRef.at("id")) +
+                                              " names the recipe being derived (" + id +
+                                              ") as its parent; its lineage cannot be adopted");
+                    if (storeRead(rid, str(ref.at("revision")))) lineage["recipe"] = ref;
+                    else
+                        notes.push_back("lineage not adopted: parent not in provider (" + rid + " @ " +
+                                        str(ref.at("revision")) + ")");
+                }
+                if (hasLineage && p.at("lineage").contains("finding") && p.at("lineage").at("finding").is_object()) {
+                    const auto ref = revisionRef(p.at("lineage").at("finding"), "lineage.finding");
+                    std::string why;
+                    if (verifyFinding(ref, why) == "ok") lineage["finding"] = ref;
+                    else
+                        notes.push_back("lineage not adopted: finding " + str(ref.at("id")) + " @ " +
+                                        str(ref.at("revision")) +
+                                        " is not known to the analysis authority (" + why + ")");
+                }
+                const auto facts = validatePair(pm, pp, base);
                 J m = pm;
-                m["content_sha256"] = facts.resolved ? facts.contentSha256 : "";
-                const J adopted = {{"schema_version", 1}, {"type", kType}, {"id", parentRef.at("id")},
-                                   {"title", text(p, "title", 200, "Workspace recipe")},
-                                   {"note", text(p, "question", 2000, "")},
-                                   {"created_at", host_.now()}, {"method", m}, {"analysis_plan", pp},
-                                   {"lineage", lineage},
-                                   {"basis", {{"calibration_known", false},
-                                              {"reason", "adopted from a saved workspace revision; "
-                                                         "the calibration in effect when it was "
-                                                         "authored was not recorded"},
-                                              {"captured_at", host_.now()}}}};
-                writeRecipe(str(parentRef.at("id")), "adopt-" + command, sha(J{{"adopt", p}}.dump()),
-                            [&] { return adopted; });
+                m["content_sha256"] = facts.contentSha256;
+                adopted = J{{"schema_version", 1}, {"type", kType}, {"id", parentRef.at("id")},
+                            {"title", text(p, "title", 200, "Workspace recipe")},
+                            {"note", text(p, "question", 2000, "")},
+                            {"created_at", host_.now()}, {"method", m}, {"analysis_plan", pp},
+                            {"lineage", lineage}, {"adoption_notes", notes},
+                            {"basis", {{"calibration_known", false},
+                                       {"reason", "adopted from a saved workspace revision; "
+                                                  "the calibration in effect when it was "
+                                                  "authored was not recorded"},
+                                       {"captured_at", host_.now()}}}};
+                adoptSha = sha(J{{"adopt", p}}.dump());
+                parentDoc = *adopted;
+            } else {
+                const auto parent = readExact(parentRef, "Parent recipe");
+                if (internal && q.contains("parent_document")) {
+                    const auto& p = q.at("parent_document");
+                    const auto& stored = parent.document;
+                    if (methodRef(p.at("method")) != J({{"source", stored.at("method").at("source")},
+                                                        {"id", stored.at("method").at("id")},
+                                                        {"revision", stored.at("method").at("revision")}}) ||
+                        revisionRef(p.at("analysis_plan"), "analysis_plan") != stored.at("analysis_plan"))
+                        refuse("conflict", "The workspace recipe differs from the provider's record of "
+                                           "the same identity");
+                }
+                parentDoc = parent.document;
             }
-            const auto parent = readExact(parentRef, "Parent recipe");
-            if (internal && q.contains("parent_document")) {
-                const auto& p = q.at("parent_document");
-                const auto& stored = parent.document;
-                if (methodRef(p.at("method")) != J({{"source", stored.at("method").at("source")},
-                                                    {"id", stored.at("method").at("id")},
-                                                    {"revision", stored.at("method").at("revision")}}) ||
-                    revisionRef(p.at("analysis_plan"), "analysis_plan") != stored.at("analysis_plan"))
-                    refuse("conflict", "The workspace recipe differs from the provider's record of "
-                                       "the same identity");
-            }
-            const auto& pd = parent.document;
+            const auto& pd = parentDoc;
             const J method = q.contains("method") ? methodRef(q.at("method"))
                                                   : J{{"source", pd.at("method").at("source")},
                                                       {"id", pd.at("method").at("id")},
@@ -608,16 +730,23 @@ J RecipeProvider::handle(const J& q, bool write, bool internal) const {
             const auto note = text(q, "note", 2000, "");
             J request = q;
             request.erase("parent_document");
-            return writeRecipe(id, command, sha(request.dump()), [&] {
-                const auto facts = validatePair(method, plan, base);
-                J m = method;
-                m["content_sha256"] = facts.contentSha256;
-                return J{{"schema_version", 1}, {"type", kType}, {"id", id},
-                         {"title", title.empty() ? str(pd.at("title")) : title}, {"note", note},
-                         {"created_at", host_.now()}, {"method", m}, {"analysis_plan", plan},
-                         {"lineage", {{"recipe", parentRef}, {"finding", finding}}},
-                         {"basis", basis()}};
-            });
+            return writeRecipe(
+                id, command, sha(request.dump()),
+                [&] {
+                    const auto facts = validatePair(method, plan, base);
+                    J m = method;
+                    m["content_sha256"] = facts.contentSha256;
+                    return J{{"schema_version", 1}, {"type", kType}, {"id", id},
+                             {"title", title.empty() ? str(pd.at("title")) : title}, {"note", note},
+                             {"created_at", host_.now()}, {"method", m}, {"analysis_plan", plan},
+                             {"lineage", {{"recipe", parentRef}, {"finding", finding}}},
+                             {"basis", basis()}};
+                },
+                [&] {
+                    if (adopted)
+                        writeRecipe(str(parentRef.at("id")), "adopt-" + command, adoptSha,
+                                    [&] { return *adopted; }, {});
+                });
         }
         if (action == "recipe_diff") {
             fields(q, {"action", "recipe_id", "revision", "against"}, {"profile_base"});

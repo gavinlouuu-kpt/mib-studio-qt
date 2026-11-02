@@ -60,6 +60,8 @@ export interface ProviderRecipe {
   schema_version: 1; type: "I-recipe/1"; id: string; revision: string; title: string; note: string; created_at: string;
   method: MethodRef & { content_sha256: string }; analysis_plan: RevisionRef;
   lineage: { recipe: RevisionRef | null; finding: RevisionRef | null };
+  /** Only on a recipe adopted from a saved workspace: lineage references not adopted, with why (#825). */
+  adoption_notes?: string[];
   basis: Record<string, unknown>;
 }
 export interface RecipeSummary { id: string; revision: string; title: string; created_at: string; method: MethodRef; analysis_plan: RevisionRef; lineage: { recipe: RevisionRef | null; finding: RevisionRef | null } }
