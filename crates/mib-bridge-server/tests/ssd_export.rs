@@ -161,7 +161,10 @@ impl Reply {
     }
 }
 
-fn parse_head(raw: &[u8]) -> Option<(u16, Vec<(String, String)>, usize)> {
+/// Status, headers and the body offset of an HTTP response head.
+type Head = (u16, Vec<(String, String)>, usize);
+
+fn parse_head(raw: &[u8]) -> Option<Head> {
     let split = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
     let header = String::from_utf8_lossy(&raw[..split]).into_owned();
     let mut lines = header.lines();

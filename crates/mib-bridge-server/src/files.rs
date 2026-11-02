@@ -324,6 +324,8 @@ pub(crate) async fn download(State(server): State<Arc<Server>>, Query(query): Qu
     if range_header.as_deref().is_some_and(|r| r.len() > MAX_RANGE_HEADER || r.contains(',')) {
         return (StatusCode::RANGE_NOT_SATISFIABLE, "a single short byte range only").into_response();
     }
+    // The refusal is the response itself, built once per request: its size does not matter here.
+    #[allow(clippy::result_large_err)]
     let opened = {
         let server = server.clone();
         tokio::task::spawn_blocking(move || -> Result<(File, String, u64, u64), Response> {
