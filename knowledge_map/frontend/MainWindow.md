@@ -185,7 +185,8 @@ created in `setupStatusSurfaces()`:
   error (`fatalSavePresented_`, reset at Start and at the terminal status);
   outside a run it opens the dialog with `open()`, never `exec()`, and
   releases the latch when it closes. A modal per queued error nested event
-  loops until the GUI stack overflowed (60 levels on the rig). A
+  loops until the GUI stack overflowed (60 levels on the rig). Guard:
+  `integration.fatal_save_dialog_e2e` (mock stream, forced overflow). A
   Stop issued by another client (the bridge) or by shutdown is rendered the
   same way. `stopInProgress_` disables Start/Stop and the compact text;
   `flushInProgress_` mirrors `status.flushing` for the camera operation

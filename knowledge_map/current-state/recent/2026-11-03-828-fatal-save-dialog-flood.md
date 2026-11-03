@@ -25,7 +25,19 @@ inside Qt Widgets/USER32 dialog frames.
   dialog for the terminal status (the existing deferred-dialog rule). Outside a
   run it opens the dialog with `open()`.
 
-**Tests.** `processing.experiment_capacity_error_latch`.
+**Tests.**
+- `processing.experiment_capacity_error_latch`: 8 producers saturate the buffer; one report per run.
+- `integration.fatal_save_dialog_e2e`: the real MainWindow runs an experiment on the 512x96 real-cell mock
+  stream at 1000 fps, with every detected cell accepted, an 8 MB buffer and HDF5 appends slowed by 400 ms.
+  A watcher answers the save dialog and records every message box. It expects:
+  - one Save Error box, opened after the run is terminal;
+  - never more than one box open at once.
+
+  On the unfixed code the process crashes about 4 s into the run. On the rig it passes 3 of 3 runs, in
+  7-8 s each.
+- The test honours `QT_QPA_PLATFORM` (default offscreen). On the Windows rig run it with
+  `QT_QPA_PLATFORM=windows`, because the offscreen plugin stalls in the QApplication constructor there,
+  as `integration.monitoring_scatter_e2e` does too.
 
 **Not fixed here.** The save path still cannot sustain 5000 fps of
 about 0.5 MB frames on the rig, so such runs still fail; they now fail cleanly
