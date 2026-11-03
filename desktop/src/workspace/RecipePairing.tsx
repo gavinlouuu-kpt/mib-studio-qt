@@ -20,14 +20,14 @@ export function RecipePairing({ recipe, contextRevision, compatibility, diff, on
     </dl>
     {matching ? <Notice tone={matching.overall === "equal" ? "info" : "warn"}
       title={`Compatibility with ${matching.right.kind === "instrument" ? "the instrument" : `recipe ${String(matching.right.id)} · ${String(matching.right.revision)}`}: ${matching.overall}`}>
-      <ul data-testid="recipe-diff">{matching.items.map(i => <li key={i.dimension}><strong>{i.dimension}</strong> · {i.status} · {i.reason}</li>)}</ul>
+      <ul data-testid="recipe-diff" data-tour="recipe-diff">{matching.items.map(i => <li key={i.dimension}><strong>{i.dimension}</strong> · {i.status} · {i.reason}</li>)}</ul>
       Computed by the recipe provider at this check. Copying preserves pinned references and never applies settings.
     </Notice> : <Notice tone={current?.status === "compatible" ? "info" : "warn"}
       title={current ? `Compatibility: ${current.status}` : "Compatibility not checked for this recipe and current setup"}>
       {current?.reasons.length ? <ul>{current.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul> : null}
       Compatibility is provider evidence, not hardware verification. Copying preserves pinned references and never applies settings.
     </Notice>}
-    {onCopy && recipe.revision !== null ? <Button onClick={onCopy}>Base a new draft on this recipe</Button> : null}
+    {onCopy && recipe.revision !== null ? <Button onClick={onCopy} data-tour="recipe-derive">Base a new draft on this recipe</Button> : null}
     {recipe.revision === null ? <p role="status">Draft only · not saved or applied. Changes do not affect the active run.</p> : null}
   </Card>;
 }

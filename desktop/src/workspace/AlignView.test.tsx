@@ -15,6 +15,7 @@ import { WRITE_TIMEOUT_MS, type Rect, type WriteResult } from "./quickControlMod
 import type { CameraFeatureApi } from "./useCameraFeatures";
 import type { CameraFeatureReply, CameraFeatureTreeReply, CameraFeatureWriteRequest } from "../bridge";
 import { FEATURES, SESSION, treeOutcome, treeReply, writeReply } from "./cameraFeatureFixtures";
+import { facts as tourFacts, FACTS as TOUR_FACTS } from "../tours/mib/facts";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -397,6 +398,29 @@ describe("SFNC quick controls over the camera's node map (#806 E-3)", () => {
     expect(api.write).toHaveBeenCalledTimes(1);
     expect($("align-write-gain").textContent).toBe("Refused · requested 99 dB · 0 dB · Value is outside the current device bounds.");
     expect($("align-write-gain").getAttribute("data-tone")).toBe("blocked");
+  });
+
+  // Tours (E02): a write reply with a readback is the tour's `feature-write-readback`; a refusal is handed out in the backend's words.
+  it("reports a write with a readback to the tours, as the write summary words it, and a refusal as a refusal", async () => {
+    tourFacts.reset();
+    const api = fakeFeatures([treeReply()], (r) => r.feature === "Gain"
+      ? writeReply("refused", r.feature, r.value, FEATURES.Gain.descriptor!, "Value is outside the current device bounds.")
+      : writeReply("readback", r.feature, r.value, { ...FEATURES.ExposureTime.descriptor!, value: { type: "float", value: 248 } }, "", { ...SESSION, capability_revision: "2" }));
+    await render({ features: api });
+    await settle();
+    expect(tourFacts.condition(TOUR_FACTS.featureWrite)).toBe("pending");     // reading the tree reports nothing
+    await setDraft("gain", "99");
+    await act(async () => writeButton("Gain").click());
+    await settle();
+    expect(tourFacts.detail(TOUR_FACTS.featureWrite)).toBeUndefined();
+    const refused = tourFacts.condition(TOUR_FACTS.featureWrite);
+    expect(refused).toEqual({ failed: expect.stringContaining("Value is outside the current device bounds.") });
+    await setDraft("exposure", "250");
+    await act(async () => writeButton("Exposure").click());
+    await settle();
+    expect(tourFacts.condition(TOUR_FACTS.featureWrite)).toBe("met");
+    expect(tourFacts.detail(TOUR_FACTS.featureWrite)).toContain("ExposureTime: Written");
+    expect(tourFacts.detail(TOUR_FACTS.featureWrite)).toContain("requested 250 us · 248 us");
   });
 
   it("a stale write reply re-reads the tree; a stale tree is read again at once", async () => {

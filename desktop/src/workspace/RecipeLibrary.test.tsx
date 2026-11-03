@@ -14,6 +14,7 @@ vi.mock("../bridge", () => ({ bridge: {
 } }));
 import { bridge } from "../bridge";
 import { RecipeLibrary } from "./RecipeLibrary";
+import { facts, FACTS } from "../tours/mib/facts";
 
 const b = vi.mocked(bridge);
 let host: HTMLDivElement, root: Root;
@@ -117,4 +118,35 @@ it("shows the provider's adoption notes as returned (#825)", async () => {
 
 it("production recipe code imports no fixture", () => {
   for (const source of [librarySource, pairingSource, planSource, modelSource]) expect(source).not.toMatch(/fixtures?\//);
+});
+
+// Tours (I02): the library reports the backend's answer to a create, as the tour's `recipe-created` condition. Nothing else reports it.
+it("reports a created recipe to the tours, with the id and revision the provider returned", async () => {
+  facts.reset();
+  act(() => root.render(<RecipeLibrary controlHeld />));
+  b.recipeCreate.mockResolvedValue({ status: "ok", replayed: false, recipe: recipe("r-new") });
+  expect(facts.condition(FACTS.recipeCreated)).toBe("pending");
+  await click("Create recipe");
+  expect(b.recipeCreate).toHaveBeenCalledTimes(1);
+  expect(facts.condition(FACTS.recipeCreated)).toBe("met");
+  expect(facts.detail(FACTS.recipeCreated)).toBe("r-new · revision 1");
+});
+
+it("reports a refused create to the tours as what the provider said, and not as created", async () => {
+  facts.reset();
+  act(() => root.render(<RecipeLibrary controlHeld />));
+  b.recipeCreate.mockResolvedValue({ status: "invalid", message: "title is required" });
+  await click("Create recipe");
+  expect(facts.detail(FACTS.recipeCreated)).toBeUndefined();
+  const refused = facts.condition(FACTS.recipeCreated);
+  expect(refused).toEqual({ failed: expect.stringContaining("title is required") });
+  expect(facts.condition(FACTS.recipeCreated)).toBe("pending");   // a refusal is handed out once
+});
+
+it("a derive or a list does not report the create fact", async () => {
+  facts.reset();
+  await openOriginal();
+  b.recipeDerive.mockResolvedValue({ status: "ok", replayed: false, recipe: recipe("r-next", { id: "r-original", revision: "1" }) });
+  await click("Base a new draft on this recipe");
+  expect(facts.condition(FACTS.recipeCreated)).toBe("pending");
 });

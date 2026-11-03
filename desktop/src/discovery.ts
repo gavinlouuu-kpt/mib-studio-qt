@@ -107,6 +107,7 @@ export function toCameraDiscovery(snap: DiscoverySnapshot): CameraDiscovery {
     valid: snap.valid && snap.state === DISCOVERY_JOB_STATES.Completed,
     complete: snap.complete,
     job_id: snap.job_id,
+    instance: snap.instance,
     cameras,
     framegrabbers,
   };

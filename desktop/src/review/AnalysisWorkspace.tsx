@@ -227,7 +227,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       <label>Exact-key QC decisions<textarea aria-label="QC decisions JSON" rows={5} value={qcText} onChange={e=>setQcText(e.target.value)}/></label>
       <p>Use the pinned gallery buttons to stage assertions with the author/reason above, then save a new backend revision. A changed source cannot inherit foreign event labels.</p>
     </details>
-    <details><summary>Saved histogram, scatter and overlay specification</summary>
+    <details><summary data-tour="review-plot-spec">Saved histogram, scatter and overlay specification</summary>
       <p>Up to eight graph populations share fixed raw-value bins. Count, fraction or density normalization is explicit. Display offsets do not alter gates or statistics. Save a new backend revision to persist this specification.</p>
       <label><input type="checkbox" checked={plotEnabled} onChange={e=>setPlotEnabled(e.target.checked)} disabled={busy}/>Include PlotSpec in the next saved revision</label>
       <p>Scatter example: <code>{'{"kind":"scatter","x":"area","y":"deformability","seed":42,"maxPoints":1000,"layers":[{"population":"area-gate"}]}'}</code>. Its display sample never limits native population statistics.</p>

@@ -62,6 +62,8 @@ export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "re
   /** Back to the classic view as it was (no classic tab change); App remembers it as the
    *  operator's choice for the next start. */
   onExit: () => void;
+  /** Open the Tours list (App's Help menu entry has the same effect). Opening it acts on nothing. Absent: no button. */
+  onTours?: () => void;
   serviceMode: boolean;
   /** O2 Align: the live image, image tools and quick controls. */
   align: Omit<AlignViewProps, "onClassic">;
@@ -86,7 +88,7 @@ export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "re
   };
 }
 
-export function Workspace({ brand, source, method, stage, onStage, onExit, serviceMode, align, experiment, ...prepare }: WorkspaceProps) {
+export function Workspace({ brand, source, method, stage, onStage, onExit, onTours, serviceMode, align, experiment, ...prepare }: WorkspaceProps) {
   // Read only while Prepare or the Experiment plan (which takes Prepare's verdict) is shown and no
   // run is active (the gates would only say "running"). Always without a path.
   const showsVerdict = workspaceReadsPrepare(stage, experiment.view);
@@ -135,7 +137,10 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
         {showsVerdict ? <StateChip tone={verdict.tone} title={verdict.detail || undefined} data-testid="workspace-verdict">{verdict.title}</StateChip> : null}
         <StateChip tone="neutral" data-testid="workspace-preview-chip">{stage === 1 || stage === 2 ? "Preview · acts only on a button" : "Preview · read-only"}</StateChip>
       </>}
-      headerActions={<Button onClick={onExit}>Classic view</Button>}
+      headerActions={<>
+        {onTours ? <Button onClick={onTours} data-tour="workspace-tours" title="Guided tours and what's new. Opening the list changes nothing and sends nothing.">Tours</Button> : null}
+        <Button onClick={onExit}>Classic view</Button>
+      </>}
     >
       {serviceMode && (
         <div className="ws-body ws-body--banner">

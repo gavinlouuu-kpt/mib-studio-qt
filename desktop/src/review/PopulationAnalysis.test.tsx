@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { PopulationAnalysis } from "./PopulationAnalysis";
 import { reviewBridge } from "./reviewBridge";
+import { facts, FACTS } from "../tours/mib/facts";
 vi.mock("./reviewBridge", () => ({ reviewBridge: { analyzePopulation: vi.fn() } }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, host: HTMLDivElement;
@@ -70,4 +71,30 @@ it("reports a storage failure without claiming the recipe was saved", async () =
   await act(async () => Array.from(host.querySelectorAll('button')).find(b => b.textContent === "Save recipe")!.click());
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("Storage quota exceeded");
   expect(host.textContent).not.toContain("Recipe saved in this browser");
+});
+
+// Tours (F04, F05, F08): the panel reports the backend's counts, or its refusal, as the tour's `population-evaluated` condition.
+it("reports the backend's counts to the tours after an analysis, and nothing before", async () => {
+  facts.reset();
+  expect(facts.condition(FACTS.populationEvaluated)).toBe("pending");
+  vi.mocked(reviewBridge.analyzePopulation).mockResolvedValue(reply as never);
+  await act(async () => host.querySelector("button")!.click());
+  expect(facts.condition(FACTS.populationEvaluated)).toBe("met");
+  expect(facts.detail(FACTS.populationEvaluated)).toBe("14 selected · 0 excluded · 0 unknown");
+});
+it("reports a refusal to the tours as the backend's words, not as an evaluation", async () => {
+  facts.reset();
+  vi.mocked(reviewBridge.analyzePopulation).mockResolvedValue({ok: false, message: "Incomplete source"} as never);
+  await act(async () => host.querySelector("button")!.click());
+  expect(facts.detail(FACTS.populationEvaluated)).toBeUndefined();
+  expect(facts.condition(FACTS.populationEvaluated)).toEqual({ failed: expect.stringContaining("Incomplete source") });
+});
+it("a late result after source replacement is not reported to the tours", async () => {
+  facts.reset();
+  let finish!: (value: never) => void;
+  vi.mocked(reviewBridge.analyzePopulation).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => host.querySelector("button")!.click());
+  await act(async () => root.render(<PopulationAnalysis path="b.h5" disabled={false} />));
+  await act(async () => finish(reply as never));
+  expect(facts.condition(FACTS.populationEvaluated)).toBe("pending");
 });
