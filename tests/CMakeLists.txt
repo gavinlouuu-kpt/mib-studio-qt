@@ -589,6 +589,11 @@ mib_add_backend_test_executable(processing_science_seam_test processing/processi
 add_test(NAME processing.science_seam COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_seam_test)
 set_tests_properties(processing.science_seam PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+# The target group's E layer filters only with a table loaded; without one the group is the box alone.
+mib_add_backend_test_executable(processing_target_group_emodulus_test processing/processing_target_group_emodulus_test.cpp)
+add_test(NAME processing.target_group_emodulus COMMAND $<TARGET_FILE:mib_backend_tests> processing_target_group_emodulus_test)
+set_tests_properties(processing.target_group_emodulus PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(processing_contract_v2_migration_test processing/processing_contract_v2_migration_test.cpp)
 add_test(NAME processing.contract_v2_migration COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract_v2_migration_test)
 set_tests_properties(processing.contract_v2_migration PROPERTIES LABELS "processing;backend" TIMEOUT 30)

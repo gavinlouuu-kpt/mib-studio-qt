@@ -353,21 +353,19 @@ public:
             r.brightness = {m.brightness_q1, m.brightness_q2, m.brightness_q3, m.brightness_q4};
             r.isTargetGroup = m.is_target_group != 0;
             r.allContours = sharedContours;
-            if (lut && !r.touchesBorder && r.area > 0.0) {
+            if (!r.touchesBorder && r.area > 0.0) {
                 // Same LUT step the bundled science takes after metrics.
                 const double areaUm = r.area * pixelToMicronFactor * pixelToMicronFactor;
-                r.youngsModulus = eModulusLut->lookup(areaUm, r.deformability);
+                if (lut) {
+                    r.youngsModulus = eModulusLut->lookup(areaUm, r.deformability);
+                }
+                // The host decides the target group: the core does not have the LUT, and a core
+                // built before the "E layer needs a table" rule would have tested its own
+                // placeholder E against the range. With a table: box and E range. Without one: the
+                // E layer is skipped and the group is the box alone, whatever the core said.
                 if (r.isValid && config.enable_target_group) {
-                    const bool tgArea = areaUm >= config.target_group_area_min &&
-                                        areaUm <= config.target_group_area_max;
-                    const bool tgDeform =
-                        r.deformability >= config.target_group_deformability_min &&
-                        r.deformability <= config.target_group_deformability_max;
-                    const bool tgEmod = !config.enable_target_group_emodulus ||
-                                        (!std::isnan(r.youngsModulus) &&
-                                         r.youngsModulus >= config.target_group_emodulus_min &&
-                                         r.youngsModulus <= config.target_group_emodulus_max);
-                    r.isTargetGroup = tgArea && tgDeform && tgEmod;
+                    r.isTargetGroup = science::isTargetGroupMember(config, eModulusLut, areaUm,
+                                                                    r.deformability, r.youngsModulus);
                 }
             }
             results.push_back(std::move(r));

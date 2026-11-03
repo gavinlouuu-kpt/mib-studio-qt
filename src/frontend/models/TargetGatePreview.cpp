@@ -60,21 +60,33 @@ double lookupE(const backend::EModulusLut* lut, double areaUm, double deformabil
     return lut->lookup(areaUm, deformability);
 }
 
-bool isTarget(const GateSpec& s, double areaUm, double deformability, double emodulus)
+bool lutLoaded(const backend::EModulusLut* lut)
 {
-    // Mirror of ProcessingScience.cpp (tgArea / tgDeform / tgEmod) for a valid cell.
+    return lut && lut->isLoaded();
+}
+
+bool eLayerFilters(const GateSpec& s, bool tableLoaded)
+{
+    return s.emodEnabled && tableLoaded;
+}
+
+bool isTarget(const GateSpec& s, bool tableLoaded, double areaUm, double deformability, double emodulus)
+{
+    // Mirror of ProcessingScience.cpp isTargetGroupMember (tgArea / tgDeform / tgEmod) for a valid cell.
     if (!s.enabled) return false;
     const bool tgArea = (areaUm >= s.areaMin && areaUm <= s.areaMax);
     const bool tgDeform = (deformability >= s.deformMin && deformability <= s.deformMax);
-    const bool tgEmod = !s.emodEnabled || (!std::isnan(emodulus) && emodulus >= s.emodMin && emodulus <= s.emodMax);
+    const bool tgEmod =
+        !eLayerFilters(s, tableLoaded) || (!std::isnan(emodulus) && emodulus >= s.emodMin && emodulus <= s.emodMax);
     return tgArea && tgDeform && tgEmod;
 }
 
 bool wouldBeTarget(const GateSpec& s, const backend::EModulusLut* lut, double areaUm, double deformability)
 {
-    // E is only consulted with the E gate on; skip the lookup otherwise.
-    const double e = s.enabled && s.emodEnabled ? lookupE(lut, areaUm, deformability) : kNaN;
-    return isTarget(s, areaUm, deformability, e);
+    // E is only consulted when the E layer filters; skip the lookup otherwise.
+    const bool loaded = lutLoaded(lut);
+    const double e = s.enabled && eLayerFilters(s, loaded) ? lookupE(lut, areaUm, deformability) : kNaN;
+    return isTarget(s, loaded, areaUm, deformability, e);
 }
 
 // ---- data <-> pixel -------------------------------------------------------------
@@ -478,14 +490,14 @@ std::optional<double> dragValue(const DragSession& s, const GateSpec& current, c
 
 // ---- live count -------------------------------------------------------------------------------
 
-PreviewCount countTargets(const GateSpec& spec, const std::vector<scatterhit::Point>& points,
+PreviewCount countTargets(const GateSpec& spec, bool tableLoaded, const std::vector<scatterhit::Point>& points,
                           const std::vector<double>& emodulus)
 {
     PreviewCount c;
     c.total = static_cast<int>(points.size());
     for (std::size_t i = 0; i < points.size(); ++i) {
         const double e = i < emodulus.size() ? emodulus[i] : kNaN;
-        if (isTarget(spec, points[i].x, points[i].y, e)) ++c.target;
+        if (isTarget(spec, tableLoaded, points[i].x, points[i].y, e)) ++c.target;
     }
     return c;
 }

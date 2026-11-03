@@ -253,8 +253,11 @@ strobe width/delay. The FPS control is disabled for manual profiles.
   you click **Apply changes**. Values are rounded to what the panel shows and a
   minimum never passes its maximum. Dragging anywhere else still pans the
   chart, and clicking a cell still selects it. Edges cannot be dragged while
-  an apply is running. Without an E-modulus table the E range admits no cell
-  and the chart says so. The overlay is not part of the chart saved at Stop.
+  an apply is running. The E range filters only while an E-modulus table is
+  loaded. Without one the Young's modulus box is ignored: the target group is
+  the area and deformability box alone (a two-layer filter), the chart tints and
+  counts that box and says so, and a positive E minimum does not change it. The
+  overlay is not part of the chart saved at Stop.
 - **Read a position off the chart.** With the pointer on empty space the tip
   shows the area, the deformability and, inside the E-modulus table, the
   Young's modulus at that spot.

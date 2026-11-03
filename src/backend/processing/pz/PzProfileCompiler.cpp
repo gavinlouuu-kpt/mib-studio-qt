@@ -127,7 +127,13 @@ CompiledProfile compileUnetCellsV2(const UnetCellsProfileInputs& in) {
     w.flag("enable_area_ratio_check", c.enable_area_ratio_check);
     w.flag("enable_laplacian_variance_check", c.enable_laplacian_variance_check);
     w.flag("target_group_enabled", c.enable_target_group);
-    w.flag("target_group_emodulus_enabled", c.enable_target_group_emodulus);
+    // The E layer of the target group needs a table (the host rule, ProcessingScience.h
+    // isTargetGroupMember): without a loaded table the flag is written clear, so the PL does not sort
+    // on E (the PZ7035 ABI forbids enabling E sorting without a table) and the group is the
+    // area/deformability box alone. The E range words below are still written from the settings.
+    const bool lutLoaded = in.lut && in.lut->isLoaded();
+    const bool eLayerOn = c.enable_target_group_emodulus && lutLoaded;
+    w.flag("target_group_emodulus_enabled", eLayerOn);
 
     if (c.channel_band_h > 0) {
         if (c.channel_band_y < 0) out.errors.push_back("channel_band_y must be >= 0");
@@ -189,10 +195,15 @@ CompiledProfile compileUnetCellsV2(const UnetCellsProfileInputs& in) {
                 out.table0[2 * i + 1] = static_cast<uint8_t>(v >> 8);
             }
         }
-    } else if (c.enable_target_group && c.enable_target_group_emodulus) {
-        out.errors.push_back("the target group gates on E-modulus but no E-modulus LUT is loaded");
     }
     out.warnings = plIgnoredSettingsChanged(c);
+    if (c.enable_target_group && c.enable_target_group_emodulus && !lutLoaded) {
+        // Not an error: the instrument runs, sorting on the box. A warning so the operator knows the E
+        // range they set is not applied.
+        out.warnings.push_back(
+            "target_group.emodulus_enabled (no E-modulus LUT is loaded: the E range is skipped and the target "
+            "group is the area/deformability box only)");
+    }
     return out;
 }
 

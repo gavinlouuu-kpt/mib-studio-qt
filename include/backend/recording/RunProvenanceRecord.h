@@ -42,7 +42,7 @@ inline constexpr uint32_t kRunSnapshotSchemaVersion = 3;
 // and describe the loaded bytes only when catalogSha256 equals sha256 (the catalog can report a
 // manifest whose download failed while the older cached file stays loaded).
 struct EModulusLutRecord {
-    bool loaded{false};                         // no LUT: E values and the E gate were unavailable
+    bool loaded{false};                         // no LUT: no E values; the target group's E range was skipped (box only)
     std::optional<std::string> lutId;
     std::optional<std::string> revision;
     std::optional<std::string> source;          // "r2-public-catalog" | "local-cache" | "bundled-fallback"

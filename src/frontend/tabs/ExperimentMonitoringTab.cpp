@@ -330,12 +330,13 @@ public:
         p->setRenderHint(QPainter::Antialiasing, true);
         p->setFont(chart_->font());
 
-        // 1. Tinted region: exact rectangle without the E gate; with it the
+        // 1. Tinted region: exact rectangle when the E layer does not filter (no E
+        //    gate, or no table loaded: the group is the box alone); otherwise the
         //    sampled predicate (box ^ E range), clipped to the exact box.
         if (!boxVisible.isEmpty()) {
-            if (!spec.emodEnabled) {
+            if (!gate::eLayerFilters(spec, gate::lutLoaded(params_.lut))) {
                 p->fillRect(boxVisible, tintColor());
-            } else if (params_.lut) {
+            } else {
                 const gate::Mask& m = mask(vp);
                 if (m.onCount() > 0) {
                     if (maskImage_.isNull()) {
@@ -800,7 +801,8 @@ namespace frontend
             emodBox->setObjectName(QStringLiteral("targetEmodulusBox"));
             emodBox->setCheckable(true);
             emodBox->setToolTip(tr("When enabled, a target cell must also have a Young's modulus (kPa, looked up in the loaded E-modulus table) inside this range. "
-                                   "A cell whose lookup falls outside the table, or any cell when no table is loaded, is never target group."));
+                                   "A cell whose lookup falls outside the table is never target group. "
+                                   "When no table is loaded this range is skipped and the target group is the area and deformability box alone."));
             bindTuneField(TuneField::TargetEmodulusEnabled, emodBox, nullptr,
                           [emodBox]() { return QVariant(emodBox->isChecked()); },
                           [emodBox](const QVariant& v) { emodBox->setChecked(v.toBool()); });
@@ -2909,7 +2911,7 @@ namespace frontend
             unapplied = unapplied || draft_.isChanged(f);
         params.label = unapplied ? tr("Target group (unapplied)") : tr("Target group");
         if (geo.spec.enabled && geo.spec.emodEnabled && !lutSnapshot_)
-            params.notice = tr("No E-modulus table is loaded: the E range admits no cell");
+            params.notice = tr("No E-modulus table loaded: the target group uses the box only");
         gateOverlay_->setParams(std::move(params));
         gateOverlay_->setVisible(geo.spec.enabled);
         if (!geo.spec.enabled) setGateHover(gate::HandleKind::None);
@@ -2922,14 +2924,10 @@ namespace frontend
         const gate::GateSpec spec = gateSpec();
         gatePreviewLabel_->setVisible(spec.enabled);
         if (!spec.enabled) return;
-        // Without a table no cell has an E: an E range then admits none.
-        std::vector<double> unknown;
-        const std::vector<double>* emodulus = &scatterPointE_;
-        if (!lutSnapshot_) {
-            unknown.assign(scatterPoints_.size(), std::numeric_limits<double>::quiet_NaN());
-            emodulus = &unknown;
-        }
-        gatePreviewLabel_->setText(gate::previewText(gate::countTargets(spec, scatterPoints_, *emodulus)));
+        // Without a table the E layer is skipped (the stored E of a cell is a placeholder then): the
+        // count is the box alone, the same rule as the science.
+        gatePreviewLabel_->setText(
+            gate::previewText(gate::countTargets(spec, lutSnapshot_ != nullptr, scatterPoints_, scatterPointE_)));
     }
 
     QPointF ExperimentMonitoringTab::chartPosFromView(QPointF viewPos) const

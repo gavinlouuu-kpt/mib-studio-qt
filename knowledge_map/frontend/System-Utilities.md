@@ -200,8 +200,11 @@
   the target-group gate overlay on the Monitoring scatter
   ([[ExperimentMonitoringTab]] "Gate overlay"). `GateSpec` is the draft gate
   (`fromConfig`); `isTarget` / `wouldBeTarget` are the exact predicate of
-  `ProcessingScience.cpp` (area and deformability box, optional E range with
-  NaN E never passing); `computeMask` samples it over the plot rectangle;
+  `ProcessingScience.cpp` `isTargetGroupMember` (area and deformability box, optional
+  E range; the E layer filters only with the E gate on AND a table loaded
+  (`eLayerFilters(spec, tableLoaded)`), where a NaN E never passes, and is
+  skipped without a table so the group is the box alone); `computeMask` samples
+  it over the plot rectangle;
   `isoContour(lut, level)` is marching squares on the `EModulusLut` grid
   (crossings on grid edges, where `lookup` is exactly linear, so every vertex
   satisfies `lookup == level`; both bilinear saddle resolutions; closed
@@ -210,8 +213,8 @@
   `beginDrag` / `dragValue` turn pointer travel into a new field value
   *relative to the press* (an E contour moves by the change of E under its
   carried anchor point), `constrainEdit` clamps to the control's range, rounds
-  to `tuneFieldDecimals` and keeps min ≤ max; `countTargets` / `previewText`
-  give the live "N of M" count. Pixel coordinates are one system, carried by
+  to `tuneFieldDecimals` and keeps min ≤ max; `countTargets(spec, tableLoaded, ...)` /
+  `previewText` give the live "N of M" count. Pixel coordinates are one system, carried by
   `scatterhit::Viewport`. Guard: `frontend.target_gate_preview` (pure).
 
 ## Utils (`src/frontend/utils/`)

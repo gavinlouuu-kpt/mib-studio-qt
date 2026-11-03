@@ -26,8 +26,10 @@
 //     gate off;
 //  7. while an apply is in flight no handle can be grabbed;
 //  8. stored snapshots never carry the overlay;
-//  9. with no table loaded an enabled E gate shows the notice, tints nothing,
-//     counts no cell and has no E handle; the table coming back restores them.
+//  9. with no table loaded the E layer is skipped: an enabled E gate shows the
+//     notice, tints the box, counts the box (also with a positive E minimum),
+//     draws no contour and has no E handle; the table coming back restores
+//     the E range.
 
 #include "backend/app/AppBackend.h"
 #include "backend/processing/ProcessingService.h"
@@ -129,21 +131,22 @@ backend::services::ProcessedFrame frameOf(const Cell& c, double factor)
     return f;
 }
 
-// The target-group expression of ProcessingScience.cpp for a valid cell.
-bool scienceTarget(const backend::services::ProcessingConfig& c, const Cell& cell)
+// The target-group expression of ProcessingScience.cpp (isTargetGroupMember) for a valid cell. The E layer
+// filters only with the E gate on AND a table loaded; without a table the group is the box alone.
+bool scienceTarget(const backend::services::ProcessingConfig& c, const Cell& cell, bool tableLoaded)
 {
     if (!c.enable_target_group) return false;
     const bool tgArea = cell.areaUm >= c.target_group_area_min && cell.areaUm <= c.target_group_area_max;
     const bool tgDeform = cell.deform >= c.target_group_deformability_min && cell.deform <= c.target_group_deformability_max;
-    const bool tgEmod = !c.enable_target_group_emodulus ||
+    const bool tgEmod = !c.enable_target_group_emodulus || !tableLoaded ||
                         (!std::isnan(cell.e) && cell.e >= c.target_group_emodulus_min && cell.e <= c.target_group_emodulus_max);
     return tgArea && tgDeform && tgEmod;
 }
 
-QString expectedPreview(const backend::services::ProcessingConfig& c, const std::vector<Cell>& cells)
+QString expectedPreview(const backend::services::ProcessingConfig& c, const std::vector<Cell>& cells, bool tableLoaded = true)
 {
     int n = 0;
-    for (const auto& cell : cells) n += scienceTarget(c, cell) ? 1 : 0;
+    for (const auto& cell : cells) n += scienceTarget(c, cell, tableLoaded) ? 1 : 0;
     const double pct = 100.0 * n / static_cast<double>(cells.size());
     return QStringLiteral("Target group preview: %1 of %2 plotted valid cells (%3%)").arg(n).arg(cells.size()).arg(pct, 0, 'f', 1);
 }
@@ -674,11 +677,37 @@ int main(int argc, char* argv[])
         settle(2);
         info = tab.gateOverlayInfoForTests();
         MIB_EXPECT(tab.gateLutForTests() == nullptr, "the tab dropped its copy");
-        MIB_EXPECT(info.shown && info.notice.contains(QStringLiteral("No E-modulus table")) && info.notice.contains(QStringLiteral("admits no cell")),
+        MIB_EXPECT(info.shown && info.notice == QStringLiteral("No E-modulus table loaded: the target group uses the box only"),
                    "clear notice: " + info.notice.toStdString());
-        MIB_EXPECT(info.maskOn == 0 && info.contourLabels.isEmpty() && info.contourLines == 0, "nothing tinted, no contours");
-        MIB_EXPECT(preview->text().contains(QStringLiteral(": 0 of ")), "no cell counted: " + preview->text().toStdString());
+        // The E layer is skipped: the tint is the box (the same cells as with the E gate off), no contours.
+        const int noTableMaskOn = info.maskOn;
+        MIB_EXPECT(noTableMaskOn > 0 && info.contourLabels.isEmpty() && info.contourLines == 0, "the box is tinted, no contours");
+        MIB_EXPECT(preview->text() == expectedPreview(draft.draft(), cells, false), "box count: " + preview->text().toStdString());
+        MIB_EXPECT(!preview->text().contains(QStringLiteral(": 0 of ")), "the box holds plotted cells: " + preview->text().toStdString());
         MIB_EXPECT(!finite(tab.gateHandleViewPosForTests(gate::HandleKind::EmodMin)), "no E handle without a table");
+        {
+            // A positive E minimum (the stored E of the cells is irrelevant): still the box.
+            const double eMin = draft.field(TuneField::TargetEmodulusMin).toDouble();
+            const double eMax = draft.field(TuneField::TargetEmodulusMax).toDouble();
+            tab.setTuneFieldForTests(TuneField::TargetEmodulusMax, 10.0);
+            tab.setTuneFieldForTests(TuneField::TargetEmodulusMin, 5.0);
+            settle(2);
+            const QString boxCount = expectedPreview(draft.draft(), cells, false);
+            MIB_EXPECT(draft.draft().target_group_emodulus_min == 5.0 && preview->text() == boxCount,
+                       "positive E minimum, no table: the count is the box: " + preview->text().toStdString());
+            MIB_EXPECT(tab.gateOverlayInfoForTests().maskOn == noTableMaskOn && tab.gateOverlayInfoForTests().notice == info.notice,
+                       "positive E minimum, no table: the tint is the box");
+            // With the E gate unticked (still no table) the tint and the count are the same box, and no notice.
+            tab.setTuneFieldForTests(TuneField::TargetEmodulusEnabled, false);
+            settle(2);
+            MIB_EXPECT(tab.gateOverlayInfoForTests().maskOn == noTableMaskOn && tab.gateOverlayInfoForTests().notice.isEmpty() &&
+                           preview->text() == boxCount,
+                       "E gate off, no table: the same box, no notice");
+            tab.setTuneFieldForTests(TuneField::TargetEmodulusEnabled, true);
+            tab.setTuneFieldForTests(TuneField::TargetEmodulusMin, eMin);
+            tab.setTuneFieldForTests(TuneField::TargetEmodulusMax, eMax);
+            settle(2);
+        }
         shot(tab, "4-no-table");
         mouse::move(view, tab.scatterDataViewPosForTests(310, 0.045));
         settle(1);

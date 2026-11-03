@@ -224,9 +224,10 @@ exposed subset of `ProcessingConfig`, owned by the pure
   stay visible. Under *Target group / sorting gate*: `targetGroupBox`
   (area/deformability ranges, accessible names prefixed "Target group",
   plus the nested checkable `targetEmodulusBox` for the optional Young's
-  modulus range in kPa; with no E-modulus LUT loaded, or a lookup outside
-  the table, an enabled E gate admits no cell; its title is just "Young's
-  modulus" and its form has no side margins so the 220 px width still fits)
+  modulus range in kPa; the E layer filters only with a LUT loaded, where a
+  lookup outside the table fails it, and with no LUT it is skipped so the group
+  is the box alone; its title is just "Young's modulus" and its form has no
+  side margins so the 220 px width still fits)
   with a hint that it selects valid cells for the sort trigger and never
   changes validity. *Multi-image acquisition*: `multiImageBox` + images per
   trigger. Rows are `QFormLayout` with `WrapLongRows`, so labels stack over
@@ -283,21 +284,25 @@ the draft. Pure logic lives in `frontend::gate` (`TargetGatePreview.h`,
   to the mouse; geometry is read from the live plot area and axes at paint
   time, so pan, zoom, resize and `setScatterX/YRange` need no bookkeeping
   (`QValueAxis::rangeChanged` and `QChart::plotAreaChanged` just schedule a
-  repaint). Layers: the tint (an exact rectangle without the E gate; with it the
-  sampled predicate, 3 px cells, clipped to the exact box and cached by gate /
-  table / viewport), the **dashed** box, the **dash-dot** E contours with
+  repaint). Layers: the tint (an exact rectangle when the E layer does not filter,
+  i.e. the E gate is off or no table is loaded; otherwise the sampled predicate,
+  3 px cells, clipped to the exact box and cached by gate / table / viewport),
+  the **dashed** box, the **dash-dot** E contours with
   "E ≥ 2.00 kPa" / "E ≤ 6.00 kPa" labels (moved out of the way of the name pill),
   and a pill "Target group" / "Target group (unapplied)" (any `Target*` field
   differs from the baseline). Nothing relies on colour alone. With the E gate on
-  and no table loaded a red pill says the E range admits no cell and nothing is
-  tinted. The grabs for HDF5 snapshots and TIFF exports hide the item like the
+  and no table loaded a red pill says "No E-modulus table loaded: the target
+  group uses the box only"; the box is tinted, no contours are drawn and there
+  are no E handles. The grabs for HDF5 snapshots and TIFF exports hide the item like the
   selection highlight (`HiddenItemWhileGrabbing`): stored images show data, not
   the operator's draft.
 - **Live count** — `gatePreviewLabel_` under the chart (the scatter view sits in
   `scatterContainer_`): "Target group preview: N of M plotted valid cells (P%)",
   hidden while the draft gate is off. M is the plotted points
   (`scatterPoints_`), E comes from each cell's stored `youngsModulus`
-  (`scatterPointE_`, built with the points); NaN fails an enabled E gate.
+  (`scatterPointE_`, built with the points); with a table loaded NaN fails an
+  enabled E gate, with no table the E values are not read (`countTargets` gets
+  `tableLoaded = lutSnapshot_ != nullptr`) and the count is the box.
   Recomputed by `refreshGatePreview()` after every scatter refresh and
   `refreshGateOverlay()`, which `refreshTuneFooter()` calls, so edit / load /
   revert / apply-result all update it.
@@ -342,18 +347,24 @@ the draft. Pure logic lives in `frontend::gate` (`TargetGatePreview.h`,
   clamp / round / min ≤ max, count) and `frontend.monitoring_gate_overlay`
   (visibility follows the draft, geometry, hover, edge and E drags write the
   spin boxes and footer, pan and click untouched away from handles, apply lock,
-  snapshots, no-table notice; `MIB_GATE_OVERLAY_OUT=<dir>` writes screenshots).
+  snapshots, no-table notice, tint and count = box also with a positive E
+  minimum; `MIB_GATE_OVERLAY_OUT=<dir>` writes screenshots).
 
 ## Gotchas
 
-- **E gate without a table: the overlay is stricter than the backend as the code
-  reads today.** The overlay and the live count treat every cell's E as unknown
-  when no table is loaded, so an enabled E range admits no cell (as the tune
-  panel tooltip says). `ProcessingScience.cpp` only assigns
-  `FilterResult::youngsModulus` when a table is loaded; otherwise it keeps its
-  default `0.0`, which is *not* NaN, so with no table an enabled E range that
-  contains 0 (the default `emodulus_min` is 0.0) would still pass `tgEmod`. Not
-  changed here (backend science); if it matters, initialise the field to NaN.
+- **The E layer needs a table; keep the four copies of the rule in step.** A
+  valid cell is target group when it is in the area box, in the deformability
+  box and the E layer passes. The E layer filters only with the E gate on AND an
+  E-modulus table loaded; with no table it is skipped (the group is the box
+  alone, whatever `emodulus_min` is), because without a table
+  `FilterResult::youngsModulus` stays at its `0.0` default, which would pass or
+  fail every cell by accident. With a table a NaN lookup (outside it) still
+  fails the layer. The rule lives in `science::isTargetGroupMember`
+  (`ProcessingScience.cpp`); this tab mirrors it in
+  `gate::isTarget`/`wouldBeTarget`/`countTargets` (`TargetGatePreview.cpp`), and
+  the PZ profile compiler clears `target_group_emodulus_enabled` without a table.
+  `frontend.target_gate_preview` compares the mirror with the science expression
+  on a sweep with and without a table.
 - **Crop with the clamped ROI, never the raw one.** Monitoring frames were
   accumulated under the ROI / camera geometry active when they were
   processed; the current `getRealtimeRoi()` may not fit them (ROI edited,

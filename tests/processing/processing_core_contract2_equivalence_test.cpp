@@ -12,6 +12,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <random>
 #include <string>
 #include <vector>
@@ -86,6 +87,36 @@ cv::Mat noisyFrame(const cv::Mat& background, unsigned seed, int amplitude) {
         }
     }
     return frame;
+}
+
+// The valid records' target flags: how many valid cells there are and how many are target group.
+struct TargetCount {
+    int valid{0};
+    int target{0};
+};
+
+TargetCount countTargets(ProcessingService& service, const std::vector<cv::Mat>& frames,
+                         const cv::Mat& background, const ProcessingConfig& config,
+                         const ProcessingService::Roi& roi) {
+    TargetCount count;
+    for (const auto& record : service.processBatch(frames, config, background, roi)) {
+        if (!record.validation.isValid) continue;
+        ++count.valid;
+        count.target += record.validation.isTargetGroup ? 1 : 0;
+    }
+    return count;
+}
+
+// A table with the same E (2 kPa) over area [0, 5000] um^2 and deformability [0, 1], as a LUT file.
+std::filesystem::path writeFlatLutFile() {
+    std::random_device rd;
+    const auto path = std::filesystem::temp_directory_path() /
+                      ("mib_c2_equivalence_lut_" + std::to_string(rd()) + ".txt");
+    std::ofstream out(path);
+    for (const double area : {0.0, 5000.0}) {
+        for (const double deform : {0.0, 1.0}) out << area << '\t' << deform << '\t' << 2.0 << '\n';
+    }
+    return path;
 }
 
 } // namespace
@@ -183,6 +214,48 @@ int main(int argc, char** argv) {
     target.target_group_area_min = 0;
     target.target_group_area_max = 100000;
     expectSameBatch(plugin, bundled, {objects}, background, target, full, "target group");
+
+    // 5b. The E-modulus layer of the target group needs a table. The core has no LUT, so the loader
+    // decides the group on the host: without a table the E range is skipped (the box alone), for a
+    // zero and a positive minimum, and the core's own answer cannot change that.
+    for (const double eMin : {0.0, 5.0}) {
+        ProcessingConfig eGate = target;
+        eGate.target_group_deformability_max = 1.0;
+        eGate.enable_target_group_emodulus = true;
+        eGate.target_group_emodulus_min = eMin;
+        eGate.target_group_emodulus_max = 10.0;
+        const std::string tag = "E range without a table, min " + std::to_string(eMin);
+        expectSameBatch(plugin, bundled, {objects}, background, eGate, full, tag);
+        const TargetCount viaCore = countTargets(plugin, {objects}, background, eGate, full);
+        const TargetCount bundledCount = countTargets(bundled, {objects}, background, eGate, full);
+        MIB_EXPECT(viaCore.valid > 0 && viaCore.target == viaCore.valid,
+                   tag + ": every valid cell is target through the core (" + std::to_string(viaCore.target) + "/" +
+                       std::to_string(viaCore.valid) + ")");
+        MIB_EXPECT(bundledCount.valid == viaCore.valid && bundledCount.target == viaCore.target,
+                   tag + ": the bundled kernel agrees");
+    }
+
+    // 5c. With a table loaded the layer filters, on both sides alike.
+    {
+        const auto lutFile = writeFlatLutFile();
+        MIB_REQUIRE(plugin.loadEModulusLut(lutFile.string()) && bundled.loadEModulusLut(lutFile.string()),
+                    "flat E-modulus table loads");
+        std::filesystem::remove(lutFile);
+        ProcessingConfig eGate = target;
+        eGate.target_group_deformability_max = 1.0;
+        eGate.enable_target_group_emodulus = true;
+        for (const auto& range : {std::pair<double, double>{1.0, 3.0}, {0.0, 10.0}, {3.0, 4.0}, {0.0, 1.0}}) {
+            eGate.target_group_emodulus_min = range.first;
+            eGate.target_group_emodulus_max = range.second;
+            const bool inRange = range.first <= 2.0 && 2.0 <= range.second;
+            const std::string tag = "E range [" + std::to_string(range.first) + ", " + std::to_string(range.second) +
+                                    "] with a 2 kPa table";
+            expectSameBatch(plugin, bundled, {objects}, background, eGate, full, tag);
+            const TargetCount viaCore = countTargets(plugin, {objects}, background, eGate, full);
+            MIB_EXPECT(viaCore.valid > 0 && viaCore.target == (inRange ? viaCore.valid : 0),
+                       tag + ": target " + std::to_string(viaCore.target) + "/" + std::to_string(viaCore.valid));
+        }
+    }
 
     // 6. No object at all: the placeholder record matches.
     expectSameBatch(plugin, bundled, {background.clone()}, background, config, full, "empty frame");

@@ -5,10 +5,12 @@
 //
 //  - GateSpec is the draft gate (TargetGroupEnabled, target area / deformability
 //    box, optional Young's modulus range) and isTarget() is the exact predicate
-//    of ProcessingScience.cpp (target_group_*): a valid cell is target group
-//    when its area and deformability lie in the box and, with the E gate on,
-//    its E (EModulusLut::lookup(area, deformability)) is a number inside
-//    [emodulus_min, emodulus_max].
+//    of ProcessingScience.cpp (isTargetGroupMember): a valid cell is target group
+//    when its area and deformability lie in the box and the E layer passes. The E
+//    layer filters only with the E gate on AND an E-modulus table loaded; then the
+//    cell's E (EModulusLut::lookup(area, deformability)) must be a number inside
+//    [emodulus_min, emodulus_max]. With no table loaded the E layer is skipped and
+//    the group is the box alone (a two-layer filter), whatever the E range says.
 //  - computeMask() samples that predicate over the plot area (tinted region).
 //  - isoContour() extracts the iso-E lines of the LUT (marching squares on the
 //    LUT's own bilinear grid; the crossings sit on grid edges, where lookup()
@@ -62,10 +64,18 @@ struct GateSpec {
 // E (kPa) for a point, NaN without a loaded table or outside its coverage.
 double lookupE(const backend::EModulusLut* lut, double areaUm, double deformability);
 
-// ProcessingScience semantics for a *valid* cell with a known E (NaN = no value).
-// False whenever the gate is off.
-bool isTarget(const GateSpec& spec, double areaUm, double deformability, double emodulus);
-// Same with E looked up in `lut`.
+// Whether a table is usable for the gate: non-null and loaded.
+bool lutLoaded(const backend::EModulusLut* lut);
+
+// Whether the E layer filters at all: the gate has an E range AND a table is loaded. Otherwise the
+// target group is the box alone (the contours and the E part of the tint are not drawn either).
+bool eLayerFilters(const GateSpec& spec, bool tableLoaded);
+
+// ProcessingScience semantics for a *valid* cell. `emodulus` is the cell's E (NaN = no value, i.e.
+// outside the table); it is not read unless the E layer filters (eLayerFilters). With the layer
+// filtering, a NaN E fails it. False whenever the gate is off.
+bool isTarget(const GateSpec& spec, bool tableLoaded, double areaUm, double deformability, double emodulus);
+// Same with E looked up in `lut` (a null or unloaded table skips the E layer).
 bool wouldBeTarget(const GateSpec& spec, const backend::EModulusLut* lut, double areaUm, double deformability);
 
 // ---- data <-> pixel -------------------------------------------------------------
@@ -177,8 +187,10 @@ struct PreviewCount {
     double percent() const { return total > 0 ? 100.0 * target / total : 0.0; }
 };
 // `points` are the plotted valid cells (x = um^2, y = deformability), `emodulus`
-// their E (NaN = none), same order. Counts the cells isTarget() accepts.
-PreviewCount countTargets(const GateSpec& spec, const std::vector<scatterhit::Point>& points,
+// their E (NaN = none), same order; `tableLoaded` is whether the E-modulus table is
+// loaded (when it is not, the E values are not read: the E layer is skipped).
+// Counts the cells isTarget() accepts.
+PreviewCount countTargets(const GateSpec& spec, bool tableLoaded, const std::vector<scatterhit::Point>& points,
                           const std::vector<double>& emodulus);
 QString previewText(const PreviewCount& count);
 

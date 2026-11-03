@@ -58,14 +58,16 @@ EModulusLut makeLut()
     return lut;
 }
 
-// The expression of ProcessingScience.cpp (target group block), spelled out
-// from a ProcessingConfig for a valid cell with E already known.
-bool scienceTarget(const ProcessingConfig& c, double areaUm, double deform, double e)
+// The expression of ProcessingScience.cpp (isTargetGroupMember), spelled out
+// from a ProcessingConfig for a valid cell with E already known. The E layer
+// filters only with the E gate on AND a table loaded; without a table the E is
+// not read and the group is the box alone.
+bool scienceTarget(const ProcessingConfig& c, bool tableLoaded, double areaUm, double deform, double e)
 {
     if (!c.enable_target_group) return false;
     const bool tgArea = (areaUm >= c.target_group_area_min && areaUm <= c.target_group_area_max);
     const bool tgDeform = (deform >= c.target_group_deformability_min && deform <= c.target_group_deformability_max);
-    const bool tgEmod = !c.enable_target_group_emodulus ||
+    const bool tgEmod = !c.enable_target_group_emodulus || !tableLoaded ||
                         (!std::isnan(e) && e >= c.target_group_emodulus_min && e <= c.target_group_emodulus_max);
     return tgArea && tgDeform && tgEmod;
 }
@@ -113,8 +115,13 @@ int main(int argc, char* argv[])
         MIB_EXPECT(std::isnan(g::lookupE(&empty, 100, 0.1)), "unloaded table: no E");
         MIB_EXPECT(std::abs(g::lookupE(&lut, 123.4, 0.137) - synthE(123.4, 0.137)) < 1e-9, "lookup helper = table lookup");
 
+        MIB_EXPECT(g::lutLoaded(&lut) && !g::lutLoaded(nullptr) && !g::lutLoaded(&empty), "lutLoaded: loaded only");
+        MIB_EXPECT(g::eLayerFilters(boxSpec(true), true) && !g::eLayerFilters(boxSpec(true), false) &&
+                       !g::eLayerFilters(boxSpec(false), true),
+                   "the E layer filters with the E gate on and a table loaded");
+
         long compared = 0, targets = 0, nanE = 0;
-        for (int variant = 0; variant < 6; ++variant) {
+        for (int variant = 0; variant < 8; ++variant) {
             ProcessingConfig c;
             c.enable_target_group = variant != 0;
             c.target_group_area_min = 100;
@@ -122,9 +129,10 @@ int main(int argc, char* argv[])
             c.target_group_deformability_min = 0.1;
             c.target_group_deformability_max = 0.3;
             c.enable_target_group_emodulus = variant >= 3;
-            // 3: wide, 4: narrow band, 5: band that only the NaN-free part of the table can hold
-            c.target_group_emodulus_min = variant == 4 ? 1.5 : 0.0;
-            c.target_group_emodulus_max = variant == 4 ? 2.5 : (variant == 5 ? 4.0 : 10.0);
+            // 3: wide, 4: narrow band, 5: band that only the NaN-free part of the table can hold,
+            // 6: a positive minimum no placeholder E (0.0) satisfies, 7: a band above the table's values
+            c.target_group_emodulus_min = variant == 4 ? 1.5 : (variant == 6 ? 5.0 : (variant == 7 ? 50.0 : 0.0));
+            c.target_group_emodulus_max = variant == 4 ? 2.5 : (variant == 5 ? 4.0 : (variant == 7 ? 60.0 : 10.0));
             const g::GateSpec spec = g::GateSpec::fromConfig(c);
             MIB_EXPECT(spec.enabled == c.enable_target_group && spec.emodEnabled == c.enable_target_group_emodulus,
                        "spec mirrors the config flags");
@@ -136,25 +144,40 @@ int main(int argc, char* argv[])
                     const double d = 0.01 * id;
                     const double e = g::lookupE(&lut, a, d);
                     if (std::isnan(e)) ++nanE;
-                    const bool want = scienceTarget(c, a, d, e);
+                    const bool want = scienceTarget(c, true, a, d, e);
                     MIB_EXPECT(g::wouldBeTarget(spec, &lut, a, d) == want, "wouldBeTarget == science");
-                    MIB_EXPECT(g::isTarget(spec, a, d, e) == want, "isTarget == science");
+                    MIB_EXPECT(g::isTarget(spec, true, a, d, e) == want, "isTarget == science");
+                    // No table: the E layer is skipped whatever E the cell carries (0.0 placeholder, NaN, or a value).
+                    const bool wantBox = scienceTarget(c, false, a, d, e);
+                    MIB_EXPECT(g::wouldBeTarget(spec, nullptr, a, d) == wantBox, "wouldBeTarget, no table == science");
+                    MIB_EXPECT(g::isTarget(spec, false, a, d, 0.0) == wantBox && g::isTarget(spec, false, a, d, kNaN) == wantBox &&
+                                   g::isTarget(spec, false, a, d, e) == wantBox,
+                               "isTarget, no table == science (the E is not read)");
+                    MIB_EXPECT(wantBox == (c.enable_target_group && a >= 100 && a <= 300 && d >= 0.1 && d <= 0.3),
+                               "no table: the box alone");
                     ++compared;
                     targets += want;
                 }
             }
         }
-        MIB_EXPECT(compared == 6 * 141 * 56 && targets > 100 && nanE > 1000, "the sweep covers targets and missing E");
+        MIB_EXPECT(compared == 8 * 141 * 56 && targets > 100 && nanE > 1000, "the sweep covers targets and missing E");
         const g::GateSpec on = boxSpec(true, 1.0, 3.0);
-        MIB_EXPECT(!g::isTarget(on, 200, 0.2, kNaN), "NaN E fails an enabled E gate");
-        MIB_EXPECT(g::isTarget(boxSpec(false), 200, 0.2, kNaN), "NaN E is ignored with the E gate off");
-        MIB_EXPECT(!g::isTarget(boxSpec(false), kNaN, 0.2, 2.0) && !g::isTarget(boxSpec(false), 200, kNaN, 2.0),
+        MIB_EXPECT(!g::isTarget(on, true, 200, 0.2, kNaN), "NaN E fails an enabled E gate (table loaded)");
+        MIB_EXPECT(g::isTarget(on, false, 200, 0.2, kNaN) && g::isTarget(on, false, 200, 0.2, 0.0) &&
+                       g::isTarget(boxSpec(true, 5.0, 10.0), false, 200, 0.2, 0.0),
+                   "no table: an enabled E gate is skipped (min 1 or 5, E 0.0 or NaN)");
+        MIB_EXPECT(!g::isTarget(on, false, 50, 0.2, 2.0) && !g::isTarget(on, false, 200, 0.5, 2.0),
+                   "no table: a cell outside the box is out");
+        MIB_EXPECT(g::isTarget(on, true, 200, 0.2, 2.0) && !g::isTarget(on, true, 200, 0.2, 0.0) && !g::isTarget(on, true, 200, 0.2, 3.5),
+                   "table loaded: the range filters");
+        MIB_EXPECT(g::isTarget(boxSpec(false), true, 200, 0.2, kNaN), "NaN E is ignored with the E gate off");
+        MIB_EXPECT(!g::isTarget(boxSpec(false), true, kNaN, 0.2, 2.0) && !g::isTarget(boxSpec(false), true, 200, kNaN, 2.0),
                    "a NaN area or deformability is never in range");
         g::GateSpec off = boxSpec(false);
         off.enabled = false;
-        MIB_EXPECT(!g::isTarget(off, 200, 0.2, 2.0), "gate off: never target");
-        MIB_EXPECT(g::isTarget(boxSpec(false), 100, 0.1, 0) && g::isTarget(boxSpec(false), 300, 0.3, 0), "bounds are inclusive");
-        MIB_EXPECT(!g::isTarget(boxSpec(false), 99.999, 0.2, 0) && !g::isTarget(boxSpec(false), 300.001, 0.2, 0), "just outside is out");
+        MIB_EXPECT(!g::isTarget(off, true, 200, 0.2, 2.0) && !g::isTarget(off, false, 200, 0.2, 2.0), "gate off: never target");
+        MIB_EXPECT(g::isTarget(boxSpec(false), true, 100, 0.1, 0) && g::isTarget(boxSpec(false), true, 300, 0.3, 0), "bounds are inclusive");
+        MIB_EXPECT(!g::isTarget(boxSpec(false), true, 99.999, 0.2, 0) && !g::isTarget(boxSpec(false), true, 300.001, 0.2, 0), "just outside is out");
         MIB_EXPECT(g::GateSpec{} == g::GateSpec{} && boxSpec() != boxSpec(true), "spec equality");
     }
 
@@ -187,8 +210,22 @@ int main(int argc, char* argv[])
         g::GateSpec off = boxSpec(true);
         off.enabled = false;
         MIB_EXPECT(g::computeMask(off, &lut, vp, 3.0).onCount() == 0, "gate off: empty mask");
-        MIB_EXPECT(g::computeMask(boxSpec(true), nullptr, vp, 3.0).onCount() == 0, "E gate on, no table: admits no cell");
-        MIB_EXPECT(g::computeMask(boxSpec(false), nullptr, vp, 3.0).onCount() > 0, "E gate off needs no table");
+        {
+            // No table: the E layer is skipped, the tint is the box whatever the E range says.
+            const g::Mask plainBox = g::computeMask(boxSpec(false), nullptr, vp, 3.0);
+            MIB_EXPECT(plainBox.onCount() > 0, "E gate off needs no table");
+            for (const double eMin : {0.0, 5.0}) {
+                const g::Mask noTable = g::computeMask(boxSpec(true, eMin, 10.0), nullptr, vp, 3.0);
+                MIB_EXPECT(noTable.onCount() == plainBox.onCount() && noTable.on == plainBox.on,
+                           "E gate on, no table: the mask is the box (E min " + std::to_string(eMin) + ")");
+                const backend::EModulusLut unloaded;
+                MIB_EXPECT(g::computeMask(boxSpec(true, eMin, 10.0), &unloaded, vp, 3.0).on == plainBox.on,
+                           "E gate on, unloaded table: the mask is the box (E min " + std::to_string(eMin) + ")");
+            }
+            // With a table the E range still removes cells from the box.
+            MIB_EXPECT(g::computeMask(boxSpec(true, 1.0, 3.0), &lut, vp, 3.0).onCount() < plainBox.onCount(),
+                       "E gate on, table: the range removes cells from the box");
+        }
         g::Viewport bad = vp;
         bad.x1 = bad.x0;
         MIB_EXPECT(g::computeMask(boxSpec(), &lut, bad, 3.0).cellCount() == 0, "degenerate viewport: empty");
@@ -431,16 +468,28 @@ int main(int argc, char* argv[])
         std::vector<scatterhit::Point> pts = {{150, 0.2, 1}, {350, 0.2, 2}, {200, 0.05, 3}, {200, 0.25, 4}, {250, 0.15, 5}};
         std::vector<double> e = {2.0, 2.0, 2.0, kNaN, 5.0};
         // box only: 1, 4, 5 are inside (350 is out, 0.05 is out)
-        auto c = g::countTargets(boxSpec(false), pts, e);
+        auto c = g::countTargets(boxSpec(false), true, pts, e);
         MIB_EXPECT(c.target == 3 && c.total == 5 && std::abs(c.percent() - 60.0) < 1e-9, "box-only count (E ignored, incl. NaN)");
-        // with E in [1, 3]: cell 4 has no E, cell 5 has E 5 -> only cell 1
-        c = g::countTargets(boxSpec(true, 1.0, 3.0), pts, e);
-        MIB_EXPECT(c.target == 1 && c.total == 5, "E gate: NaN and out-of-range E are not target");
+        // with E in [1, 3] and a table: cell 4 has no E, cell 5 has E 5 -> only cell 1
+        c = g::countTargets(boxSpec(true, 1.0, 3.0), true, pts, e);
+        MIB_EXPECT(c.target == 1 && c.total == 5, "E gate, table: NaN and out-of-range E are not target");
         g::GateSpec off = boxSpec(true, 1.0, 3.0);
         off.enabled = false;
-        MIB_EXPECT(g::countTargets(off, pts, e).target == 0, "gate off: none");
-        MIB_EXPECT(g::countTargets(boxSpec(true, 1.0, 3.0), pts, std::vector<double>{}).target == 0, "no E values: an E gate admits none");
-        MIB_EXPECT(g::countTargets(boxSpec(false), {}, {}).total == 0 && g::countTargets(boxSpec(false), {}, {}).percent() == 0.0, "empty set");
+        MIB_EXPECT(g::countTargets(off, true, pts, e).target == 0 && g::countTargets(off, false, pts, e).target == 0, "gate off: none");
+        MIB_EXPECT(g::countTargets(boxSpec(true, 1.0, 3.0), true, pts, std::vector<double>{}).target == 0,
+                   "table loaded but no E values: an E gate admits none");
+        // No table: the E layer is skipped, the count is the box (cells 1, 4, 5), whatever the stored E (a 0.0
+        // placeholder, NaN, or values) and whatever the E range (min 0 or positive).
+        const std::vector<double> placeholder(pts.size(), 0.0);
+        for (const double eMin : {0.0, 5.0}) {
+            for (const std::vector<double>* values : std::vector<const std::vector<double>*>{&e, &placeholder}) {
+                c = g::countTargets(boxSpec(true, eMin, 10.0), false, pts, *values);
+                MIB_EXPECT(c.target == 3 && c.total == 5, "E gate, no table: the count is the box (E min " + std::to_string(eMin) + ")");
+            }
+            MIB_EXPECT(g::countTargets(boxSpec(true, eMin, 10.0), false, pts, std::vector<double>{}).target == 3,
+                       "E gate, no table, no E values: the count is the box");
+        }
+        MIB_EXPECT(g::countTargets(boxSpec(false), true, {}, {}).total == 0 && g::countTargets(boxSpec(false), true, {}, {}).percent() == 0.0, "empty set");
         MIB_EXPECT(g::previewText({3, 5}) == QStringLiteral("Target group preview: 3 of 5 plotted valid cells (60.0%)"), "preview text");
         MIB_EXPECT(g::previewText({0, 0}).contains(QStringLiteral("no plotted valid cells")), "preview text without cells");
     }
