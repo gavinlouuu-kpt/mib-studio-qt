@@ -195,6 +195,24 @@
   persisted && applied; "saved, not applied" explicit) / `failApply`.
   `stateText()` is the footer text. Also defines the request/result
   contract used by `AppConfigWatcher`. Guard: `frontend.config_draft`.
+- **`TargetGatePreview`** (`TargetGatePreview.h`, namespace
+  `frontend::gate`) — pure model (Qt Core + the Qt-free backend types) behind
+  the target-group gate overlay on the Monitoring scatter
+  ([[ExperimentMonitoringTab]] "Gate overlay"). `GateSpec` is the draft gate
+  (`fromConfig`); `isTarget` / `wouldBeTarget` are the exact predicate of
+  `ProcessingScience.cpp` (area and deformability box, optional E range with
+  NaN E never passing); `computeMask` samples it over the plot rectangle;
+  `isoContour(lut, level)` is marching squares on the `EModulusLut` grid
+  (crossings on grid edges, where `lookup` is exactly linear, so every vertex
+  satisfies `lookup == level`; both bilinear saddle resolutions; closed
+  loops). `hitTest` finds the nearest box edge or E contour within 6 px
+  (`HandleKind`; edges win ties; coincident edges split by pointer side),
+  `beginDrag` / `dragValue` turn pointer travel into a new field value
+  *relative to the press* (an E contour moves by the change of E under its
+  carried anchor point), `constrainEdit` clamps to the control's range, rounds
+  to `tuneFieldDecimals` and keeps min ≤ max; `countTargets` / `previewText`
+  give the live "N of M" count. Pixel coordinates are one system, carried by
+  `scatterhit::Viewport`. Guard: `frontend.target_gate_preview` (pure).
 
 ## Utils (`src/frontend/utils/`)
 
@@ -266,6 +284,18 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
   re-arm the user-zoomed state. Only a left double-click resets. Guard:
   `frontend.zoomable_chart_view` (synthesized events via
   `tests/support/qt_mouse.h`; the tree has no QtTest).
+  **Press interceptor:** `setPressInterceptor(fn)` is asked on every left press
+  (view coordinates); a claimed press is never a pan. Without travel it is
+  still a click (`plotClicked`); past the drag threshold it becomes an
+  intercepted drag reported by `interceptDragStarted(pressPos)`,
+  `interceptDragMoved(pressPos, viewPos)` and
+  `interceptDragFinished(pressPos, viewPos, completed)` (`completed == false`
+  for a lost gesture: focus out, double-click, release elsewhere); the view
+  moves no axis itself and ignores the wheel meanwhile. `hoverLeft()` fires
+  when the pointer leaves with no button held. With no interceptor, or one that
+  declines, behaviour is unchanged. Used by [[ExperimentMonitoringTab]] to
+  drag the target-group gate handles; guard `frontend.monitoring_gate_overlay`
+  (section 0 tests the view on its own).
 - **`RunStatusWidget`** (issue #363) — glyph + `ElidingLabel` bound to a
   `RunStatusModel` (`bind`); text carries the state, color is only a
   secondary cue; accessible name "Run state: …"; bounded width (≤ 260 px).

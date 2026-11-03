@@ -50,18 +50,28 @@ void ZoomableChartView::markUserZoomed()
 
 void ZoomableChartView::cancelGesture()
 {
+    const bool wasIntercepting = interceptDragging_;
     pressPending_ = false;
+    pressIntercepted_ = false;
+    interceptDragging_ = false;
     pressButton_ = Qt::NoButton;
     if (isPanning_) {
         isPanning_ = false;
         unsetCursor();
     }
+    if (wasIntercepting)
+        emit interceptDragFinished(pressPos_, interceptPos_, false);
 }
 
 void ZoomableChartView::wheelEvent(QWheelEvent* event)
 {
     if (!chart())
         return;
+    // The owner is dragging a handle drawn on the plot; the axes stay put.
+    if (interceptDragging_) {
+        event->accept();
+        return;
+    }
 
     const double delta = event->angleDelta().y();
     if (qFuzzyIsNull(delta))
@@ -144,10 +154,14 @@ void ZoomableChartView::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton) {
         // A click until the pointer travels startDragDistance(); only then a pan.
+        if (interceptDragging_)
+            cancelGesture(); // a lost release of an owner's drag: report it before a new press starts
         pressPending_ = true;
         pressButton_ = event->button();
         pressPos_ = event->position();
         lastPanPoint_ = event->position();
+        interceptDragging_ = false;
+        pressIntercepted_ = event->button() == Qt::LeftButton && pressInterceptor_ && pressInterceptor_(pressPos_);
         event->accept();
     } else {
         QChartView::mousePressEvent(event);
@@ -186,7 +200,7 @@ void ZoomableChartView::mouseMoveEvent(QMouseEvent* event)
 {
     // The release went elsewhere (context menu, modal, window switch) while
     // the pointer stayed here: a move with that button up ends the gesture.
-    if ((pressPending_ || isPanning_) && !(event->buttons() & pressButton_))
+    if ((pressPending_ || isPanning_ || interceptDragging_) && !(event->buttons() & pressButton_))
         cancelGesture();
     if (pressPending_) {
         const QPointF travel = event->position() - pressPos_;
@@ -195,8 +209,20 @@ void ZoomableChartView::mouseMoveEvent(QMouseEvent* event)
             return;
         }
         pressPending_ = false;
-        isPanning_ = true;
-        setCursor(Qt::ClosedHandCursor);
+        if (pressIntercepted_) {
+            interceptDragging_ = true;
+            interceptPos_ = event->position();
+            emit interceptDragStarted(pressPos_);
+        } else {
+            isPanning_ = true;
+            setCursor(Qt::ClosedHandCursor);
+        }
+    }
+    if (interceptDragging_) {
+        interceptPos_ = event->position();
+        emit interceptDragMoved(pressPos_, interceptPos_);
+        event->accept();
+        return;
     }
     if (isPanning_) {
         panTo(event->position());
@@ -209,14 +235,21 @@ void ZoomableChartView::mouseMoveEvent(QMouseEvent* event)
 
 void ZoomableChartView::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (event->button() != pressButton_ || (!pressPending_ && !isPanning_)) {
+    if (event->button() != pressButton_ || (!pressPending_ && !isPanning_ && !interceptDragging_)) {
         QChartView::mouseReleaseEvent(event);
         return;
     }
     const bool wasClick = pressPending_;
+    const bool wasIntercepting = interceptDragging_;
     const Qt::MouseButton button = pressButton_;
+    const QPointF pressPos = pressPos_;
+    interceptDragging_ = false; // the release completes it; cancelGesture must not report a loss
     cancelGesture();
     event->accept();
+    if (wasIntercepting) {
+        emit interceptDragFinished(pressPos, event->position(), true);
+        return;
+    }
     if (wasClick && chart() && chart()->plotArea().contains(event->position()))
         emit plotClicked(event->position(), button);
 }
@@ -225,8 +258,10 @@ void ZoomableChartView::leaveEvent(QEvent* event)
 {
     // A release that happened elsewhere (a dialog, another window) never
     // reaches this view; never leave a pan armed once no button is held.
-    if (QApplication::mouseButtons() == Qt::NoButton)
+    if (QApplication::mouseButtons() == Qt::NoButton) {
         cancelGesture();
+        emit hoverLeft();
+    }
     QChartView::leaveEvent(event);
 }
 

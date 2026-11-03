@@ -111,6 +111,8 @@ set(FRONTEND_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/src/frontend/models/RunStatusModel.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/models/RunStatusModel.h
     ${PROJECT_SOURCE_DIR}/src/frontend/models/ProcessingConfigDraft.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/models/TargetGatePreview.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/models/TargetGatePreview.h
     ${PROJECT_SOURCE_DIR}/src/frontend/widgets/RunStatusWidget.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/widgets/RunStatusWidget.h
     ${PROJECT_SOURCE_DIR}/src/frontend/widgets/AlertBanner.cpp
@@ -247,6 +249,15 @@ if(BUILD_TESTING)
     add_test(NAME frontend.monitoring_tune COMMAND $<TARGET_FILE:mib_frontend_tests> monitoring_tune_panel_test
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.monitoring_tune PROPERTIES LABELS "frontend;layout;safety" TIMEOUT 240)
+
+    # Monitoring scatter gate overlay: the draft target-group gate drawn on the
+    # scatter (tint, box, iso-E contours), edited by dragging its edges, hover
+    # readout, live count, snapshots, no-table notice; plus the view's press
+    # interceptor. Pure model: frontend.target_gate_preview (tests/CMakeLists.txt).
+    mib_test_runner_add(mib_frontend_tests monitoring_gate_overlay_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_gate_overlay_test.cpp)
+    add_test(NAME frontend.monitoring_gate_overlay COMMAND $<TARGET_FILE:mib_frontend_tests> monitoring_gate_overlay_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.monitoring_gate_overlay PROPERTIES LABELS "frontend;monitoring;layout;safety" TIMEOUT 240)
 
     # Monitoring scatter density (KDE) colouring: toggle, asynchronous periodic
     # estimate, late points, hide/show, persistence and the settings dialog.

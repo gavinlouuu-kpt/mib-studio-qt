@@ -237,6 +237,27 @@ strobe width/delay. The FPS control is disabled for manual profiles.
   says so); **✕** closes it, and *Overlay* under the valid thumbnails also
   draws the contours in it. Works with Density on, and the selection is
   never part of the chart saved at Stop.
+- **See and drag the target-group gate on the scatter.** While the
+  *Target group gate* is ticked in the tune panel, the scatter shows it: a
+  dashed box for the area and deformability ranges with a light blue tint
+  inside, and the label *Target group* (*Target group (unapplied)* while the
+  panel holds edits that are not applied yet; the chart follows the panel, not
+  the applied values). With the *Young's modulus* box ticked, two dash-dot
+  lines mark the E minimum and maximum (labelled, for example,
+  *E ≥ 1.00 kPa*) and only the part of the box between them is tinted. Under
+  the chart, *Target group preview: N of M plotted valid cells (P%)* says how
+  many of the cells now on the chart the draft gate would select. Move the
+  pointer onto a box edge or an E line (the cursor changes and a tip names the
+  value) and **drag** it: the matching box in the tune panel changes with it,
+  is marked `*`, and the footer counts the change, but nothing is applied until
+  you click **Apply changes**. Values are rounded to what the panel shows and a
+  minimum never passes its maximum. Dragging anywhere else still pans the
+  chart, and clicking a cell still selects it. Edges cannot be dragged while
+  an apply is running. Without an E-modulus table the E range admits no cell
+  and the chart says so. The overlay is not part of the chart saved at Stop.
+- **Read a position off the chart.** With the pointer on empty space the tip
+  shows the area, the deformability and, inside the E-modulus table, the
+  Young's modulus at that spot.
 - Live totals: valid count, invalid count, algorithm FPS, valid FPS.
 - Charts accumulate only while the tab is visible, and they are a live
   preview — they are not saved with the experiment.
