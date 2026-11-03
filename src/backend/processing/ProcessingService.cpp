@@ -668,6 +668,7 @@ void ProcessingService::startExperiment() {
     droppedValidFrames_.store(0, std::memory_order_relaxed);
     droppedInvalidFrames_.store(0, std::memory_order_relaxed);
     lastDropLogUs_.store(0, std::memory_order_relaxed);
+    capacityErrorReported_.store(false, std::memory_order_relaxed);
     resetRealtimeMetrics();
     experimentAccounting_.reset(experimentAccountingGeneration_, experimentAccountingPolicyAllowsDrops_);
     providerLossLogged_.store(0, std::memory_order_relaxed);
@@ -2456,7 +2457,7 @@ bool ProcessingService::appendExperimentFrame(ProcessedFrame&& frame, bool isVal
                                maxBufferedFrames);
     settle.unlock();
     if (needsFlush() && flushRequestCb_) flushRequestCb_();
-    if (r.dropped() && flushErrorCb_)
+    if (r.dropped() && flushErrorCb_ && !capacityErrorReported_.exchange(true, std::memory_order_relaxed))
         flushErrorCb_("Experiment buffer capacity exceeded: recording data was dropped");
     return r.stored;
 }

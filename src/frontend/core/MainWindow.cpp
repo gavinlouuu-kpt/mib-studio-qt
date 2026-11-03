@@ -371,6 +371,11 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
     backend_.setFatalSaveErrorCallback([this](const std::string& msg) {
         const QString q = QString::fromStdString(msg);
         QMetaObject::invokeMethod(this, [this, q]() {
+            // Issue #828: a burst of errors must not stack modal dialogs (each
+            // one's nested event loop ran the next queued error until the GUI
+            // stack overflowed). Present the first; later ones only log.
+            if (fatalSavePresented_) return;
+            fatalSavePresented_ = true;
             // Persistent, actionable and latched (issue #363): the alert
             // survives metrics refreshes and the run stays Failed even if the
             // metadata write later succeeds.
@@ -396,8 +401,18 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
             const auto fault = backend_.experiment().status();
             if (fault.faultMessage == q.toStdString()) presentedFault_ = fault;
             statusBar()->showMessage(tr("Save error: %1").arg(q));
-            QMessageBox::critical(this, tr("Save Error"),
-                tr("Data could not be saved and the operation was stopped:\n\n%1").arg(q));
+            if (experimentActive_) {
+                // Shown by onExperimentStatus once the run is terminal and the
+                // file is closed (the deferred-dialog rule below).
+                pendingFatalSaveMessage_ = q;
+                return;
+            }
+            auto* box = new QMessageBox(QMessageBox::Critical, tr("Save Error"),
+                tr("Data could not be saved and the operation was stopped:\n\n%1").arg(q),
+                QMessageBox::Ok, this);
+            box->setAttribute(Qt::WA_DeleteOnClose);
+            connect(box, &QDialog::finished, this, [this]() { fatalSavePresented_ = false; });
+            box->open();
         }, Qt::QueuedConnection);
     });
 
@@ -1524,6 +1539,8 @@ void MainWindow::onStartExperiment()
     experimentStartTimeNs_ = result.run.startWallClockNs;
 
     experimentActive_ = true;
+    fatalSavePresented_ = false;
+    pendingFatalSaveMessage_.clear();
     runOperationId_ = runStatusModel_->beginOperation(frontend::RunPhase::Starting, QFileInfo(filePath).fileName());
     runStatusModel_->setPhase(frontend::RunPhase::Running, runOperationId_, QFileInfo(filePath).fileName());
     statusLabel_->setText(result.run.camera.simulated
@@ -1640,9 +1657,17 @@ void MainWindow::onExperimentStatus(const backend::app::ExperimentStatus& status
     }
     else if (fatal)
     {
-        // The fatal-save callback already raised the critical alert/dialog.
+        // The fatal-save callback already raised the critical alert; its
+        // dialog was held until now (issue #828).
         runStatusModel_->latchFailure(runOperationId_, QString::fromStdString(status.faultMessage));
     }
+    if (!pendingFatalSaveMessage_.isEmpty())
+    {
+        deferredCritical = tr("Data could not be saved and the operation was stopped:\n\n%1")
+                               .arg(pendingFatalSaveMessage_);
+        pendingFatalSaveMessage_.clear();
+    }
+    fatalSavePresented_ = false;
 
     const auto accounting = backend_.processing().experimentAccountingSnapshot();
     SPDLOG_INFO("Experiment accounting: completion={} ({}); admitted={} empty={} processed={} "
