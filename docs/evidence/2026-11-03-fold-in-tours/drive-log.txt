@@ -1,0 +1,545 @@
+[    0.0s] MIB Studio tour drive 2026-11-03: schemes ['light', 'dark'], tours 6, server /home/gavin/Developer/.worktrees/mib-fold-in-tours/crates/mib-bridge-server/target/debug/yofo-studio-server, dist /home/gavin/Developer/.worktrees/mib-fold-in-tours/desktop/dist
+[    0.0s] fixtures /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/fixtures; mock frames /home/gavin/Developer/.worktrees/mib-fold-in-tours/data/mock_frames; out /home/gavin/Developer/.worktrees/mib-fold-in-tours/docs/evidence/2026-11-03-fold-in-tours; PIL yes
+[    0.4s] chromium 134.0.6998.35
+[    0.4s] === light / fold-in-e01-discovery
+[    0.7s] server light-e01-discovery: http://127.0.0.1:35197, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T115949-light-e01-discovery/data (pid 3158401)
+[    4.0s]    1/8 [step] Before: a job ID named the scan  -> flow:before:job
+[    4.5s]    2/8 [step] A restart could mix up jobs  -> flow:before:mix
+[    5.1s]    3/8 [step] After: every reply names its backend  -> flow:after:svc
+[    5.6s]    4/8 [step] A reply from another backend is stale  -> flow:after:svc->stale
+[    6.1s]    5/8 [step] What is proven, and what is not  -> flow:evidence
+[    6.8s]    6/8 [step] Available devices  -> connect-devices
+[    6.9s]     observed devices list: 'Mock camera (folder frame stream)'
+[    7.2s]    7/8 [step] Press Refresh  -> connect-refresh  (status: Press Refresh. Waiting for the backend to confirm…)
+[    7.2s]   [PASS] light-e01-discovery: step 7 'Press Refresh' waits (Next disabled, waiting text) (status='Press Refresh. Waiting for the backend to confirm…')
+[    9.6s]   [PASS] light-e01-discovery: step 7 waiting held >= 2.2 s with no operator input (held 2216 ms, events in window: [])
+[    9.6s]   [PASS] light-e01-discovery: step 7 operator could use the real control (press Refresh on the Connect tab)
+[    9.8s]   [PASS] light-e01-discovery: step 7 'Done' appeared only after the backend's reply to fetch_device_discovery/start_camera_discovery (reply at +12.0 ms, success shown at +79.4 ms)
+[    9.8s]   [PASS] light-e01-discovery: the instance ID the tour shows is the one in the backend's reply (shown 92352720-e9b1-43bf-b093-6c3718fa43df)
+[   10.9s]   [PASS] light-e01-discovery: step 7 stays on the step after Done until Next is pressed
+[   11.4s]     operator window non-poll commands: ['start_camera_discovery']
+[   11.7s]    8/8 [step] What the job found  -> connect-found
+[   11.8s]     observed found line: 'Found 0 framegrabber(s), 0 eGrabber camera(s), 0 MindVision camera(s) · selected: mock (/home/gavin/Developer/.worktrees/mib-fold-in-tours/data/mock_frames)'
+[   11.8s]     observed devices list after refresh: 'Mock camera (folder frame stream)'
+[   12.1s]    9/8 [feedback] Was this tour clear?  -> None
+[   12.3s]   [PASS] light-e01-discovery: feedback checkpoint shows Clear and Unclear and a note field
+[   12.9s]   [PASS] light-e01-discovery: verdict 'clear' is selected
+[   13.7s]   [PASS] light-e01-discovery: the tour sent no command: every command outside the operator's own control use is a read or a poll (236 commands, 17 distinct, all polls/reads)
+[   13.7s]   [PASS] light-e01-discovery: no uncaught page errors during the tour
+[   14.0s]   [PASS] light-e01-discovery: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: clear)
+[   14.1s]   [PASS] light-e01-discovery: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file light-e01-discovery.json)
+[   14.3s] server light-e01-discovery: stopped (exit 0)
+[   14.3s] --- light-e01-discovery: PASS  steps 8  screenshots 13  checks 12 (0 failed)
+[   14.3s] === light / fold-in-e02-features
+[   14.4s] server light-e02-features: http://127.0.0.1:41519, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120003-light-e02-features/data (pid 3161391)
+[   18.0s]     observed state chips with the camera idle: ['Refused · No camera session is open; start capture first.', 'Refused · No camera session is open; start capture first.', 'Refused · No camera session is open; start capture first.', 'Refused · No camera session is open; start capture first.', 'Current']
+[   19.9s]   [PASS] light-e02-features: operator started the mock camera in the classic view (set-up)
+[   20.8s]    1/11 [step] Before: the classic view for the rest  -> flow:before:link
+[   21.3s]    2/11 [step] Before: nothing listed the camera's features  -> flow:before:none
+[   21.8s]    3/11 [step] After: the camera describes itself  -> flow:after:node
+[   22.3s]    4/11 [step] Refusals come from the backend  -> flow:after:gate
+[   22.8s]    5/11 [step] What is proven, and what is not  -> flow:evidence
+[   23.5s]    6/11 [step] Feature tree  -> align-feature-toggle
+[   23.7s]   [PASS] light-e02-features: step 6 operator assist: press Feature tree
+[   24.6s]   [PASS] light-e02-features: step 6 the operator's press sent only ['camera_feature_tree'] (no write, no apply) (sent [])
+[   25.6s]    7/11 [step] The tree as the camera reports it  -> align-feature-tree
+[   25.8s]     observed feature tree: "Feature tree · camera (remote device) Read-only · categories and features as the camera's GenApi node map describes them 8 features Evidence: fixture/mock · source mock:mock_frames · generation 1 Category / feature Type Access Value Range ▸ Root – – – – ▸ DeviceControl – – – – DeviceModelName string"
+[   26.1s]    8/11 [step] Quick controls are name bindings  -> align-quick-controls
+[   26.6s]    9/11 [step] Write a Quick control  -> align-quick-controls  (status: Press Write on a writable row. Waiting for the backend to confirm…)
+[   26.6s]   [PASS] light-e02-features: step 9 'Write a Quick control' waits (Next disabled, waiting text) (status='Press Write on a writable row. Waiting for the backend to confirm…')
+[   29.1s]   [PASS] light-e02-features: step 9 waiting held >= 2.2 s with no operator input (held 2306 ms, events in window: [])
+[   29.2s]   [PASS] light-e02-features: step 9 operator could use the real control (type a frame rate and press Write on the Frame rate row)
+[   29.3s]   [PASS] light-e02-features: step 9 'Done' appeared only after the backend's reply to camera_feature_write (reply at +105.9 ms, success shown at +223.9 ms)
+[   30.5s]   [PASS] light-e02-features: step 9 stays on the step after Done until Next is pressed
+[   31.0s]     operator window non-poll commands: ['camera_feature_write']
+[   31.3s]   10/11 [step] Requested and readback  -> align-write-reply
+[   31.6s]     observed write reply: 'Written · readback · requested 334 Hz · 334 Hz'
+[   31.8s]   11/11 [step] States and refusals  -> align-state-chip
+[   32.1s]     observed state chips: ['Writable | Writable: read/write', 'Writable | Writable: read/write', 'Writable | Writable: read/write', 'Writable | Writable: read/write', 'Current | Current']
+[   32.4s]   12/11 [feedback] Was this tour clear?  -> None
+[   32.5s]   [PASS] light-e02-features: feedback checkpoint shows Clear and Unclear and a note field
+[   33.0s]   [PASS] light-e02-features: verdict 'unclear' is selected
+[   33.8s]   [PASS] light-e02-features: the tour sent no command: every command outside the operator's own control use is a read or a poll (602 commands, 20 distinct, all polls/reads)
+[   33.8s]   [PASS] light-e02-features: no uncaught page errors during the tour
+[   34.1s]   [PASS] light-e02-features: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: unclear)
+[   34.2s]   [PASS] light-e02-features: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file light-e02-features.json)
+[   34.4s] server light-e02-features: stopped (exit 0)
+[   34.4s] --- light-e02-features: PASS  steps 11  screenshots 19  checks 14 (0 failed)
+[   34.4s] === light / fold-in-e04-e06-runs
+[   34.5s] server light-e04-e06-runs: http://127.0.0.1:47489, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120023-light-e04-e06-runs/data (pid 3165230)
+[   37.9s]   [PASS] light-e04-e06-runs: operator started the mock camera in the classic view (set-up)
+[   38.9s]    1/11 [step] Before: the page worked out the first frame  -> flow:before:ui
+[   39.3s]    2/11 [step] Before: preview and recording were flags  -> flow:before:flags
+[   39.8s]    3/11 [step] After: two facts, kept apart  -> flow:after:frame
+[   40.3s]    4/11 [step] Counts must add up  -> flow:after:acct
+[   40.8s]    5/11 [step] What is proven, and what is not  -> flow:evidence
+[   41.5s]    6/11 [step] Start a run  -> plan-start-run  (status: Press Start run. Waiting for the backend to confirm…)
+[   41.5s]   [PASS] light-e04-e06-runs: step 6 'Start a run' waits (Next disabled, waiting text) (status='Press Start run. Waiting for the backend to confirm…')
+[   43.9s]   [PASS] light-e04-e06-runs: step 6 waiting held >= 2.2 s with no operator input (held 2310 ms, events in window: [])
+[   44.0s]   [PASS] light-e04-e06-runs: step 6 operator could use the real control (press Start run and answer the file prompt)
+[   44.0s]     dialog prompt: 'Save Experiment Data\nThe file is saved on the instrument, in /mnt/hdd/developer-data/mib-s' -> /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120023-light-e04-e06-runs/data/runs/tour-run.h5
+[   44.2s]   [PASS] light-e04-e06-runs: step 6 'Done' appeared only after the backend's reply to experiment_start (reply at +45.6 ms, success shown at +235.0 ms)
+[   45.4s]   [PASS] light-e04-e06-runs: step 6 stays on the step after Done until Next is pressed
+[   45.8s]     operator window non-poll commands: ['experiment_start', 'shell_log']
+[   46.3s]    7/11 [step] Wait for the first frame  -> live-body  (status: Already done: the run's status showed frames (run generation 1 · 0 valid and 9 invalid fra)
+[   46.5s]   [PASS] light-e04-e06-runs: step 7 'Already done' (first frame) rests on a status reply with a nonzero frame counter that arrived earlier ({"reply_t_rel_ms": -2180.7, "counters": {"invalid_buffered": "1", "persistence_admitted": "1"}})
+[   46.8s]    8/11 [step] Stop and finalize  -> live-stop-run  (status: Press Stop & finalize run. Waiting for the backend to confirm…)
+[   46.8s]   [PASS] light-e04-e06-runs: step 8 'Stop and finalize' waits (Next disabled, waiting text) (status='Press Stop & finalize run. Waiting for the backend to confirm…')
+[   49.3s]   [PASS] light-e04-e06-runs: step 8 waiting held >= 2.2 s with no operator input (held 2229 ms, events in window: [])
+[   49.3s]   [PASS] light-e04-e06-runs: step 8 operator could use the real control (press Stop & finalize run)
+[   49.8s]   [PASS] light-e04-e06-runs: step 8 'Done' appeared only after the backend's reply to experiment_stop/fetch_run_accounting (reply at +279.4 ms, success shown at +471.4 ms)
+[   51.1s]   [PASS] light-e04-e06-runs: step 8 stays on the step after Done until Next is pressed
+[   51.6s]     operator window non-poll commands: ['experiment_stop', 'shell_log']
+[   52.0s]    9/11 [step] The lifecycle, as observed  -> run-summary-lifecycle
+[   52.3s]     observed lifecycle: "✓ Start requested done · this plan sent the Start of run 1 ? Acknowledged · first frame seen unknown · not observed · the start reply said started; first frame not observed: a single sample is followed by its operation's end, not the run status ? Active · recording unknown · not observed · not observed: a single sample is followed by its operation's end, not the run status ? Stopping unknown · not observed · not observed: a single sample is followed by its operation's end, not the run status ✓ Drain · finalizing done · the run's operation ended: the backend ends it once the run is finalized ✓ Confirmed closed done · the backend closed the file (its operation ended); a single sample has no cl"
+[   52.6s]   10/11 [step] Counts and accounting  -> run-summary-counts
+[   52.8s]     observed counts: "Counts The file's counts and accounting, read by the backend · shown as sent Low n · under 200 valid rows Rows in the valid set 0 Valid 0 Finite (plotted) 0 Excluded (valid, not finite) 0 Completion complete Admitted 1 267 Processed 0 Committed to the file 13 Cancelled by policy 0 Store loss 0 Processing failed 0"
+[   53.1s]   11/11 [step] The writer closed  -> run-summary-writer
+[   53.3s]     observed writer: "closed · the run's operation ended (the backend finalizes first) · accounting complete"
+[   53.6s]   12/11 [feedback] Was this tour clear?  -> None
+[   53.8s]   [PASS] light-e04-e06-runs: feedback checkpoint shows Clear and Unclear and a note field
+[   54.3s]   [PASS] light-e04-e06-runs: verdict 'clear' is selected
+[   55.0s]   [PASS] light-e04-e06-runs: the tour sent no command: every command outside the operator's own control use is a read or a poll (719 commands, 21 distinct, all polls/reads)
+[   55.0s]   [PASS] light-e04-e06-runs: no uncaught page errors during the tour
+[   55.3s]   [PASS] light-e04-e06-runs: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: clear)
+[   55.4s]   [PASS] light-e04-e06-runs: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file light-e04-e06-runs.json)
+[   55.7s] server light-e04-e06-runs: stopped (exit 0)
+[   55.7s] --- light-e04-e06-runs: PASS  steps 11  screenshots 18  checks 18 (0 failed)
+[   55.7s] === light / fold-in-i02-recipes
+[   55.8s] server light-i02-recipes: http://127.0.0.1:40131, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120044-light-i02-recipes/data (pid 3169632)
+[   56.6s]     seeded: method profile tour-method @ a068e7bb01c1ecbf45588ba535f9b5fa872fe4a5b3dbfd32ef37181f2561afac; analysis plan tour-plan @ 1 (on population-6000.h5)
+[   59.3s]    1/14 [step] Before: no recipe provider  -> flow:before:iface
+[   59.8s]    2/14 [step] Before: compatibility was never checked  -> flow:before:note
+[   60.2s]    3/14 [step] After: a native provider stores recipes  -> flow:after:store
+[   60.7s]    4/14 [step] The backend computes the comparison  -> flow:after:diff
+[   61.2s]    5/14 [step] Apply preview applies nothing  -> flow:after:prev
+[   61.7s]    6/14 [step] What is proven, and what is not  -> flow:evidence
+[   62.4s]    7/14 [step] Recipe library  -> recipe-library
+[   62.8s]    8/14 [step] Local profile directory  -> recipe-profile
+[   64.1s]   [PASS] light-i02-recipes: step 8 operator assist: type the local profile directory
+[   65.9s]    9/14 [step] Create a recipe  -> recipe-form  (status: Fill the form and press Create recipe. Waiting for the backend to confirm…)
+[   65.9s]   [PASS] light-i02-recipes: step 9 'Create a recipe' waits (Next disabled, waiting text) (status='Fill the form and press Create recipe. Waiting for the backend to confirm…')
+[   68.4s]   [PASS] light-i02-recipes: step 9 waiting held >= 2.2 s with no operator input (held 2291 ms, events in window: [])
+[   69.6s]   [PASS] light-i02-recipes: step 9 operator could use the real control (fill the New recipe form and press Create recipe)
+[   69.7s]   [PASS] light-i02-recipes: step 9 'Done' appeared only after the backend's reply to recipe_create (reply at +1244.5 ms, success shown at +1294.4 ms)
+[   70.8s]   [PASS] light-i02-recipes: step 9 stays on the step after Done until Next is pressed
+[   71.3s]     operator window non-poll commands: ['recipe_create']
+[   71.3s]     observed recipe notice: ['Created recipe 3b133d0b-4a74-457c-9666-5959e0261b7d · revision 1. Nothing was applied.']
+[   71.6s]   10/14 [step] Compare with the instrument  -> recipe-compare
+[   71.7s]   [PASS] light-i02-recipes: step 10 operator assist: press Compare with the instrument
+[   72.8s]   [PASS] light-i02-recipes: step 10 the operator's press sent only ['recipe_diff'] (no write, no apply) (sent ['recipe_diff'])
+[   73.7s]   11/14 [step] Method, profile, core, calibration  -> recipe-diff
+[   73.8s]     observed diff: 'method · different · No method is applied on the instrument profile · different · No configuration is applied on the instrument core · unknown · Processing core of recipe 3b133d0b-4a74-457c-9666-5959e0261b7d @ 1 unknown: the local profile declares no processing contract and pins no core build calibration · equal · calibration no record in effect; E-LUT 8a86b2beef4f'
+[   74.1s]   12/14 [step] Base a new draft on this recipe  -> recipe-derive
+[   74.5s]   13/14 [step] Preview apply  -> recipe-preview-apply
+[   74.7s]   [PASS] light-i02-recipes: step 13 operator assist: press Preview apply
+[   75.7s]   [PASS] light-i02-recipes: step 13 the operator's press sent only ['recipe_apply_preview'] (no write, no apply) (sent ['recipe_apply_preview'])
+[   76.7s]   14/14 [step] Not applied  -> recipe-apply-preview
+[   76.8s]     observed apply preview: 'Apply preview · different · not applied Method selection to send to local_profile_store: profile_command {"base":"/mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120044-light-i02-recipes/profiles","request":"{\\"baseline\\":\\"a068e7bb01c1ecbf45588ba535f9b5fa872fe4a5b3dbfd32ef37181f2561afac\\",\\"name\\":\\"tour-method\\",\\"operation\\":\\"apply\\"}"}. It takes effect only when'
+[   77.1s]   15/14 [feedback] Was this tour clear?  -> None
+[   77.3s]   [PASS] light-i02-recipes: feedback checkpoint shows Clear and Unclear and a note field
+[   77.7s]   [PASS] light-i02-recipes: verdict 'unclear' is selected
+[   78.4s]   [PASS] light-i02-recipes: the tour sent no command: every command outside the operator's own control use is a read or a poll (364 commands, 17 distinct, all polls/reads)
+[   78.4s]   [PASS] light-i02-recipes: no uncaught page errors during the tour
+[   78.7s]   [PASS] light-i02-recipes: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: unclear)
+[   78.8s]   [PASS] light-i02-recipes: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file light-i02-recipes.json)
+[   79.1s] server light-i02-recipes: stopped (exit 0)
+[   79.1s] --- light-i02-recipes: PASS  steps 14  screenshots 22  checks 16 (0 failed)
+[   79.1s] === light / fold-in-f04-population
+[   79.2s] server light-f04-population: http://127.0.0.1:57567, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120108-light-f04-population/data (pid 3174554)
+[   82.1s]    1/12 [step] Before: a 10,000-event cap  -> flow:before:cap1
+[   82.7s]    2/12 [step] Before: the reference ran outside MIB  -> flow:before:ref
+[   83.1s]    3/12 [step] After: the whole file, in chunks  -> flow:after:cols
+[   83.6s]    4/12 [step] One exact membership  -> flow:after:member
+[   84.2s]    5/12 [step] What is proven, and what is not  -> flow:evidence
+[   84.9s]    6/12 [step] Open a recording  -> review-open-file  (status: Press Select HDF File… and choose a recording. Waiting for the backend to confirm…)
+[   84.9s]   [PASS] light-f04-population: step 6 'Open a recording' waits (Next disabled, waiting text) (status='Press Select HDF File… and choose a recording. Waiting for the backend to confirm…')
+[   87.3s]   [PASS] light-f04-population: step 6 waiting held >= 2.2 s with no operator input (held 2269 ms, events in window: [])
+[   87.4s]     dialog prompt: 'Open recording' -> /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/fixtures/population-6000.h5
+[   87.4s]   [PASS] light-f04-population: step 6 operator could use the real control (press Select HDF File... and answer the path prompt)
+[   87.6s]   [PASS] light-f04-population: step 6 'Done' appeared only after the backend's reply to load_recording (reply at +48.2 ms, success shown at +270.5 ms)
+[   88.9s]   [PASS] light-f04-population: step 6 stays on the step after Done until Next is pressed
+[   89.4s]     operator window non-poll commands: ['load_recording', 'render_review_overlay', 'shell_log']
+[   89.4s]     observed review header: '/mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/fixtures/population-6000.h5 · experiment · valid 6000, invalid 600 · core v0.3.2'
+[   89.7s]    7/12 [step] Population analysis  -> review-population
+[   90.2s]    8/12 [step] Analyze population  -> review-population-analyze  (status: Press Analyze population. Waiting for the backend to confirm…)
+[   90.2s]   [PASS] light-f04-population: step 8 'Analyze population' waits (Next disabled, waiting text) (status='Press Analyze population. Waiting for the backend to confirm…')
+[   92.7s]   [PASS] light-f04-population: step 8 waiting held >= 2.2 s with no operator input (held 2217 ms, events in window: [])
+[   92.7s]   [PASS] light-f04-population: step 8 operator could use the real control (press Analyze population)
+[   93.0s]   [PASS] light-f04-population: step 8 'Done' appeared only after the backend's reply to analyze_population (reply at +30.3 ms, success shown at +249.9 ms)
+[   94.2s]   [PASS] light-f04-population: step 8 stays on the step after Done until Next is pressed
+[   94.7s]     operator window non-poll commands: ['analyze_population']
+[   94.9s]    9/12 [step] The counts  -> review-population-result
+[   95.1s]     observed counts: '6600 selected · 0 excluded · 0 unknown / 6000 valid + 600 invalid stored observations. Selected population · px² Measured Missing Minimum Maximum Mean Median 6600 0 584.8574563661406 3503.0908930181263 1726.978840524988 1571.3049974872793 Stored metadata values; absent fields and nonfinite measurements are unknown. Processing validity is not scientific QC. Selected observations 12 per page, in valid-set then invalid-set row order. Images are copied with the evaluated source; unavailable images do not remove observations. Loading a page runs a fresh evaluation. Load gated gallery Local read-only evaluation. No verified content fingerprint or saved result; results are cleared when the source o'
+[   95.4s]   10/12 [step] Statistics with their unit  -> review-population-statistics
+[   95.5s]     observed statistics: 'Selected population · px² Measured Missing Minimum Maximum Mean Median 6600 0 584.8574563661406 3503.0908930181263 1726.978840524988 1571.3049974872793'
+[   95.8s]   11/12 [step] The gated gallery  -> review-population-gallery
+[   96.0s]     observed gallery: {'imgs': 0, 'text': 'Selected observations 12 per page, in valid-set then invalid-set row order. Images are copied with the evaluated source; unavailable images do not remove observations. Loading a page runs a fresh evaluation. Load gated gallery'}
+[   96.0s]   [PASS] light-f04-population: step 11 operator assist: press Load gated gallery
+[   97.7s]     observed gallery after load: {'imgs': 12, 'text': 'Selected observations 12 per page, in valid-set then invalid-set row order. Images are copied with the evaluated source; unavailable images do not remove observations. Loading a page runs a fresh evaluation. Load gated galleryPrevious selected pageNext selected page valid · row 0 valid · row 1 valid'}
+[   98.0s]   12/12 [step] Plots come from saved strategies  -> review-plot-spec
+[   98.5s]   13/12 [feedback] Was this tour clear?  -> None
+[   98.7s]   [PASS] light-f04-population: feedback checkpoint shows Clear and Unclear and a note field
+[   99.2s]   [PASS] light-f04-population: verdict 'clear' is selected
+[  100.0s]   [PASS] light-f04-population: the tour sent no command: every command outside the operator's own control use is a read or a poll (348 commands, 17 distinct, all polls/reads)
+[  100.0s]   [PASS] light-f04-population: no uncaught page errors during the tour
+[  100.3s]   [PASS] light-f04-population: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: clear)
+[  100.3s]   [PASS] light-f04-population: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file light-f04-population.json)
+[  100.6s] server light-f04-population: stopped (exit 0)
+[  100.6s] --- light-f04-population: PASS  steps 12  screenshots 19  checks 17 (0 failed)
+[  100.6s] === light / fold-in-i12-f12-workspace
+[  100.7s] server light-i12-f12-workspace: http://127.0.0.1:58093, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120129-light-i12-f12-workspace/data (pid 3180483)
+[  103.6s]    1/10 [step] Before: a store nobody could reach  -> flow:before:store
+[  104.1s]    2/10 [step] Before: two diverging copies  -> flow:before:copies
+[  104.6s]    3/10 [step] After: a stale save is refused  -> flow:after:conflict
+[  105.1s]    4/10 [step] After a restart  -> flow:after:stale
+[  105.5s]    5/10 [step] What is proven, and what is not  -> flow:evidence
+[  106.2s]    6/10 [step] Saved workspace plan  -> saved-plan
+[  106.6s]    7/10 [step] Save the plan  -> saved-plan-save  (status: Press Save new workspace. Waiting for the backend to confirm…)
+[  106.6s]   [PASS] light-i12-f12-workspace: step 7 'Save the plan' waits (Next disabled, waiting text) (status='Press Save new workspace. Waiting for the backend to confirm…')
+[  109.0s]   [PASS] light-i12-f12-workspace: step 7 waiting held >= 2.2 s with no operator input (held 2297 ms, events in window: [])
+[  109.0s]   [PASS] light-i12-f12-workspace: step 7 operator could use the real control (press Save new workspace)
+[  109.1s]   [PASS] light-i12-f12-workspace: step 7 'Done' appeared only after the backend's reply to workspace_write (reply at +51.8 ms, success shown at +62.2 ms)
+[  110.2s]   [PASS] light-i12-f12-workspace: step 7 stays on the step after Done until Next is pressed
+[  110.7s]     operator window non-poll commands: ['workspace_write']
+[  111.0s]    8/10 [step] What the backend said  -> saved-plan-message
+[  111.1s]     observed message: 'Workspace persistence Saved revision 1. This is a recorded plan, not proof of acquisition or scientific compatibility.'
+[  111.4s]    9/10 [step] Revision history  -> saved-plan-history
+[  111.5s]   [PASS] light-i12-f12-workspace: step 9 operator assist: press Read revision history
+[  112.4s]   [PASS] light-i12-f12-workspace: step 9 the operator's press sent only ['workspace_read'] (no write, no apply) (sent ['workspace_read'])
+[  113.1s]     observed history: " without unit Not declared / invalid S1 1 Not declared 1 Add custom annotations using the sample editor's Key/values. Repeated unit labels stay the same unit; sample or cell counts do not establish independent replicates. Save a workspace revision to retain this group selection. Show annotation JSON"
+[  113.3s]   10/10 [step] Workspace library  -> saved-plan-library
+[  113.7s]   11/10 [feedback] Was this tour clear?  -> None
+[  113.9s]   [PASS] light-i12-f12-workspace: feedback checkpoint shows Clear and Unclear and a note field
+[  114.4s]   [PASS] light-i12-f12-workspace: verdict 'unclear' is selected
+[  115.1s]   [PASS] light-i12-f12-workspace: the tour sent no command: every command outside the operator's own control use is a read or a poll (265 commands, 17 distinct, all polls/reads)
+[  115.1s]   [PASS] light-i12-f12-workspace: no uncaught page errors during the tour
+[  115.4s]   [PASS] light-i12-f12-workspace: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: unclear)
+[  115.5s]   [PASS] light-i12-f12-workspace: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file light-i12-f12-workspace.json)
+[  115.7s] server light-i12-f12-workspace: stopped (exit 0)
+[  115.7s] --- light-i12-f12-workspace: PASS  steps 10  screenshots 16  checks 13 (0 failed)
+[  115.7s] === light / surfaces: notice, Tours list, Help menu, quiet while the camera acquires
+[  115.8s] server light-surfaces: http://127.0.0.1:60087, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120144-light-surfaces/data (pid 3184288)
+[  120.2s]   [PASS] light-surfaces: the what's new notice is shown on a fresh browser and names the new tours (6 new:
+take the tour
+×)
+[  120.2s]   [PASS] light-surfaces: nothing starts a tour by itself (no popover after 4 s on the page)
+[  120.7s]   [PASS] light-surfaces: 'take the tour' opens the Tours list with all six tours, each marked new, and starts no tour (6 entries, 6 new badges)
+[  121.2s]   [PASS] light-surfaces: once the list was opened the notice is gone (every tour counts as seen)
+[  121.6s]   [PASS] light-surfaces: Help > Tours and what's new opens the same list in the classic shell
+[  121.9s]   [PASS] light-surfaces: opening the notice and the list sent no command beyond the app's own load-time ones ([])
+[  125.5s]   [PASS] light-surfaces: a dismissed notice stays dismissed after a reload (stored in this browser)
+[  127.3s]   [PASS] light-surfaces: (fresh browser) the notice is shown while the camera is idle
+[  129.0s]   [PASS] light-surfaces: the notice is hidden while the camera acquires (quiet rule)
+[  129.3s] server light-surfaces: stopped (exit 0)
+[  129.3s] --- light-surfaces: PASS
+[  129.3s] === light / idle gate: action step blocked while the camera acquires and while an experiment runs
+[  129.4s] server light-idle-gate: http://127.0.0.1:57545, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120158-light-idle-gate/data (pid 3198418)
+[  135.2s]   [PASS] light-idle-gate: [camera acquiring] the action step 'Press Refresh' is shown as blocked: the camera is acquiring (Not now: the camera is acquiring. Skip this step to go on.)
+[  135.2s]   [PASS] light-idle-gate: [camera acquiring] its Next button is disabled and the highlighted control is not interactive (next_disabled=True no_interaction=True)
+[  137.9s]   [PASS] light-idle-gate: [camera acquiring] the operator cannot press Refresh through the overlay (Locator.click: Timeout 2500ms exceeded. | blocked by the Driver.js overlay (driver-active))
+[  139.4s]   [PASS] light-idle-gate: [camera acquiring] nothing was sent and the tour stayed on the blocked step (non-read commands: [])
+[  139.7s]   [PASS] light-idle-gate: [camera acquiring] 'Skip this step to go on' works (the tour goes to step 8) (8 of 8)
+[  140.2s]     dialog prompt: 'Save Experiment Data\nThe file is saved on the instrument, in /mnt/hdd/developer-data/mib-s' -> /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120158-light-idle-gate/data/runs/gate-run.h5
+[  143.5s]   [PASS] light-idle-gate: [experiment running] the action step 'Press Refresh' is shown as blocked: an experiment is running (Not now: an experiment is running. Skip this step to go on.)
+[  143.5s]   [PASS] light-idle-gate: [experiment running] its Next button is disabled and the highlighted control is not interactive (next_disabled=True no_interaction=True)
+[  146.2s]   [PASS] light-idle-gate: [experiment running] the operator cannot press Refresh through the overlay (Locator.click: Timeout 2500ms exceeded. | blocked by the Driver.js overlay (driver-active))
+[  147.8s]   [PASS] light-idle-gate: [experiment running] nothing was sent and the tour stayed on the blocked step (non-read commands: [])
+[  148.0s]   [PASS] light-idle-gate: [experiment running] 'Skip this step to go on' works (the tour goes to step 8) (8 of 8)
+[  148.9s]   [PASS] light-idle-gate: the operator stopped the run again and the experiment reads inactive
+[  149.0s] server light-idle-gate: stopped (exit 0)
+[  149.0s] --- light-idle-gate: PASS
+[  149.0s] === light / missing-target recovery (E01 step 6, connect-devices, attribute removed)
+[  149.1s] server light-missing-target: http://127.0.0.1:58547, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120218-light-missing-target/data (pid 3203569)
+[  152.9s]   [PASS] light-missing-target: the data-tour attribute of the next step's element (connect-devices) was removed before its step
+[  153.3s]   [PASS] light-missing-target: the step says it is not on screen and why, and does not point at nothing ('Not on screen: Available devices': 'It is not shown on this instrument, or not in its present state. Skip this step, or restart the tour.')
+[  153.3s]   [PASS] light-missing-target: it offers Skip and Restart (and Back/Next) (['Skip', 'Restart'])
+[  153.8s]   [PASS] light-missing-target: Skip goes on to the next step (7 of 8, the Refresh action) (7 of 8 'Press Refresh')
+[  154.3s]   [PASS] light-missing-target: Back returns to the missing step (still absent, same explanation) (6 of 8 'Not on screen: Available devices')
+[  154.7s]   [PASS] light-missing-target: Restart goes back to step 1 (1 of 8) (1 of 8 'Before: a job ID named the scan')
+[  155.3s]   [PASS] light-missing-target: the missing-target recovery sent no command ([])
+[  155.3s] server light-missing-target: stopped (exit 0)
+[  155.3s] --- light-missing-target: PASS
+[  155.3s] === dark / fold-in-e01-discovery
+[  155.4s] server dark-e01-discovery: http://127.0.0.1:39587, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120224-dark-e01-discovery/data (pid 3204802)
+[  158.3s]    1/8 [step] Before: a job ID named the scan  -> flow:before:job
+[  158.8s]    2/8 [step] A restart could mix up jobs  -> flow:before:mix
+[  159.3s]    3/8 [step] After: every reply names its backend  -> flow:after:svc
+[  159.8s]    4/8 [step] A reply from another backend is stale  -> flow:after:svc->stale
+[  160.3s]    5/8 [step] What is proven, and what is not  -> flow:evidence
+[  161.0s]    6/8 [step] Available devices  -> connect-devices
+[  161.1s]     observed devices list: 'Mock camera (folder frame stream)'
+[  161.4s]    7/8 [step] Press Refresh  -> connect-refresh  (status: Press Refresh. Waiting for the backend to confirm…)
+[  161.4s]   [PASS] dark-e01-discovery: step 7 'Press Refresh' waits (Next disabled, waiting text) (status='Press Refresh. Waiting for the backend to confirm…')
+[  163.9s]   [PASS] dark-e01-discovery: step 7 waiting held >= 2.2 s with no operator input (held 2296 ms, events in window: [])
+[  163.9s]   [PASS] dark-e01-discovery: step 7 operator could use the real control (press Refresh on the Connect tab)
+[  164.2s]   [PASS] dark-e01-discovery: step 7 'Done' appeared only after the backend's reply to fetch_device_discovery/start_camera_discovery (reply at +26.9 ms, success shown at +274.6 ms)
+[  164.2s]   [PASS] dark-e01-discovery: the instance ID the tour shows is the one in the backend's reply (shown 2194754f-42b8-4a26-a207-c535378c516b)
+[  165.3s]   [PASS] dark-e01-discovery: step 7 stays on the step after Done until Next is pressed
+[  165.8s]     operator window non-poll commands: ['start_camera_discovery']
+[  166.1s]    8/8 [step] What the job found  -> connect-found
+[  166.3s]     observed found line: 'Found 0 framegrabber(s), 0 eGrabber camera(s), 0 MindVision camera(s) · selected: mock (/home/gavin/Developer/.worktrees/mib-fold-in-tours/data/mock_frames)'
+[  166.3s]     observed devices list after refresh: 'Mock camera (folder frame stream)'
+[  166.6s]    9/8 [feedback] Was this tour clear?  -> None
+[  166.8s]   [PASS] dark-e01-discovery: feedback checkpoint shows Clear and Unclear and a note field
+[  167.2s]   [PASS] dark-e01-discovery: verdict 'clear' is selected
+[  167.9s]   [PASS] dark-e01-discovery: the tour sent no command: every command outside the operator's own control use is a read or a poll (234 commands, 17 distinct, all polls/reads)
+[  167.9s]   [PASS] dark-e01-discovery: no uncaught page errors during the tour
+[  168.3s]   [PASS] dark-e01-discovery: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: clear)
+[  168.3s]   [PASS] dark-e01-discovery: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file dark-e01-discovery.json)
+[  168.6s] server dark-e01-discovery: stopped (exit 0)
+[  168.6s] --- dark-e01-discovery: PASS  steps 8  screenshots 13  checks 12 (0 failed)
+[  168.6s] === dark / fold-in-e02-features
+[  168.7s] server dark-e02-features: http://127.0.0.1:52073, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120237-dark-e02-features/data (pid 3207395)
+[  172.2s]     observed state chips with the camera idle: ['Refused · No camera session is open; start capture first.', 'Refused · No camera session is open; start capture first.', 'Refused · No camera session is open; start capture first.', 'Refused · No camera session is open; start capture first.', 'Current']
+[  174.0s]   [PASS] dark-e02-features: operator started the mock camera in the classic view (set-up)
+[  174.9s]    1/11 [step] Before: the classic view for the rest  -> flow:before:link
+[  175.4s]    2/11 [step] Before: nothing listed the camera's features  -> flow:before:none
+[  175.9s]    3/11 [step] After: the camera describes itself  -> flow:after:node
+[  176.4s]    4/11 [step] Refusals come from the backend  -> flow:after:gate
+[  176.9s]    5/11 [step] What is proven, and what is not  -> flow:evidence
+[  177.6s]    6/11 [step] Feature tree  -> align-feature-toggle
+[  177.8s]   [PASS] dark-e02-features: step 6 operator assist: press Feature tree
+[  178.7s]   [PASS] dark-e02-features: step 6 the operator's press sent only ['camera_feature_tree'] (no write, no apply) (sent [])
+[  179.7s]    7/11 [step] The tree as the camera reports it  -> align-feature-tree
+[  179.9s]     observed feature tree: "Feature tree · camera (remote device) Read-only · categories and features as the camera's GenApi node map describes them 8 features Evidence: fixture/mock · source mock:mock_frames · generation 1 Category / feature Type Access Value Range ▸ Root – – – – ▸ DeviceControl – – – – DeviceModelName string"
+[  180.2s]    8/11 [step] Quick controls are name bindings  -> align-quick-controls
+[  180.7s]    9/11 [step] Write a Quick control  -> align-quick-controls  (status: Press Write on a writable row. Waiting for the backend to confirm…)
+[  180.7s]   [PASS] dark-e02-features: step 9 'Write a Quick control' waits (Next disabled, waiting text) (status='Press Write on a writable row. Waiting for the backend to confirm…')
+[  183.1s]   [PASS] dark-e02-features: step 9 waiting held >= 2.2 s with no operator input (held 2218 ms, events in window: [])
+[  183.3s]   [PASS] dark-e02-features: step 9 operator could use the real control (type a frame rate and press Write on the Frame rate row)
+[  183.5s]   [PASS] dark-e02-features: step 9 'Done' appeared only after the backend's reply to camera_feature_write (reply at +123.6 ms, success shown at +304.3 ms)
+[  184.7s]   [PASS] dark-e02-features: step 9 stays on the step after Done until Next is pressed
+[  185.2s]     operator window non-poll commands: ['camera_feature_write']
+[  185.5s]   10/11 [step] Requested and readback  -> align-write-reply
+[  185.7s]     observed write reply: 'Written · readback · requested 334 Hz · 334 Hz'
+[  186.0s]   11/11 [step] States and refusals  -> align-state-chip
+[  186.2s]     observed state chips: ['Writable | Writable: read/write', 'Writable | Writable: read/write', 'Writable | Writable: read/write', 'Writable | Writable: read/write', 'Current | Current']
+[  186.5s]   12/11 [feedback] Was this tour clear?  -> None
+[  186.7s]   [PASS] dark-e02-features: feedback checkpoint shows Clear and Unclear and a note field
+[  187.2s]   [PASS] dark-e02-features: verdict 'unclear' is selected
+[  187.9s]   [PASS] dark-e02-features: the tour sent no command: every command outside the operator's own control use is a read or a poll (598 commands, 20 distinct, all polls/reads)
+[  187.9s]   [PASS] dark-e02-features: no uncaught page errors during the tour
+[  188.3s]   [PASS] dark-e02-features: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: unclear)
+[  188.3s]   [PASS] dark-e02-features: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file dark-e02-features.json)
+[  188.6s] server dark-e02-features: stopped (exit 0)
+[  188.6s] --- dark-e02-features: PASS  steps 11  screenshots 19  checks 14 (0 failed)
+[  188.6s] === dark / fold-in-e04-e06-runs
+[  188.7s] server dark-e04-e06-runs: http://127.0.0.1:51137, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120257-dark-e04-e06-runs/data (pid 3256913)
+[  192.2s]   [PASS] dark-e04-e06-runs: operator started the mock camera in the classic view (set-up)
+[  193.1s]    1/11 [step] Before: the page worked out the first frame  -> flow:before:ui
+[  193.6s]    2/11 [step] Before: preview and recording were flags  -> flow:before:flags
+[  194.1s]    3/11 [step] After: two facts, kept apart  -> flow:after:frame
+[  194.6s]    4/11 [step] Counts must add up  -> flow:after:acct
+[  195.1s]    5/11 [step] What is proven, and what is not  -> flow:evidence
+[  195.8s]    6/11 [step] Start a run  -> plan-start-run  (status: Press Start run. Waiting for the backend to confirm…)
+[  195.8s]   [PASS] dark-e04-e06-runs: step 6 'Start a run' waits (Next disabled, waiting text) (status='Press Start run. Waiting for the backend to confirm…')
+[  198.3s]   [PASS] dark-e04-e06-runs: step 6 waiting held >= 2.2 s with no operator input (held 2321 ms, events in window: [])
+[  198.4s]   [PASS] dark-e04-e06-runs: step 6 operator could use the real control (press Start run and answer the file prompt)
+[  198.4s]     dialog prompt: 'Save Experiment Data\nThe file is saved on the instrument, in /mnt/hdd/developer-data/mib-s' -> /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120257-dark-e04-e06-runs/data/runs/tour-run.h5
+[  198.6s]   [PASS] dark-e04-e06-runs: step 6 'Done' appeared only after the backend's reply to experiment_start (reply at +125.6 ms, success shown at +205.1 ms)
+[  199.8s]   [PASS] dark-e04-e06-runs: step 6 stays on the step after Done until Next is pressed
+[  200.2s]     operator window non-poll commands: ['experiment_start', 'shell_log']
+[  200.6s]    7/11 [step] Wait for the first frame  -> live-body  (status: Already done: the run's status showed frames (run generation 1 · 0 valid and 9 invalid fra)
+[  200.8s]   [PASS] dark-e04-e06-runs: step 7 'Already done' (first frame) rests on a status reply with a nonzero frame counter that arrived earlier ({"reply_t_rel_ms": -2167.1, "counters": {"invalid_buffered": "1", "persistence_admitted": "1"}})
+[  201.1s]    8/11 [step] Stop and finalize  -> live-stop-run  (status: Press Stop & finalize run. Waiting for the backend to confirm…)
+[  201.1s]   [PASS] dark-e04-e06-runs: step 8 'Stop and finalize' waits (Next disabled, waiting text) (status='Press Stop & finalize run. Waiting for the backend to confirm…')
+[  203.7s]   [PASS] dark-e04-e06-runs: step 8 waiting held >= 2.2 s with no operator input (held 2309 ms, events in window: [])
+[  203.7s]   [PASS] dark-e04-e06-runs: step 8 operator could use the real control (press Stop & finalize run)
+[  204.1s]   [PASS] dark-e04-e06-runs: step 8 'Done' appeared only after the backend's reply to experiment_stop/fetch_run_accounting (reply at +187.3 ms, success shown at +429.5 ms)
+[  205.4s]   [PASS] dark-e04-e06-runs: step 8 stays on the step after Done until Next is pressed
+[  205.8s]     operator window non-poll commands: ['experiment_stop', 'shell_log']
+[  206.3s]    9/11 [step] The lifecycle, as observed  -> run-summary-lifecycle
+[  206.5s]     observed lifecycle: "✓ Start requested done · this plan sent the Start of run 1 ? Acknowledged · first frame seen unknown · not observed · the start reply said started; first frame not observed: a single sample is followed by its operation's end, not the run status ? Active · recording unknown · not observed · not observed: a single sample is followed by its operation's end, not the run status ? Stopping unknown · not observed · not observed: a single sample is followed by its operation's end, not the run status ✓ Drain · finalizing done · the run's operation ended: the backend ends it once the run is finalized ✓ Confirmed closed done · the backend closed the file (its operation ended); a single sample has no cl"
+[  206.8s]   10/11 [step] Counts and accounting  -> run-summary-counts
+[  206.9s]     observed counts: "Counts The file's counts and accounting, read by the backend · shown as sent Low n · under 200 valid rows Rows in the valid set 0 Valid 0 Finite (plotted) 0 Excluded (valid, not finite) 0 Completion complete Admitted 1 279 Processed 0 Committed to the file 13 Cancelled by policy 0 Store loss 0 Processing failed 0"
+[  207.2s]   11/11 [step] The writer closed  -> run-summary-writer
+[  207.4s]     observed writer: "closed · the run's operation ended (the backend finalizes first) · accounting complete"
+[  207.7s]   12/11 [feedback] Was this tour clear?  -> None
+[  207.9s]   [PASS] dark-e04-e06-runs: feedback checkpoint shows Clear and Unclear and a note field
+[  208.4s]   [PASS] dark-e04-e06-runs: verdict 'clear' is selected
+[  209.1s]   [PASS] dark-e04-e06-runs: the tour sent no command: every command outside the operator's own control use is a read or a poll (729 commands, 21 distinct, all polls/reads)
+[  209.1s]   [PASS] dark-e04-e06-runs: no uncaught page errors during the tour
+[  209.4s]   [PASS] dark-e04-e06-runs: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: clear)
+[  209.5s]   [PASS] dark-e04-e06-runs: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file dark-e04-e06-runs.json)
+[  209.8s] server dark-e04-e06-runs: stopped (exit 0)
+[  209.8s] --- dark-e04-e06-runs: PASS  steps 11  screenshots 18  checks 18 (0 failed)
+[  209.8s] === dark / fold-in-i02-recipes
+[  209.9s] server dark-i02-recipes: http://127.0.0.1:44807, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120318-dark-i02-recipes/data (pid 3338974)
+[  210.5s]     seeded: method profile tour-method @ a068e7bb01c1ecbf45588ba535f9b5fa872fe4a5b3dbfd32ef37181f2561afac; analysis plan tour-plan @ 1 (on population-6000.h5)
+[  213.1s]    1/14 [step] Before: no recipe provider  -> flow:before:iface
+[  213.6s]    2/14 [step] Before: compatibility was never checked  -> flow:before:note
+[  214.1s]    3/14 [step] After: a native provider stores recipes  -> flow:after:store
+[  214.6s]    4/14 [step] The backend computes the comparison  -> flow:after:diff
+[  215.1s]    5/14 [step] Apply preview applies nothing  -> flow:after:prev
+[  215.6s]    6/14 [step] What is proven, and what is not  -> flow:evidence
+[  216.3s]    7/14 [step] Recipe library  -> recipe-library
+[  216.7s]    8/14 [step] Local profile directory  -> recipe-profile
+[  218.1s]   [PASS] dark-i02-recipes: step 8 operator assist: type the local profile directory
+[  219.9s]    9/14 [step] Create a recipe  -> recipe-form  (status: Fill the form and press Create recipe. Waiting for the backend to confirm…)
+[  219.9s]   [PASS] dark-i02-recipes: step 9 'Create a recipe' waits (Next disabled, waiting text) (status='Fill the form and press Create recipe. Waiting for the backend to confirm…')
+[  222.4s]   [PASS] dark-i02-recipes: step 9 waiting held >= 2.2 s with no operator input (held 2308 ms, events in window: [])
+[  223.7s]   [PASS] dark-i02-recipes: step 9 operator could use the real control (fill the New recipe form and press Create recipe)
+[  223.9s]   [PASS] dark-i02-recipes: step 9 'Done' appeared only after the backend's reply to recipe_create (reply at +1310.3 ms, success shown at +1515.5 ms)
+[  225.1s]   [PASS] dark-i02-recipes: step 9 stays on the step after Done until Next is pressed
+[  225.6s]     operator window non-poll commands: ['recipe_create']
+[  225.6s]     observed recipe notice: ['Created recipe fbf69cea-8bd9-481c-ada4-5217ead9d744 · revision 1. Nothing was applied.']
+[  225.8s]   10/14 [step] Compare with the instrument  -> recipe-compare
+[  226.0s]   [PASS] dark-i02-recipes: step 10 operator assist: press Compare with the instrument
+[  227.0s]   [PASS] dark-i02-recipes: step 10 the operator's press sent only ['recipe_diff'] (no write, no apply) (sent ['recipe_diff'])
+[  228.0s]   11/14 [step] Method, profile, core, calibration  -> recipe-diff
+[  228.2s]     observed diff: 'method · different · No method is applied on the instrument profile · different · No configuration is applied on the instrument core · unknown · Processing core of recipe fbf69cea-8bd9-481c-ada4-5217ead9d744 @ 1 unknown: the local profile declares no processing contract and pins no core build calibration · equal · calibration no record in effect; E-LUT 8a86b2beef4f'
+[  228.5s]   12/14 [step] Base a new draft on this recipe  -> recipe-derive
+[  228.9s]   13/14 [step] Preview apply  -> recipe-preview-apply
+[  229.1s]   [PASS] dark-i02-recipes: step 13 operator assist: press Preview apply
+[  230.1s]   [PASS] dark-i02-recipes: step 13 the operator's press sent only ['recipe_apply_preview'] (no write, no apply) (sent ['recipe_apply_preview'])
+[  231.1s]   14/14 [step] Not applied  -> recipe-apply-preview
+[  231.2s]     observed apply preview: 'Apply preview · different · not applied Method selection to send to local_profile_store: profile_command {"base":"/mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120318-dark-i02-recipes/profiles","request":"{\\"baseline\\":\\"a068e7bb01c1ecbf45588ba535f9b5fa872fe4a5b3dbfd32ef37181f2561afac\\",\\"name\\":\\"tour-method\\",\\"operation\\":\\"apply\\"}"}. It takes effect only when '
+[  231.5s]   15/14 [feedback] Was this tour clear?  -> None
+[  231.7s]   [PASS] dark-i02-recipes: feedback checkpoint shows Clear and Unclear and a note field
+[  232.2s]   [PASS] dark-i02-recipes: verdict 'unclear' is selected
+[  232.9s]   [PASS] dark-i02-recipes: the tour sent no command: every command outside the operator's own control use is a read or a poll (392 commands, 17 distinct, all polls/reads)
+[  232.9s]   [PASS] dark-i02-recipes: no uncaught page errors during the tour
+[  233.2s]   [PASS] dark-i02-recipes: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: unclear)
+[  233.3s]   [PASS] dark-i02-recipes: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file dark-i02-recipes.json)
+[  233.5s] server dark-i02-recipes: stopped (exit 0)
+[  233.5s] --- dark-i02-recipes: PASS  steps 14  screenshots 22  checks 16 (0 failed)
+[  233.5s] === dark / fold-in-f04-population
+[  233.6s] server dark-f04-population: http://127.0.0.1:45091, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120342-dark-f04-population/data (pid 3377101)
+[  236.5s]    1/12 [step] Before: a 10,000-event cap  -> flow:before:cap1
+[  237.0s]    2/12 [step] Before: the reference ran outside MIB  -> flow:before:ref
+[  237.5s]    3/12 [step] After: the whole file, in chunks  -> flow:after:cols
+[  238.0s]    4/12 [step] One exact membership  -> flow:after:member
+[  238.5s]    5/12 [step] What is proven, and what is not  -> flow:evidence
+[  239.2s]    6/12 [step] Open a recording  -> review-open-file  (status: Press Select HDF File… and choose a recording. Waiting for the backend to confirm…)
+[  239.2s]   [PASS] dark-f04-population: step 6 'Open a recording' waits (Next disabled, waiting text) (status='Press Select HDF File… and choose a recording. Waiting for the backend to confirm…')
+[  241.7s]   [PASS] dark-f04-population: step 6 waiting held >= 2.2 s with no operator input (held 2296 ms, events in window: [])
+[  241.7s]     dialog prompt: 'Open recording' -> /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/fixtures/population-6000.h5
+[  241.7s]   [PASS] dark-f04-population: step 6 operator could use the real control (press Select HDF File... and answer the path prompt)
+[  242.0s]   [PASS] dark-f04-population: step 6 'Done' appeared only after the backend's reply to load_recording (reply at +23.6 ms, success shown at +241.6 ms)
+[  243.2s]   [PASS] dark-f04-population: step 6 stays on the step after Done until Next is pressed
+[  243.6s]     operator window non-poll commands: ['load_recording', 'render_review_overlay', 'shell_log']
+[  243.6s]     observed review header: '/mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/fixtures/population-6000.h5 · experiment · valid 6000, invalid 600 · core v0.3.2'
+[  243.9s]    7/12 [step] Population analysis  -> review-population
+[  244.4s]    8/12 [step] Analyze population  -> review-population-analyze  (status: Press Analyze population. Waiting for the backend to confirm…)
+[  244.4s]   [PASS] dark-f04-population: step 8 'Analyze population' waits (Next disabled, waiting text) (status='Press Analyze population. Waiting for the backend to confirm…')
+[  246.8s]   [PASS] dark-f04-population: step 8 waiting held >= 2.2 s with no operator input (held 2296 ms, events in window: [])
+[  246.9s]   [PASS] dark-f04-population: step 8 operator could use the real control (press Analyze population)
+[  247.2s]   [PASS] dark-f04-population: step 8 'Done' appeared only after the backend's reply to analyze_population (reply at +35.0 ms, success shown at +261.0 ms)
+[  248.4s]   [PASS] dark-f04-population: step 8 stays on the step after Done until Next is pressed
+[  248.8s]     operator window non-poll commands: ['analyze_population']
+[  249.1s]    9/12 [step] The counts  -> review-population-result
+[  249.3s]     observed counts: '6600 selected · 0 excluded · 0 unknown / 6000 valid + 600 invalid stored observations. Selected population · px² Measured Missing Minimum Maximum Mean Median 6600 0 584.8574563661406 3503.0908930181263 1726.978840524988 1571.3049974872793 Stored metadata values; absent fields and nonfinite measurements are unknown. Processing validity is not scientific QC. Selected observations 12 per page, in valid-set then invalid-set row order. Images are copied with the evaluated source; unavailable images do not remove observations. Loading a page runs a fresh evaluation. Load gated gallery Local read-only evaluation. No verified content fingerprint or saved result; results are cleared when the source o'
+[  249.6s]   10/12 [step] Statistics with their unit  -> review-population-statistics
+[  249.8s]     observed statistics: 'Selected population · px² Measured Missing Minimum Maximum Mean Median 6600 0 584.8574563661406 3503.0908930181263 1726.978840524988 1571.3049974872793'
+[  250.0s]   11/12 [step] The gated gallery  -> review-population-gallery
+[  250.2s]     observed gallery: {'imgs': 0, 'text': 'Selected observations 12 per page, in valid-set then invalid-set row order. Images are copied with the evaluated source; unavailable images do not remove observations. Loading a page runs a fresh evaluation. Load gated gallery'}
+[  250.3s]   [PASS] dark-f04-population: step 11 operator assist: press Load gated gallery
+[  251.9s]     observed gallery after load: {'imgs': 12, 'text': 'Selected observations 12 per page, in valid-set then invalid-set row order. Images are copied with the evaluated source; unavailable images do not remove observations. Loading a page runs a fresh evaluation. Load gated galleryPrevious selected pageNext selected page valid · row 0 valid · row 1 valid'}
+[  252.2s]   12/12 [step] Plots come from saved strategies  -> review-plot-spec
+[  252.7s]   13/12 [feedback] Was this tour clear?  -> None
+[  252.9s]   [PASS] dark-f04-population: feedback checkpoint shows Clear and Unclear and a note field
+[  253.4s]   [PASS] dark-f04-population: verdict 'clear' is selected
+[  254.1s]   [PASS] dark-f04-population: the tour sent no command: every command outside the operator's own control use is a read or a poll (333 commands, 17 distinct, all polls/reads)
+[  254.1s]   [PASS] dark-f04-population: no uncaught page errors during the tour
+[  254.4s]   [PASS] dark-f04-population: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: clear)
+[  254.5s]   [PASS] dark-f04-population: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file dark-f04-population.json)
+[  254.8s] server dark-f04-population: stopped (exit 0)
+[  254.8s] --- dark-f04-population: PASS  steps 12  screenshots 19  checks 17 (0 failed)
+[  254.8s] === dark / fold-in-i12-f12-workspace
+[  254.9s] server dark-i12-f12-workspace: http://127.0.0.1:45443, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120403-dark-i12-f12-workspace/data (pid 3397277)
+[  257.8s]    1/10 [step] Before: a store nobody could reach  -> flow:before:store
+[  258.2s]    2/10 [step] Before: two diverging copies  -> flow:before:copies
+[  258.7s]    3/10 [step] After: a stale save is refused  -> flow:after:conflict
+[  259.2s]    4/10 [step] After a restart  -> flow:after:stale
+[  259.7s]    5/10 [step] What is proven, and what is not  -> flow:evidence
+[  260.4s]    6/10 [step] Saved workspace plan  -> saved-plan
+[  260.8s]    7/10 [step] Save the plan  -> saved-plan-save  (status: Press Save new workspace. Waiting for the backend to confirm…)
+[  260.8s]   [PASS] dark-i12-f12-workspace: step 7 'Save the plan' waits (Next disabled, waiting text) (status='Press Save new workspace. Waiting for the backend to confirm…')
+[  263.2s]   [PASS] dark-i12-f12-workspace: step 7 waiting held >= 2.2 s with no operator input (held 2303 ms, events in window: [])
+[  263.2s]   [PASS] dark-i12-f12-workspace: step 7 operator could use the real control (press Save new workspace)
+[  263.6s]   [PASS] dark-i12-f12-workspace: step 7 'Done' appeared only after the backend's reply to workspace_write (reply at +90.0 ms, success shown at +297.8 ms)
+[  264.7s]   [PASS] dark-i12-f12-workspace: step 7 stays on the step after Done until Next is pressed
+[  265.2s]     operator window non-poll commands: ['workspace_write']
+[  265.5s]    8/10 [step] What the backend said  -> saved-plan-message
+[  265.6s]     observed message: 'Workspace persistence Saved revision 1. This is a recorded plan, not proof of acquisition or scientific compatibility.'
+[  265.9s]    9/10 [step] Revision history  -> saved-plan-history
+[  266.1s]   [PASS] dark-i12-f12-workspace: step 9 operator assist: press Read revision history
+[  267.0s]   [PASS] dark-i12-f12-workspace: step 9 the operator's press sent only ['workspace_read'] (no write, no apply) (sent ['workspace_read'])
+[  267.6s]     observed history: " without unit Not declared / invalid S1 1 Not declared 1 Add custom annotations using the sample editor's Key/values. Repeated unit labels stay the same unit; sample or cell counts do not establish independent replicates. Save a workspace revision to retain this group selection. Show annotation JSON"
+[  267.9s]   10/10 [step] Workspace library  -> saved-plan-library
+[  268.3s]   11/10 [feedback] Was this tour clear?  -> None
+[  268.5s]   [PASS] dark-i12-f12-workspace: feedback checkpoint shows Clear and Unclear and a note field
+[  269.0s]   [PASS] dark-i12-f12-workspace: verdict 'unclear' is selected
+[  269.7s]   [PASS] dark-i12-f12-workspace: the tour sent no command: every command outside the operator's own control use is a read or a poll (276 commands, 17 distinct, all polls/reads)
+[  269.7s]   [PASS] dark-i12-f12-workspace: no uncaught page errors during the tour
+[  270.0s]   [PASS] dark-i12-f12-workspace: the Tours list shows the stored verdict for the tour (Since 2026-11-03 · fold-in tours (claude/fold-in-tours) · your feedback: unclear)
+[  270.0s]   [PASS] dark-i12-f12-workspace: the exported feedback file holds the entry (tour, verdict, note, time, version) ('Export feedback (JSON, 1)': 1 record(s), file dark-i12-f12-workspace.json)
+[  270.4s] server dark-i12-f12-workspace: stopped (exit 0)
+[  270.4s] --- dark-i12-f12-workspace: PASS  steps 10  screenshots 16  checks 13 (0 failed)
+[  270.4s] === dark / surfaces: notice, Tours list, Help menu, quiet while the camera acquires
+[  270.5s] server dark-surfaces: http://127.0.0.1:52671, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120419-dark-surfaces/data (pid 3412869)
+[  275.1s]   [PASS] dark-surfaces: the what's new notice is shown on a fresh browser and names the new tours (6 new:
+take the tour
+×)
+[  275.1s]   [PASS] dark-surfaces: nothing starts a tour by itself (no popover after 4 s on the page)
+[  275.6s]   [PASS] dark-surfaces: 'take the tour' opens the Tours list with all six tours, each marked new, and starts no tour (6 entries, 6 new badges)
+[  276.0s]   [PASS] dark-surfaces: once the list was opened the notice is gone (every tour counts as seen)
+[  276.5s]   [PASS] dark-surfaces: Help > Tours and what's new opens the same list in the classic shell
+[  276.8s]   [PASS] dark-surfaces: opening the notice and the list sent no command beyond the app's own load-time ones ([])
+[  280.4s]   [PASS] dark-surfaces: a dismissed notice stays dismissed after a reload (stored in this browser)
+[  282.1s]   [PASS] dark-surfaces: (fresh browser) the notice is shown while the camera is idle
+[  283.9s]   [PASS] dark-surfaces: the notice is hidden while the camera acquires (quiet rule)
+[  284.2s] server dark-surfaces: stopped (exit 0)
+[  284.2s] --- dark-surfaces: PASS
+[  284.2s] === dark / idle gate: action step blocked while the camera acquires and while an experiment runs
+[  284.3s] server dark-idle-gate: http://127.0.0.1:51375, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120433-dark-idle-gate/data (pid 3423971)
+[  290.1s]   [PASS] dark-idle-gate: [camera acquiring] the action step 'Press Refresh' is shown as blocked: the camera is acquiring (Not now: the camera is acquiring. Skip this step to go on.)
+[  290.1s]   [PASS] dark-idle-gate: [camera acquiring] its Next button is disabled and the highlighted control is not interactive (next_disabled=True no_interaction=True)
+[  292.8s]   [PASS] dark-idle-gate: [camera acquiring] the operator cannot press Refresh through the overlay (Locator.click: Timeout 2500ms exceeded. | blocked by the Driver.js overlay (driver-active))
+[  294.3s]   [PASS] dark-idle-gate: [camera acquiring] nothing was sent and the tour stayed on the blocked step (non-read commands: [])
+[  294.6s]   [PASS] dark-idle-gate: [camera acquiring] 'Skip this step to go on' works (the tour goes to step 8) (8 of 8)
+[  295.0s]     dialog prompt: 'Save Experiment Data\nThe file is saved on the instrument, in /mnt/hdd/developer-data/mib-s' -> /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120433-dark-idle-gate/data/runs/gate-run.h5
+[  298.5s]   [PASS] dark-idle-gate: [experiment running] the action step 'Press Refresh' is shown as blocked: an experiment is running (Not now: an experiment is running. Skip this step to go on.)
+[  298.5s]   [PASS] dark-idle-gate: [experiment running] its Next button is disabled and the highlighted control is not interactive (next_disabled=True no_interaction=True)
+[  301.1s]   [PASS] dark-idle-gate: [experiment running] the operator cannot press Refresh through the overlay (Locator.click: Timeout 2500ms exceeded. | blocked by the Driver.js overlay (driver-active))
+[  302.7s]   [PASS] dark-idle-gate: [experiment running] nothing was sent and the tour stayed on the blocked step (non-read commands: [])
+[  303.0s]   [PASS] dark-idle-gate: [experiment running] 'Skip this step to go on' works (the tour goes to step 8) (8 of 8)
+[  303.4s]   [PASS] dark-idle-gate: the operator stopped the run again and the experiment reads inactive
+[  303.6s] server dark-idle-gate: stopped (exit 0)
+[  303.6s] --- dark-idle-gate: PASS
+[  303.6s] === dark / missing-target recovery (E01 step 6, connect-devices, attribute removed)
+[  303.7s] server dark-missing-target: http://127.0.0.1:58873, data /mnt/hdd/developer-data/mib-studio-qt/handover/fold-in-tours/run-data/20261103T120452-dark-missing-target/data (pid 3441474)
+[  307.5s]   [PASS] dark-missing-target: the data-tour attribute of the next step's element (connect-devices) was removed before its step
+[  308.0s]   [PASS] dark-missing-target: the step says it is not on screen and why, and does not point at nothing ('Not on screen: Available devices': 'It is not shown on this instrument, or not in its present state. Skip this step, or restart the tour.')
+[  308.0s]   [PASS] dark-missing-target: it offers Skip and Restart (and Back/Next) (['Skip', 'Restart'])
+[  308.4s]   [PASS] dark-missing-target: Skip goes on to the next step (7 of 8, the Refresh action) (7 of 8 'Press Refresh')
+[  309.0s]   [PASS] dark-missing-target: Back returns to the missing step (still absent, same explanation) (6 of 8 'Not on screen: Available devices')
+[  309.4s]   [PASS] dark-missing-target: Restart goes back to step 1 (1 of 8) (1 of 8 'Before: a job ID named the scan')
+[  309.9s]   [PASS] dark-missing-target: the missing-target recovery sent no command ([])
+[  310.0s] server dark-missing-target: stopped (exit 0)
+[  310.0s] --- dark-missing-target: PASS
+[  312.6s] contact sheet contact-sheet-light.png: 1.20 MB
+[  314.9s] contact sheet contact-sheet-dark.png: 1.14 MB
+[  315.0s] 
+[  315.0s] SUMMARY
+[  315.0s]   light fold-in-e01-discovery          PASS  steps 8  shots 13  checks 12 (0 failed)
+[  315.0s]   light fold-in-e02-features           PASS  steps 11  shots 19  checks 14 (0 failed)
+[  315.0s]   light fold-in-e04-e06-runs           PASS  steps 11  shots 18  checks 18 (0 failed)
+[  315.0s]   light fold-in-i02-recipes            PASS  steps 14  shots 22  checks 16 (0 failed)
+[  315.0s]   light fold-in-f04-population         PASS  steps 12  shots 19  checks 17 (0 failed)
+[  315.0s]   light fold-in-i12-f12-workspace      PASS  steps 10  shots 16  checks 13 (0 failed)
+[  315.0s]   dark  fold-in-e01-discovery          PASS  steps 8  shots 13  checks 12 (0 failed)
+[  315.0s]   dark  fold-in-e02-features           PASS  steps 11  shots 19  checks 14 (0 failed)
+[  315.0s]   dark  fold-in-e04-e06-runs           PASS  steps 11  shots 18  checks 18 (0 failed)
+[  315.0s]   dark  fold-in-i02-recipes            PASS  steps 14  shots 22  checks 16 (0 failed)
+[  315.0s]   dark  fold-in-f04-population         PASS  steps 12  shots 19  checks 17 (0 failed)
+[  315.0s]   dark  fold-in-i12-f12-workspace      PASS  steps 10  shots 16  checks 13 (0 failed)
+[  315.0s]   light surfaces                       PASS  shots 4  checks 9 (0 failed)
+[  315.0s]   light idle-gate                      PASS  shots 2  checks 11 (0 failed)
+[  315.0s]   light missing-target                 PASS  shots 3  checks 7 (0 failed)
+[  315.0s]   dark  surfaces                       PASS  shots 4  checks 9 (0 failed)
+[  315.0s]   dark  idle-gate                      PASS  shots 2  checks 11 (0 failed)
+[  315.0s]   dark  missing-target                 PASS  shots 3  checks 7 (0 failed)
+[  315.0s] PNGs 232, 14.66 MB; manifest /home/gavin/Developer/.worktrees/mib-fold-in-tours/docs/evidence/2026-11-03-fold-in-tours/manifest.json
+[  315.0s] ALL CHECKS PASSED

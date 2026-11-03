@@ -1,0 +1,14 @@
+{
+  "kind": "tour-feedback",
+  "app": "MIB Studio",
+  "exported": "2026-11-03T04:00:23.227Z",
+  "records": [
+    {
+      "tour": "fold-in-e02-features",
+      "verdict": "unclear",
+      "note": "drive 2026-11-03 light: unclear; scripted note for fold-in-e02-features",
+      "tourVersion": "2026-11-03",
+      "at": "2026-11-03T04:00:22.406Z"
+    }
+  ]
+}
