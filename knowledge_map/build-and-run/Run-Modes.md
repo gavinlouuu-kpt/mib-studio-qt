@@ -52,7 +52,7 @@ Read at startup (see `main.cpp` and [[../architecture/AppBackend]]):
 | `MIB_ARAVIS_DEVICE_ID=<id>` | auto | Explicit Aravis device identifier (for Fake, `Fake_1`) |
 | `MIB_ARAVIS_FAKE=true\|false` | false | Explicitly enable Aravis's Fake interface for development/tests |
 | `MIB_MOCK_CAMERA_DIR=<path>` | — | Folder with PNG/TIFF/JPEG frames |
-| `MIB_MOCK_CAMERA_INTERVAL_MS=<ms>` | 33 | Frame cadence |
+| `MIB_MOCK_CAMERA_INTERVAL_MS=<ms>` | 33 | Frame cadence; fractional ms allowed (`0.2` = 5000 fps) |
 | `MIB_MOCK_CAMERA_LOOP=true\|false` | true | Loop or stop at end |
 | `MIB_MINDVISION_CAMERA_INDEX=<n>` | 0 | MindVision device index used by startup selection |
 | `MIB_MINDVISION_CONFIG=<path>` | — | JSON config applied before MindVision capture starts |

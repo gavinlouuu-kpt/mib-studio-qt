@@ -21,7 +21,9 @@ bool loopFiles{true};
 
 - `MIB_CAMERA_MODE=mock` — force mock (bypasses ConnectTab selection)
 - `MIB_MOCK_CAMERA_DIR=<path>` — folder source
-- `MIB_MOCK_CAMERA_INTERVAL_MS=<ms>` — overrides `frameInterval`
+- `MIB_MOCK_CAMERA_INTERVAL_MS=<ms>` — overrides `frameInterval`; fractional values are
+  honoured to the microsecond (`0.2` = 5000 fps). Before #828 `std::stoi` truncated them to 0
+  and the 33 ms default silently stayed.
 - `MIB_MOCK_CAMERA_LOOP=true|false` — overrides `loopFiles`
 
 ## Responsibility

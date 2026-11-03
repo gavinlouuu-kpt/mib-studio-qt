@@ -27,14 +27,26 @@ inside Qt Widgets/USER32 dialog frames.
 
 **Tests.**
 - `processing.experiment_capacity_error_latch`: 8 producers saturate the buffer; one report per run.
-- `integration.fatal_save_dialog_e2e`: the real MainWindow runs an experiment on the 512x96 real-cell mock
-  stream at 1000 fps, with every detected cell accepted, an 8 MB buffer and HDF5 appends slowed by 400 ms.
-  A watcher answers the save dialog and records every message box. It expects:
-  - one Save Error box, opened after the run is terminal;
-  - never more than one box open at once.
+- `integration.fatal_save_dialog_e2e`: the real MainWindow runs an experiment at the rig's load.
+  - **Load:** the 512x96 real-cell mock stream centred on a flat 1216x208 background, a 5000 fps target,
+    every detected cell accepted, and the default 512 MB buffer.
+  - **Writer delay:** each HDF5 append is delayed 1.5 s by default, the latency the rig's D: HDD showed
+    per ~530-frame batch.
+  - **Expected result:**
+    - one Save Error box, opened after the run is terminal;
+    - never more than one box open at once.
+  - **Results on the rig, 2026-11-03:**
 
-  On the unfixed code the process crashes about 4 s into the run. On the rig it passes 3 of 3 runs, in
-  7-8 s each.
+    | Run | Code | Outcome |
+    |---|---|---|
+    | Default settings | Fixed | Overflow at about 8 s; passes 2 of 2. |
+    | Natural (`_SLOW_MS=0`, `_DIR` on the D: HDD) | Fixed | Overflow at about 16 s, with the same `buffered=1061` backlog line as the users' logs; passes. |
+    | Natural (`_SLOW_MS=0`, `_DIR` on the D: HDD) | Unfixed | Crashes at 10.8 s after 1,238 `Fatal save error` lines. |
+
+  - **Throughput ceiling:** the mock pipeline admits about 1.4-2.6k frames/s, not the full 5000 fps.
+  - **Fast disk:** with the file on NVMe and no delay the writer kept up for 60 s, so no overflow.
+- `MIB_MOCK_CAMERA_INTERVAL_MS` now accepts fractional milliseconds (`0.2` = 5000 fps). The how-to already
+  documented that value, but `std::stoi` truncated it to 0 and the mock silently stayed at about 30 fps.
 - The test honours `QT_QPA_PLATFORM` (default offscreen). On the Windows rig run it with
   `QT_QPA_PLATFORM=windows`, because the offscreen plugin stalls in the QApplication constructor there,
   as `integration.monitoring_scatter_e2e` does too.
