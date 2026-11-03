@@ -178,7 +178,8 @@ capture stop/fault/shutdown paths also release the generator. `releaseCamera`
 retains an unconfirmed rig shutdown in the lifecycle failure message after
 `camera->stop()`; explicit stop must not silently report physical OFF.
 See [workflow](../../docs/howto/illuminated-live-view.md).
-# First-frame observation (E04)
+
+## First-frame observation (E04)
 
 `start()` acceptance means a generation was scheduled. `cameraReady` means the
 camera's `start()` succeeded. Neither proves that the preview path has delivered
@@ -187,17 +188,32 @@ for each accepted generation and is reset synchronously when a new generation
 is accepted. Duplicate starts preserve the current observation.
 
 The value-only first-frame callback carries generation, host monotonic time, and
-the zero-based committed frame index when a `FrameStore` is configured. With a
-store, observation requires `committedCount()` to advance after publication;
-without one, a non-empty frame with nonzero dimensions is sufficient. Event
-callback access is copied under the callback mutex and invocation happens after
-releasing lifecycle locks. As with the ready callback, consumers must use the
-generation to reject stale work. `stop()` publishes Stopping and invokes the
-ready-unbind callback before camera teardown, then joins the worker; any frame
-already being delivered may complete before stop returns.
+a frame index. A frame is only eligible when it is non-empty with nonzero
+dimensions; with a `FrameStore` configured it must also be committed
+(`committedCount()` advances after publication). The index is the store's
+absolute committed index when a store exists (the store outlives restarts, so a
+later generation's first frame has a larger index), and this session's
+zero-based frame count when there is none.
+
+The latch is checked under `lifecycleMutex_`: the generation must be current and
+the state `Running`. `stop()` publishes Stopping under the same mutex, so a frame
+that is mid-delivery when it does is still published to the store but is not
+reported as the first frame. `run()` keeps a local latch per generation; once set,
+later frames skip the observation block, so the push loop adds no lock or
+`FrameStore` read per frame. Event callback access is copied under the callback
+mutex and invoked after all lifecycle locks are released. As with the ready
+callback, consumers must use the generation to reject stale work.
 
 The fake-camera lifecycle test covers a blocked first grab (ready without
-observation), one committed event, exactly-once delivery, and reset on restart.
+observation), one committed event, exactly-once delivery, a duplicate start that
+keeps the observation, retention after stop, reset on restart with a fresh
+observation, empty and zero-dimension frames, an unstored (zero-capacity) preview,
+a frame delivered while `stop()` runs, and concurrent snapshot/event accounting.
+Its barrier is `FakeLifecycleCamera::releaseGrab()`, which returns once the
+released grab has returned its frame; the capture thread handles that frame
+before the next grab, so the next blocked grab proves it was processed. The
+facade boundary test checks the lifecycle JSON for the observed, retained and
+restarted sessions.
 The E04 Driver.js tour integration is absent from this checkout; the event and
 JSON observation are available to a later tour, but no guided walkthrough is
 claimed here.

@@ -11,8 +11,10 @@
 #include <cstdlib>
 #include <fstream>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <stdexcept>
@@ -268,6 +270,38 @@ int main()
         std::cerr << "BackendFacade should expose Qt-widget-free frame copies\n";
         facade.shutdown();
         return 7;
+    }
+
+    // E04: once the running session has published a frame, the lifecycle JSON
+    // reports the first observed frame (bounded poll: the mock camera produces
+    // frames continuously). 64-bit values are decimal strings like the rest.
+    std::string firstFrameGeneration;
+    std::string firstFrameHostTimeUs;
+    std::string firstFrameIndex;
+    {
+        nlohmann::json lifecycle;
+        for (int attempt = 0; attempt < 200; ++attempt)
+        {
+            lifecycle = nlohmann::json::parse(facade.fetchCaptureLifecycleJson());
+            if (lifecycle.value("first_frame_observed", false))
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        firstFrameGeneration = lifecycle.value("generation", std::string{});
+        firstFrameHostTimeUs = lifecycle.value("first_frame_host_time_us", std::string{"0"});
+        firstFrameIndex = lifecycle.value("first_frame_index", std::string{"missing"});
+        if (!lifecycle.value("first_frame_observed", false) ||
+            lifecycle.value("state", std::string{}) != "running" ||
+            !lifecycle.value("camera_ready", false) ||
+            firstFrameGeneration.empty() || firstFrameGeneration == "0" ||
+            firstFrameHostTimeUs == "0" || firstFrameIndex == "missing")
+        {
+            std::cerr << "Lifecycle JSON should report the first observed frame: " << lifecycle.dump() << "\n";
+            facade.shutdown();
+            return 110;
+        }
     }
 
     bridge::PlaybackSeekCommand seekLatest;
@@ -574,6 +608,103 @@ int main()
         std::cerr << "CameraCommand should stop capture through CaptureService\n";
         facade.shutdown();
         return 13;
+    }
+
+    // E04: the observation is retained after stop. A restart resets it with
+    // the new generation, and that generation observes again. The frame
+    // callback runs before a frame is published, so it parks the capture
+    // thread: the restarted session cannot observe until the gate opens.
+    {
+        const auto retained = nlohmann::json::parse(facade.fetchCaptureLifecycleJson());
+        if (retained.value("state", std::string{}) != "idle" ||
+            !retained.value("first_frame_observed", false) ||
+            retained.value("generation", std::string{}) != firstFrameGeneration ||
+            retained.value("first_frame_host_time_us", std::string{}) != firstFrameHostTimeUs ||
+            retained.value("first_frame_index", std::string{}) != firstFrameIndex)
+        {
+            std::cerr << "Lifecycle JSON should retain the observation after stop: " << retained.dump() << "\n";
+            facade.shutdown();
+            return 111;
+        }
+
+        struct Gate
+        {
+            std::mutex m;
+            std::condition_variable cv;
+            bool entered = false;
+            bool open = false;
+        };
+        auto gate = std::make_shared<Gate>();
+        const auto openGate = [gate]
+        {
+            {
+                std::lock_guard<std::mutex> lock(gate->m);
+                gate->open = true;
+            }
+            gate->cv.notify_all();
+        };
+        backend.capture().setFrameCallback([gate](auto &&...)
+        {
+            std::unique_lock<std::mutex> lock(gate->m);
+            gate->entered = true;
+            gate->cv.notify_all();
+            gate->cv.wait(lock, [&] { return gate->open; });
+        });
+
+        bridge::CameraCommand restartCapture;
+        restartCapture.action = bridge::CameraCommandAction::StartCapture;
+        const bool restartAccepted = facade.dispatch(restartCapture).ok;
+        bool parked = false;
+        if (restartAccepted)
+        {
+            std::unique_lock<std::mutex> lock(gate->m);
+            parked = gate->cv.wait_for(lock, std::chrono::seconds(5), [&] { return gate->entered; });
+        }
+        const auto restarted = nlohmann::json::parse(facade.fetchCaptureLifecycleJson());
+        const bool resetOk =
+            restartAccepted && parked &&
+            restarted.value("generation", std::string{}) ==
+                std::to_string(std::stoull(firstFrameGeneration) + 1) &&
+            !restarted.value("first_frame_observed", true) &&
+            restarted.value("first_frame_host_time_us", std::string{"missing"}) == "0" &&
+            restarted.value("first_frame_index", std::string{"missing"}) == "0";
+        // Always release the capture thread before anything can join it.
+        openGate();
+
+        nlohmann::json observedAgain;
+        if (resetOk)
+        {
+            for (int attempt = 0; attempt < 200; ++attempt)
+            {
+                observedAgain = nlohmann::json::parse(facade.fetchCaptureLifecycleJson());
+                if (observedAgain.value("first_frame_observed", false))
+                {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        }
+        backend.capture().setFrameCallback(nullptr);
+        if (!resetOk)
+        {
+            std::cerr << "A restarted capture should reset the first-frame observation: " << restarted.dump() << "\n";
+            facade.shutdown();
+            return 112;
+        }
+        if (!observedAgain.value("first_frame_observed", false) ||
+            observedAgain.value("generation", std::string{}) != restarted.value("generation", std::string{}) ||
+            observedAgain.value("first_frame_host_time_us", std::string{"0"}) == "0")
+        {
+            std::cerr << "The restarted generation should observe its own first frame: " << observedAgain.dump() << "\n";
+            facade.shutdown();
+            return 113;
+        }
+        if (!facade.dispatch(stopCapture).ok)
+        {
+            std::cerr << "CameraCommand should stop the restarted capture\n";
+            facade.shutdown();
+            return 114;
+        }
     }
 
     // Soft trigger with capture stopped: must also fail cleanly.

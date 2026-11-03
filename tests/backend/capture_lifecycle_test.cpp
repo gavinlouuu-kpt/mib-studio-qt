@@ -16,9 +16,14 @@
 #include "support/fake_lifecycle_camera.h"
 #include "support/watchdog.h"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
+#include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -160,6 +165,13 @@ int main(int argc, char** argv)
 
     // ---- First-frame observation is distinct from ready and fires once only
     //      after FrameStore has committed a readable frame. ------------------
+    //
+    // Barrier: FakeLifecycleCamera::releaseGrab() returns only after the
+    // blocked grabFrame() consumed the release and returned its frame, and the
+    // capture thread handles that frame before it calls grabFrame() again. So
+    // "release, then waitUntilGrabBlocked()" means the released frame was fully
+    // processed (framesProcessed is bumped after the observation block), with
+    // no polling of the very state under test.
     {
         wd.mark("first frame observed");
         Rig rig;
@@ -175,22 +187,69 @@ int main(int argc, char** argv)
         MIB_REQUIRE(svc.waitForState({CaptureLifecycleState::Running}, std::chrono::seconds(5)) ==
                         CaptureLifecycleState::Running, "camera ready");
         MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "first grab blocked");
-        auto snap = svc.lifecycleSnapshot();
+        const auto snap = svc.lifecycleSnapshot();
         MIB_EXPECT(snap.cameraReady && !snap.firstFrameObserved, "ready does not imply observed");
+        MIB_EXPECT(snap.firstFrameHostTimeUs == 0 && snap.firstFrameIndex == 0,
+                   "unobserved snapshot carries no first-frame metadata");
         MIB_EXPECT(events.load() == 0 && store->committedCount() == 0, "no event before a frame");
-        rig.camera->releaseGrab();
-        MIB_REQUIRE(waitFor([&] { return svc.lifecycleSnapshot().firstFrameObserved; },
-                            std::chrono::seconds(5)), "first frame observed");
-        MIB_EXPECT(waitFor([&] { return events.load() == 1; }, std::chrono::seconds(5)), "event delivered");
-        MIB_EXPECT(event.generation == 1 && event.frameIndex == 0, "event identifies committed frame");
-        MIB_EXPECT(store->committedCount() == 1, "publication committed");
+
+        MIB_REQUIRE(rig.camera->releaseGrab(), "first grab released");
         MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "second grab blocked");
-        rig.camera->releaseGrab();
+        MIB_EXPECT(svc.stats().framesProcessed.load() == 1,
+                   "released frame was fully processed before the next grab");
+        const auto observed = svc.lifecycleSnapshot();
+        MIB_REQUIRE(observed.firstFrameObserved, "first frame observed");
+        MIB_REQUIRE(events.load() == 1, "event delivered");
+        MIB_EXPECT(event.generation == 1 && event.frameIndex == 0, "event identifies committed frame");
+        MIB_EXPECT(event.hostTimeUs != 0 && event.hostTimeUs == observed.firstFrameHostTimeUs &&
+                       event.frameIndex == observed.firstFrameIndex,
+                   "snapshot carries the event's metadata");
+        MIB_EXPECT(store->committedCount() == 1, "publication committed");
+
+        // A duplicate start is a no-op and keeps the latched observation.
+        MIB_EXPECT(svc.requestStart() == CaptureStartOutcome::AlreadyActive, "duplicate start");
+        const auto dup = svc.lifecycleSnapshot();
+        MIB_EXPECT(dup.generation == 1 && dup.firstFrameObserved &&
+                       dup.firstFrameHostTimeUs == observed.firstFrameHostTimeUs &&
+                       dup.firstFrameIndex == observed.firstFrameIndex,
+                   "duplicate start preserves the latched observation");
+
+        MIB_REQUIRE(rig.camera->releaseGrab(), "second grab released");
         MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "third grab blocked");
+        MIB_EXPECT(svc.stats().framesProcessed.load() == 2, "second frame was fully processed");
+        MIB_EXPECT(store->committedCount() == 2, "second frame committed");
         MIB_EXPECT(events.load() == 1, "event fires exactly once");
+        MIB_EXPECT(svc.lifecycleSnapshot().firstFrameIndex == observed.firstFrameIndex,
+                   "later frames do not move the latched index");
+
         svc.stop();
+        const auto stopped = svc.lifecycleSnapshot();
+        MIB_EXPECT(stopped.state == CaptureLifecycleState::Idle && stopped.firstFrameObserved,
+                   "observation is retained after stop");
+
+        // Restart: the reset is synchronous with acceptance, and the new
+        // generation can observe again.
         MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "restart accepted");
-        MIB_EXPECT(!svc.lifecycleSnapshot().firstFrameObserved, "new generation resets observation");
+        const auto restarted = svc.lifecycleSnapshot();
+        MIB_EXPECT(restarted.generation == 2 && !restarted.firstFrameObserved &&
+                       restarted.firstFrameHostTimeUs == 0 && restarted.firstFrameIndex == 0,
+                   "new generation resets observation");
+        MIB_REQUIRE(svc.waitForState({CaptureLifecycleState::Running}, std::chrono::seconds(5)) ==
+                        CaptureLifecycleState::Running, "restart reaches Running");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "restart grab blocked");
+        MIB_EXPECT(!svc.lifecycleSnapshot().firstFrameObserved && events.load() == 1,
+                   "new generation is not observed before its own frame");
+        MIB_REQUIRE(rig.camera->releaseGrab(), "restart grab released");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "restart next grab blocked");
+        const auto again = svc.lifecycleSnapshot();
+        MIB_EXPECT(again.generation == 2 && again.firstFrameObserved,
+                   "new generation observes again");
+        MIB_REQUIRE(events.load() == 2, "second generation event delivered");
+        // The FrameStore outlives restarts: its index is absolute.
+        MIB_EXPECT(event.generation == 2 && event.frameIndex == 2 &&
+                       event.frameIndex == store->committedCount() - 1 &&
+                       again.firstFrameIndex == event.frameIndex,
+                   "second generation event carries the store's absolute index");
         svc.stop();
     }
 
@@ -209,11 +268,149 @@ int main(int argc, char** argv)
         MIB_REQUIRE(svc.waitForState({CaptureLifecycleState::Running}, std::chrono::seconds(5)) ==
                         CaptureLifecycleState::Running, "ready");
         MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "grab blocked");
-        rig.camera->releaseGrab();
-        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "frame delivered");
+        MIB_REQUIRE(rig.camera->releaseGrab(), "grab released");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "next grab blocked");
+        MIB_EXPECT(svc.stats().framesProcessed.load() == 1,
+                   "the frame was processed, so the negative result is not vacuous");
         MIB_EXPECT(!svc.lifecycleSnapshot().firstFrameObserved && events.load() == 0,
                    "uncommitted preview does not produce observation");
         svc.stop();
+    }
+
+    // A frame the SDK delivered but that is empty (no payload) or has zero
+    // width/height never satisfies observation, with or without a store (a
+    // store commits any non-empty payload, so the validity check is what
+    // gates the zero-dimension case).
+    for (int variant = 0; variant < 2; ++variant) {
+        wd.mark("malformed first frame");
+        Rig rig;
+        rig.script.emptyPayloadFrames = variant == 0;
+        rig.script.zeroDimensionFrames = variant == 1;
+        CaptureService svc;
+        std::shared_ptr<backend::playback::FrameStore> store;
+        if (variant == 1) {
+            store = std::make_shared<backend::playback::FrameStore>(8);
+            svc.setFrameStore(store);
+        }
+        std::atomic<int> events{0};
+        svc.setFirstFrameObservedCallback([&](const auto&) { ++events; });
+        svc.setCameraFactory(rig.factory());
+        MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "accepted");
+        MIB_REQUIRE(svc.waitForState({CaptureLifecycleState::Running}, std::chrono::seconds(5)) ==
+                        CaptureLifecycleState::Running, "ready");
+        MIB_REQUIRE(waitFor([&] { return svc.stats().framesProcessed.load() >= 5; },
+                            std::chrono::seconds(5)),
+                    "malformed frames were processed");
+        const auto snap = svc.lifecycleSnapshot();
+        MIB_EXPECT(snap.cameraReady && !snap.firstFrameObserved && events.load() == 0 &&
+                       snap.firstFrameHostTimeUs == 0 && snap.firstFrameIndex == 0,
+                   variant == 0 ? "empty frame does not satisfy observation"
+                                : "zero-dimension frame does not satisfy observation");
+        if (store) {
+            MIB_EXPECT(store->committedCount() > 0, "the store did commit the zero-dimension frames");
+        }
+        svc.stop();
+    }
+
+    // A frame that is mid-delivery when stop() publishes Stopping is not a
+    // first frame. The frame callback runs before publication, so it can park
+    // the capture thread deterministically while stop() runs elsewhere.
+    {
+        wd.mark("first frame while stopping");
+        struct Gate {
+            std::mutex m;
+            std::condition_variable cv;
+            bool entered = false;
+            bool open = false;
+        };
+        auto gate = std::make_shared<Gate>();
+        Rig rig;
+        CaptureService svc;
+        auto store = std::make_shared<backend::playback::FrameStore>(8);
+        svc.setFrameStore(store);
+        svc.setFrameCallback([gate](auto&&...) {
+            std::unique_lock<std::mutex> lk(gate->m);
+            gate->entered = true;
+            gate->cv.notify_all();
+            gate->cv.wait(lk, [&] { return gate->open; });
+        });
+        std::atomic<int> events{0};
+        svc.setFirstFrameObservedCallback([&](const auto&) { ++events; });
+        svc.setCameraFactory(rig.factory());
+        MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "accepted");
+        {
+            std::unique_lock<std::mutex> lk(gate->m);
+            MIB_REQUIRE(gate->cv.wait_for(lk, std::chrono::seconds(5), [&] { return gate->entered; }),
+                        "first frame parked in the frame callback");
+        }
+        std::thread stopper([&] { svc.stop(); });
+        MIB_REQUIRE(waitFor([&] { return svc.lifecycleSnapshot().state == CaptureLifecycleState::Stopping; },
+                            std::chrono::seconds(5)),
+                    "stop() published Stopping");
+        {
+            std::lock_guard<std::mutex> lk(gate->m);
+            gate->open = true;
+        }
+        gate->cv.notify_all();
+        stopper.join();
+        MIB_EXPECT(store->committedCount() >= 1, "the in-flight frame was still published");
+        MIB_EXPECT(!svc.lifecycleSnapshot().firstFrameObserved && events.load() == 0,
+                   "a frame delivered after stop() began is not a first frame");
+    }
+
+    // Concurrent snapshot/event accounting: while sessions cycle at full frame
+    // rate, a reader never sees a torn first-frame tuple, and every generation
+    // that observed delivers exactly one event.
+    {
+        wd.mark("first frame concurrent accounting");
+        Rig rig;
+        rig.script.produceInterval = std::chrono::microseconds(50);
+        CaptureService svc;
+        svc.setFrameStore(std::make_shared<backend::playback::FrameStore>(16));
+        std::mutex perGenMutex;
+        std::map<uint64_t, int> perGeneration;
+        svc.setFirstFrameObservedCallback([&](const auto& value) {
+            std::lock_guard<std::mutex> lk(perGenMutex);
+            ++perGeneration[value.generation];
+        });
+        svc.setCameraFactory(rig.factory());
+        std::atomic<bool> readerStop{false};
+        std::atomic<int> torn{0};
+        std::thread reader([&] {
+            while (!readerStop.load()) {
+                const auto s = svc.lifecycleSnapshot();
+                const bool tupleTorn = s.firstFrameObserved
+                                           ? s.firstFrameHostTimeUs == 0
+                                           : (s.firstFrameHostTimeUs != 0 || s.firstFrameIndex != 0);
+                if (tupleTorn) torn.fetch_add(1);
+                std::this_thread::yield();
+            }
+        });
+        constexpr int kCycles = 20;
+        for (int i = 1; i <= kCycles; ++i) {
+            wd.mark("first frame accounting cycle");
+            MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "cycle start accepted");
+            MIB_REQUIRE(waitFor([&] { return svc.lifecycleSnapshot().firstFrameObserved; },
+                                std::chrono::seconds(5)),
+                        "cycle observes a first frame");
+            MIB_EXPECT(svc.lifecycleSnapshot().generation == static_cast<uint64_t>(i),
+                       "observation belongs to this cycle's generation");
+            MIB_REQUIRE(waitFor([&] {
+                            std::lock_guard<std::mutex> lk(perGenMutex);
+                            return perGeneration[static_cast<uint64_t>(i)] >= 1;
+                        }, std::chrono::seconds(5)),
+                        "cycle event delivered");
+            svc.stop();
+        }
+        readerStop.store(true);
+        reader.join();
+        MIB_EXPECT(torn.load() == 0, "no torn first-frame snapshot");
+        std::lock_guard<std::mutex> lk(perGenMutex);
+        MIB_EXPECT(perGeneration.size() == static_cast<size_t>(kCycles), "one generation per cycle");
+        for (const auto& entry : perGeneration) {
+            MIB_EXPECT(entry.second == 1, "generation " + std::to_string(entry.first) +
+                                              " delivered exactly one event");
+        }
     }
 
     // ---- 3. Camera start failure -> Faulted with CameraStartFailed + the

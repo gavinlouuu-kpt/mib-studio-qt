@@ -522,6 +522,11 @@ void CaptureService::run(uint64_t generation) {
         // never allocates.
         size_t reservedFrameBytes = 0;
 
+        // One run() is one generation. Once this session's first-frame
+        // observation is latched, later frames skip the observation block
+        // entirely (no extra lock or FrameStore reads on the hot path).
+        bool firstFrameLatched = false;
+
         // Declared outside the loop so grabFrame's data.assign reuses the
         // vector's capacity frame-to-frame (pushFrame copies out of it) —
         // at triggered rates of 5000 fps a per-iteration Frame would malloc
@@ -587,7 +592,8 @@ void CaptureService::run(uint64_t generation) {
                           frame.height,
                           frame.timestamp);
             }
-            const uint64_t committedBefore = frameStore ? frameStore->committedCount() : 0;
+            const uint64_t committedBefore =
+                (!firstFrameLatched && frameStore) ? frameStore->committedCount() : 0;
             if (frameStore) {
                 // Pre-reserve FIFO slots to the live frame size so the
                 // high-speed hot path never allocates. First reservation happens
@@ -609,23 +615,44 @@ void CaptureService::run(uint64_t generation) {
                                        frame.timestamp,
                                        frame.hostTimestampUs, generation);
             }
-            const bool validFrame = !frame.data.empty() && frame.width > 0 && frame.height > 0;
-            const bool published = !frameStore || frameStore->committedCount() > committedBefore;
-            if (validFrame && published) {
-                FirstFrameObservedEvent event{generation, frame.hostTimestampUs,
-                    frameStore ? frameStore->committedCount() - 1 : stats_.framesProcessed.load()};
-                FirstFrameObservedCallback observed;
-                {
-                    std::lock_guard<std::mutex> lk(lifecycleMutex_);
-                    if (generation == snapshot_.generation && !snapshot_.firstFrameObserved) {
-                        snapshot_.firstFrameObserved = true;
-                        snapshot_.firstFrameHostTimeUs = event.hostTimeUs;
-                        snapshot_.firstFrameIndex = event.frameIndex;
-                        std::lock_guard<std::mutex> callbackLk(callbackMutex_);
-                        observed = firstFrameObservedCallback_;
+            if (!firstFrameLatched) {
+                // A frame counts only if it is non-empty and, when a FrameStore
+                // is configured, the store actually committed it.
+                const bool validFrame = !frame.data.empty() && frame.width > 0 && frame.height > 0;
+                const uint64_t committedAfter = frameStore ? frameStore->committedCount() : 0;
+                const bool committed = !frameStore || committedAfter > committedBefore;
+                if (validFrame && committed) {
+                    // FrameStore index is absolute (the store outlives restarts);
+                    // without a store it is this session's zero-based frame count
+                    // (framesProcessed is bumped below, after this block).
+                    const FirstFrameObservedEvent event{
+                        generation, frame.hostTimestampUs,
+                        frameStore ? committedAfter - 1
+                                   : stats_.framesProcessed.load(std::memory_order_relaxed)};
+                    bool fire = false;
+                    {
+                        // Only a session that is still Running reports a first
+                        // frame: stop() publishes Stopping under this mutex, so a
+                        // frame that was mid-delivery then is not reported.
+                        std::lock_guard<std::mutex> lk(lifecycleMutex_);
+                        if (generation == snapshot_.generation &&
+                            snapshot_.state == CaptureLifecycleState::Running) {
+                            firstFrameLatched = true;
+                            if (!snapshot_.firstFrameObserved) {
+                                snapshot_.firstFrameObserved = true;
+                                snapshot_.firstFrameHostTimeUs = event.hostTimeUs;
+                                snapshot_.firstFrameIndex = event.frameIndex;
+                                fire = true;
+                            }
+                        }
+                    }
+                    if (fire) {
+                        // Copy under the callback mutex, invoke with no lock held.
+                        FirstFrameObservedCallback observed;
+                        { std::lock_guard<std::mutex> lk(callbackMutex_); observed = firstFrameObservedCallback_; }
+                        if (observed) observed(event);
                     }
                 }
-                if (observed) observed(event);
             }
             {
                 const uint64_t published = Tools::getTimestamp();
