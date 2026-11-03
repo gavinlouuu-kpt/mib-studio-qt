@@ -252,7 +252,7 @@ and its values below it, named in full with units:
 | Group | Criteria |
 |---|---|
 | **Cell acceptance filters** | Area (µm²) min/max · Deformability min/max · Ring ratio min/max · Area ratio max · Border exclusion · Single inner contour |
-| **Target group / sorting gate** | Area (µm²) min/max · Deformability min/max — applied to valid cells only; selects which fire the sort trigger and never changes validity |
+| **Target group / sorting gate** | Area (µm²) min/max · Deformability min/max · optional Young's modulus (kPa) min/max — applied to valid cells only; selects which fire the sort trigger and never changes validity |
 | **Multi-image acquisition** | Record image series · Images per trigger |
 
 Unchecking a criterion greys out its values but keeps them visible, so you

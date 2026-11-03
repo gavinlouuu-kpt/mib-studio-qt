@@ -467,12 +467,28 @@ namespace frontend
                    tr("Applied to valid cells only: selects which of them fire the sort trigger. Never changes validity."));
         {
             auto* box = makeCriterion(tr("Target group gate"), QStringLiteral("targetGroupBox"), TuneField::TargetGroupEnabled,
-                                      tr("When enabled, a valid cell inside both ranges is reported as target group and fires the sort trigger."));
+                                      tr("When enabled, a valid cell inside every enabled range is reported as target group and fires the sort trigger."));
             auto* form = makeForm(box);
             addIntField(form, tr("Area minimum"), TuneField::TargetAreaMin, QStringLiteral("targetAreaMinSpin"), 0, 100000, 10);
             addIntField(form, tr("Area maximum"), TuneField::TargetAreaMax, QStringLiteral("targetAreaMaxSpin"), 0, 100000, 10);
             addDoubleField(form, tr("Deformability minimum"), TuneField::TargetDeformabilityMin, QStringLiteral("targetDeformMinSpin"), 0.0, 1.0, 0.01);
             addDoubleField(form, tr("Deformability maximum"), TuneField::TargetDeformabilityMax, QStringLiteral("targetDeformMaxSpin"), 0.0, 1.0, 0.01);
+            // Optional third range inside the gate: Young's modulus from the
+            // E-modulus LUT lookup on (area, deformability). Nested checkable
+            // box so its enable state sits with its values, like the others.
+            auto* emodBox = new QGroupBox(tr("Young's modulus (kPa)"), box);
+            emodBox->setObjectName(QStringLiteral("targetEmodulusBox"));
+            emodBox->setCheckable(true);
+            emodBox->setToolTip(tr("When enabled, a target cell must also have a Young's modulus (kPa, looked up in the loaded E-modulus table) inside this range. "
+                                   "A cell whose lookup falls outside the table, or any cell when no table is loaded, is never target group."));
+            bindTuneField(TuneField::TargetEmodulusEnabled, emodBox, nullptr,
+                          [emodBox]() { return QVariant(emodBox->isChecked()); },
+                          [emodBox](const QVariant& v) { emodBox->setChecked(v.toBool()); });
+            connect(emodBox, &QGroupBox::toggled, this, [this](bool on) { onTuneFieldEdited(TuneField::TargetEmodulusEnabled, on); });
+            form->addRow(emodBox);
+            auto* emodForm = makeForm(emodBox);
+            addDoubleField(emodForm, tr("Minimum"), TuneField::TargetEmodulusMin, QStringLiteral("targetEmodMinSpin"), 0.0, 1000.0, 0.1);
+            addDoubleField(emodForm, tr("Maximum"), TuneField::TargetEmodulusMax, QStringLiteral("targetEmodMaxSpin"), 0.0, 1000.0, 0.1);
         }
 
         // --- Multi-image acquisition -------------------------------------

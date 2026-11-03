@@ -180,7 +180,8 @@
   Qt Core only).
 - **`ProcessingConfigDraft`** (`ProcessingConfigDraft.h`, issue #364) —
   pure draft model for the Monitoring tune panel: `TuneField` enumerates
-  the 20 exposed fields with full label, unit, display decimals, group
+  the 23 exposed fields (including the target group's Young's modulus
+  gate: `TargetEmodulusEnabled/Min/Max`, kPa) with full label, unit, display decimals, group
   (Acceptance / TargetGroup / MultiImage) and JSON path
   (`image_processing/...`); `readTuneField`/`writeTuneField`,
   `tuneValuesEqual` (equality at display precision), `ProcessingConfigPatch`

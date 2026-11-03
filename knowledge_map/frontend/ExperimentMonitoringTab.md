@@ -218,7 +218,10 @@ exposed subset of `ProcessingConfig`, owned by the pure
   and `criterionSingleInner` (enable-only, with a wrapping description).
   Unchecking a group disables its value controls; the configured values
   stay visible. Under *Target group / sorting gate*: `targetGroupBox`
-  (area/deformability ranges, accessible names prefixed "Target group")
+  (area/deformability ranges, accessible names prefixed "Target group",
+  plus the nested checkable `targetEmodulusBox` for the optional Young's
+  modulus range in kPa; with no E-modulus LUT loaded, or a lookup outside
+  the table, an enabled E gate admits no cell)
   with a hint that it selects valid cells for the sort trigger and never
   changes validity. *Multi-image acquisition*: `multiImageBox` + images per
   trigger. Rows are `QFormLayout` with `WrapLongRows`, so labels stack over
