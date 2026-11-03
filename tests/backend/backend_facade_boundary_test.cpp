@@ -167,7 +167,11 @@ int main()
                                              "test.operator", "injected retained fault", true)
                  .ok)
             return 93;
-        if (facade.fetchCaptureLifecycleJson().find("\"generation\":\"0\"") == std::string::npos)
+        const auto captureLifecycle = nlohmann::json::parse(facade.fetchCaptureLifecycleJson());
+        if (captureLifecycle.value("generation", std::string{}) != "0" ||
+            captureLifecycle.value("first_frame_observed", true) ||
+            captureLifecycle.value("first_frame_host_time_us", std::string{"missing"}) != "0" ||
+            captureLifecycle.value("first_frame_index", std::string{"missing"}) != "0")
             return 94;
         {
             std::lock_guard<std::mutex> lock(eventsMutex);

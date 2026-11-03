@@ -10,6 +10,7 @@
 // variables (no timing sleeps) for its barriers.
 
 #include "backend/services/CaptureService.h"
+#include "backend/playback/FrameStore.h"
 
 #include "support/assert.h"
 #include "support/fake_lifecycle_camera.h"
@@ -157,6 +158,64 @@ int main(int argc, char** argv)
         svc.stop();
     }
 
+    // ---- First-frame observation is distinct from ready and fires once only
+    //      after FrameStore has committed a readable frame. ------------------
+    {
+        wd.mark("first frame observed");
+        Rig rig;
+        rig.script.blockGrab = true;
+        CaptureService svc;
+        auto store = std::make_shared<backend::playback::FrameStore>(8);
+        svc.setFrameStore(store);
+        std::atomic<int> events{0};
+        CaptureService::FirstFrameObservedEvent event;
+        svc.setFirstFrameObservedCallback([&](const auto& value) { event = value; ++events; });
+        svc.setCameraFactory(rig.factory());
+        MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "accepted");
+        MIB_REQUIRE(svc.waitForState({CaptureLifecycleState::Running}, std::chrono::seconds(5)) ==
+                        CaptureLifecycleState::Running, "camera ready");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "first grab blocked");
+        auto snap = svc.lifecycleSnapshot();
+        MIB_EXPECT(snap.cameraReady && !snap.firstFrameObserved, "ready does not imply observed");
+        MIB_EXPECT(events.load() == 0 && store->committedCount() == 0, "no event before a frame");
+        rig.camera->releaseGrab();
+        MIB_REQUIRE(waitFor([&] { return svc.lifecycleSnapshot().firstFrameObserved; },
+                            std::chrono::seconds(5)), "first frame observed");
+        MIB_EXPECT(waitFor([&] { return events.load() == 1; }, std::chrono::seconds(5)), "event delivered");
+        MIB_EXPECT(event.generation == 1 && event.frameIndex == 0, "event identifies committed frame");
+        MIB_EXPECT(store->committedCount() == 1, "publication committed");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "second grab blocked");
+        rig.camera->releaseGrab();
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "third grab blocked");
+        MIB_EXPECT(events.load() == 1, "event fires exactly once");
+        svc.stop();
+        MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "restart accepted");
+        MIB_EXPECT(!svc.lifecycleSnapshot().firstFrameObserved, "new generation resets observation");
+        svc.stop();
+    }
+
+    // A successful SDK grab is insufficient when configured preview storage
+    // cannot commit the frame (zero-capacity store rejects publication).
+    {
+        wd.mark("preview publication rejected");
+        Rig rig;
+        rig.script.blockGrab = true;
+        CaptureService svc;
+        svc.setFrameStore(std::make_shared<backend::playback::FrameStore>(0));
+        std::atomic<int> events{0};
+        svc.setFirstFrameObservedCallback([&](const auto&) { ++events; });
+        svc.setCameraFactory(rig.factory());
+        MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "accepted");
+        MIB_REQUIRE(svc.waitForState({CaptureLifecycleState::Running}, std::chrono::seconds(5)) ==
+                        CaptureLifecycleState::Running, "ready");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "grab blocked");
+        rig.camera->releaseGrab();
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "frame delivered");
+        MIB_EXPECT(!svc.lifecycleSnapshot().firstFrameObserved && events.load() == 0,
+                   "uncommitted preview does not produce observation");
+        svc.stop();
+    }
+
     // ---- 3. Camera start failure -> Faulted with CameraStartFailed + the
     //         camera's structured message; direct restart (no stop) works. ----
     {
@@ -224,6 +283,23 @@ int main(int argc, char** argv)
         MIB_EXPECT(svc.lifecycleSnapshot().state == CaptureLifecycleState::Idle, "stop after fault -> Idle");
     }
 
+    // A stream can end after camera readiness but before any first frame.
+    {
+        wd.mark("stream ended before first frame");
+        Rig rig;
+        rig.script.endStreamBeforeFirstFrame = true;
+        CaptureService svc;
+        svc.setCameraFactory(rig.factory());
+        std::atomic<int> events{0};
+        svc.setFirstFrameObservedCallback([&](const auto&) { ++events; });
+        MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "accepted");
+        MIB_REQUIRE(svc.waitForState({CaptureLifecycleState::Faulted}, std::chrono::seconds(5)) ==
+                        CaptureLifecycleState::Faulted, "stream ends naturally");
+        const auto snap = svc.lifecycleSnapshot();
+        MIB_EXPECT(!snap.firstFrameObserved && events.load() == 0, "no observation before first frame");
+        MIB_EXPECT(snap.lastFailure == CaptureFailureKind::StreamEnded, "stream end recorded");
+    }
+
     // ---- 5. Stop while grabFrame is blocked in the SDK: bounded stop. ------
     {
         wd.mark("stop while blocked");
@@ -237,6 +313,8 @@ int main(int argc, char** argv)
                     "running");
         MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)),
                     "grab parked in blocking wait");
+        MIB_EXPECT(!svc.lifecycleSnapshot().firstFrameObserved,
+                   "stop before first frame leaves observation false");
         const auto t0 = std::chrono::steady_clock::now();
         svc.stop();
         const auto elapsed = std::chrono::steady_clock::now() - t0;

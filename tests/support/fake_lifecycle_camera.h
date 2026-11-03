@@ -30,6 +30,7 @@ public:
         // After this many frames the camera reports "stream ended" on its own
         // (isRunning() false, grabFrame false). 0 = never.
         uint64_t endStreamAfterFrames = 0;
+        bool endStreamBeforeFirstFrame = false;
         // Delay injected inside stop() to model slow SDK teardown.
         std::chrono::milliseconds stopDelay{0};
         // Delay injected inside start() before it reports success/failure.
@@ -132,6 +133,12 @@ public:
         obs_->grabCalls.fetch_add(1);
         std::unique_lock<std::mutex> lk(mutex_);
         if (!running_) return false;
+        if (script_.endStreamBeforeFirstFrame) {
+            running_ = false;
+            failure_.code = "fake.stream_ended";
+            failure_.message = "fake camera ended before its first frame";
+            return false;
+        }
         if (script_.blockGrab) {
             grabBlocked_ = true;
             blockedCv_.notify_all();

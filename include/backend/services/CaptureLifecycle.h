@@ -94,6 +94,10 @@ struct CaptureLifecycleSnapshot {
     // Host monotonic microseconds (Tools::getTimestamp) of the last state
     // transition — lets consumers detect a stale snapshot.
     uint64_t transitionHostTimeUs{0};
+    // First valid frame observed in this generation (separate from readiness).
+    bool firstFrameObserved{false};
+    uint64_t firstFrameHostTimeUs{0};
+    uint64_t firstFrameIndex{0};
 
     bool isActive() const
     {

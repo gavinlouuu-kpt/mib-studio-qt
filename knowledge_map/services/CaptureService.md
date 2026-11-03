@@ -178,3 +178,26 @@ capture stop/fault/shutdown paths also release the generator. `releaseCamera`
 retains an unconfirmed rig shutdown in the lifecycle failure message after
 `camera->stop()`; explicit stop must not silently report physical OFF.
 See [workflow](../../docs/howto/illuminated-live-view.md).
+# First-frame observation (E04)
+
+`start()` acceptance means a generation was scheduled. `cameraReady` means the
+camera's `start()` succeeded. Neither proves that the preview path has delivered
+a frame. `CaptureLifecycleSnapshot::firstFrameObserved` is latched separately
+for each accepted generation and is reset synchronously when a new generation
+is accepted. Duplicate starts preserve the current observation.
+
+The value-only first-frame callback carries generation, host monotonic time, and
+the zero-based committed frame index when a `FrameStore` is configured. With a
+store, observation requires `committedCount()` to advance after publication;
+without one, a non-empty frame with nonzero dimensions is sufficient. Event
+callback access is copied under the callback mutex and invocation happens after
+releasing lifecycle locks. As with the ready callback, consumers must use the
+generation to reject stale work. `stop()` publishes Stopping and invokes the
+ready-unbind callback before camera teardown, then joins the worker; any frame
+already being delivered may complete before stop returns.
+
+The fake-camera lifecycle test covers a blocked first grab (ready without
+observation), one committed event, exactly-once delivery, and reset on restart.
+The E04 Driver.js tour integration is absent from this checkout; the event and
+JSON observation are available to a later tour, but no guided walkthrough is
+claimed here.

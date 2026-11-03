@@ -39,16 +39,22 @@ CaptureService::~CaptureService() {
 
 void CaptureService::setConfig(const Config& cfg) { config_ = cfg; }
 
-void CaptureService::setFrameCallback(FrameCallback cb) { callback_ = std::move(cb); }
+void CaptureService::setFrameCallback(FrameCallback cb) { std::lock_guard<std::mutex> lk(callbackMutex_); callback_ = std::move(cb); }
 
-void CaptureService::setFrameStore(std::shared_ptr<backend::playback::FrameStore> store) { frameStore_ = std::move(store); }
+void CaptureService::setFrameStore(std::shared_ptr<backend::playback::FrameStore> store) { std::lock_guard<std::mutex> lk(callbackMutex_); frameStore_ = std::move(store); }
 
 void CaptureService::setCameraFactory(CameraFactory factory) {
     cameraFactory_ = std::move(factory);
 }
 
 void CaptureService::setCameraReadyCallback(CameraReadyCallback cb) {
+    std::lock_guard<std::mutex> lk(callbackMutex_);
     cameraReadyCallback_ = std::move(cb);
+}
+
+void CaptureService::setFirstFrameObservedCallback(FirstFrameObservedCallback cb) {
+    std::lock_guard<std::mutex> lk(callbackMutex_);
+    firstFrameObservedCallback_ = std::move(cb);
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +139,9 @@ CaptureStartOutcome CaptureService::requestStart() {
     resetSessionTelemetryLocked();
     snapshot_.state = CaptureLifecycleState::Starting;
     snapshot_.cameraReady = false;
+    snapshot_.firstFrameObserved = false;
+    snapshot_.firstFrameHostTimeUs = 0;
+    snapshot_.firstFrameIndex = 0;
     snapshot_.transitionHostTimeUs = Tools::getTimestamp();
     running_.store(true, std::memory_order_release);
     workerExited_.store(false, std::memory_order_release);
@@ -173,9 +182,9 @@ void CaptureService::stop() {
         // ICamera::setTriggerOutput and must not race the grabber teardown.
         // releaseCamera() on the capture thread repeats this call later; both
         // the callback and TriggerService::stop() are idempotent.
-        if (cameraReadyCallback_) {
-            cameraReadyCallback_(nullptr, generation);
-        }
+        CameraReadyCallback ready;
+        { std::lock_guard<std::mutex> lk(callbackMutex_); ready = cameraReadyCallback_; }
+        if (ready) ready(nullptr, generation);
         std::scoped_lock lk(cameraMutex_);
         if (activeCamera_) {
             activeCamera_->stop();
@@ -355,9 +364,9 @@ void CaptureService::run(uint64_t generation) {
             if (acquisitionReportGeneration_ == generation) acquisitionReportValid_ = false;
         }
         // Consumers release their camera reference while it is still valid.
-        if (cameraReadyCallback_) {
-            cameraReadyCallback_(nullptr, generation);
-        }
+        CameraReadyCallback ready;
+        { std::lock_guard<std::mutex> lk(callbackMutex_); ready = cameraReadyCallback_; }
+        if (ready) ready(nullptr, generation);
         if (camera) {
             // stop() may be called concurrently by the lifecycle owner. Keep
             // the non-owning active-camera pointer protected while invoking
@@ -497,8 +506,10 @@ void CaptureService::run(uint64_t generation) {
         }
         lifecycleCv_.notify_all();
 
-        if (cameraReadyCallback_ && running_.load(std::memory_order_acquire)) {
-            cameraReadyCallback_(camera.get(), generation);
+        CameraReadyCallback ready;
+        { std::lock_guard<std::mutex> lk(callbackMutex_); ready = cameraReadyCallback_; }
+        if (ready && running_.load(std::memory_order_acquire)) {
+            ready(camera.get(), generation);
         }
 
         constexpr uint64_t kStatsInterval = 1'000'000ULL;
@@ -566,14 +577,18 @@ void CaptureService::run(uint64_t generation) {
                 continue;
             }
 
-            if (callback_) {
-                callback_(frame.data.data(),
+            FrameCallback frameCallback;
+            std::shared_ptr<backend::playback::FrameStore> frameStore;
+            { std::lock_guard<std::mutex> lk(callbackMutex_); frameCallback = callback_; frameStore = frameStore_; }
+            if (frameCallback) {
+                frameCallback(frame.data.data(),
                           frame.data.size(),
                           frame.width,
                           frame.height,
                           frame.timestamp);
             }
-            if (frameStore_) {
+            const uint64_t committedBefore = frameStore ? frameStore->committedCount() : 0;
+            if (frameStore) {
                 // Pre-reserve FIFO slots to the live frame size so the
                 // high-speed hot path never allocates. First reservation happens
                 // on frame 1 of the session, and releases the slots' excess when
@@ -582,10 +597,10 @@ void CaptureService::run(uint64_t generation) {
                 // frames of this session are never dropped by it.
                 const size_t frameBytes = frame.data.size();
                 if (frameBytes > reservedFrameBytes) {
-                    frameStore_->reserveFrameBytes(frameBytes);
+                    frameStore->reserveFrameBytes(frameBytes);
                     reservedFrameBytes = frameBytes;
                 }
-                frameStore_->pushFrame(frame.data.data(),
+                frameStore->pushFrame(frame.data.data(),
                                        frame.data.size(),
                                        frame.width,
                                        frame.height,
@@ -593,6 +608,24 @@ void CaptureService::run(uint64_t generation) {
                                        frame.pixelFormat,
                                        frame.timestamp,
                                        frame.hostTimestampUs, generation);
+            }
+            const bool validFrame = !frame.data.empty() && frame.width > 0 && frame.height > 0;
+            const bool published = !frameStore || frameStore->committedCount() > committedBefore;
+            if (validFrame && published) {
+                FirstFrameObservedEvent event{generation, frame.hostTimestampUs,
+                    frameStore ? frameStore->committedCount() - 1 : stats_.framesProcessed.load()};
+                FirstFrameObservedCallback observed;
+                {
+                    std::lock_guard<std::mutex> lk(lifecycleMutex_);
+                    if (generation == snapshot_.generation && !snapshot_.firstFrameObserved) {
+                        snapshot_.firstFrameObserved = true;
+                        snapshot_.firstFrameHostTimeUs = event.hostTimeUs;
+                        snapshot_.firstFrameIndex = event.frameIndex;
+                        std::lock_guard<std::mutex> callbackLk(callbackMutex_);
+                        observed = firstFrameObservedCallback_;
+                    }
+                }
+                if (observed) observed(event);
             }
             {
                 const uint64_t published = Tools::getTimestamp();
