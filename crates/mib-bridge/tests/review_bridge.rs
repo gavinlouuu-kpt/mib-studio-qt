@@ -18,6 +18,76 @@ fn fixture_path(tag: &str) -> std::path::PathBuf {
 
 const RGB8: u64 = 0x0218_0014;
 
+const RUN_STATISTICS_JSON_ABS_TOLERANCE: f64 = 1e-12;
+
+fn assert_run_statistics_json_eq(actual: &serde_json::Value, expected: &serde_json::Value, path: &str) {
+    use serde_json::Value;
+
+    match (actual, expected) {
+        (Value::Number(a), Value::Number(b)) => {
+            let integer = |n: &serde_json::Number| n.as_i64().map(i128::from).or_else(|| n.as_u64().map(i128::from));
+            let (a_integer, b_integer) = (integer(a), integer(b));
+            match (a_integer, b_integer) {
+                (Some(a), Some(b)) => assert_eq!(a, b, "{path}: integer differs"),
+                (Some(_), None) | (None, Some(_)) => assert_eq!(a, b, "{path}: integer/float type differs"),
+                (None, None) => {
+                    let (a, b) = (a.as_f64().unwrap(), b.as_f64().unwrap());
+                    assert!((a - b).abs() <= RUN_STATISTICS_JSON_ABS_TOLERANCE,
+                        "{path}: {a} differs from {b} by more than {RUN_STATISTICS_JSON_ABS_TOLERANCE}");
+                }
+            }
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            assert_eq!(a.keys().collect::<Vec<_>>(), b.keys().collect::<Vec<_>>(), "{path}: object keys differ");
+            for key in b.keys() {
+                assert_run_statistics_json_eq(&a[key], &b[key], &format!("{path}.{key}"));
+            }
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            assert_eq!(a.len(), b.len(), "{path}: array lengths differ");
+            for (i, (a, b)) in a.iter().zip(b).enumerate() {
+                assert_run_statistics_json_eq(a, b, &format!("{path}[{i}]"));
+            }
+        }
+        _ => assert_eq!(actual, expected, "{path}: values differ"),
+    }
+}
+
+fn assert_run_statistics_json_member_eq(actual: &serde_json::Value, expected: &serde_json::Value, key: &str, path: &str) {
+    let (actual, expected) = (actual.get(key), expected.get(key));
+    assert_eq!(actual.is_some(), expected.is_some(), "{path}.{key}: field presence differs");
+    if let (Some(actual), Some(expected)) = (actual, expected) {
+        assert_run_statistics_json_eq(actual, expected, &format!("{path}.{key}"));
+    }
+}
+
+#[test]
+fn run_statistics_json_comparison_accepts_roundoff() {
+    let actual = serde_json::json!({"overlay": [0.038_f64, 0.053_f64]});
+    let expected = serde_json::json!({"overlay": [0.038000000000000006_f64, 0.053000000000000005_f64]});
+    assert_run_statistics_json_eq(&actual, &expected, "statistics");
+}
+
+#[test]
+fn run_statistics_json_comparison_rejects_real_differences() {
+    let cases = [
+        (serde_json::json!(1.000001_f64), serde_json::json!(1.0_f64)),
+        (serde_json::json!({"a": 1}), serde_json::json!({"b": 1})),
+        (serde_json::json!({"a": 1, "b": 2}), serde_json::json!({"a": 1})),
+        (serde_json::json!({"a": null}), serde_json::json!({})),
+        (serde_json::json!("22"), serde_json::json!("21")),
+        (serde_json::json!(true), serde_json::json!(1)),
+        (serde_json::json!(1), serde_json::json!(1.0_f64)),
+        (serde_json::json!([1, 2]), serde_json::json!([1])),
+        (serde_json::json!([1, 2]), serde_json::json!([2, 1])),
+        (serde_json::json!(9007199254740993_u64), serde_json::json!(9007199254740992_u64)),
+    ];
+    for (actual, expected) in cases {
+        assert!(std::panic::catch_unwind(|| assert_run_statistics_json_eq(&actual, &expected, "negative")).is_err(),
+            "comparison unexpectedly accepted {actual} and {expected}");
+    }
+}
+
 #[test]
 #[serial]
 fn review_bridge_reads_the_fixture_file() {
@@ -685,16 +755,16 @@ fn run_statistics_twin_over_the_parity_fixture() {
     assert_eq!(runs[2]["status"], "not_available");
     assert_eq!(runs[3]["status"], "error");
     assert_eq!(r["reference"]["confirmed"], true);
-    // The golden reply the TypeScript decoder tests read (contract/fixtures/run-quick-look-v1.json,
-    // the same request over /data/runs/fixture_<variant>.h5) has exactly these numbers.
+    // The golden reply is shared with the TypeScript decoder tests; floating-point calculations
+    // may vary by a few ULPs across architectures, while structure and non-numeric values stay exact.
     let golden: serde_json::Value =
         serde_json::from_str(include_str!("../contract/fixtures/run-quick-look-v1.json")).unwrap();
     for i in 0..4 {
         for key in ["status", "statistics", "delta", "computed_at", "from_cache"] {
-            assert_eq!(runs[i][key], golden["runs"][i][key], "golden run {i} {key}: regenerate the fixture");
+            assert_run_statistics_json_member_eq(&runs[i], &golden["runs"][i], key, &format!("runs[{i}]"));
         }
     }
-    assert_eq!(r["reference"]["run"]["statistics"], golden["reference"]["run"]["statistics"]);
+    assert_run_statistics_json_member_eq(&r["reference"]["run"], &golden["reference"]["run"], "statistics", "reference.run");
     let refused: serde_json::Value =
         serde_json::from_str(&bridge.pin_mut().review_run_statistics(r#"{"paths":[]}"#)).unwrap();
     assert_eq!(refused["ok"], false, "{refused}");
