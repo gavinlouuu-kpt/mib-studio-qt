@@ -241,6 +241,8 @@ export interface CameraDiscovery {
   valid: boolean;
   complete: boolean;
   job_id: string;
+  /** E01 (ABI 49): the backend instance that answered, as the snapshot named it (absent on an older backend). */
+  instance?: string;
   cameras: DiscoveredCamera[];
   framegrabbers: DiscoveredFramegrabber[];
 }

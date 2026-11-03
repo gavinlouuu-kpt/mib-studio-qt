@@ -1,0 +1,137 @@
+/* Guided tours (generic). Follows the app's variables (--panel, --border, --text, --muted, --accent, --warn) and, for the
+   tour surfaces only, the browser's dark preference. Readable from a phone's width up. */
+
+.tour-notice, .tour-list-modal, .tour-flow-modal, .driver-popover.tour-popover {
+  --tour-bg: var(--panel, #fafafa);
+  --tour-fg: var(--text, #1a1a1a);
+  --tour-muted: var(--muted, #777);
+  --tour-line: var(--border, #c8c8c8);
+  --tour-accent: var(--accent, #2b6cb0);
+  --tour-warn: var(--warn, #b7791f);
+  --tour-a: #dbe8f7;   /* node tones: the app's legend names them */
+  --tour-b: #ececec;
+  --tour-c: #dcefe0;
+  --tour-d: #f4ead6;
+  --tour-w: #fbe3cf;
+  --tour-n: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  .tour-notice, .tour-list-modal, .tour-flow-modal, .driver-popover.tour-popover {
+    --tour-bg: #1e2227;
+    --tour-fg: #e6e6e6;
+    --tour-muted: #a0a6ad;
+    --tour-line: #4a5058;
+    --tour-accent: #7fb0ea;
+    --tour-warn: #e3a44f;
+    --tour-a: #23364d;
+    --tour-b: #30343a;
+    --tour-c: #1f3a28;
+    --tour-d: #3d3423;
+    --tour-w: #4a2e1a;
+    --tour-n: #262a30;
+  }
+}
+
+/* ---- "what's new" ---- */
+.tour-notice {
+  position: fixed; right: 12px; bottom: 34px; z-index: 90;
+  display: flex; align-items: center; gap: 4px;
+  max-width: calc(100vw - 24px);
+  padding: 6px 6px 6px 12px;
+  background: var(--tour-bg); color: var(--tour-fg);
+  border: 1px solid var(--tour-line); border-left: 3px solid var(--tour-accent); border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.tour-notice button { font: inherit; background: none; border: 0; cursor: pointer; color: var(--tour-accent); padding: 2px 4px; }
+.tour-notice .tour-notice-take { text-decoration: underline; }
+.tour-notice .tour-notice-dismiss { color: var(--tour-muted); font-size: 16px; line-height: 1; }
+
+/* ---- the Tours list ---- */
+.modal.tour-list-modal, .modal.tour-flow-modal {
+  background: var(--tour-bg); color: var(--tour-fg); border-color: var(--tour-line);
+  min-width: 0; max-height: 92vh; overflow-y: auto;
+}
+.modal.tour-list-modal { width: min(720px, 96vw); max-width: 96vw; }
+.tour-list-modal .btn, .tour-flow-modal .btn { color: var(--tour-fg); background: var(--tour-bg); border: 1px solid var(--tour-line); }
+.tour-list-intro { color: var(--tour-muted); margin: 0 0 8px; }
+.tour-list { list-style: none; margin: 0; padding: 0; }
+.tour-list li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--tour-line); }
+.tour-list li.new { border-left: 3px solid var(--tour-accent); padding-left: 8px; }
+.tour-list-main { flex: 1 1 300px; min-width: 0; }
+.tour-list-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.tour-list-summary { margin-top: 2px; }
+.tour-list-meta { color: var(--tour-muted); font-size: 11px; margin-top: 2px; }
+.tour-new-badge { margin-left: 6px; padding: 0 5px; border-radius: 8px; font-size: 11px; background: var(--tour-accent); color: var(--tour-bg); }
+.tour-kind { margin-left: 6px; font-size: 11px; color: var(--tour-muted); }
+.tour-list-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.tour-list-foot a.btn { text-decoration: none; }
+
+/* ---- the flowchart panel ---- */
+.modal.tour-flow-modal { width: min(1180px, 97vw); max-width: 97vw; padding: 10px 12px; }
+.tour-flow-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.tour-flow-head h3 { margin: 0; }
+.tour-flow-grid { display: grid; gap: 10px; margin-top: 8px; grid-template-columns: 1fr; }
+@media (min-width: 900px) {
+  .tour-flow-grid.n2 { grid-template-columns: 1fr 1fr; }
+  .tour-flow-grid.n3 { grid-template-columns: 1fr 1fr 1fr; }
+}
+.tour-flow { margin: 0; padding: 6px; border: 1px solid var(--tour-line); border-radius: 4px; min-width: 0; }
+.tour-flow figcaption { font-weight: 600; margin-bottom: 4px; }
+.tour-flow-role { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--tour-line); }
+.tour-flow-role.after { border-color: var(--tour-accent); color: var(--tour-accent); }
+.tour-flow-role.planned { border-style: dashed; color: var(--tour-muted); }
+.tour-flow svg { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; overflow: visible; }
+.tour-flow-legend { color: var(--tour-muted); font-size: 11px; margin: 4px 0 0; }
+.tour-node rect { fill: var(--tour-n); stroke: var(--tour-line); stroke-width: 1; }
+.tour-node.tone-a rect { fill: var(--tour-a); }
+.tour-node.tone-b rect { fill: var(--tour-b); }
+.tour-node.tone-c rect { fill: var(--tour-c); }
+.tour-node.tone-d rect { fill: var(--tour-d); }
+.tour-node.tone-warn rect { fill: var(--tour-w); stroke: var(--tour-warn); }
+.tour-node text { fill: var(--tour-fg); text-anchor: middle; font-family: system-ui, sans-serif; }
+.tour-node-label { font-size: 11.5px; font-weight: 600; }
+.tour-node-sub { font-size: 9.5px; fill: var(--tour-muted) !important; }
+.tour-edge-line { fill: none; stroke: var(--tour-muted); stroke-width: 1.4; }
+.tour-edge.dashed .tour-edge-line { stroke-dasharray: 4 3; }
+.tour-edge-hit { fill: none; stroke: transparent; stroke-width: 10; }
+.tour-edge-label { font-size: 9.5px; fill: var(--tour-muted); font-family: system-ui, sans-serif; }
+.tour-arrowhead { fill: var(--tour-muted); }
+.tour-evidence { display: grid; gap: 8px; grid-template-columns: 1fr; margin-top: 10px; }
+@media (min-width: 900px) { .tour-evidence { grid-template-columns: 1fr 1fr 1fr; } }
+.tour-evidence-group { border: 1px solid var(--tour-line); border-radius: 4px; padding: 6px 8px; }
+.tour-evidence-group h4 { margin: 0 0 4px; font-size: 12px; }
+.tour-evidence-group.demonstrated { border-left: 3px solid #1a7f37; }
+.tour-evidence-group.tested { border-left: 3px solid var(--tour-accent); }
+.tour-evidence-group.uncertain { border-left: 3px solid var(--tour-warn); }
+.tour-evidence-group ul { margin: 0; padding-left: 16px; }
+.tour-evidence-group li { margin: 2px 0; }
+.tour-evidence-source { color: var(--tour-muted); font-size: 11px; }
+.tour-evidence-none { color: var(--tour-muted); margin: 0; }
+.tour-evidence-note { grid-column: 1 / -1; color: var(--tour-muted); font-size: 11px; margin: 0; }
+
+/* ---- the popover (Driver.js) ---- */
+.driver-popover.tour-popover { background: var(--tour-bg); color: var(--tour-fg); max-width: min(340px, calc(100vw - 24px)); font-family: system-ui, sans-serif; }
+.driver-popover.tour-popover .driver-popover-title { font-size: 15px; }
+.driver-popover.tour-popover .driver-popover-description { font-size: 13px; line-height: 1.45; color: var(--tour-fg); }
+.driver-popover.tour-popover .driver-popover-progress-text { color: var(--tour-muted); }
+.driver-popover.tour-popover .driver-popover-close-btn { color: var(--tour-muted); }
+.driver-popover.tour-popover .driver-popover-footer { flex-wrap: wrap; gap: 6px; }
+.driver-popover.tour-popover .driver-popover-footer button,
+.driver-popover.tour-popover .tour-btn {
+  font: inherit; font-size: 12px; text-shadow: none; padding: 3px 8px; border-radius: 3px; cursor: pointer;
+  background: var(--tour-bg); color: var(--tour-fg); border: 1px solid var(--tour-line);
+}
+.driver-popover.tour-popover .driver-popover-next-btn { border-color: var(--tour-accent); color: var(--tour-accent); }
+.driver-popover.tour-popover .driver-popover-btn-disabled { opacity: 0.45; cursor: not-allowed; }
+.tour-extra-buttons { display: inline-flex; gap: 4px; margin-right: auto; }
+.driver-popover.tour-popover .driver-popover-arrow-side-left.driver-popover-arrow { border-left-color: var(--tour-bg); }
+.driver-popover.tour-popover .driver-popover-arrow-side-right.driver-popover-arrow { border-right-color: var(--tour-bg); }
+.driver-popover.tour-popover .driver-popover-arrow-side-top.driver-popover-arrow { border-top-color: var(--tour-bg); }
+.driver-popover.tour-popover .driver-popover-arrow-side-bottom.driver-popover-arrow { border-bottom-color: var(--tour-bg); }
+.tour-action-status { margin: 8px 0 0; padding: 4px 6px; border-left: 3px solid var(--tour-accent); font-size: 12px; }
+.tour-feedback { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tour-feedback .tour-verdict[aria-pressed="true"] { border-color: var(--tour-accent); color: var(--tour-accent); font-weight: 600; }
+.tour-feedback-note { flex: 1 1 100%; font: inherit; font-size: 12px; background: var(--tour-bg); color: var(--tour-fg); border: 1px solid var(--tour-line); border-radius: 3px; }
+
+/* A named region of a canvas, placed by the runner's geometry adapter. */
+.tour-canvas-region { position: fixed; pointer-events: none; z-index: 1; }

@@ -8,6 +8,7 @@ import { Button, Card, Notice } from "@mib/ui";
 import { bridge } from "../bridge";
 import { mintExperimentId } from "./planModel";
 import { RecipePairing } from "./RecipePairing";
+import { FACTS, reportFact, reportFactRefused } from "../tours/mib/facts";
 import { decodeApplyPreview, decodeRecipeDiff, decodeRecipeList, decodeRecipeReply, pairingView,
   type ProviderRecipe, type RecipeApplyPreview, type RecipeDiff, type RecipeSummary } from "./recipeModel";
 
@@ -47,9 +48,11 @@ export function RecipeLibrary({ controlHeld }: { controlHeld: boolean }) {
     try { recipe = decodeRecipeReply(reply); } catch (e) {
       // A refusal is final; only a lost or malformed reply keeps the exact command for a retry.
       if (reply && typeof reply === "object" && "status" in reply && (reply as { status: unknown }).status !== "storage") setRetry(null);
+      if (pending.kind === "create") reportFactRefused(FACTS.recipeCreated, String(e instanceof Error ? e.message : e));
       throw e;
     }
     setRetry(null); setSelected(recipe); setDiff(null); setPreview(null);
+    if (pending.kind === "create") reportFact(FACTS.recipeCreated, `${recipe.id} · revision ${recipe.revision}`);
     setMessage(`${pending.kind === "create" ? "Created" : "Derived"} recipe ${recipe.id} · revision ${recipe.revision}. Nothing was applied.`);
   });
   const compare = (against: "instrument" | { recipe_id: string; revision: string }) => selected && run(async () => {
@@ -60,19 +63,19 @@ export function RecipeLibrary({ controlHeld }: { controlHeld: boolean }) {
   });
   const blocked = busy || !!retry;
 
-  return <Card title="Recipe library" data-testid="recipe-library">
+  return <Card title="Recipe library" data-testid="recipe-library" data-tour="recipe-library">
     <p>Recipes pair an acquisition method revision with an analysis plan revision. They are stored by the backend and never edited: “Base a new draft” creates a new recipe linked to its parent. Compatibility and apply previews are computed by the backend; nothing here applies a method, calibration or hardware setting.</p>
-    <label>Local profile directory <input aria-label="Recipe profile directory" value={profileBase} disabled={busy} onChange={e => { setProfileBase(e.target.value); setDiff(null); setPreview(null); }} /></label>
+    <label data-tour="recipe-profile">Local profile directory <input aria-label="Recipe profile directory" value={profileBase} disabled={busy} onChange={e => { setProfileBase(e.target.value); setDiff(null); setPreview(null); }} /></label>
     <Button disabled={blocked} onClick={() => void list(null)}>List recipes</Button>
     {after && <Button disabled={blocked} onClick={() => void list(after)}>More recipes</Button>}
     <ul>{recipes.map(r => <li key={`${r.id}:${r.revision}`}><Button disabled={blocked} onClick={() => void open(r.id, r.revision)}>{r.title || r.id} · {r.method.id} @ {r.method.revision} + {r.analysis_plan.id} @ {r.analysis_plan.revision}</Button></li>)}</ul>
-    <details><summary>New recipe</summary>
+    <details><summary>New recipe</summary><div data-tour="recipe-form">
       {(["title", "note", "methodId", "methodRevision", "planId", "planRevision"] as const).map(k =>
         <label key={k}>{k}<input aria-label={`New recipe ${k}`} value={form[k]} disabled={blocked || !controlHeld} onChange={e => setForm({ ...form, [k]: e.target.value })} /></label>)}
       <label>Method source <select aria-label="New recipe method source" value={form.source} disabled={blocked || !controlHeld} onChange={e => setForm({ ...form, source: e.target.value as "local" | "registry" })}><option value="local">Local</option><option value="registry">Registry</option></select></label>
-      <Button disabled={blocked || !controlHeld} onClick={() => void write({ kind: "create", request: { command_id: mintExperimentId(), recipe_id: mintExperimentId(), title: form.title, note: form.note,
+      <Button disabled={blocked || !controlHeld} data-tour="recipe-create" onClick={() => void write({ kind: "create", request: { command_id: mintExperimentId(), recipe_id: mintExperimentId(), title: form.title, note: form.note,
         method: { source: form.source, id: form.methodId, revision: form.methodRevision }, analysis_plan: { id: form.planId, revision: form.planRevision }, ...base } })}>Create recipe</Button>
-    </details>
+    </div></details>
     {retry && <Button disabled={busy || !controlHeld} onClick={() => void write(retry)}>Retry the same {retry.kind}</Button>}
     {selected && <>
       <RecipePairing recipe={pairingView(selected)} contextRevision={null} compatibility={null} diff={diff}
@@ -81,11 +84,11 @@ export function RecipeLibrary({ controlHeld }: { controlHeld: boolean }) {
       {!!selected.adoption_notes?.length && <Notice tone="info" title="Adopted from a saved workspace">
         <ul data-testid="recipe-adoption-notes">{selected.adoption_notes.map(n => <li key={n}>{n}</li>)}</ul>
       </Notice>}
-      <Button disabled={blocked} onClick={() => void compare("instrument")}>Compare with the instrument</Button>
+      <Button disabled={blocked} data-tour="recipe-compare" onClick={() => void compare("instrument")}>Compare with the instrument</Button>
       {selected.lineage.recipe && <Button disabled={blocked} onClick={() => void compare({ recipe_id: selected.lineage.recipe!.id, revision: selected.lineage.recipe!.revision })}>Compare with the parent recipe</Button>}
-      <Button disabled={blocked} onClick={() => void previewApply()}>Preview apply</Button>
+      <Button disabled={blocked} data-tour="recipe-preview-apply" onClick={() => void previewApply()}>Preview apply</Button>
     </>}
-    {preview && <Notice tone={preview.blocked.length ? "warn" : "info"} title={`Apply preview · ${preview.overall} · not applied`}>
+    {preview && <Notice tone={preview.blocked.length ? "warn" : "info"} data-tour="recipe-apply-preview" title={`Apply preview · ${preview.overall} · not applied`}>
       <p data-testid="apply-preview-selection">{preview.method_selection
         ? `Method selection to send to ${preview.method_selection.authority}: ${preview.method_selection.command} ${JSON.stringify(preview.method_selection.args)}. It takes effect only when that authority accepts it.`
         : preview.blocked.length ? "No method selection can be prepared." : "The pinned method is already the applied one."}</p>

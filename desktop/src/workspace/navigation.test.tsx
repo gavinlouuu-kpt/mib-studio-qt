@@ -20,6 +20,7 @@ import { BRIDGE_ABI_VERSION, CALIBRATION_APPLY_OUTCOMES, COMMAND_TYPES, EXPERIME
 import { DESKTOP_CAPABILITIES } from "../platformCapabilities";
 import { applyReply, calList as calListOf, calRecord } from "./calibrationFixtures";
 import { LANDING_STORAGE_KEY } from "./landing";
+import { facts as tourFacts, FACTS as TOUR_FACTS } from "../tours/mib/facts";
 import quickLookGolden from "../../../crates/mib-bridge/contract/fixtures/run-quick-look-v1.json";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -1301,5 +1302,123 @@ describe("Prepare's Calibration card (A4b)", () => {
     expect(log.filter((e) => e.cmd === "calibration_apply")).toEqual([]);
     expect(byTestId("plan-calibration-refusal")!.textContent).toContain("Not started · the applied calibration changed since this page read it");
     expect(host.querySelector("[data-testid=plan-experiment-id]")!.textContent).toBe(id);
+  });
+});
+
+// Tours (tours/mib): the Tours list and a guided tour are navigation and reading, never actuation. The
+// whole App over the mocked transport, every command logged: the Help menu entry and the workspace
+// header's Tours button open the list and start nothing; a tour moves the views (here: to the classic
+// Connect tab and back) without sending a command that acts and without writing the landing choice.
+describe.each<Variant>(["desktop", "pz7035"])("the Tours list and a tour never act (%s)", (variant) => {
+  const TOUR_IDS = ["fold-in-e01-discovery", "fold-in-e02-features", "fold-in-e04-e06-runs", "fold-in-i02-recipes", "fold-in-f04-population", "fold-in-i12-f12-workspace"];
+  const tourList = () => host.querySelector<HTMLElement>('[aria-label="Tours and what\'s new"]');
+  const popover = () => host.ownerDocument.querySelector(".driver-popover");
+  const popTitle = () => host.ownerDocument.querySelector(".driver-popover-title")?.textContent ?? null;
+  const pressNext = () => click(host.ownerDocument.querySelector(".driver-popover-next-btn"), "Next");
+  const closeList = () => click([...(tourList()?.querySelectorAll("button") ?? [])].find((b) => b.textContent === "Close"), "Close the Tours list");
+  const menu = (label: string) => [...host.querySelectorAll<HTMLElement>(".menubar-item > button")].find((b) => b.textContent === label);
+  const menuItem = (label: string) => [...host.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent === label);
+
+  let boxes: { mockRestore(): void };
+  beforeEach(() => {
+    // jsdom lays nothing out: every element counts as shown, so the tour runner's "has a box" check passes.
+    boxes = vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+    window.matchMedia = ((q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
+  });
+  afterEach(() => { boxes.mockRestore(); });
+
+  it("the Help menu entry opens the list of six tours; no tour starts, nothing acts, and the landing choice is untouched", async () => {
+    await boot(variant);
+    expect(storedLanding()).toBe("classic");
+    expect(tourList()).toBeNull();
+    log.splice(0);
+    await click(menu("Help"), "Help menu");
+    await click(menuItem("Tours and what's new"), "Tours and what's new");
+    expect([...tourList()!.querySelectorAll("li[data-tour-entry]")].map((l) => l.getAttribute("data-tour-entry"))).toEqual(TOUR_IDS);
+    await advance(3000);
+    expect(popover()).toBeNull();
+    expect(acting(log)).toEqual([]);
+    expect(storedLanding()).toBe("classic");
+    await closeList();
+    expect(tourList()).toBeNull();
+    expect(acting(log)).toEqual([]);
+  });
+
+  it("the workspace header's Tours button does the same without leaving the workspace; Close hides the list and nothing is sent that acts", async () => {
+    await boot(variant);
+    await click(buttonByText("Workspace preview"), "workspace toggle");
+    expect(workspaceShown()).toBe(true);
+    const landing = storedLanding();
+    log.splice(0);
+    await click(buttonByText("Tours"), "Tours");
+    expect(tourList()).not.toBeNull();
+    expect(workspaceShown()).toBe(true);
+    await advance(3000);
+    expect(popover()).toBeNull();
+    await closeList();
+    expect(workspaceShown()).toBe(true);
+    expect(acting(log)).toEqual([]);
+    expect(storedLanding()).toBe(landing);
+  });
+
+  it("the discovery tour shows the classic Connect tab and restores the workspace when it ends; it sends no discovery or other command that acts", async () => {
+    await boot(variant);
+    await click(buttonByText("Workspace preview"), "workspace toggle");
+    expect(host.querySelector("[data-testid=workspace-prepare]")).not.toBeNull();
+    const landing = storedLanding();
+    log.splice(0);
+    await click(buttonByText("Tours"), "Tours");
+    const take = [...tourList()!.querySelectorAll(`li[data-tour-entry="fold-in-e01-discovery"] button`)].find((b) => b.textContent === "Take the tour");
+    await click(take, "Take the tour");
+    await advance(1000);
+    expect(popTitle()).toBe("Before: a job ID named the scan");   // the flowcharts first: no view change yet
+    for (let i = 0; i < 6 && popTitle() !== "Available devices"; i++) await pressNext();
+    expect(popTitle()).toBe("Available devices");
+    expect(workspaceShown()).toBe(false);                          // the step's view: the classic Connect tab
+    expect(host.querySelector('.tabbar button[aria-selected="true"]')).toBe(host.querySelector(".tabbar button"));
+    await pressNext();
+    expect(popTitle()).toBe("Press Refresh");                      // waits for the operator: the tour pressed nothing
+    await advance(2000);
+    expect(log.map((e) => e.cmd)).not.toContain("start_camera_discovery");
+    expect(acting(log)).toEqual([]);
+    await click(host.ownerDocument.querySelector(".driver-popover-close-btn"), "Close the tour");
+    await advance(500);
+    expect(popover()).toBeNull();
+    expect(workspaceShown()).toBe(true);                           // back where the tour started
+    expect(host.querySelector("[data-testid=workspace-prepare]")).not.toBeNull();
+    expect(acting(log)).toEqual([]);
+    expect(storedLanding()).toBe(landing);                         // navigation by a tour is not a choice
+  });
+});
+
+// Tours (E04): the App reports the backend's answer to the Plan's Start as the tour's `run-start-accepted` condition: the
+// accepted start with the generation and file it read back, a refusal in the backend's words. A first frame is a separate fact.
+describe("the Plan's Start reports the backend's answer to the tours (desktop)", () => {
+  it("an accepted start is reported with the run's file; no first frame is claimed", async () => {
+    tourFacts.reset();
+    canStart = true;
+    await boot("desktop");
+    await openPlan();
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    await advance(3000);
+    expect(tourFacts.condition(TOUR_FACTS.runStart)).toBe("pending");     // opening the Plan reports nothing
+    vi.mocked(save).mockResolvedValueOnce("/data/run.h5");
+    await click(buttonByText("Start run"), "Start run");
+    expect(tourFacts.condition(TOUR_FACTS.runStart)).toBe("met");
+    expect(tourFacts.detail(TOUR_FACTS.runStart)).toContain("/data/run.h5");
+    expect(tourFacts.condition(TOUR_FACTS.runFirstFrame)).toBe("pending"); // the status counters are all zero
+  });
+
+  it("a refused start is reported in the backend's words and is not a start", async () => {
+    tourFacts.reset();
+    canStart = true;
+    startReply = { ok: false, message: "invalid start request: annotation.condition: 300 bytes, at most 256", start_outcome: EXPERIMENT_START_OUTCOMES.InvalidRequest };
+    await boot("desktop");
+    await openPlan();
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    vi.mocked(save).mockResolvedValueOnce("/data/run.h5");
+    await click(buttonByText("Start run"), "Start run");
+    expect(tourFacts.detail(TOUR_FACTS.runStart)).toBeUndefined();
+    expect(tourFacts.condition(TOUR_FACTS.runStart)).toEqual({ failed: expect.stringContaining("300 bytes, at most 256") });
   });
 });

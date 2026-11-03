@@ -173,7 +173,7 @@ function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCamer
         </>}
         actions={<>
           {started ? <Button onClick={plan.newPlan}>New plan</Button> : null}
-          <Button variant="primary" disabled={blocks.length > 0} onClick={() => { if (build.json !== null) void plan.start(build.json, SINGLE_SAMPLE_RUN_INDEX); }}>
+          <Button variant="primary" disabled={blocks.length > 0} data-tour="plan-start-run" onClick={() => { if (build.json !== null) void plan.start(build.json, SINGLE_SAMPLE_RUN_INDEX); }}>
             {starting ? "Starting…" : "Start run"}
           </Button>
         </>}>

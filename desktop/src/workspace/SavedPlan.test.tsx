@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SavedPlan } from "./SavedPlan";
 import { newPlanDraft } from "./planModel";
 import { decodeSavedPlan } from "./savedPlanModel";
+import { facts, FACTS } from "../tours/mib/facts";
 vi.mock("../transport", () => ({ invoke: vi.fn() }));
 import { invoke } from "../transport";
 const call = vi.mocked(invoke);
@@ -135,4 +136,32 @@ it("journals the complete next-run request across reload and never auto-applies"
   call.mockResolvedValue({status:"ok",workspace_id:q.workspace_id,revision:"1",document:{schema_version:1,plan:{...draft,experimentId:q.experiment_id},recipe:{...recipe,id:q.recipe_id}}});
   await click("Retry same save");expect(call.mock.calls[2]).toEqual(sent);
   expect(call.mock.calls.every(([name])=>name==="workspace_read"||name==="workspace_write")).toBe(true);
+});
+
+// Tours (I12, F12): the panel reports a committed revision, or the store's refusal, as the tour's `workspace-revision-saved` condition.
+it("reports a saved revision to the tours with the id and revision the store returned; a read or a restore does not", async () => {
+  facts.reset();
+  render(); call.mockResolvedValue(ok);
+  await click("Open saved plan");
+  expect(facts.condition(FACTS.workspaceSaved)).toBe("pending");      // a read is not a save
+  await click("Save new revision");
+  expect(facts.condition(FACTS.workspaceSaved)).toBe("met");
+  expect(facts.detail(FACTS.workspaceSaved)).toBe(`${draft.experimentId} · revision 1`);
+});
+it("reports a restore to the tours as nothing: only a commit is the tour's save", async () => {
+  facts.reset();
+  render(); call.mockResolvedValueOnce({...ok, revision:"4"}); await click("Open saved plan");
+  call.mockResolvedValueOnce({status:"ok", revisions:["1","2","3","4"]}); await click("Read revision history");
+  const select = host.querySelector("select")!;
+  act(() => { select.value = "2"; select.dispatchEvent(new Event("change", {bubbles:true})); });
+  call.mockResolvedValueOnce({...ok,revision:"5"}); await click("Restore selected revision");
+  expect(facts.condition(FACTS.workspaceSaved)).toBe("pending");
+});
+it("reports the store's refusal of a save to the tours in its own words, once", async () => {
+  facts.reset();
+  render(); call.mockResolvedValueOnce(ok).mockResolvedValueOnce({ status:"conflict", message:"Stale revision" });
+  await click("Open saved plan"); await click("Save new revision");
+  expect(facts.detail(FACTS.workspaceSaved)).toBeUndefined();
+  expect(facts.condition(FACTS.workspaceSaved)).toEqual({ failed: "conflict: Stale revision" });
+  expect(facts.condition(FACTS.workspaceSaved)).toBe("pending");
 });

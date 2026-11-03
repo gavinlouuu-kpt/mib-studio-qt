@@ -53,3 +53,5 @@ Run `python3 scripts/check_docs.py` after editing any markdown; CI enforces it.
 
 - [One-click illuminated Live View](howto/illuminated-live-view.md) — saved
   MindVision XGC/R5D rig setup, coordinated Play/Stop and commissioning evidence.
+- [Adding a guided tour](howto/adding-a-tour.md) — every user-facing feature or
+  backend change ships with a Driver.js tour, or with the reason it has none.

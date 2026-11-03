@@ -351,7 +351,7 @@ function AlignImage(p: ImageProps) {
     <>
       <Toolbar title="Align">
         <Button variant="selected" aria-current="page">Quick controls</Button>
-        <Button variant={p.showTree ? "selected" : "secondary"} aria-pressed={p.showTree} onClick={p.onToggleTree}
+        <Button variant={p.showTree ? "selected" : "secondary"} aria-pressed={p.showTree} onClick={p.onToggleTree} data-tour="align-feature-toggle"
           title="Every category and feature the camera's GenApi node map reports, read-only">Feature tree</Button>
         <Button onClick={p.onClassic} title="Back to the classic view">Classic view</Button>
         <Button variant={frozen ? "selected" : "secondary"} aria-pressed={frozen} onClick={() => setFrozen((f) => !f)}
@@ -535,7 +535,7 @@ function QuickControls({ roi, rows, control, lockedReason, pz7035, camera }: {
         const st = r.binding ? resolutionStatus(r.binding.resolution, !!camera?.loading) : r.roi ? { ...roiStatus, title: roiStatus.label } : rb!.access === "unavailable"
           ? { tone: "unsupported" as const, label: `Unavailable · ${rb!.chip}`, title: `Unavailable: ${rb!.why}` }
           : { tone: "neutral" as const, label: `Read-only · ${rb!.chip}`, title: `Read-only: ${rb!.why}` };
-        return <StateChip size="small" tone={st.tone} title={st.title} data-testid={`align-state-${r.id}`}>{st.label}</StateChip>;
+        return <StateChip size="small" tone={st.tone} title={st.title} data-testid={`align-state-${r.id}`} data-tour="align-state-chip">{st.label}</StateChip>;
       },
     },
   ];
@@ -559,6 +559,7 @@ function QuickControls({ roi, rows, control, lockedReason, pz7035, camera }: {
       title="Quick controls"
       subtitle="Requested → readback · a value is current only after readback"
       data-testid="align-quick-controls"
+      data-tour="align-quick-controls"
       actions={roi.access === "rw" ? <>
         <Button disabled={!canWrite || (!s.edited && s.phase === "idle")} onClick={control.revert}>Revert to readback</Button>
         <Button disabled={!canWrite} onClick={control.submit} title={roi.kind === "processing" ? PROCESSING_ROI_WRITE : undefined}>{pending ? "Writing…" : `Write ${roi.kind === "run" ? "Run window" : "ROI"}`}</Button>

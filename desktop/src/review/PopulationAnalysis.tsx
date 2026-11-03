@@ -3,6 +3,7 @@ import { PopulationThumbnail } from "./PopulationThumbnail";
 import { useEffect, useRef, useState } from "react";
 import { AnalysisWorkspace, type AnalysisCall } from "./AnalysisWorkspace";
 import { reviewBridge } from "./reviewBridge";
+import { FACTS, reportFact, reportFactRefused } from "../tours/mib/facts";
 
 export interface PopulationGraph {
   id: string; revision: string; output: string;
@@ -70,12 +71,16 @@ export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.ana
       if (reply.schema !== "review-population/1" || reply.path !== path || reply.feature !== feature)
         throw new Error("The source or analysis contract changed; run again.");
       setResult(reply);
-    } catch (e) { if (token === sequence.current) setError(String(e)); }
+      // Tours (F04, F05, F08): the backend's counts, as the reply gave them.
+      reportFact(FACTS.populationEvaluated, `${reply.selected} selected · ${reply.excluded} excluded · ${reply.unknown} unknown`);
+    } catch (e) {
+      if (token === sequence.current) { setError(String(e)); reportFactRefused(FACTS.populationEvaluated, String(e)); }
+    }
     finally { if (token === sequence.current) setBusy(false); }
   }
   const format = (n: number | null) => n === null ? "—" : String(n);
   return <details className="population-analysis">
-    <summary>Population analysis · stored observations</summary>
+    <summary data-tour="review-population">Population analysis · stored observations</summary>
     <p>Inclusive interval across both valid and invalid observations. No scientific QC filter. The whole file is evaluated natively in bounded chunks with exact membership and statistics; nothing is sampled.</p>
     <fieldset disabled={disabled || busy}>
       <legend>Interval gate</legend>
@@ -84,7 +89,7 @@ export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.ana
       </select></label>{" "}
       <label>Minimum <input aria-label="Analysis minimum" type="number" step="any" placeholder="Unbounded" value={minimum} onChange={e => setMinimum(e.target.value)} /></label>{" "}
       <label>Maximum <input aria-label="Analysis maximum" type="number" step="any" placeholder="Unbounded" value={maximum} onChange={e => setMaximum(e.target.value)} /></label>{" "}
-      <button onClick={() => void analyze()}>{busy ? "Analyzing…" : "Analyze population"}</button>
+      <button data-tour="review-population-analyze" onClick={() => void analyze()}>{busy ? "Analyzing…" : "Analyze population"}</button>
     </fieldset>
     <details><summary>Population graph recipe</summary>
       <p>Interval, polygon, ellipse, quadrant, AND, OR and NOT nodes are evaluated by the native backend over the whole file. Parent IDs restrict populations. Unknown measurements remain unknown under NOT. The selected measurement above controls the reduction, not graph membership.</p>
@@ -98,12 +103,12 @@ export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.ana
     </details>
     <AnalysisWorkspace path={path} disabled={disabled} graphText={graphText} feature={feature} read={analysisRead} write={analysisWrite} job={analysisJob} live={live} onLoadGraph={g=>{setGraphText(JSON.stringify(g,null,2));setGraphEnabled(true);}} />
     {error && <p role="alert">{error}</p>}
-    {result && <div role="status">
+    {result && <div role="status" data-tour="review-population-result">
       <p>{result.selected} selected · {result.excluded} excluded · {result.unknown} unknown / {result.valid} valid + {result.invalid} invalid stored observations.</p>
-      <table><caption>Selected population · {result.unit}</caption><thead><tr><th>Measured</th><th>Missing</th><th>Minimum</th><th>Maximum</th><th>Mean</th><th>Median</th></tr></thead>
+      <table data-tour="review-population-statistics"><caption>Selected population · {result.unit}</caption><thead><tr><th>Measured</th><th>Missing</th><th>Minimum</th><th>Maximum</th><th>Mean</th><th>Median</th></tr></thead>
         <tbody><tr><td>{result.measured}</td><td>{result.missing}</td><td>{format(result.minimum)}</td><td>{format(result.maximum)}</td><td>{format(result.mean)}</td><td>{format(result.median)}</td></tr></tbody></table>
       <p>{result.measurementSemantics}</p>
-      <section aria-label="Gated gallery">
+      <section aria-label="Gated gallery" data-tour="review-population-gallery">
         <h4>Selected observations</h4>
         <p>12 per page, in valid-set then invalid-set row order. Images are copied with the evaluated source; unavailable images do not remove observations. Loading a page runs a fresh evaluation.</p>
         <button disabled={busy || disabled} onClick={() => void analyze(0)}>Load gated gallery</button>

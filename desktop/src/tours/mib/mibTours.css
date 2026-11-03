@@ -1,0 +1,12 @@
+/* MIB Studio tours: the generic tour surfaces (tours.css) read --panel, --text, --muted, --border, --accent and --warn. Here they are
+   mapped to the kit's --mib-* tokens. tours.css keeps its own prefers-color-scheme: dark block, so the tour surfaces have a dark
+   variant even though the app has one light palette. */
+.tour-notice, .tour-list-modal, .tour-flow-modal, .driver-popover.tour-popover {
+  --panel: var(--mib-color-card, #ffffff);
+  --text: var(--mib-color-ink, #1b2626);
+  --muted: var(--mib-color-sub, #5f6b6b);
+  --border: var(--mib-color-line, #e1e6e6);
+  --accent: var(--mib-color-accent, #2f6e6a);
+  --warn: var(--mib-color-warn, #9a6a12);
+  font-family: var(--mib-font-family, system-ui, sans-serif);
+}

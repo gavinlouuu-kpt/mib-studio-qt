@@ -203,11 +203,11 @@ export function LiveView({ tabs, plan, snapshot, running, experimentActive, host
           {frozen ? "Resume display" : "Freeze display"}
         </Button>
         <Button variant="destructive" disabled={target.kind === "none"} title={target.kind === "none" ? target.reason : target.kind === "queue" ? `Stops ${curRow?.ref}'s run (stop → drain → finalize), as Next sample does` : `Stops run generation ${target.generation} (stop → drain → finalize)`}
-          onClick={() => void stopRun()} data-testid="live-stop-run">
+          onClick={() => void stopRun()} data-testid="live-stop-run" data-tour="live-stop-run">
           {stopping || queue.pending === "stop" ? "Stopping…" : "Stop & finalize run"}
         </Button>
       </Toolbar>
-      <div className="ws-body" data-testid="live-body">
+      <div className="ws-body" data-testid="live-body" data-tour="live-body">
         <LiveNotices controlHeld={controlHeld} paused={q.paused} snapshot={snapshot} hostProcessing={hostProcessing} frozen={frozen} frozenChange={cells.frozenChange}
           readError={cells.readError} stopNotice={stopNotice} onResume={queue.resume} />
         {cells.notice ? (
