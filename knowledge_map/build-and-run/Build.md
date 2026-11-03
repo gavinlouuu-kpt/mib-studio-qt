@@ -430,7 +430,7 @@ current desktop version.
 
 The desktop has three maintained publishers: local `release.ps1`, manual
 `.github/workflows/build-windows.yml`, and tag-triggered
-`.github/workflows/release.yml`. The `develop` auto-beta trigger in
+`.github/workflows/release.yml`. The `beta`-branch auto-beta trigger in
 `build-windows.yml` is path-gated: merges touching only docs, the vault,
 `tools/`, `tests/`, `bindings/python/`, markdown, or other workflows do not
 build or publish a beta (changes to that workflow itself still release).

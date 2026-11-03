@@ -2,9 +2,9 @@ name: Backend CI
 
 on:
   push:
-    branches: [main, master, develop, dev/react-tauri]
+    branches: [main, master, develop, beta, dev/react-tauri]
   pull_request:
-    branches: [main, master, develop, dev/react-tauri]
+    branches: [main, master, develop, beta, dev/react-tauri]
 
 permissions:
   contents: read

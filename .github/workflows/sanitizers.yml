@@ -7,7 +7,7 @@ name: Sanitizers
 # gating main while suppressions are tuned.
 on:
   pull_request:
-    branches: [main, master, develop]
+    branches: [main, master, develop, beta]
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
