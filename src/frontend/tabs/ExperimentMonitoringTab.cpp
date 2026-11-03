@@ -476,7 +476,7 @@ namespace frontend
             // Optional third range inside the gate: Young's modulus from the
             // E-modulus LUT lookup on (area, deformability). Nested checkable
             // box so its enable state sits with its values, like the others.
-            auto* emodBox = new QGroupBox(tr("Young's modulus (kPa)"), box);
+            auto* emodBox = new QGroupBox(tr("Young's modulus"), box);
             emodBox->setObjectName(QStringLiteral("targetEmodulusBox"));
             emodBox->setCheckable(true);
             emodBox->setToolTip(tr("When enabled, a target cell must also have a Young's modulus (kPa, looked up in the loaded E-modulus table) inside this range. "
@@ -487,6 +487,9 @@ namespace frontend
             connect(emodBox, &QGroupBox::toggled, this, [this](bool on) { onTuneFieldEdited(TuneField::TargetEmodulusEnabled, on); });
             form->addRow(emodBox);
             auto* emodForm = makeForm(emodBox);
+            // Nested inside the target box: no extra side margins, so the
+            // compact (220 px) panel width still fits without scrolling.
+            emodForm->setContentsMargins(0, 2, 0, 4);
             addDoubleField(emodForm, tr("Minimum"), TuneField::TargetEmodulusMin, QStringLiteral("targetEmodMinSpin"), 0.0, 1000.0, 0.1);
             addDoubleField(emodForm, tr("Maximum"), TuneField::TargetEmodulusMax, QStringLiteral("targetEmodMaxSpin"), 0.0, 1000.0, 0.1);
         }
