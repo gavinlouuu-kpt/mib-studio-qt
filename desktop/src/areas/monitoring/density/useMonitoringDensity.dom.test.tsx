@@ -148,6 +148,16 @@ describe("the settings push (MON-058, 083..085)", () => {
     expect(api.kdeLayer.toggle.notice).toBe("");
   });
 
+  it("stays quiet about a refused push while the toggle is off (the start-up push of 'off' is routine)", async () => {
+    calls.set.mockResolvedValue({ ok: false, message: "backend is not initialized", settings: null });
+    await render();
+    expect(api.kdeLayer.toggle.notice).toBe("");
+    expect(appended).toEqual([]);
+    calls.set.mockRejectedValue(new Error("older backend: unknown command"));
+    await act(async () => api.state.setMonSettings((s) => ({ ...s, kdeIntervalMs: 4000 })));
+    expect(api.kdeLayer.toggle.notice).toBe("");
+  });
+
   it("says a rejected push (VIEWER_ONLY from the server) the same way", async () => {
     calls.set.mockRejectedValue(new Error("VIEWER_ONLY: another client controls this instrument"));
     await render();

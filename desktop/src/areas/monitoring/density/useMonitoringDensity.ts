@@ -71,6 +71,8 @@ export function useMonitoringDensity({
   appendRef.current = append;
   const activeRef = useRef(active);
   activeRef.current = active;
+  const onRef = useRef(on);
+  onRef.current = on;
 
   // ---- one notice at a time: a refused or failing command / poll, said once ----
   const noticeKind = useRef<"" | "push" | "poll">("");
@@ -121,10 +123,11 @@ export function useMonitoringDensity({
         y1: scatterYMax,
       })
       .then((reply) => {
-        if (current) tell("push", reply.ok ? "" : `Density (KDE) settings were not accepted by the backend (${reply.message || "refused"}): the colouring may not follow them.`);
+        // Said only to an operator who has the density switched on: the push of "off" at start-up is routine.
+        if (current) tell("push", reply.ok || !onRef.current ? "" : `Density (KDE) settings were not accepted by the backend (${reply.message || "refused"}): the colouring may not follow them.`);
       })
       .catch((e) => {
-        if (current) tell("push", `Density (KDE) settings could not be sent to the backend (${e instanceof Error ? e.message : String(e)}): the colouring may not follow them.`);
+        if (current) tell("push", onRef.current ? `Density (KDE) settings could not be sent to the backend (${e instanceof Error ? e.message : String(e)}): the colouring may not follow them.` : "");
       });
     return () => { current = false; };
   }, [ready, viewerOnly, active, kdeIntervalMs, kdeBandwidthFactor, kdeCorePercent, scatterXMin, scatterXMax, scatterYMin, scatterYMax, tell]);
