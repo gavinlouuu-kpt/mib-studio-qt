@@ -98,6 +98,14 @@ describe("the Density (KDE) toggle (MON-058)", () => {
     expect(d.toggle.onChange).toHaveBeenLastCalledWith(false);
   });
 
+  it("describes the colours that are drawn: green and blue off, density and squares on", async () => {
+    await mount(layer({ on: false }));
+    expect(host.textContent).toContain("green: valid, blue: target group");
+    await mount(layer({ on: true }));
+    expect(host.textContent).toContain("colour: local density (darker is denser), squares: target group");
+    expect(host.textContent).not.toContain("green: valid");
+  });
+
   it("is not there without a layer (a standalone chart, or an older shell)", async () => {
     await mount(undefined);
     expect(checkbox()).toBeNull();

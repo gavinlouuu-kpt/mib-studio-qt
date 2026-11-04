@@ -90,7 +90,7 @@ export function MonitoringChartsView(props: MonitoringChartsViewProps) {
         {scatterFooter?.(data.scatter)}
         {!snapshot?.valid || !data.scatter.xs.length ? <p>No calibrated finite valid-object samples available.</p> : null}
         <p>
-          Valid objects only; green: valid, blue: target group; newest {MONITORING_WINDOW} valid rows, each point with its exact
+          Valid objects only; {densityOn ? "colour: local density (darker is denser), squares: target group" : "green: valid, blue: target group"}; newest {MONITORING_WINDOW} valid rows, each point with its exact
           analysis-time calibration. {data.uncalibrated} valid rows lack analysis-time calibration and are omitted. Historical rows are
           never recalibrated with current settings.
         </p>

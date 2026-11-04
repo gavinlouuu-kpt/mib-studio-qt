@@ -847,7 +847,7 @@ reads the settings from the studio state when mounted in the classic view):
   `monitoringRowKey`) is newer than it and takes the sparsest level. `drawMonitoringScatter`
   gets one optional `density` model: valid cells as circles and the target group as
   squares, one path per level and shape (no per-point element, no per-poll work beyond what is
-  drawn), then the core contour (solid, #2a78d6, 2 px) and the reference (dashed, #eb6834)
+  drawn; the legend keeps the two series apart by shape and the note under the chart says "colour: local density (darker is denser), squares: target group"), then the core contour (solid, #2a78d6, 2 px) and the reference (dashed, #eb6834)
   over the points, under the selection marker and the overlay. Without the model the canvas
   calls are byte-identical to before (`drawDensity.test.ts` pins a digest taken at the base
   commit). Reference: Pin current keeps the live loops (`pinned HH:mm:ss`, forgets the file
