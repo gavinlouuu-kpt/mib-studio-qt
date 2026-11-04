@@ -264,7 +264,15 @@ the bridge. No I slice is TypeScript only.
   definition of done. Clarified the E objective as GenApi-driven node-map work,
   not a feature list. Identified I/F duplication of analysis code and ABI 47.
 
-## Progress
+## Current evidence navigation (2026-11-04)
+
+The [37-goal acceptance evidence index](../../evidence/fold-in-acceptance-index.md)
+records the integrated PR #816 baseline and remaining proof for every goal.
+PR #816 now includes the E/I/F integration. The checklist below is the dated
+2026-11-02 snapshot, not the current integration topology; keep it as history.
+Canonical actions and decisions remain in ENG-MIBQT (MIBQT-16 for this index).
+
+## Progress (historical 2026-11-02 snapshot)
 
 Draft PRs as of 2026-11-02. Evidence classes: E = fixture/mock; F and I =
 real backend on synthetic data. Nothing has been checked on hardware yet.
