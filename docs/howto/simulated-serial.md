@@ -49,7 +49,9 @@ The built-in bench (`serialsim::makeBenchRig`):
 | COM5 | CH340, enumerates after 1.2 s, silent 150 ms after open | OEABT nanopositioner |
 | COM6 | FT231X (0403:6015) | ZC300 Z stage addr 1 (identity registers) |
 
-Point the pump settings at COM3, the generator at COM4 (9600 baud). An
+Point the pump settings at COM3, the generator at COM4 (9600 baud). `desktop/scripts/hardware-sim-check.py` drives
+the desktop (Tauri) app's pump panel on this bench through tauri-driver: connect, auto-applied rate,
+the polled run state after Start and Stop, and hold-to-purge (#855). An
 unreadable or invalid scenario stops the backend from starting. It never
 falls back to the real ports while you believe they are simulated. The
 CoreMorrow vendor DLL opens ports itself, so CoreMorrow endpoints are not
