@@ -181,7 +181,7 @@ TypeScript via the generated `desktop/src/bridgeContract.ts`
 (`scripts/gen_bridge_contract.py --check` is a desktop-CI drift gate).
 
 The command/event set is a versioned schema: `bridge_abi_version()` returns the
-current version (`42` since #716 A4a; each later bump has its own `## ABI N` section below)
+current version (`45` since #868 hardware PR2; each bump has its own `## ABI N` section below)
 (the early history:v2 added the review commands — `load_recording`, `playback_seek_index`,
 `fetch_frame_by_index`; v3 added the processing commands — `apply_processing`,
 `fetch_processing_stats`; v4 added operation state, `cancel_operation`,
@@ -519,6 +519,31 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
+
+## ABI 45: serial ports, the sort-trigger funnel, pulse generator limits (#868 wave 1 hardware PR2)
+
+Additive over ABI 44, for the pulse generator panel and the status bar of the desktop app (HW-046, HW-049,
+HW-054, HW-055). Contract: `hardware_trigger_and_ports`.
+
+- **`list_serial_ports`:** `-> {ports: [{system_name, system_location, description, manufacturer,
+  serial_number, vendor_id, product_id}]}`; the host's `enumerateSerialPorts()` (the simulated rig's under
+  `MIB_SERIAL_MODE=sim`); opens no port; a read for every client (not in `CONTROL_COMMANDS`). Path: C++
+  `BackendFacade::listSerialPortsJson` -> cxx `list_serial_ports` -> `mib-app-commands` -> Tauri command and
+  dispatch -> `bridge.ts` `listSerialPorts`.
+- **`fetch_trigger_status`** gains the Qt status bar's funnel: `valid_objects`, `target_group_objects`,
+  `unserved_target_group_objects` (ProcessingService identification counters), `dropped_requests`,
+  `dropped_pulses` (TriggerService), `dropped_valid_frames`, `avg_target_latency_us`, `max_target_latency_us`
+  (PipelineTimingRecorder). The panel derives conversion, lost and served as `StatsDisplayManager.cpp` does.
+- **`pulse_generator_status`** gains `data_bits`, `parity`, `stop_bits` and `channel_count`, `min_frequency_hz`,
+  `max_frequency_hz` (the `PulseGeneratorService` constants); `pulse_generator_command` validates against the same
+  constants and gains the actions `set` and `start` (`channel`, `frequency_hz`, `duty_percent`): frequency, then
+  duty, then (start) the output, as one command under `withIdleConfiguration`, so a refused value or a failed
+  write stops the sequence and an experiment cannot start between the writes.
+- **ABI touch points:** `bridge-contract.json` `abi_version` 45 and `hardware_trigger_and_ports`; `shim.cpp`
+  `bridge_abi_version()`; `contract.rs` `abi_version_is_stable` and `hardware_trigger_and_ports_abi_45`;
+  `dispatch.rs` `hardware_reads_through_dispatch`; the generated `bridgeContract.ts`; the
+  `eventAdapter.test.ts` pin. C++ test: `backend.facade_boundary` (limits, port list, funnel, and Set / Start /
+  Stop against the simulated bench generator).
 
 ## ABI 44: the run quick look (#716 A7a)
 

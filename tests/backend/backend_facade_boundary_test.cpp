@@ -2,6 +2,8 @@
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/services/PulseGeneratorService.h"
+#include "backend/services/SimulatedSerial.h"
 
 #include <opencv2/core.hpp>
 #include <nlohmann/json.hpp>
@@ -194,6 +196,63 @@ int main()
             if (facade.pulseGeneratorCommandJson(request).ok) return 70;
         }
         if (facade.fetchPulseGeneratorStatusJson().find("\"connected\":false") == std::string::npos) return 71;
+        // HW-055 (#868): the module's limits and the connection's framing come from the service, not a copy in the UI.
+        {
+            const auto pulse = nlohmann::json::parse(facade.fetchPulseGeneratorStatusJson());
+            if (pulse.value("channel_count", 0) != backend::services::PulseGeneratorService::CHANNEL_COUNT ||
+                pulse.value("min_frequency_hz", 0.0) != backend::services::PulseGeneratorService::MIN_FREQUENCY_HZ ||
+                pulse.value("max_frequency_hz", 0.0) != backend::services::PulseGeneratorService::MAX_FREQUENCY_HZ ||
+                pulse.value("data_bits", 0) != 8 || pulse.value("parity", std::string()) != "N" || pulse.value("stop_bits", 0) != 1)
+                return 110;
+        }
+        // HW-049 (#868): the serial port list is a read-only JSON array of the documented keys; it opens nothing.
+        {
+            const auto ports = nlohmann::json::parse(facade.listSerialPortsJson());
+            if (!ports.contains("ports") || !ports["ports"].is_array()) return 111;
+            for (const auto& port : ports["ports"])
+                for (const auto* key : {"system_name", "system_location", "description", "manufacturer", "serial_number", "vendor_id", "product_id"})
+                    if (!port.contains(key)) return 112;
+        }
+        // HW-054 (#868): Set / Start / Stop against the simulated bench generator (COM4, addr 1, 9600).
+        // Start is ONE command: frequency, duty and the output; a refused value changes nothing.
+        {
+            namespace sim = backend::services::serialsim;
+            sim::install(sim::makeBenchRig(1));
+            const auto ports = nlohmann::json::parse(facade.listSerialPortsJson())["ports"];
+            bool sawGenerator = false;
+            for (const auto& port : ports)
+                if (port["system_name"] == "COM4" && port["vendor_id"] == 0x0403 && port["product_id"] == 0x6001) sawGenerator = true;
+            int failure = 0;
+            nlohmann::json before;
+            auto status = [&] { return nlohmann::json::parse(facade.fetchPulseGeneratorStatusJson()); };
+            if (!sawGenerator) failure = 114;
+            else if (!facade.pulseGeneratorCommandJson(R"({"action":"connect","port":"COM4","baud":9600,"data_bits":8,"parity":"N","stop_bits":1,"address":1})").ok) failure = 115;
+            else if (status()["data_bits"] != 8 || status()["parity"] != "N" || status()["stop_bits"] != 1) failure = 116;
+            else if (before = status()["channels"][0],
+                     facade.pulseGeneratorCommandJson(R"({"action":"start","channel":0,"frequency_hz":399,"duty_percent":25})").ok ||
+                     facade.pulseGeneratorCommandJson(R"({"action":"start","channel":0,"frequency_hz":1000,"duty_percent":101})").ok ||
+                     facade.pulseGeneratorCommandJson(R"({"action":"set","channel":0,"frequency_hz":40001,"duty_percent":10})").ok ||
+                     status()["channels"][0] != before) failure = 117;
+            else if (!facade.pulseGeneratorCommandJson(R"({"action":"start","channel":0,"frequency_hz":1000,"duty_percent":25})").ok) failure = 118;
+            else if (status()["channels"][0]["output_enabled"] != true || status()["channels"][0]["frequency_hz"] != 1000.0 ||
+                     status()["channels"][0]["duty_percent"] != 25.0) failure = 119;
+            else if (!facade.pulseGeneratorCommandJson(R"({"action":"set","channel":0,"frequency_hz":2000,"duty_percent":10})").ok ||
+                     status()["channels"][0]["frequency_hz"] != 2000.0 || status()["channels"][0]["duty_percent"] != 10.0 ||
+                     status()["channels"][0]["output_enabled"] != true) failure = 120;
+            else if (!facade.pulseGeneratorCommandJson(R"({"action":"enable","channel":0,"enabled":false})").ok ||
+                     status()["channels"][0]["output_enabled"] != false) failure = 121;
+            else if (!facade.pulseGeneratorCommandJson(R"({"action":"disconnect"})").ok) failure = 122;
+            sim::install(nullptr);
+            if (failure) return failure;
+        }
+        // HW-046 (#868): the sort-trigger funnel starts at zero on a fresh backend.
+        {
+            bridge::BackendTriggerStatus trigger;
+            trigger.targetGroupObjects = 99;
+            if (!facade.fetchTriggerStatus(trigger) || trigger.targetGroupObjects != 0 || trigger.validObjects != 0 ||
+                trigger.droppedRequests != 0 || trigger.droppedPulses != 0 || trigger.maxTargetLatencyUs != 0)
+                return 113;
+        }
         bridge::AutofocusCommand badEndpoint;
         badEndpoint.action = bridge::AutofocusCommandAction::Connect;
         badEndpoint.endpoint = backend::nanopositioner::Endpoint{};

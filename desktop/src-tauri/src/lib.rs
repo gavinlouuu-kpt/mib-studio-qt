@@ -225,6 +225,11 @@ fn pulse_generator_status(state: State<AppState>) -> Result<serde_json::Value, S
 }
 
 #[tauri::command]
+fn list_serial_ports(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::list_serial_ports(&state)
+}
+
+#[tauri::command]
 fn autofocus_connect_endpoint(state: State<AppState>, backend: String, endpoint: String, com_port: i32, baud_rate: i32, device_address: i32) -> Result<cmds::CmdResult, String> {
     cmds::autofocus_connect_endpoint(&state, backend, endpoint, com_port, baud_rate, device_address)
 }
@@ -858,6 +863,7 @@ pub fn run() {
             startup_discovery_status,
             pulse_generator_command,
             pulse_generator_status,
+            list_serial_ports,
             autofocus_connect_endpoint,
             autofocus_connect,
             autofocus_disconnect,

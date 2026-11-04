@@ -782,6 +782,15 @@ pub mod ffi {
         pub last_track_id: i32,
         pub periodic_active: bool,
         pub periodic_interval_ms: i32,
+        /// Sort-trigger funnel (HW-046, #868): valid objects, target group, unserved extras, drops, latency.
+        pub valid_objects: u64,
+        pub target_group_objects: u64,
+        pub unserved_target_group_objects: u64,
+        pub dropped_requests: u64,
+        pub dropped_pulses: u64,
+        pub dropped_valid_frames: u64,
+        pub avg_target_latency_us: f64,
+        pub max_target_latency_us: u64,
     }
 
     /// A frame pulled on demand: metadata plus a single owned copy of the pixel
@@ -1078,6 +1087,8 @@ pub mod ffi {
         fn startup_discovery_status(self: Pin<&mut BackendBridge>) -> String;
         fn pulse_generator_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn pulse_generator_status(self: Pin<&mut BackendBridge>) -> String;
+        /// Read-only serial port list for the port pickers (HW-049): JSON `{"ports":[...]}`.
+        fn list_serial_ports(self: Pin<&mut BackendBridge>) -> String;
 
         fn render_review_overlay(self: Pin<&mut BackendBridge>, json: &str) -> Vec<u8>;
         fn fetch_review_reanalysis_preview(self: Pin<&mut BackendBridge>, json: &str) -> BridgeFrame;

@@ -71,6 +71,7 @@ pub const COMMANDS: &[&str] = &[
     "startup_discovery_status",
     "pulse_generator_command",
     "pulse_generator_status",
+    "list_serial_ports",
     "autofocus_connect_endpoint",
     "autofocus_connect",
     "autofocus_disconnect",
@@ -361,6 +362,7 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::pulse_generator_command(state, a.json).and_then(json)
         }
         "pulse_generator_status" => crate::pulse_generator_status(state).and_then(json),
+        "list_serial_ports" => crate::list_serial_ports(state).and_then(json),
         "autofocus_connect_endpoint" => {
             #[derive(Deserialize)]
             struct A {
@@ -1514,6 +1516,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
+    // ABI 45 (#868): the serial port list is a read through dispatch (the WebSocket's path); the trigger status
+    // carries the sort-trigger funnel and the pulse generator status its limits.
+    #[test]
+    #[serial]
+    fn hardware_reads_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_hw45_{}", std::process::id()));
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let Reply::Json(ports) = dispatch(&state, &host, "list_serial_ports", Value::Null).unwrap() else { panic!("JSON") };
+        assert!(ports["ports"].is_array(), "{ports}");
+        let Reply::Json(trigger) = dispatch(&state, &host, "fetch_trigger_status", Value::Null).unwrap() else { panic!("JSON") };
+        for key in ["valid_objects", "target_group_objects", "unserved_target_group_objects", "dropped_requests", "dropped_pulses",
+                    "dropped_valid_frames", "avg_target_latency_us", "max_target_latency_us"] {
+            assert!(trigger.get(key).is_some_and(|v| v.is_number()), "trigger status has {key}: {trigger}");
+        }
+        let Reply::Json(pulse) = dispatch(&state, &host, "pulse_generator_status", Value::Null).unwrap() else { panic!("JSON") };
+        assert_eq!((pulse["channel_count"].as_i64(), pulse["min_frequency_hz"].as_f64(), pulse["max_frequency_hz"].as_f64()), (Some(4), Some(400.0), Some(40000.0)));
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
     // ABI 44 (#716 A7a): the run quick look through dispatch (the WebSocket's path) and the Tauri
     // function: strict arguments refused before the backend, the parity fixture computed, the
     // reference confirmed with deltas, a second read from the cache, and nothing written.
@@ -1529,7 +1553,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

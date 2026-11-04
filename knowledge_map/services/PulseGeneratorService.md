@@ -159,3 +159,13 @@ classification is unchanged. Discovery never writes.
 Before this, while the sweep held the pump adapter at 9600, a pump Connect at
 115200 failed with "different settings". The race showed across the chip
 matrix of `backend.serial_startup_race` ([[SimulatedSerial]]).
+
+## Desktop bridge surface (2026-11-04, #868)
+
+`BackendFacade::pulseGeneratorCommandJson` validates every request before the driver and serializes
+configuration against experiment Start: `connect`, `disconnect`, `frequency`, `duty`, `enable`, and since ABI 45
+`set` (frequency, then duty) and `start` (frequency, duty, then the output) as ONE command, as Qt's Set and
+Start buttons do. Output-off (`enable false`) bypasses the idle lock. `fetchPulseGeneratorStatusJson` reports the
+module's limits (`channel_count`, `min_frequency_hz`, `max_frequency_hz`) and the connection's framing, so the
+desktop panel carries no copy of the constants; `listSerialPortsJson` is the read-only port list. See
+[[architecture/Desktop-Shell]] and [[architecture/Rust-Bridge]].
