@@ -76,6 +76,13 @@ Synchronous, called from main thread.
   fails harmlessly and both SDKs work in any order. Regression guard:
   `hardware.discovery_reentry` (`tests/hardware/hw_discovery_reentry_test.cpp`)
   with modes for thread, MindVision step, and MindVision-first order.
+- **`GenTLHolder.h` is included whenever `MIB_HAS_EGRABBER` is set**, not only
+  when MindVision is also on. It used to sit inside the `MIB_HAS_MINDVISION`
+  include block, so a Windows build with `-DMIB_ENABLE_MINDVISION=OFF` failed
+  to compile this file (`backend::camera::egrabber::sharedGenTL` not found).
+  CI never saw it because `build-windows.yml` always builds with MindVision
+  on; the first bench build ([[../build-and-run/Build]], "Bench build on the
+  Windows camera PC") did.
 - Applying a script **stops capture** as a side effect (done in
   [[../architecture/AppBackend]]). Capture does not auto-restart.
 - Mock cameras are not discovered here — they're configured via

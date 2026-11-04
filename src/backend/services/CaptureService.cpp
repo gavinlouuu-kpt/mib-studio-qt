@@ -576,7 +576,10 @@ void CaptureService::run(uint64_t generation) {
             if (frameStore_) {
                 // Pre-reserve FIFO slots to the live frame size so the
                 // high-speed hot path never allocates. First reservation happens
-                // on frame 1; re-reserve only if the geometry grows.
+                // on frame 1 of the session, and releases the slots' excess when
+                // an earlier session (an Overview) used larger frames (#839);
+                // within the session re-reserve only if the geometry grows, so
+                // frames of this session are never dropped by it.
                 const size_t frameBytes = frame.data.size();
                 if (frameBytes > reservedFrameBytes) {
                     frameStore_->reserveFrameBytes(frameBytes);

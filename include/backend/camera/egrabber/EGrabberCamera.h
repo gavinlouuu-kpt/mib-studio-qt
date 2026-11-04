@@ -56,10 +56,32 @@ private:
 
     CameraConfig config_{};
 #if MIB_HAS_EGRABBER
+    // How long grabFrame() waits for a buffer while holding stateMutex_ (#840).
+    // The wait used eGrabber's default of GENTL_INFINITE, so with no frames
+    // arriving (a trigger nothing drives) it held stateMutex_ forever and
+    // stop(), which needs the same mutex, never returned: the UI thread hung on
+    // a tab switch. A timeout ends the wait with GC_ERR_TIMEOUT (no frame yet);
+    // stop() also interrupts it at once, so this is only the upper bound.
+    static constexpr uint64_t kPopTimeoutMs = 50;
+
+    // Wakes a grabFrame() blocked in pop (cancelPop) and tells it not to start
+    // another wait. Takes triggerMutex_ only, never stateMutex_, so stop()
+    // can call it while a grabFrame() holds stateMutex_.
+    void interruptPendingPop();
+    // Stops the acquisition and releases the grabber, its buffers and the
+    // producer handle. Caller holds stateMutex_ (stop() and the failure paths
+    // of start(), which hold it: std::mutex is not recursive, so they must not
+    // call stop()).
+    void releaseGrabberLocked();
+
     mutable std::unique_ptr<Euresys::EGrabber<Euresys::CallbackOnDemand>> grabber_;
     // Shared process-wide producer handle (see GenTLHolder.h); released
     // by stop(), but the holder keeps the producer open for the process.
     std::shared_ptr<Euresys::EGenTL> genTL_;
+    // Set by stop() before it waits for stateMutex_, cleared by start():
+    // grabFrame() returns without waiting once it is set, closing the window in
+    // which a cancelPop lands before the wait begins and is lost.
+    std::atomic<bool> stopRequested_{false};
 #endif
 
     uint64_t width_ = 0;
@@ -87,9 +109,11 @@ private:
     std::atomic<bool> running_{false};
     mutable std::mutex stateMutex_;
     // Guards grabber_ pointer lifetime against the trigger thread. Held by
-    // setTriggerOutput() for the whole grabber_ use and by start()/stop()
-    // around every grabber_ assignment/reset. Deliberately separate from
-    // stateMutex_, which stop() holds across ~360 ms of teardown sleeps.
+    // setTriggerOutput() for the whole grabber_ use, by interruptPendingPop()
+    // for its cancelPop, and by start()/stop() around every grabber_
+    // assignment/reset. Deliberately separate from stateMutex_, which stop()
+    // holds across ~360 ms of teardown sleeps and grabFrame() across its wait.
+    // Lock order: stateMutex_ before triggerMutex_, never the reverse.
     mutable std::mutex triggerMutex_;
 
     // Trigger output state. triggerLineApplied_ tracks whether LineSelector

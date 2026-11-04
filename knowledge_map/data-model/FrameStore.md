@@ -187,12 +187,40 @@ this is safe because every hot-path op acquires the shared structural lock
   the ring does not allocate — without it the first `capacity` pushes each
   allocate a slot buffer mid-stream. The empty-frame filter path reuses a
   `thread_local` scratch `Frame` rather than allocating a temp per frame.
+- `reserveFrameBytes` follows the frame size **down** as well as up (#839).
+  The store lives for the whole process and every capture session reserves
+  its own frame size on its first frame, so a slot that kept an earlier,
+  larger size (an Overview full-sensor session at 1920x1080, 2 MB, before an
+  Experiment window of 0.25 MB) held ~10 GiB for the rest of the run, and the
+  #833 buffer plan, which sizes itself from the RAM still available
+  (`Tools::getAvailableSystemRAMBytes`), was cut by it (4.7 GiB / 2.00 s
+  became 1.8 GiB / 0.76 s on the bench PC). Now, under the exclusive
+  structural lock, each slot above the new size is swapped for a buffer of
+  the new size; a stored frame that still fits is carried over, a stale frame
+  larger than the new size is dropped and its slot then reads `Malformed` (the
+  slot keeps its write index). The structural lock is held for the swap only:
+  the old buffers are freed after it is released, and a release of 16 MiB or
+  more on a detached thread, because returning ~10 GiB of resident pages took
+  0.5 s on P5, which would stall every reader and the capture thread that calls
+  `reserveFrameBytes` on its first frame (the camera streams on: the SDK's
+  input buffers would overrun and count as session buffer underruns). The
+  accounting (`memoryStats`) is final when the call returns. `CaptureService` calls it on the first frame of each session
+  and again only when the geometry grows inside the session, so frames of the
+  running session are never dropped by it. Measured on P5 with a 5000-slot
+  store: process RSS 9964 MiB after the Overview ring filled, 81 MiB right
+  after the reserve to 1216x208 and 1268 MiB once the ring refilled with
+  Experiment frames. Guard: `backend.frame_store_reserve` (retained bytes
+  follow the reservation both ways, stale frames read Malformed, frames that
+  fit survive, a reserve flipping sizes under live IO tears no frame).
 - Retained-byte accounting (issue #370, [[../diagnostics/MemoryBudget]]):
   `slotBytes_` mirrors each slot's `data.capacity()` (updated under the slot
   lock in `pushFrame`, under the exclusive lock in `reserveFrameBytes` /
   `resize`) and `retainedBytes_` / `peakRetainedBytes_` are relaxed atomics,
-  so `memoryStats()` never takes a lock. Guard: `processing.memory_budget`
-  (reserve → plateau across overwrites → resize re-account).
+  so `memoryStats()` never takes a lock. `currentBytes` and the declared
+  `capacityBytes` (slots x the latest reservation) follow the reservation
+  down; `peakBytes` stays the store's high-water mark. Guard:
+  `processing.memory_budget` (reserve → plateau across overwrites → resize
+  re-account).
 - `saveFramesToAvi` serialises frames while holding the mutex only long
   enough to snapshot the range; the VideoWriter loop runs outside the
   lock. Same pattern as `saveFramesToDisk`.

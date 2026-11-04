@@ -98,8 +98,10 @@ public:
                                             std::optional<::camera::common::CameraWindow> planned = std::nullopt);
 
     // The destination write-rate measurement (storage.throughput); tests
-    // install a fake. nullptr restores measureDestinationWriteRate. Results
-    // are cached per (destination directory, saved frame size).
+    // install a fake. nullptr restores measureDestinationWriteRate. A slow
+    // result is measured again (up to three probes, the best kept, #841) and
+    // the result is cached per (destination directory, saved frame size) unless
+    // it fails the floor stream: that one is probed again at the next Start.
     using WriteRateProbe = std::function<WriteRateMeasurement(const std::string& outputPath, uint64_t bytesPerFrame)>;
     void setWriteRateProbe(WriteRateProbe probe);
 
@@ -308,7 +310,13 @@ private:
     // Destination write rates (#833, storage.throughput), per (directory,
     // saved frame size); under mutex_.
     WriteRateProbe writeRateProbe_;
-    std::map<std::string, WriteRateMeasurement> writeRates_;
+    struct WriteRateEntry {
+        WriteRateMeasurement measurement;
+        // false: the measurement fails the floor stream. It stays for display
+        // (the Overview panel) but the next measuring evaluation probes again (#841).
+        bool settled{true};
+    };
+    std::map<std::string, WriteRateEntry> writeRates_;
     std::string lastWriteRateKey_;
 
     // Written under mutex_; atomic so start() can answer AlreadyActive without the lock (#595).

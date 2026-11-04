@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <vector>
 
 #ifdef _WIN32
@@ -157,6 +158,61 @@ WriteRateMeasurement measureDestinationWriteRate(const std::string& outputPath, 
         m.note = std::string("write-rate probe failed: ") + e.what();
         return m;
     }
+}
+
+bool writeRateFailsFloor(const WriteRateMeasurement& m, double floorBytesPerSecond)
+{
+    return m.ok && floorBytesPerSecond > 0 && m.bytesPerSecond < floorBytesPerSecond;
+}
+
+bool writeRateIsSuspect(const WriteRateMeasurement& m, double floorBytesPerSecond)
+{
+    using W = DestinationWriteRate;
+    if (!m.ok) return false;
+    // The probe loop ends at kMaxSeconds, so a probe that took that long ran into the bound.
+    const bool ranIntoBound = m.seconds >= W::kMaxSeconds;
+    const bool closeToFloor =
+        floorBytesPerSecond > 0 && m.bytesPerSecond < W::kSuspectBelowFloorMultiple * floorBytesPerSecond;
+    return ranIntoBound || closeToFloor;
+}
+
+WriteRateMeasurement measureBestWriteRate(const std::function<WriteRateMeasurement()>& probe,
+                                          double floorBytesPerSecond)
+{
+    using W = DestinationWriteRate;
+    WriteRateMeasurement best;
+    std::vector<double> rates; // of the successful probes, in order
+    double spentSeconds = 0.0;
+    int taken = 0;
+    while (taken < W::kMaxProbes) {
+        WriteRateMeasurement m = probe();
+        ++taken;
+        if (!m.ok) {
+            if (rates.empty()) {
+                m.probes = taken; // nothing was measured: the failure is the answer, not repeated
+                return m;
+            }
+            break; // a failed repeat keeps the best of the earlier probes
+        }
+        rates.push_back(m.bytesPerSecond);
+        spentSeconds += m.seconds;
+        if (!best.ok || m.bytesPerSecond > best.bytesPerSecond) best = m;
+        if (!writeRateIsSuspect(best, floorBytesPerSecond)) break;
+        if (spentSeconds >= W::kMaxTotalSeconds) break;
+    }
+    best.probes = taken;
+    if (rates.size() > 1) {
+        std::string list;
+        for (const double r : rates) {
+            char one[32];
+            std::snprintf(one, sizeof one, "%s%.1f", list.empty() ? "" : ", ", r / 1e6);
+            list += one;
+        }
+        best.note += "; best of " + std::to_string(rates.size()) + " probes (" + list + " MB/s)";
+        SPDLOG_INFO("Destination write rate at {}: best of {} probes, {:.0f} MB/s kept ({} MB/s)", best.directory,
+                    rates.size(), best.bytesPerSecond / 1e6, list);
+    }
+    return best;
 }
 
 } // namespace backend::app

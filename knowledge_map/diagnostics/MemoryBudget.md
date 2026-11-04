@@ -42,7 +42,7 @@ an upper bound on what those owners keep resident together.
 | Owner | Knowledge | Bound | Where |
 |---|---|---|---|
 | `capture.sdkBuffers` | Estimated (SDK input-buffer count × last frame payload) or Unknown | count from telemetry | [[../architecture/AppBackend]] |
-| `playback.frameStore` | Measured (slot allocations, resident even when stale) | capacity × reserved frame bytes | [[../data-model/FrameStore]] `memoryStats()` |
+| `playback.frameStore` | Measured (slot allocations, resident even when stale) | capacity × the latest reserved frame bytes (follows a smaller frame size down, #839) | [[../data-model/FrameStore]] `memoryStats()` |
 | `processing.experimentBuffer` | Measured | `maxBufferedFrames` **and** `maxBufferedBytes`, sized together from the camera window and rate at Start (#833; 512 MiB until a plan is applied) | `ExperimentFrameBuffer` |
 | `processing.monitoringRings` | Measured | 2 × 1000 entries (bytes follow the frame geometry) | `FrameRingBuffer` |
 | `monitoring.cellStore` | Measured (owned crops; a pinned strip cell has its own copy in each, #789) | 24 + 16 cells, 4 MiB + 4 MiB | [[../services/MonitoringCellStore]] (ABI 41) |
@@ -90,7 +90,9 @@ images (the trigger image shared with `originalImage` is counted once).
   count-bounded and their bytes follow the ROI geometry; the plateau is what
   the guard asserts.
 - `FrameStore` retained bytes are slot *allocations* (`capacity()`), which
-  is what stays resident; a stale slot still counts.
+  is what stays resident; a stale slot still counts. A smaller
+  `reserveFrameBytes` (a new session with a smaller frame) releases the
+  excess and lowers `currentBytes`; `peakBytes` keeps the high-water mark.
 - The experiment byte budget is a declared drop policy exactly like the
   frame cap: exceeding it during a run yields `persistenceCancelledByPolicy`
   and the run cannot be reported Complete without those drops being

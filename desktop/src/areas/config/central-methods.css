@@ -1,0 +1,102 @@
+/* Configuration (#864): the Central Methods dialog (CentralMethodsPanel.tsx). Part of the App.css cascade. */
+/* Central Methods panel (registry, #398) */
+.registry-modal {
+  max-width: 820px;
+  min-width: 620px;
+}
+
+.registry-status {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.registry-activity,
+.registry-note {
+  color: #555;
+  font-size: 12px;
+}
+
+.registry-warning {
+  color: #b00020;
+  margin: 6px 0;
+}
+
+.registry-table-wrap {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.registry-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.registry-table th,
+.registry-table td {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid #eee;
+  white-space: nowrap;
+}
+
+.registry-table tr.revoked td {
+  color: #b00020;
+  font-weight: 700;
+}
+
+.registry-table tr.selected td {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.registry-table tr {
+  cursor: pointer;
+}
+.registry-table td.validation-failed {
+  color: var(--err);
+  font-weight: 600;
+}
+
+.registry-tabs .btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.registry-reason {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 4px 0;
+}
+.registry-details,
+.registry-conflict {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 4px 0;
+  max-height: 140px;
+  overflow: auto;
+}
+.registry-conflict {
+  color: var(--warn);
+}
+.registry-table tr.conflict td {
+  color: var(--warn);
+}
+.registry-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.registry-confirm {
+  border: 1px solid var(--accent);
+  padding: 6px 8px;
+  margin: 4px 0;
+}
+.registry-confirm pre {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 0 0 4px;
+  max-height: 180px;
+  overflow: auto;
+}

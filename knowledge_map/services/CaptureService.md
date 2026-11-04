@@ -37,7 +37,11 @@ stop/grab/restart boundary.
   downstream latency measurement ([[../diagnostics/PipelineTimingRecorder]]).
   The camera's own `timestamp` is a device tick on a different clock.
 - Copies frame bytes into `FrameStore` (including the host stamp) and fires
-  `FrameCallback` (used by UI for live preview).
+  `FrameCallback` (used by UI for live preview). On the first frame of each
+  session it calls `FrameStore::reserveFrameBytes` with that frame's size,
+  which also releases the ring's excess when the previous session (an
+  Overview) used larger frames (#839); inside the session it re-reserves only
+  when the geometry grows.
 - Exposes `CaptureStats` — `framesProcessed`, `lastFrameRate`,
   `lastDataRateMBps` (the latter two come from EGrabber StreamModule), plus
   delivery-mode and acquisition-queue telemetry: requested vs
@@ -140,6 +144,10 @@ receipt/publish timing is host-side latency, never exposure time. Consumers:
 `backend.timestamp_telemetry`.
 
 ## Gotchas
+
+- Capture changes that reach the EGrabber path are bench-tested before they merge:
+  PR CI compiles `MIB_HAS_EGRABBER=0`. Build with `scripts/win11_bench_build.sh
+  <branch>` and see [[../camera/EGrabberCamera]] (Verification on the bench camera).
 
 - Always refresh EGrabber `StreamModule` stat counters before calling
   `stop()` — see [[../conventions/Code-Conventions]] and

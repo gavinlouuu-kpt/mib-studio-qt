@@ -25,7 +25,7 @@ Details: [`Overview`](knowledge_map/architecture/Overview.md), [`Threading-Model
 
 | Task | Start here |
 |------|------------|
-| A backend service / a frontend tab | `knowledge_map/services/<Name>Service.md` / `knowledge_map/frontend/` |
+| A backend service / a frontend tab | `knowledge_map/services/<Name>Service.md` / `knowledge_map/frontend/`; desktop (Tauri) area owners: [`desktop-area-ownership`](docs/howto/desktop-area-ownership.md) |
 | Build, run modes, dependencies, assets | [`knowledge_map/build-and-run/Build.md`](knowledge_map/build-and-run/Build.md) |
 | Code and logging conventions | [`knowledge_map/conventions/Code-Conventions.md`](knowledge_map/conventions/Code-Conventions.md) |
 | How-tos, ADRs, execution plans, known debt | [`docs/README.md`](docs/README.md), [`docs/decisions/README.md`](docs/decisions/README.md), [`docs/exec-plans/README.md`](docs/exec-plans/README.md), [`tech-debt-tracker`](docs/exec-plans/tech-debt-tracker.md) |
@@ -60,12 +60,8 @@ Public assets need no token; bumping a pin is a reviewed edit to the manifest.
 Guide: [`knowledge_map/build-and-run/Assets.md`](knowledge_map/build-and-run/Assets.md).
 
 ```bash
-python3 scripts/provision-assets.py --list                                   # what exists, public/private
-python3 scripts/provision-assets.py --required-only                          # required assets
 python3 scripts/provision-assets.py --asset 512x96stream-mock-frames --count 1000   # 512x96 TIFF stream -> MIB_MOCK_CAMERA_DIR
 HF_TOKEN=<read token> python3 scripts/provision-assets.py --asset z-adjustment-50v  # private 1.5 GB HDF5 conformance corpus
-python3 scripts/provision-assets.py --check --required-only                  # offline: exit 1 + fix command if incomplete
-ctest --preset linux-network-test   # `network`-labelled tests (kin10) pull rows live via the Dataset Viewer API
 ```
 
 ## Verification
@@ -117,3 +113,7 @@ text file I/O (`open`, `read_text`, `write_text`).
 - Runtime data (logs, sqlite, HDF5, mock frames) lives under `data/`.
 - Test performance metrics go to MLflow at `mlflow.yofo.bio` via
   `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` env vars (never hardcode).
+- **Bench-test camera, capture and eGrabber PRs before merging.** A PR touching `src/backend/camera*`,
+  capture, `CameraControlService`, `EGrabberCamera`, `AppBackend` camera paths or `#if MIB_HAS_EGRABBER`
+  code is built with `scripts/win11_bench_build.sh <branch>` and tested on the win11-agent camera first.
+  PR CI does not compile it; the Windows beta hands tested builds to the rig ([how-to](docs/howto/win11-bench-build.md)).

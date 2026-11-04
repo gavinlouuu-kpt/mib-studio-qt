@@ -502,11 +502,27 @@ coordinator only collects inputs (`windowGateInputsLocked`,
   per frame: an empty run); Warn when unknown. The rate comes from
   `measureDestinationWriteRate` (`app/DestinationWriteRate.h`): frame-size
   chunks fsynced in the destination's directory, at most 32 MiB / 0.75 s, the
-  file removed; cached per (directory, frame size) for the coordinator's
-  lifetime, a failed measurement too (the rate stays unknown, so it is not
-  repeated on every evaluation), and taken only once `storage.output` passed.
-  It runs on the calling thread under the coordinator lock, like the other
-  destination probes. Tests install a fake with `setWriteRateProbe`.
+  file removed; taken only once `storage.output` passed. It runs on the
+  calling thread under the coordinator lock, like the other destination
+  probes. Tests install a fake with `setWriteRateProbe`.
+  **One sample is not trusted when it is slow (#841).** On the bench one of
+  nine probes of a healthy NVMe read 15.2 MB/s (it ran into the 0.75 s bound)
+  against 469-700 MB/s, and the result is cached for the app's life.
+  `measureBestWriteRate` measures again while the best result so far is below
+  4x the floor stream or ran into the bound: at most 3 probes, the best kept
+  (the note lists them, "best of 2 probes (15.2, 469.0 MB/s)"), and no new
+  probe once the probes spent 2.25 s of timed writing. A healthy destination
+  takes one probe (~0.1 s); the worst case is about 3 s of the Start
+  evaluation. **Caching:** the result is kept per (directory, frame size) for
+  the coordinator's lifetime unless it fails the floor stream
+  (`writeRateFailsFloor`): that one is shown (the Overview panel reads the
+  last measurement) but marked unsettled, so the next measuring evaluation
+  (the next Start) probes again. A kept result is also measured again when it
+  no longer carries the floor of the current rate (a higher `target_fps`). A
+  failed measurement (the rate unknown, a warning) is kept as before, so a
+  destination that cannot be measured does not delay every evaluation. The
+  floor is `recordingFloorBytesPerSecond` (`app/RecordingCapacity.h`), the
+  same figure the gate compares.
 - An Overview session (eGrabber after a `CameraScriptRole::Overview` script,
   or `isCameraOverview()`) shows the full sensor: its rates are not used
   (`experimentSessionLocked`), so the rate falls back to `target_fps` and the

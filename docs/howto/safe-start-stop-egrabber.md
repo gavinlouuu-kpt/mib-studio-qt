@@ -6,6 +6,7 @@ This guide documents a safe pattern to start/stop Euresys EGrabber and how to tr
 
 - `-1012` is raised when a blocking `pop()/processEvent()` is aborted. This is expected during shutdown if a thread is waiting in `pop()` while `stop()` is called.
 - Samples treat ABORT as normal during stop and explicitly cancel blocking calls to wake the waiter.
+- Never wait in `pop()` with the default `GENTL_INFINITE` timeout while holding a lock that `stop()` also needs: with no frames arriving the wait never ends, `stop()` waits for the lock forever, and a UI thread that called it hangs (#840, `EGrabberCamera`). Pass a finite timeout (`ScopedBuffer(grabber, timeoutMs)`; `GC_ERR_TIMEOUT` means "no frame yet", not an error) and call `cancelPop()` before taking the lock.
 
 ## Recommended patterns from SDK samples
 

@@ -1,0 +1,50 @@
+/* Shared (owner: shell #862, coordinate changes). Part of the App.css cascade. */
+/* ---- Modal (Configure Mock / About) ---- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 14px 16px;
+  min-width: 380px;
+  max-width: 560px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.modal h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.modal .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.modal .row input[type="text"],
+.modal .row input[type="number"] {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  font: inherit;
+}
+
+.modal .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 12px;
+}
