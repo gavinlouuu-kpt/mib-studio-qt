@@ -196,6 +196,25 @@ public:
     // Workers use wait=false to avoid waiting on transactions that may join them.
     bool withIdleConfiguration(const std::function<void()>& transaction);
     bool withIdleConfiguration(const std::function<void()>& transaction, bool wait);
+    // The same, for the live tuning of the cell acceptance and target group criteria (#866 MON-080;
+    // the Qt Monitoring tune panel applies them during a run). Idle behaves exactly like
+    // withIdleConfiguration (`midRun` false). While the run is Active the transaction also runs, with
+    // `midRun` true, under the same coordinator lock, so it can neither overlap Start nor the
+    // finalization: Stop's acceptance, the worker's switch to Stopping and the file's closing all
+    // need that lock, and a run that has been asked to stop is refused here. The caller must change
+    // nothing but the tune criteria and the provenance text (processingPatchIsTuneOnly); a
+    // withIdleConfiguration nested in a midRun transaction is refused (the run is not idle).
+    // Refused (false, transaction not run) when the experiment is Starting, Stopping or Failed, when
+    // an Active run is being stopped, and on a PL instrument (`refusal`, when given, then says why;
+    // it stays empty for the plain "not idle" cases): the PL runs with the profile compiled at Start,
+    // so a host-side change during the run would only make the file's recorded settings untrue.
+    bool withTuneConfiguration(const std::function<void(bool midRun)>& transaction, std::string* refusal = nullptr);
+    // The rule withTuneConfiguration applies to a run that is not Idle, so the table of refusals can
+    // be tested without driving a run into every state: true only for an Active run that holds a
+    // run (`hasRun`), has not been asked to stop and is processed on the host; `why` gets the reason
+    // for the cases that have one (an Active run that is being stopped, a PL instrument).
+    static bool midRunTuneAllowed(ExperimentRunState state, bool hasRun, bool stopping, bool hostProcessing,
+                                  std::string* why = nullptr);
     bool hasUnresolvedFault() const;
 
 private:

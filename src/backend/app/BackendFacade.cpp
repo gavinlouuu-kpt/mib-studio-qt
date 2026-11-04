@@ -926,14 +926,59 @@ namespace backend::bridge
         return {false, BackendCommandType::Recording, "Unknown recording command"};
     }
 
+    namespace
+    {
+        // While an experiment is Active only a configJson patch of image_processing that names tune
+        // criteria alone (app::processingPatchIsTuneOnly; config_version may ride along as the usual
+        // freshness check) is accepted: empty when the command qualifies, else what is locked.
+        std::string midRunTuneCommandRefusal(const ProcessingSettingsCommand& command)
+        {
+            if (command.config || command.roi || command.realtimeEnabled || command.realtimeDropFrames ||
+                command.realtimeProcessingMode || command.realtimeBatchSettings || command.pixelToMicronFactor ||
+                command.flushInterval)
+                return "only the cell acceptance and target group criteria can change (as an image_processing patch)";
+            if (!command.configJson)
+                return "nothing to apply";
+            try
+            {
+                const auto doc = nlohmann::json::parse(*command.configJson);
+                if (!doc.is_object() || !doc.contains("image_processing"))
+                    return "only the cell acceptance and target group criteria can change (as an image_processing patch)";
+                for (auto it = doc.begin(); it != doc.end(); ++it)
+                    if (it.key() != "image_processing" && it.key() != "config_version")
+                        return it.key() + " cannot change until it ends";
+                std::string why;
+                if (!app::processingPatchIsTuneOnly(doc.at("image_processing"), &why))
+                    return why + " cannot change until it ends";
+            }
+            catch (const std::exception& e)
+            {
+                return std::string("not a valid configuration patch (") + e.what() + ")";
+            }
+            return {};
+        }
+    } // namespace
+
     BackendCommandResult
     BackendFacade::handleProcessingSettingsCommand(const ProcessingSettingsCommand& command) {
         BackendCommandResult result{false, BackendCommandType::ProcessingSettings, "Processing settings are locked during an experiment"};
-        backend_.experiment().withIdleConfiguration([&] {
+        std::string refusal;
+        // Idle, or Active with only the tune criteria (#866 MON-080): see ExperimentCoordinator::withTuneConfiguration.
+        const bool entered = backend_.experiment().withTuneConfiguration([&](bool midRun) {
             result = [&]() -> BackendCommandResult {
 
+        if (midRun) {
+            // The run keeps everything but the cell acceptance and target group criteria: refuse
+            // any other part of the command, naming it, before anything is parsed or applied.
+            const std::string locked = midRunTuneCommandRefusal(command);
+            if (!locked.empty()) {
+                const std::string message = "Processing settings are locked during an experiment: " + locked;
+                return {false, BackendCommandType::ProcessingSettings, message};
+            }
+        }
         auto& processing = backend_.processing();
         auto merged = processing.getProcessingConfig();
+        const auto liveConfig = merged;
         auto mode = processing.getRealtimeProcessingMode();
         auto batch = processing.getRealtimeBatchSettings();
         auto roi = processing.getRealtimeRoi();
@@ -971,6 +1016,7 @@ namespace backend::bridge
                                                             : doc}}
                         .dump(),
                     merged);
+                if (midRun) merged = app::withTuneCriteriaFrom(liveConfig, merged); // the whitelist already says so; belt and braces
                 touchesImage = true;
                 if (doc.contains("realtime_processing")) {
                     const auto& rt = doc.at("realtime_processing");
@@ -1048,6 +1094,7 @@ namespace backend::bridge
                 throw std::runtime_error(
                     "Current runtime configuration provenance must be an object");
             runtime["image_processing"] = processing::config_json::toJson(merged);
+            if (!midRun) { // a run in progress changes the criteria only, so the rest of its provenance stands
             runtime["pixel_to_micron_factor"] = factor;
             runtime["buffer_threshold"] = flush;
             runtime["realtime_processing"] = {
@@ -1061,6 +1108,7 @@ namespace backend::bridge
                 {"worker_count", batch.workerCount},
                 {"max_batch_delay_ms", batch.maxBatchDelayMs}};
             runtime["roi"] = {{"x", roi.x}, {"y", roi.y}, {"w", roi.w}, {"h", roi.h}};
+            }
             provenance = runtime.dump();
         } catch (const std::exception& e) {
             const std::string message =
@@ -1068,6 +1116,15 @@ namespace backend::bridge
             emitEvent(BackendErrorEvent{BackendErrorSource::ConfigCore,
                                         BackendCommandType::ProcessingSettings, message});
             return {false, BackendCommandType::ProcessingSettings, message};
+        }
+        if (midRun) {
+            // Only the criteria and the provenance text: no realtime, ROI, batch, factor or flush
+            // setter and no realtime restart under a running experiment.
+            processing.setProcessingConfig(merged);
+            backend_.setLastConfigJson(provenance);
+            SPDLOG_INFO("BackendFacade: tuned the running experiment ({})",
+                        command.configJson ? *command.configJson : std::string{});
+            return {true, BackendCommandType::ProcessingSettings, "Processing settings applied"};
         }
         // No setter is reached until the entire JSON and typed candidate is valid.
         if (touchesImage) processing.setProcessingConfig(merged);
@@ -1092,7 +1149,9 @@ namespace backend::bridge
         });
         return {true, BackendCommandType::ProcessingSettings, "Processing settings applied"};
             }();
-        });
+        }, &refusal);
+        if (!entered && !refusal.empty())
+            result.message = "Processing settings are locked during an experiment: " + refusal;
         return result;
     }
 
