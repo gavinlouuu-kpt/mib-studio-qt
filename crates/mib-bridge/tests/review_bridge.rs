@@ -244,6 +244,35 @@ fn review_bridge_reads_the_fixture_file() {
     );
     let _ = std::fs::remove_file(&existing);
     let _ = std::fs::remove_file(&fresh);
+    // Review ABI 8 (#867): the Qt BatchMaskDialog's setup, preview and
+    // overrides. The fixture: 10 valid frames, recorded ROI and background.
+    let setup: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_review_regenerate_setup(2, "")).unwrap();
+    assert_eq!(setup["ok"], true, "{setup}");
+    assert_eq!(setup["preview_dataset"], "/valid_frames/images");
+    assert_eq!(setup["frame_count"], "10");
+    assert_eq!(setup["roi_recorded"], true);
+    assert!(setup["roi"]["w"].as_u64().unwrap() > 0 && setup["config"]["gaussian_blur_size"].is_i64(), "{setup}");
+    let refused: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_review_regenerate_setup(99, "")).unwrap();
+    assert_eq!(refused["ok"], false);
+    let preview = bridge.pin_mut().fetch_review_regenerate_preview(2, "", 9);
+    assert!(preview.valid && preview.frame_index == 9 && preview.data.len() as u64 == preview.width * preview.height);
+    assert!(!bridge.pin_mut().fetch_review_regenerate_preview(2, "", 10).valid, "past the set");
+    let dialog = fixture_path("regen_dialog");
+    let _ = std::fs::remove_file(&dialog);
+    let request = serde_json::json!({
+        "source": 2, "output_path": dialog.to_string_lossy(), "use_recorded_config": true,
+        "image_processing": {"gaussian_blur_size": 5, "area_threshold_min": 1},
+        "roi": {"x": 0, "y": 0, "w": 0, "h": 0}, "background": "frame",
+        "background_index": 3, "background_dataset": "/valid_frames/images",
+    });
+    let started = bridge.pin_mut().review_regenerate_masks_json(&request.to_string());
+    assert!(started.ok, "{}", started.message);
+    let done = wait_terminal(&mut bridge, started.operation_id);
+    assert_eq!((done.kind, done.state), (3, 2), "regenerate json: {}", done.message);
+    assert!(dialog.exists());
+    let _ = std::fs::remove_file(&dialog);
+    let bad = bridge.pin_mut().review_regenerate_masks_json(r#"{"output_path":"x.h5","background":"saved"}"#);
+    assert!(!bad.ok && bad.operation_id == 0 && bad.message.contains("background"), "{}", bad.message);
     // Refusals: unknown regenerate source, empty batch.
     assert!(!bridge.pin_mut().review_regenerate_masks(99, "", 0, 0, "x.h5", true, false).ok);
     assert!(!bridge.pin_mut().review_batch_export(Vec::new(), "/tmp", true, true, 0, u64::MAX).ok);
@@ -374,8 +403,8 @@ fn run_identity_in_info_and_the_probe() {
         serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
     assert_eq!(
         ffi::review_bridge_abi_version(),
-        7,
-        "review ABI 7 (#867 Export FCS; 6 is #716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
+        8,
+        "review ABI 8 (#867 regenerate setup / preview / JSON request; 7 is #867 Export FCS; 6 is #716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
     );
     let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
     assert_eq!(max_paths, 256);

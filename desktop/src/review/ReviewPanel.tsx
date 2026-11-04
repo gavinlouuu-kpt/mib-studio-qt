@@ -422,7 +422,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     (r: RegenerateRequest) =>
       new Promise<string | null>((settle) => {
         jobs
-          .start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasks(r), undefined, {
+          .start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasksJson(r), undefined, {
             onRefused: (message) => settle(message),
             onStarted: () => {
               settle(null);
@@ -432,8 +432,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           .then(async (job) => {
             // The Qt tab reloads from the regenerated file.
             if (job?.phase === "completed") {
-              rememberExportDir(dirName(r.outputPath));
-              await openPath(r.outputPath);
+              rememberExportDir(dirName(r.output_path));
+              await openPath(r.output_path);
             }
           })
           .catch((e) => {

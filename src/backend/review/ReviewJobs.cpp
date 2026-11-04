@@ -3,13 +3,16 @@
 #include "backend/review/Reanalysis.h"
 #include "backend/app/WallClock.h"
 
+#include "backend/processing/BatchMaskSources.h"
 #include "backend/processing/KdeCoreRecord.h"
 #include "backend/processing/MonitoringDensity.h"
+#include "backend/processing/ProcessingConfigJson.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/review/ReviewSession.h"
 
+#include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
@@ -17,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <cmath>
 #include <condition_variable>
 #include <exception>
@@ -56,7 +60,131 @@ namespace backend::review
                                    : static_cast<std::size_t>(r.endInclusive);
             return out;
         }
+
+        // Review ABI 8 (#867): the open file's preview set of a regenerate
+        // source (Qt's hdf5ImageDatasetPath: a recording's recorded images,
+        // else the valid images; the invalid range its invalid images).
+        std::string regeneratePreviewDataset(RegenerateSource source, bool recording)
+        {
+            if (source == RegenerateSource::CurrentInvalid && !recording) return "/invalid_frames/images";
+            return recording ? "/recorded_frames/images" : "/valid_frames/images";
+        }
+
+        bool regenerateFromOpenFile(RegenerateSource source)
+        {
+            return source == RegenerateSource::CurrentValid || source == RegenerateSource::CurrentInvalid ||
+                   source == RegenerateSource::WholeFile;
+        }
+
+        bool regenerateHdfDataset(const std::string &dataset)
+        {
+            return dataset == "/valid_frames/images" || dataset == "/invalid_frames/images" ||
+                   dataset == "/recorded_frames/images";
+        }
     } // namespace
+
+    bool parseRegenerateMasksJson(const std::string &text, RegenerateMasksRequest &out, std::string &error)
+    {
+        using nlohmann::json;
+        RegenerateMasksRequest r;
+        try
+        {
+            const auto request = json::parse(text);
+            if (!request.is_object()) throw std::runtime_error("The request must be a JSON object");
+            const auto u64 = [&](const char *name, std::uint64_t fallback) {
+                if (!request.contains(name)) return fallback;
+                const auto &value = request.at(name);
+                if (!value.is_number_unsigned())
+                    throw std::runtime_error(std::string(name) + " must be a nonnegative integer");
+                return value.get<std::uint64_t>();
+            };
+            const auto source = u64("source", static_cast<std::uint64_t>(RegenerateSource::WholeFile));
+            if (source > static_cast<std::uint64_t>(RegenerateSource::Folder))
+                throw std::runtime_error("Unknown regenerate source");
+            r.source = static_cast<RegenerateSource>(source);
+            r.sourcePath = request.value("source_path", std::string());
+            r.startIndex = u64("start", 0);
+            r.count = u64("count", 0);
+            r.outputPath = request.value("output_path", std::string());
+            r.useRecordedConfig = request.value("use_recorded_config", true);
+            r.synthesizeBackground = request.value("synthesize_background", false);
+            if (request.contains("image_processing"))
+            {
+                const auto &config = request.at("image_processing");
+                if (!config.is_object()) throw std::runtime_error("image_processing must be an object");
+                services::ProcessingConfig probe;
+                std::string configError;
+                if (!processing::config_json::fromJson(config, probe, &configError))
+                    throw std::runtime_error("Processing config: " + configError);
+                r.imageProcessingJson = config.dump();
+            }
+            if (request.contains("roi"))
+            {
+                const auto &roi = request.at("roi");
+                int v[4] = {0, 0, 0, 0};
+                const char *names[4] = {"x", "y", "w", "h"};
+                for (int i = 0; i < 4; ++i)
+                {
+                    const auto &field = roi.at(names[i]);
+                    if (!field.is_number_unsigned() || field.get<std::uint64_t>() > 1000000)
+                        throw std::runtime_error("ROI fields must be integers from 0 to 1000000");
+                    v[i] = static_cast<int>(field.get<std::uint64_t>());
+                }
+                // A zero width or height is the full frame.
+                r.roi = v[2] > 0 && v[3] > 0 ? services::ProcessingService::Roi{v[0], v[1], v[2], v[3]}
+                                             : services::ProcessingService::Roi{0, 0, 0, 0};
+                r.overrideRoi = true;
+            }
+            const std::string background = request.value("background", std::string("recorded"));
+            if (background == "recorded") r.background = RegenerateBackground::Recorded;
+            else if (background == "none") r.background = RegenerateBackground::None;
+            else if (background == "frame")
+            {
+                r.background = RegenerateBackground::Frame;
+                if (!request.contains("background_index")) throw std::runtime_error("background_index is required");
+                r.backgroundIndex = u64("background_index", 0);
+                r.backgroundDataset = request.value("background_dataset", std::string());
+                if (regenerateFromOpenFile(r.source) && !regenerateHdfDataset(r.backgroundDataset))
+                    throw std::runtime_error("Unsupported background dataset");
+            }
+            else
+                throw std::runtime_error("background must be recorded, none or frame");
+        }
+        catch (const std::exception &failure)
+        {
+            error = failure.what();
+            return false;
+        }
+        out = std::move(r);
+        return true;
+    }
+
+    std::string regenerateSetupJson(bool ok, const RegenerateSetup &setup, const std::string &error)
+    {
+        using nlohmann::json;
+        if (!ok) return json{{"ok", false}, {"error", error}}.dump();
+        const auto &c = setup.config;
+        return json{{"ok", true},
+                    {"error", ""},
+                    {"preview_dataset", setup.previewDataset},
+                    {"frame_count", std::to_string(setup.frameCount)},
+                    // The Processing Config group's eight fields (config.json names).
+                    {"config",
+                     {{"gaussian_blur_size", c.gaussian_blur_size},
+                      {"bg_subtract_threshold", c.bg_subtract_threshold},
+                      {"morph_kernel_size", c.morph_kernel_size},
+                      {"morph_iterations", c.morph_iterations},
+                      {"area_threshold_min", c.area_threshold_min},
+                      {"area_threshold_max", c.area_threshold_max},
+                      {"deformability_threshold_min", c.deformability_threshold_min},
+                      {"deformability_threshold_max", c.deformability_threshold_max}}},
+                    {"config_recorded", setup.configRecorded},
+                    {"roi", {{"x", setup.roi.x}, {"y", setup.roi.y}, {"w", setup.roi.w}, {"h", setup.roi.h}}},
+                    {"roi_recorded", setup.roiRecorded},
+                    {"has_background", setup.hasBackground},
+                    {"core_warning", setup.coreWarning}}
+            .dump();
+    }
 
     ReviewJobLane laneOf(ReviewJobKind kind)
     {
@@ -866,6 +994,135 @@ namespace backend::review
         return true;
     }
 
+    bool ReviewJobs::regenerateSetup(RegenerateSource source, const std::string &sourcePath, RegenerateSetup &out,
+                                     std::string *error)
+    {
+        out = RegenerateSetup{};
+        // The probe's rule (lock order: the lanes' mutex, then the session's).
+        std::scoped_lock lock(impl_->mutex);
+        for (const auto &lane : impl_->lanes)
+        {
+            if (lane.busy)
+            {
+                if (error) *error = "A review job is running; open Regenerate masks when it finishes";
+                return false;
+            }
+        }
+        if (!regenerateFromOpenFile(source))
+        {
+            if (source != RegenerateSource::Avi && source != RegenerateSource::Folder)
+            {
+                if (error) *error = "Unknown regenerate source";
+                return false;
+            }
+            out.frameCount = services::batch_masks::countSourceFrames(
+                source == RegenerateSource::Avi ? "avi" : "folder", sourcePath);
+            return true;
+        }
+        const std::string path = impl_->session.filePath();
+        if (path.empty())
+        {
+            if (error) *error = "No review file open";
+            return false;
+        }
+        services::Hdf5Service reader;
+        if (!reader.loadFile(path))
+        {
+            if (error) *error = "cannot open " + path;
+            return false;
+        }
+        const bool recording = reader.isRecordingFile();
+        out.previewDataset = regeneratePreviewDataset(source, recording);
+        std::size_t count = 0;
+        int h = 0, w = 0, c = 0;
+        if (reader.getDatasetInfo(out.previewDataset, count, h, w, c)) out.frameCount = count;
+        services::ProcessingConfig recorded;
+        if (reader.readRecordedProcessingConfig(recorded))
+        {
+            out.config = recorded;
+            out.configRecorded = true;
+        }
+        if (!recording)
+        {
+            std::uint64_t first = 0, last = 0;
+            std::size_t valid = 0, invalid = 0;
+            services::ProcessingService::Roi roi{0, 0, 0, 0};
+            if (reader.readExperimentInfo(first, last, valid, invalid, &roi) && roi.w > 0 && roi.h > 0)
+            {
+                out.roi = roi;
+                out.roiRecorded = true;
+            }
+        }
+        cv::Mat background;
+        out.hasBackground = reader.readBackgroundImage(background) && !background.empty();
+        processing::ProcessingCoreIdentity recordedCore;
+        if (impl_->processing && reader.readProcessingCoreIdentity(recordedCore))
+        {
+            const auto active = impl_->processing->activeProcessingCoreIdentity();
+            // The Qt BatchMaskDialog's warning, word for word.
+            if (recordedCore != active)
+                out.coreWarning = "This file was recorded with processing core " + recordedCore.version + " (contract " +
+                                  std::to_string(recordedCore.contractVersion) +
+                                  "), but regeneration will use the currently active core " + active.version +
+                                  " (contract " + std::to_string(active.contractVersion) +
+                                  ").\n\nThe application will not switch cores automatically; the regenerated "
+                                  "output records the active identity.";
+        }
+        return true;
+    }
+
+    bool ReviewJobs::regeneratePreview(RegenerateSource source, const std::string &sourcePath, std::uint64_t index,
+                                       ReviewImage &out, std::string *error)
+    {
+        out = ReviewImage{};
+        std::scoped_lock lock(impl_->mutex);
+        for (const auto &lane : impl_->lanes)
+        {
+            if (lane.busy)
+            {
+                if (error) *error = "A review job is running";
+                return false;
+            }
+        }
+        std::string kind, path, dataset;
+        if (regenerateFromOpenFile(source))
+        {
+            path = impl_->session.filePath();
+            if (path.empty())
+            {
+                if (error) *error = "No review file open";
+                return false;
+            }
+            kind = "hdf";
+            dataset = regeneratePreviewDataset(source, impl_->session.isRecordingFile());
+        }
+        else if (source == RegenerateSource::Avi || source == RegenerateSource::Folder)
+        {
+            kind = source == RegenerateSource::Avi ? "avi" : "folder";
+            path = sourcePath;
+        }
+        else
+        {
+            if (error) *error = "Unknown regenerate source";
+            return false;
+        }
+        cv::Mat image;
+        if (!services::batch_masks::loadPreview(kind, path, dataset, static_cast<std::size_t>(index), image) ||
+            image.empty() || image.type() != CV_8UC1)
+        {
+            if (error) *error = "Cannot preview frame " + std::to_string(index + 1) + " of this source";
+            return false;
+        }
+        out.frameIndex = index;
+        out.width = static_cast<std::uint64_t>(image.cols);
+        out.height = static_cast<std::uint64_t>(image.rows);
+        out.channels = 1;
+        out.data.resize(out.width * out.height);
+        for (int y = 0; y < image.rows; ++y)
+            std::memcpy(out.data.data() + static_cast<std::size_t>(y) * out.width, image.ptr<std::uint8_t>(y), out.width);
+        return true;
+    }
+
     std::string ReviewJobs::computedCoreJson() const
     {
         const std::string current = impl_->session.filePath();
@@ -1189,6 +1446,34 @@ namespace backend::review
             if (error) *error = kReanalysisOutputExists;
             return 0;
         }
+        // Review ABI 8 (#867): the overrides are checked before the job starts.
+        nlohmann::json configOverride;
+        if (!req.imageProcessingJson.empty())
+        {
+            services::ProcessingConfig probe;
+            std::string configError;
+            try
+            {
+                configOverride = nlohmann::json::parse(req.imageProcessingJson);
+            }
+            catch (const std::exception &e)
+            {
+                configError = e.what();
+            }
+            if (configError.empty() && !processing::config_json::fromJson(configOverride, probe, &configError) &&
+                configError.empty())
+                configError = "malformed";
+            if (!configError.empty())
+            {
+                if (error) *error = "Processing config: " + configError;
+                return 0;
+            }
+        }
+        if (req.background == RegenerateBackground::Frame && needsFile && !regenerateHdfDataset(req.backgroundDataset))
+        {
+            if (error) *error = "Unsupported background dataset";
+            return 0;
+        }
         const bool recordingFile = impl_->session.isRecordingFile();
         // #758: objects are validated at the open file's recorded factor with
         // recorded settings (this fallback when it records none, as the file
@@ -1196,7 +1481,7 @@ namespace backend::review
         // AVI / folder sources. The engine reads it from the source and
         // passes it per call: the shared kernel's own factor is never set.
         const double fallback = impl_->session.fallbackPixelToMicron();
-        return impl_->startOwn(ReviewJobKind::RegenerateMasks, [impl = impl_.get(), req, source, recordingFile, fallback](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::RegenerateMasks, [impl = impl_.get(), req, source, recordingFile, fallback, configOverride](std::uint64_t id, auto flag) {
             // YOFO Review's regenerate on the shared reanalysis engine
             // (backend/review/Reanalysis.h) with its D6 options: timestamps
             // rebased to the first selected frame, a median-of-32 synthetic
@@ -1259,6 +1544,21 @@ namespace backend::review
                     r.useRecordedPixelToMicron = true;
                     r.pixelToMicron = fallback;
                 }
+            }
+            // Review ABI 8 (#867): the dialog's Processing Config fields on top
+            // of the config chosen above, its ROI, and its background choice.
+            if (!configOverride.is_null()) processing::config_json::fromJson(configOverride, r.config);
+            if (req.overrideRoi)
+            {
+                r.overrideRoi = true;
+                r.roi = req.roi;
+            }
+            if (req.background == RegenerateBackground::None || req.background == RegenerateBackground::Frame)
+                r.clearBackground = true;
+            if (req.background == RegenerateBackground::Frame)
+            {
+                r.backgroundIndex = req.backgroundIndex;
+                r.backgroundDataset = r.sourceKind == "hdf" ? req.backgroundDataset : std::string();
             }
             const auto onProgress = [&](std::uint64_t done, std::uint64_t total) {
                 if ((done % 25) == 0 || done == total)

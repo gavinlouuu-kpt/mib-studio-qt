@@ -23,7 +23,8 @@ import {
 import { OPERATION_STATES } from "../../bridgeContract";
 import { REVIEW_OPERATION_KINDS } from "../reviewContract";
 import { REGENERATE_SOURCE, type ReviewEvent } from "../reviewBridge";
-import { regenerateRequest } from "../RegenerateMasks";
+import { regenerateCalibration, regenerateRequest } from "../RegenerateMasks";
+import { DEFAULT_REGEN_CONFIG } from "../regenerate/regenerateForm";
 import { loadPixelToMicron, PX_TO_UM_KEY } from "../ReviewApp";
 import { fcsOutcomeText, outcomeText, outputPathOf, parseFcsOutcome, shortProgress } from "./ExportDialogs";
 import { applyJobEvent, isTerminal, type TrackedJob } from "./useReviewJobs";
@@ -187,17 +188,50 @@ describe("job tracking", () => {
 });
 
 describe("regenerate masks form", () => {
-  const base = { source: REGENERATE_SOURCE.WholeFile as number, sourcePath: "", from: "1", count: "0", outputPath: "/o/x.h5", useRecordedConfig: true, synthesizeBackground: false, setSize: 300 };
+  const base = {
+    source: REGENERATE_SOURCE.WholeFile as number,
+    sourcePath: "",
+    from: "1",
+    count: "100",
+    outputPath: "/o/x.h5",
+    setSize: 300,
+    config: DEFAULT_REGEN_CONFIG,
+    roi: { x: 2, y: 2, w: 28, h: 20 },
+    background: { kind: "recorded" } as const,
+    synthesizeBackground: true,
+  };
   type Form = Parameters<typeof regenerateRequest>[0];
-  it("builds requests with 0-based starts", () => {
+  it("builds review_regenerate_masks_json requests with 0-based starts (#867)", () => {
     expect(regenerateRequest(base as Form)).toEqual({
       ok: true,
-      request: { source: REGENERATE_SOURCE.WholeFile, sourcePath: "", startIndex: 0, count: 0, outputPath: "/o/x.h5", useRecordedConfig: true, synthesizeBackground: false },
+      request: {
+        source: REGENERATE_SOURCE.WholeFile,
+        source_path: "",
+        start: 0,
+        count: 0,
+        output_path: "/o/x.h5",
+        use_recorded_config: true,
+        synthesize_background: true,
+        image_processing: DEFAULT_REGEN_CONFIG,
+        roi: { x: 2, y: 2, w: 28, h: 20 },
+        background: "recorded",
+      },
     });
     const ranged = regenerateRequest({ ...base, source: REGENERATE_SOURCE.CurrentValid, from: "11", count: "20" } as Form);
-    expect(ranged.ok && [ranged.request.startIndex, ranged.request.count]).toEqual([10, 20]);
-    const avi = regenerateRequest({ ...base, source: REGENERATE_SOURCE.Avi, sourcePath: "/v.avi" } as Form);
-    expect(avi.ok && [avi.request.sourcePath, avi.request.useRecordedConfig]).toEqual(["/v.avi", false]);
+    expect(ranged.ok && [ranged.request.start, ranged.request.count]).toEqual([10, 20]);
+    const avi = regenerateRequest({ ...base, source: REGENERATE_SOURCE.Avi, sourcePath: "/v.avi", roi: null } as Form);
+    expect(avi.ok && [avi.request.source_path, avi.request.use_recorded_config, avi.request.roi]).toEqual(["/v.avi", false, { x: 0, y: 0, w: 0, h: 0 }]);
+    // Set as Background: the source index and, for the open file, its dataset.
+    const frame = regenerateRequest({ ...base, background: { kind: "frame", index: 41, dataset: "/valid_frames/images", label: 2 } } as Form);
+    expect(frame.ok && [frame.request.background, frame.request.background_index, frame.request.background_dataset]).toEqual(["frame", 41, "/valid_frames/images"]);
+    const aviFrame = regenerateRequest({ ...base, source: REGENERATE_SOURCE.Avi, sourcePath: "/v.avi", background: { kind: "frame", index: 3, dataset: "", label: 4 } } as Form);
+    expect(aviFrame.ok && aviFrame.request.background_dataset).toBeUndefined();
+    // Only the eight Processing Config fields are sent: every other setting stays the base config's.
+    const edited = regenerateRequest({ ...base, config: { ...DEFAULT_REGEN_CONFIG, gaussian_blur_size: 7 } } as Form);
+    expect(edited.ok && Object.keys(edited.request.image_processing!).sort()).toEqual(
+      ["area_threshold_max", "area_threshold_min", "bg_subtract_threshold", "deformability_threshold_max", "deformability_threshold_min", "gaussian_blur_size", "morph_iterations", "morph_kernel_size"],
+    );
+    expect(edited.ok && edited.request.image_processing!.gaussian_blur_size).toBe(7);
   });
   it("explains what is missing", () => {
     expect(regenerateRequest({ ...base, outputPath: "" } as Form)).toEqual({ ok: false, error: "Choose where to save the new file" });
@@ -205,6 +239,26 @@ describe("regenerate masks form", () => {
     expect(regenerateRequest({ ...base, source: REGENERATE_SOURCE.CurrentValid, from: "0" } as Form).ok).toBe(false);
     expect(regenerateRequest({ ...base, source: REGENERATE_SOURCE.CurrentValid, from: "301" } as Form)).toEqual({ ok: false, error: "This set has 300 images" });
     expect(regenerateRequest({ ...base, source: REGENERATE_SOURCE.CurrentInvalid, count: "-1" } as Form).ok).toBe(false);
+    expect(regenerateRequest({ ...base, roi: { x: 20, y: 0, w: 20, h: 10 }, frameWidth: 32, frameHeight: 24 } as Form)).toEqual({
+      ok: false,
+      error: "The ROI reaches past the 32 × 24 frame",
+    });
+  });
+  it("names the factor and E-LUT the run will use (REVIEW-064)", () => {
+    const info = (over: object) => ({ file_open: true, pixel_to_micron: 0.5, pixel_to_micron_from_file: true, identity: { emodulus_lut: null, emodulus_lut_provenance: null }, ...over }) as never;
+    expect(regenerateCalibration(info({}), false)).toEqual([
+      "Validated at 0.5000 µm/px (recorded in the file)",
+      "E from the review app's own E-LUT, if one is loaded: the source records none",
+    ]);
+    expect(regenerateCalibration(info({ pixel_to_micron: 0.4886, pixel_to_micron_from_file: false }), false)[0]).toBe(
+      "Validated at 0.4886 µm/px (fallback from Preferences: the file records none)",
+    );
+    const lut = { loaded: true, lut_id: "lut-a", revision: "r1" };
+    expect(regenerateCalibration(info({ identity: { emodulus_lut: lut, emodulus_lut_provenance: "snapshot" } }), false)[1]).toBe("E from the source run's E-LUT lut-a r1");
+    expect(regenerateCalibration(info({ identity: { emodulus_lut: { ...lut, loaded: false }, emodulus_lut_provenance: "snapshot" } }), false)[1]).toBe(
+      "E not computed: the source run loaded no E-LUT",
+    );
+    expect(regenerateCalibration(info({}), true)[0]).toBe("Validated at 0.4886 µm/px (the default: AVI and folder sources record no factor)");
   });
 });
 

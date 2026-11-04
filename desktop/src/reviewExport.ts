@@ -41,6 +41,12 @@ export interface ReviewExportStatus {
    * those, the valid ones (`valid_objects`, #763 F18). */
   objects?: string;
   valid_objects?: string;
+  /** Reanalysis, completed only (#867 REVIEW-064): the px→µm factor the objects were validated at and
+   * where it came from (the source file's own, the live factor when it records none, or the
+   * operator's), and the E-LUT E was computed with. */
+  pixel_to_micron?: number;
+  pixel_to_micron_source?: "recorded" | "fallback" | "operator";
+  emodulus_lut?: string;
   warnings?: string[];
   error?: string;
 }

@@ -596,6 +596,27 @@ pub mod review_ffi {
             use_recorded_config: bool,
             synthesize_background: bool,
         ) -> ReviewResult;
+        /// Review ABI 8 (#867): what the regenerate dialog shows for
+        /// `source` before a run (review-contract.json
+        /// `review_regenerate_setup` JSON: the preview set and its frame
+        /// count, the recorded or default config's eight Processing Config
+        /// fields, the recorded ROI, whether a background is saved, and the
+        /// Qt processing-core mismatch text). Refused (`"ok": false`) while a
+        /// review job runs.
+        fn fetch_review_regenerate_setup(self: Pin<&mut ReviewBridge>, source: u32, source_path: &str) -> String;
+        /// Review ABI 8 (#867): Mono8 frame `index` of the setup's preview set
+        /// (`valid = false` past its end, while a job runs, or unreadable).
+        fn fetch_review_regenerate_preview(
+            self: Pin<&mut ReviewBridge>,
+            source: u32,
+            source_path: &str,
+            index: u64,
+        ) -> ReviewFrame;
+        /// Review ABI 8 (#867): `review_regenerate_masks` with the Qt
+        /// dialog's overrides (review-contract.json
+        /// `review_regenerate_masks_json`: `image_processing`, `roi`,
+        /// `background`); the same job (kind `RegenerateMasks`).
+        fn review_regenerate_masks_json(self: Pin<&mut ReviewBridge>, request_json: &str) -> ReviewResult;
         fn review_compute_core(self: Pin<&mut ReviewBridge>, core_fraction: f64) -> ReviewResult;
         /// The record the last ComputeCore / Density job produced (JSON;
         /// empty when none). Save it with `review_save_core_record`.

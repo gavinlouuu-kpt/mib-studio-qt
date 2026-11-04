@@ -20,7 +20,7 @@ const reference = { path: "/data/runs/fixture_3.h5", run_id: "33333333-3333-4333
 
 it("pins the contract's versions and bounds", () => {
   expect(BRIDGE_ABI_VERSION).toBe(44);
-  expect(REVIEW_ABI_VERSION).toBe(7); // 6 added review_run_statistics; 7 is #867 Export FCS
+  expect(REVIEW_ABI_VERSION).toBe(8); // 6 added review_run_statistics; 7 is #867 Export FCS; 8 is #867 regenerate setup/preview/JSON
   expect(RUN_QUICK_LOOK).toEqual({ max_paths: 32, path_max_bytes: 4096, run_id_max_bytes: 128, overlay_max_points: 2000,
     low_n_valid_rows: 200, cache_entries: 64, schema_version: 1 });
   expect(REVIEW_RUN_STATISTICS).toEqual({ max_paths: 32, path_max_bytes: 4096 });

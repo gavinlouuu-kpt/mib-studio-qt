@@ -500,9 +500,18 @@ int main()
         done.published = true;
         done.produced = 18;
         done.valid = 5;
+        done.pixelToMicron = 0.5;
+        done.pixelToMicronRecorded = true;
+        done.eModulusLutResolved = true;
+        done.eModulusLutBasis = backend::review::EModulusLutBasis::NotLoaded;
+        // #867 REVIEW-064: a published run names its factor, its source and its E.
         MIB_EXPECT(backend::review::reanalysisTerminalStatusJson(7, r, done) ==
-                       R"({"error":"","final_path":"/out/new.h5","objects":"18","operation_id":"7","retained_partial_path":"","state":"completed","valid_objects":"5","warnings":[]})",
-                   "completed status");
+                       R"({"emodulus_lut":"E not computed: the source run loaded no E-LUT","error":"","final_path":"/out/new.h5","objects":"18","operation_id":"7","pixel_to_micron":0.5,"pixel_to_micron_source":"recorded","retained_partial_path":"","state":"completed","valid_objects":"5","warnings":[]})",
+                   "completed status: " + backend::review::reanalysisTerminalStatusJson(7, r, done));
+        done.pixelToMicronRecorded = false;
+        MIB_EXPECT(backend::review::reanalysisTerminalStatusJson(7, r, done).find(R"("pixel_to_micron_source":"fallback")") !=
+                       std::string::npos,
+                   "a factor the source does not record is the fallback");
         ReanalysisOutcome cancelled;
         cancelled.cancelled = true;
         cancelled.error = "Reanalysis cancelled";

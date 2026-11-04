@@ -69,6 +69,11 @@ public:
     ReviewResult review_regenerate_masks(std::uint32_t source, rust::Str source_path, std::uint64_t start_index,
                                          std::uint64_t count, rust::Str output_path, bool use_recorded_config,
                                          bool synthesize_background);
+    // Review ABI 8 (#867): the Qt BatchMaskDialog's groups (review-contract.json
+    // review_regenerate_setup / review_regenerate_masks_json).
+    rust::String fetch_review_regenerate_setup(std::uint32_t source, rust::Str source_path);
+    ReviewFrame fetch_review_regenerate_preview(std::uint32_t source, rust::Str source_path, std::uint64_t index);
+    ReviewResult review_regenerate_masks_json(rust::Str request_json);
     ReviewResult review_compute_core(double core_fraction);
     rust::String fetch_review_computed_core_json();
     ReviewResult review_request_density(double bandwidth_factor, double core_fraction, std::uint32_t levels,

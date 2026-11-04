@@ -316,6 +316,40 @@ export interface SeriesRange {
 
 export const ALL_SERIES: SeriesRange = { exportSeries: true, start: 0, end: "" };
 
+/** Contract review_regenerate_setup (review ABI 8, #867). */
+export interface RegenerateSetup {
+  ok: boolean;
+  error: string;
+  /** The open file's dataset the preview reads ("" for AVI / folder). */
+  preview_dataset?: string;
+  /** Decimal string: the preview set's frames. */
+  frame_count?: string;
+  /** The recorded config's eight Processing Config fields, else the defaults. */
+  config?: Record<string, number>;
+  config_recorded?: boolean;
+  roi?: { x: number; y: number; w: number; h: number };
+  roi_recorded?: boolean;
+  has_background?: boolean;
+  /** Qt's processing-core mismatch text, "" when none. */
+  core_warning?: string;
+}
+
+/** Contract review_regenerate_masks_json (review ABI 8, #867). */
+export interface RegenerateMasksJsonRequest {
+  source: number;
+  source_path: string;
+  start: number;
+  count: number;
+  output_path: string;
+  use_recorded_config: boolean;
+  synthesize_background: boolean;
+  image_processing?: Record<string, number>;
+  roi?: { x: number; y: number; w: number; h: number };
+  background?: "recorded" | "none" | "frame";
+  background_index?: number;
+  background_dataset?: string;
+}
+
 /** Contract review_regenerate_sources. */
 export const REGENERATE_SOURCE = { CurrentValid: 0, CurrentInvalid: 1, WholeFile: 2, Avi: 3, Folder: 4 } as const;
 
@@ -486,6 +520,16 @@ export const reviewBridge = {
       useRecordedConfig: args.useRecordedConfig ?? true,
       synthesizeBackground: args.synthesizeBackground ?? false,
     }),
+  /** Review ABI 8 (#867): what the Regenerate masks dialog shows for a source before a run
+   * (contract review_regenerate_setup); `ok` false while a review job runs. */
+  regenerateSetup: async (source: number, sourcePath = ""): Promise<RegenerateSetup> =>
+    JSON.parse(await invoke<string>("fetch_review_regenerate_setup", { source, sourcePath })) as RegenerateSetup,
+  /** Review ABI 8: Mono8 frame `index` of the setup's preview set (`valid` false past its end). */
+  regeneratePreview: (source: number, sourcePath: string, index: number) =>
+    pull("fetch_review_regenerate_preview", PULL_REVIEW, { source, sourcePath, index: decimalU64(index) }),
+  /** Review ABI 8: regenerate masks with the dialog's overrides (contract
+   * review_regenerate_masks_json); the same job as `regenerateMasks`. */
+  regenerateMasksJson: (request: RegenerateMasksJsonRequest) => command("review_regenerate_masks_json", { json: JSON.stringify(request) }),
   computeCore: (coreFraction: number) => command("review_compute_core", { coreFraction }),
   computedCoreJson: () => invoke<string>("fetch_review_computed_core_json"),
   requestDensity: (bandwidthFactor = 1.0, coreFraction = 0.9, levels = 8, wantCoreRecord = true) =>

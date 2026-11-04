@@ -650,6 +650,26 @@ is remembered (`mib.review.lastExportDir`), batch metrics / FCS refuse recording
 keep-partial is an option (default off). Config and export controls have interaction
 tests, not just codec tests.
 
+`reanalysisControls.tsx` (the Review stage's Regenerate masks panel, #867) follows the Qt
+`BatchMaskDialog` on the components it shares with YOFO Review
+(`desktop/src/review/regenerate/`: `RoiPreviewPanel`, `ProcessingConfigGroup`,
+`regenerateForm.ts`). **Input source**: the open HDF file with "Regenerate entire HDF5 file"
+(default on: dataset `all`) or a range (dataset, 0-based Start, Count 100), an image folder or
+an AVI. **Preview & ROI**: frames by `fetch_review_reanalysis_preview` with Prev / Next and
+"Frame i / n" (folder / AVI "Frame i": the facade has no frame count), the ROI pre-filled from
+the review metadata and drawn by dragging (Full frame sends the frame's own size, since the
+facade refuses a zero-size ROI and would otherwise keep the recorded one), Set as Background /
+Clear / Use saved, the synthetic box on by default. **Processing Config**: the eight Qt fields
+from the live config, "Reset to live defaults" re-fetches it; only those eight are sent as
+`image_processing`. The input budget defaults to the contract maxima (1 000 000 frames /
+16 384 MiB); the Save dialog proposes `<base>_remasked.h5` beside the source. Before Run the
+panel shows Qt's processing-core mismatch text (metadata version / source / tag against
+`fetch_processing_core_status`) and what the run is validated at; the completed status names
+the factor, its source and the E-LUT (`pixel_to_micron*`, `emodulus_lut`). A run started here
+opens its output in the Review stage once (`useReview.ts` `openReviewPath`). The draft lives
+in the `useReanalysis` hook, so it survives leaving Review. `data-tour` anchors:
+`studio-regen-source`, `studio-regen-run` and the shared `regen-*` ones.
+
 
 Monitoring placeholders are now bounded SVG plots over existing snapshot rows:
 deformability vs raw pixel area and dimensionless ring-ratio histogram. They

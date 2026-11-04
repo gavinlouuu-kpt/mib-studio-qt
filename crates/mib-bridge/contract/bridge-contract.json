@@ -527,7 +527,7 @@
       "max_frames": "integer 1..1000000; default 4096",
       "max_input_mib": "integer 1..16384; default 256; input pixels only, processing needs additional memory"
     },
-    "status": "review-export status vocabulary; own operation id; current settings, source ROI/background/identity, active core recorded"
+    "status": "review-export status vocabulary; own operation id; current settings, source ROI/background/identity, active core recorded; a completed run adds pixel_to_micron (number), pixel_to_micron_source (recorded | fallback | operator) and emodulus_lut (what E was computed with, in words) (#867)"
   },
   "review_charts_json": {
     "description": "all valid-file metrics; 128x128 density conserves every finite calibrated point; histogram exact; shared Qt math",

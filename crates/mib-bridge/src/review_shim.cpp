@@ -788,6 +788,46 @@ ReviewResult ReviewBridge::review_regenerate_masks(std::uint32_t source, rust::S
     }
 }
 
+rust::String ReviewBridge::fetch_review_regenerate_setup(std::uint32_t source, rust::Str source_path) {
+    br::RegenerateSetup setup;
+    std::string error;
+    try {
+        if (!impl_->jobs) return rust::String(br::regenerateSetupJson(false, setup, "Review bridge is not initialized"));
+        const bool ok = source <= static_cast<std::uint32_t>(br::RegenerateSource::Folder) &&
+                        impl_->jobs->regenerateSetup(static_cast<br::RegenerateSource>(source), toStd(source_path),
+                                                     setup, &error);
+        if (!ok && error.empty()) error = "Unknown regenerate source";
+        return rust::String(br::regenerateSetupJson(ok, setup, error));
+    } catch (const std::exception& e) {
+        return rust::String(br::regenerateSetupJson(false, setup, std::string("fetch_review_regenerate_setup: ") + e.what()));
+    }
+}
+
+ReviewFrame ReviewBridge::fetch_review_regenerate_preview(std::uint32_t source, rust::Str source_path,
+                                                          std::uint64_t index) {
+    try {
+        if (!impl_->jobs || source > static_cast<std::uint32_t>(br::RegenerateSource::Folder)) return ReviewFrame{};
+        br::ReviewImage image;
+        if (!impl_->jobs->regeneratePreview(static_cast<br::RegenerateSource>(source), toStd(source_path), index, image))
+            return ReviewFrame{};
+        return toFrame(image);
+    } catch (const std::exception& e) {
+        spdlog::warn("fetch_review_regenerate_preview: {}", e.what());
+        return ReviewFrame{};
+    }
+}
+
+ReviewResult ReviewBridge::review_regenerate_masks_json(rust::Str request_json) {
+    try {
+        br::RegenerateMasksRequest req;
+        std::string error;
+        if (!br::parseRegenerateMasksJson(toStd(request_json), req, error)) return fail(error);
+        return impl_->started(impl_->jobs->startRegenerateMasks(req, &error), error, "Regenerate masks");
+    } catch (const std::exception& e) {
+        return fail(std::string("review_regenerate_masks_json: ") + e.what());
+    }
+}
+
 ReviewResult ReviewBridge::review_compute_core(double core_fraction) {
     try {
         std::string error;
@@ -852,7 +892,10 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // host). v6 (#716 A7a): review_run_statistics, the run quick look's twin.
 // v7 (#867): review_export_fcs and review_batch_export_fcs (operation kind
 // ExportFcs 9; the batch reports as BatchExport 2).
-std::uint32_t review_bridge_abi_version() { return 7; }
+// v8 (#867): fetch_review_regenerate_setup, fetch_review_regenerate_preview and
+// review_regenerate_masks_json (the Qt BatchMaskDialog's preview, ROI, config and
+// background; review-contract.json review_regenerate_setup / review_regenerate_masks_json).
+std::uint32_t review_bridge_abi_version() { return 8; }
 
 namespace {
 

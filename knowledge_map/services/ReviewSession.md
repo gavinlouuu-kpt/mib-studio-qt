@@ -285,6 +285,36 @@ facade's events and status match a run cancelled on entry. A start holds its
 own reference to the runner state throughout. A worker that cannot be created gets its one Failed
 terminal and frees the lane (before S7 the lane stayed busy).
 
+**The regenerate dialog's inputs (review ABI 8, #867, the Qt BatchMaskDialog).**
+`RegenerateMasksRequest` gained the dialog's overrides, all defaulting to the
+old behaviour: `imageProcessingJson` (a partial config.json `image_processing`
+object merged with `config_json::fromJson` on top of the config the run uses
+otherwise, the recorded one or `config`; malformed → refused before the job,
+"Processing config: …"), `overrideRoi` + `roi` (w or h 0 = the full frame),
+and `background` (`RegenerateBackground`: `Recorded` keeps the saved one with
+`useRecordedConfig`, `None` clears it so `synthesizeBackground` can build one,
+`Frame` loads `backgroundDataset` row `backgroundIndex` of the open file, or
+frame `backgroundIndex` of the AVI / folder, through the engine's
+`backgroundIndex`). `parseRegenerateMasksJson` reads the bridge's
+`review_regenerate_masks_json` request. `regenerateSetup(source, path)` returns
+what the dialog shows before a run (`RegenerateSetup`, as
+`regenerateSetupJson`): the preview set (`regeneratePreviewDataset`: a
+recording's recorded images, else valid; the invalid range its invalid set;
+AVI / folder "") and its frame count (`batch_masks::countSourceFrames` for AVI
+/ folder), the recorded config or the defaults, the `/experiment_info` ROI,
+whether a background is saved, and Qt's processing-core mismatch text when
+the file's recorded `ProcessingCoreIdentity` differs from the kernel's active
+one. `regeneratePreview(source, path, index)` reads one Mono8 frame of that
+set with `batch_masks::loadPreview`. Both hold the lanes' lock and are refused
+while either lane is claimed (the probe's rule, #722). Tests: `review.jobs`
+("regenerate dialog inputs", mutation-checked).
+
+**Reanalysis status names its calibration (#867 REVIEW-064).** A completed
+`reanalysisTerminalStatusJson` adds `pixel_to_micron` (number),
+`pixel_to_micron_source` (`recorded` | `fallback` | `operator`) and
+`emodulus_lut` (`reanalysisEModulusLutPhrase`); cancelled and failed statuses
+are unchanged (`review.reanalysis` pins the bytes).
+
 **The JSON jobs (the facade's, #512 S7).** `startExportJson(ExportBatchRequest)`
 and `startReanalysisJson(ReanalysisRequest, kernel)` are the facade's
 `review_export_json` / `review_reanalysis_json` workers moved here verbatim:
