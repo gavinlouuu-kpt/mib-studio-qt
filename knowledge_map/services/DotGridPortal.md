@@ -15,3 +15,6 @@ Registration is not fabrication approval. No CAD-overlay viewer is added.
 
 Engineering plan: `docs/exec-plans/active/2026-11-04-dot-grid-portal.md`.
 Canonical operating record: ENG-MIBQT tracker, MIBQT-28 (MIBQT-27 is fabrication).
+
+Tailnet review adapter: `tools/dot_grid_portal/review/README.md`. Separate shared review
+identity and persistent local data; never a production Access bypass or production registry.
