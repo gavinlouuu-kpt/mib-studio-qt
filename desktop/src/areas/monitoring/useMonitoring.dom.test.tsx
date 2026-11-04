@@ -321,6 +321,28 @@ describe("#877 bench findings", () => {
     await tick(2100);
     expect(probe.state.readinessMessage).toBe("storage.buffer: too small");
   });
+  it("B3: a reason text that only carries a new live figure does not clear the alert", async () => {
+    const blocked = (gib: string) => ({ valid: true, ready: false, generation: "1", method_calibration: null,
+      gates: [{ id: "storage.buffer", status: S.Fail, reason: `does not fit 75% of the available memory (${gib} GiB)`, remediation: "" }] });
+    bridge.fetchExperimentReadiness.mockResolvedValue(blocked("11.9"));
+    const probe = await mount({ expTab: "preview" });
+    await tick(0);
+    await act(async () => { await probe.lifecycle.onStartExperiment(); });
+    expect(probe.state.readinessMessage).toContain("storage.buffer");
+    bridge.fetchExperimentReadiness.mockResolvedValue(blocked("12.0"));
+    await tick(2100);
+    expect(probe.state.startReadiness?.gates[0].reason).toContain("12.0 GiB");
+    expect(probe.state.readinessMessage).toContain("storage.buffer");
+  });
+  it("a Latest Frame question that cannot be shown is logged, and nothing starts", async () => {
+    bridge.fetchExperimentReadiness.mockResolvedValue({ valid: true, ready: true, generation: "1", method_calibration: null,
+      gates: [{ id: "camera.deliveryMode", status: S.Warn, reason: "r", remediation: "" }] });
+    dialogs.choose.mockRejectedValue(new Error("dialog:allow-message denied"));
+    const probe = await mount({ expTab: "preview" });
+    await act(async () => { await probe.lifecycle.onStartExperiment(); });
+    expect(probe.log).toContain("experiment start error: Error: dialog:allow-message denied");
+    expect(bridge.experimentStart).not.toHaveBeenCalled();
+  });
   it("B5: Starting lasts until the status after the reply is set, so no old end state shows in between", async () => {
     bridge.fetchExperimentReadiness.mockResolvedValue({ valid: true, ready: true, generation: "1", gates: [], method_calibration: null });
     bridge.experimentStart.mockResolvedValue({ ok: true, message: "", start_outcome: O.Started });
@@ -349,6 +371,17 @@ describe("#877 bench findings", () => {
     await act(async () => { release({ available: true, source: "last_run", start_generation: 4, completion: C.Complete, admitted: "66107" }); });
     await tick(0);
     expect(probe.state.runOutcome?.headline).toBe("Run complete: all 66107 admitted frames reconciled.");
+  });
+  it("B6: an accounting read that never answers hides the outcome for 5 s at most", async () => {
+    bridge.fetchRunAccounting.mockReturnValue(new Promise(() => undefined));
+    const probe = await mount({ expTab: "preview" });
+    await act(async () => probe.state.setExpStatus(status({
+      output_path: "/d/run.h5", start_generation: "4", terminal: true, end_time_ns: "99", completion: C.Complete,
+      completion_reason: "all reconciled", persistence_admitted: "938" })));
+    await tick(4900);
+    expect(probe.state.runOutcome).toBeNull();
+    await tick(200);
+    expect(probe.state.runOutcome?.headline).toBe("Run complete: all 938 admitted frames reconciled.");
   });
   it("B6: an accounting read cut short by a remount is read again, so the outcome shows", async () => {
     bridge.fetchRunAccounting.mockResolvedValue({ available: true, source: "last_run", start_generation: 4, completion: C.Complete, admitted: "500" });

@@ -199,6 +199,15 @@ export function seriesForcesInline(configJson: string): boolean {
   }
 }
 
+/** What a readiness read decides, without the reason texts (some carry live figures, such as the memory a
+ *  storage.buffer gate measured): equal keys block and warn on the same gates. "" for no read. */
+export function readinessDecisionKey(r: { valid: boolean; ready: boolean; gates: readonly StartGate[] } | null): string {
+  return r ? `${r.valid}|${r.ready}|${r.gates.map((g) => `${g.id}:${g.status}`).join(",")}` : "";
+}
+
+/** The backend's refusal of an unacknowledged Latest Frame start (ExperimentCoordinator::start). */
+export const LATEST_FRAME_REFUSAL = "Latest Frame delivery discards frames";
+
 /** True when two readiness reads say the same thing, so a poll that changed nothing sets no state. */
 export function sameReadiness(
   a: { valid: boolean; ready: boolean; gates: readonly StartGate[] } | null,

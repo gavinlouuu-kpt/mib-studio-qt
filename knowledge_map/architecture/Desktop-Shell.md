@@ -99,13 +99,17 @@ before the file dialog: "Latest Frame prioritizes low latency and may intentiona
 The recorded sequence may be incomplete." with Switch to Every Frame / Continue with Latest Frame /
 Cancel. Both Switch and Continue send `acknowledgeLatestFrameDrops` (ABI 45, [[Rust-Bridge]]); Switch
 also sets Every Frame for the next camera start and the start notice says this recording still runs
-Latest Frame. Switch needs the Connect stage's delivery-mode setter (#863); until it is wired
-(`switchToEveryFrame` in `useExperimentLifecycle`) the question offers Continue and Cancel. `useStartReadiness` reads
+Latest Frame. The coordinator's rule is wider than the gate (a capture switched after the preflight,
+an instrument with no live-camera gate), so a refusal with its "Latest Frame delivery discards frames"
+message asks the same question and starts once more. Switch needs the Connect stage's delivery-mode
+setter (#863); until it is wired (`switchToEveryFrame` in `useExperimentLifecycle`) the question offers
+Continue and Cancel. A question that cannot be shown rejects and is logged ("experiment start error"). `useStartReadiness` reads
 `fetch_experiment_readiness("")` every 2 s on the Experiment stage (no run active) for the standing
 list of blocking and Warn gates; the Start flow's own preflight read refreshes it, and a refusal's
-inline alert lasts until that standing readiness changes. Starting lasts until the status after the
-Start reply is set, and the run outcome waits for the run's accounting read (no saved-row count shown
-as "admitted" in between). The run phase (`experimentModel`'s `runPresentation`, `runLocked`)
+inline alert lasts until that standing readiness decides differently (`readinessDecisionKey`: gate ids
+and statuses, not reason texts with live figures) or the operator dismisses it. Starting lasts until
+the status after the Start reply is set, and the run outcome waits up to 5 s for the run's accounting
+read (no saved-row count shown as "admitted" in between). The run phase (`experimentModel`'s `runPresentation`, `runLocked`)
 locks the Overview and Review stage tabs, Review's Select HDF File and Open Recording, Stop Camera and
 Raw Record; the shell views (`Sidebar`, `StatusBar`, `Workflow`) and `CameraActions`, `PreviewPanel`,
 `ReviewTab` only place what these modules return. `ProcessingStats` (eventAdapter) carries the

@@ -237,6 +237,31 @@ describe("starting while the capture runs Latest Frame (#858)", () => {
       if (status === 0) expect(d.start).toHaveBeenCalledWith("/data/run.h5", false, false);
     }
   });
+  it("asks on the coordinator's refusal when the readiness showed no Latest Frame (a mode switched after the preflight), then starts once more", async () => {
+    const refusal = { ok: false, outcome: O.NotReady, message: "Latest Frame delivery discards frames; acknowledge the policy or switch to Every Frame" };
+    const start = vi.fn().mockResolvedValueOnce(refusal).mockResolvedValueOnce({ ok: true, message: "started" });
+    const chooseLatestFrame = vi.fn(async () => "continue" as const);
+    const d = deps({ ...noRing, fetchReadiness: readiness([]), chooseLatestFrame, start });
+    const out = await startExperiment(d);
+    expect(chooseLatestFrame).toHaveBeenCalledTimes(1);
+    expect(start.mock.calls).toEqual([["/data/run.h5", false, false], ["/data/run.h5", false, true]]);
+    expect(d.pickFile).toHaveBeenCalledTimes(1);
+    expect(out.kind).toBe("started");
+  });
+  it("Cancel on that late question starts nothing more", async () => {
+    const start = vi.fn(async () => ({ ok: false, outcome: O.NotReady, message: "Latest Frame delivery discards frames; acknowledge the policy or switch to Every Frame" }));
+    const d = deps({ ...noRing, fetchReadiness: readiness([]), chooseLatestFrame: vi.fn(async () => "cancel" as const), start });
+    expect(await startExperiment(d)).toEqual({ kind: "cancelled" });
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+  it("an acknowledged start that is still refused is not asked again", async () => {
+    const start = vi.fn(async () => ({ ok: false, outcome: O.NotReady, message: "Latest Frame delivery discards frames; acknowledge the policy or switch to Every Frame" }));
+    const chooseLatestFrame = vi.fn(async () => "continue" as const);
+    const d = deps({ ...noRing, fetchReadiness: readiness([latest]), chooseLatestFrame, start });
+    expect((await startExperiment(d)).kind).toBe("refused");
+    expect(chooseLatestFrame).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledTimes(1);
+  });
   it("without the question (an older shell) the start goes unacknowledged, and the backend's refusal comes back", async () => {
     const d = deps({ ...noRing, fetchReadiness: readiness([latest]), start: vi.fn(async () => ({
       ok: false, outcome: O.NotReady, message: "Latest Frame delivery discards frames; acknowledge the policy or switch to Every Frame" })) });

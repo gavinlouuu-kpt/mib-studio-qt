@@ -23,7 +23,7 @@ import { ACCOUNTING_REMEDIATION, runLostData } from "./runFinish";
 export function ExperimentTab() {
   const {
     ssdConfigured, ssd, expTab, setExpTab, roiFields, onStartExperiment, startExperimentReason, onStopExperiment, expState,
-    instrumentModes, runFpsStatus, cameraWin, modeError, setTab, setModeRetry, readinessMessage, expActive, runOutcome,
+    instrumentModes, runFpsStatus, cameraWin, modeError, setTab, setModeRetry, readinessMessage, setReadinessMessage, expActive, runOutcome,
     expStatus, startNotice, tab, instrument, runPresentation, runProgress, readinessSummary, readinessNotice, accountingNotice, stopRequested,
   } = useStudio();
   return (
@@ -68,7 +68,16 @@ export function ExperimentTab() {
       {instrumentModes && <ViewerGate><RunRateControl status={runFpsStatus} /></ViewerGate>}
       {instrumentModes && <RunWindowNotice tab="experiment" windowPlaced={cameraWin.placed} modeError={modeError}
         onPlaceWindow={() => setTab("overview")} onRetry={() => setModeRetry((n) => n + 1)} />}
-      {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
+      {readinessMessage && (
+        <p role="alert" className="readiness-refusal">
+          Experiment readiness: {readinessMessage}{" "}
+          {/* A refusal about the chosen file or the backend's reply never changes the standing readiness, so it would stay until
+              the next Start (#877 bench B3): the operator can put it away. Local only: no command is sent. */}
+          <button type="button" className="readiness-dismiss" onClick={() => setReadinessMessage("")} data-tour="monitoring-dismiss-refusal">
+            Dismiss
+          </button>
+        </p>
+      )}
       {!expActive && <ReadinessAdvisories summary={readinessSummary} notice={readinessNotice} />}
       {runProgress && <p role="status" className="run-progress" data-tour="monitoring-run-progress">{runProgress}</p>}
       {!expActive && <RunOutcomeNotice outcome={runOutcome} />}

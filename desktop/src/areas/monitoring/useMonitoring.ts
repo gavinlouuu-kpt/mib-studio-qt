@@ -21,7 +21,7 @@ import { POLL_HEALTHY, pollHealthAfter, pollNotice, type PollHealth } from "./po
 import { accountingDialog } from "./runFinish";
 import { cameraStopBlock, deriveRunPresentation, recordBlock, runProgressText } from "./runStatus";
 import {
-  LATEST_FRAME_PROMPT, latestFrameButtons, latestFrameChoice, sameReadiness, seriesForcesInline, summarizeReadiness,
+  LATEST_FRAME_PROMPT, latestFrameButtons, latestFrameChoice, readinessDecisionKey, sameReadiness, seriesForcesInline, summarizeReadiness,
 } from "./startReadiness";
 
 /** MON-009: Qt's "Save Experiment Data" filter, "HDF5 Files (*.h5 *.hdf5);;All Files (*)". Review shares H5_FILTER
@@ -38,6 +38,9 @@ export const EXPERIMENT_STATE_NAMES: Record<number, string> = {
   [EXPERIMENT_STATES.Stopping]: "Stopping",
   [EXPERIMENT_STATES.Failed]: "Failed",
 };
+
+/** How long the run outcome waits for the run's accounting read before it shows from the status alone (#877 bench B6). */
+export const ACCOUNTING_WAIT_MS = 5000;
 
 export function useMonitoringState() {
   const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files" | "recordings">("preview");
@@ -170,11 +173,13 @@ export function useStartReadiness({
   // A Start refusal ("Experiment readiness: ...") holds while the readiness it was refused under stands: the standing readiness when
   // the alert appeared (the Start flow refreshes it with its own preflight read). A later change (the cause gone, a profile or camera
   // change) clears it. Before, it stayed until the next Start, next to "Ready to start" (#877 bench B3).
-  const refusedUnder = useRef<{ message: string; readiness: StartReadiness | null }>({ message: "", readiness: null });
+  // "Changes" means a gate blocks or warns differently: reason texts with live figures (free memory) do not count.
+  const refusedUnder = useRef({ message: "", decision: "" });
   useEffect(() => {
-    if (!readinessMessage) { refusedUnder.current = { message: "", readiness: null }; return; }
-    if (refusedUnder.current.message !== readinessMessage) { refusedUnder.current = { message: readinessMessage, readiness: startReadiness }; return; }
-    if (refusedUnder.current.readiness !== startReadiness) setReadinessMessage("");
+    const decision = readinessDecisionKey(startReadiness);
+    if (!readinessMessage) { refusedUnder.current = { message: "", decision: "" }; return; }
+    if (refusedUnder.current.message !== readinessMessage) { refusedUnder.current = { message: readinessMessage, decision }; return; }
+    if (refusedUnder.current.decision !== decision) setReadinessMessage("");
   }, [readinessMessage, startReadiness]);
   useEffect(() => {
     if (!ready || !visible) return;
@@ -311,6 +316,8 @@ export function useExperimentLifecycle({
     if (!finishedRun || finishedRun === loggedRun.current) return;
     loggedRun.current = finishedRun;
     let live = true, done = false;
+    // A read that never answers must not hide the outcome: after 5 s it shows from the status alone (the accounting replaces it).
+    const fallback = window.setTimeout(() => { if (live && !done) setAccountingRun(finishedRun); }, ACCOUNTING_WAIT_MS);
     const status = expStatus;
     const observed = !!status && observedRun.current === status.start_generation;
     if (!observed) setRunDismissed(finishedRun);
@@ -338,6 +345,7 @@ export function useExperimentLifecycle({
     });
     return () => {
       live = false;
+      window.clearTimeout(fallback);
       // Cut short before the read came back: let the next run of this effect read it again, or the outcome would stay hidden.
       if (!done && loggedRun.current === finishedRun) loggedRun.current = "";
     };

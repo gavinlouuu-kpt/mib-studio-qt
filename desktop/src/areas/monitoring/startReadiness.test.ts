@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EXPERIMENT_START_OUTCOMES, READINESS_GATE_STATUSES as S } from "../../bridgeContract";
 import {
   INLINE_SERIES_NOTICE, LATEST_FRAME_PROMPT, blockersLine, blockingGates, blocksStart, explainReadiness, gateLine, gateStatusLabel,
-  latestFrameButtons, latestFrameChoice, runsLatestFrame, seriesForcesInline, sameReadiness, startOutcomeWording, summarizeReadiness,
+  latestFrameButtons, latestFrameChoice, readinessDecisionKey, runsLatestFrame, seriesForcesInline, sameReadiness, startOutcomeWording, summarizeReadiness,
   warningGates, warningNotice, type StartGate,
 } from "./startReadiness";
 
@@ -139,5 +139,17 @@ describe("Latest Frame at Start (#858, SHELL-054)", () => {
     expect(latestFrameChoice("yes", false)).toBe("continue");
     expect(latestFrameChoice("no", false)).toBe("cancel");
     expect(latestFrameChoice("cancel", false)).toBe("cancel");
+  });
+});
+
+describe("readinessDecisionKey (#877 bench B3)", () => {
+  const r = (gates: StartGate[], ready = false) => ({ valid: true, ready, gates });
+  it("ignores reason texts (some carry live figures) and follows ids and statuses", () => {
+    const a = r([gate("storage.buffer", S.Fail, "does not fit 75% of the available memory (11.9 GiB)")]);
+    const b = r([gate("storage.buffer", S.Fail, "does not fit 75% of the available memory (12.0 GiB)")]);
+    expect(readinessDecisionKey(a)).toBe(readinessDecisionKey(b));
+    expect(readinessDecisionKey(r([gate("storage.buffer", S.Warn, "x")]))).not.toBe(readinessDecisionKey(a));
+    expect(readinessDecisionKey(r([], true))).not.toBe(readinessDecisionKey(r([])));
+    expect(readinessDecisionKey(null)).toBe("");
   });
 });

@@ -12,7 +12,7 @@
 // Every dialog goes through `inform`, so the flow stays testable without a window.
 import { startDiscardNotice, type RingStatus } from "./ringPlayback";
 import {
-  DESTINATION_GATE, INLINE_SERIES_NOTICE, SWITCHED_NOTICE, blockersLine, blockingGates, explainReadiness, runsLatestFrame,
+  DESTINATION_GATE, INLINE_SERIES_NOTICE, LATEST_FRAME_REFUSAL, SWITCHED_NOTICE, blockersLine, blockingGates, explainReadiness, runsLatestFrame,
   startOutcomeWording, warningGates, warningNotice, type LatestFrameChoice, type StartDialog, type StartGate,
 } from "./areas/monitoring/startReadiness";
 
@@ -51,6 +51,24 @@ const UNAVAILABLE = "Backend readiness unavailable; experiment was not started."
 export async function startExperiment(deps: StartDeps): Promise<StartOutcome> {
   const inform = async (dialog: StartDialog | null) => { if (dialog && deps.inform) await deps.inform(dialog).catch(() => undefined); };
 
+  // Qt's Latest Frame question. Switch and Continue both acknowledge, because the running capture keeps Latest Frame until it
+  // restarts (Qt: "this session still runs LatestFrame"); Switch also sets Every Frame for the next camera start. Null: the
+  // operator cancelled, or the switch was refused (explained), and nothing starts.
+  const askLatestFrame = async (choose: NonNullable<StartDeps["chooseLatestFrame"]>): Promise<{ notice: string } | null> => {
+    const choice = await choose(!!deps.switchToEveryFrame);
+    if (choice === "cancel") return null;
+    if (choice === "switch" && deps.switchToEveryFrame) {
+      const switched = await deps.switchToEveryFrame().catch((e: unknown) => ({ ok: false, message: String(e) }));
+      if (!switched.ok) {
+        // Qt's switch cannot fail; here the backend can refuse it. Stop rather than record in a mode the operator turned down.
+        await inform({ kind: "warning", title: "Start Experiment", text: `The delivery mode could not be set to Every Frame: ${switched.message}\n\nThe experiment was not started.` });
+        return null;
+      }
+      return { notice: SWITCHED_NOTICE };
+    }
+    return { notice: "" };
+  };
+
   // 1. The preflight: only the destination is still unknown.
   const preflight = await deps.fetchReadiness("");
   if (!preflight.valid) return { kind: "not-ready", message: UNAVAILABLE, gates: [] };
@@ -61,24 +79,15 @@ export async function startExperiment(deps: StartDeps): Promise<StartOutcome> {
     return { kind: "not-ready", message: blockersLine(null, early), gates: early };
   }
 
-  // 2. Latest Frame discards frames on purpose: ask, as Qt does, before the file dialog. Switch and Continue both
-  //    acknowledge, because the running capture keeps Latest Frame until it restarts (Qt: "this session still runs
-  //    LatestFrame"); Switch also sets Every Frame for the next camera start.
+  // 2. Latest Frame discards frames on purpose: ask, as Qt does, before the file dialog (the readiness shows the mode as the
+  //    camera.deliveryMode Warn).
   let acknowledgeLatestFrameDrops = false;
   let switchedNotice = "";
   if (deps.chooseLatestFrame && runsLatestFrame(preflight.gates)) {
-    const choice = await deps.chooseLatestFrame(!!deps.switchToEveryFrame);
-    if (choice === "cancel") return { kind: "cancelled" };
-    if (choice === "switch" && deps.switchToEveryFrame) {
-      const switched = await deps.switchToEveryFrame().catch((e: unknown) => ({ ok: false, message: String(e) }));
-      if (!switched.ok) {
-        // Qt's switch cannot fail; here the backend can refuse it. Stop rather than record in a mode the operator turned down.
-        await inform({ kind: "warning", title: "Start Experiment", text: `The delivery mode could not be set to Every Frame: ${switched.message}\n\nThe experiment was not started.` });
-        return { kind: "cancelled" };
-      }
-      switchedNotice = SWITCHED_NOTICE;
-    }
+    const asked = await askLatestFrame(deps.chooseLatestFrame);
+    if (!asked) return { kind: "cancelled" };
     acknowledgeLatestFrameDrops = true;
+    switchedNotice = asked.notice;
   }
 
   // 3. A stopped Run (after Stop, or after an SSD run) holds its buffered frames and the start discards them: ask first, and tell the backend that the operator agreed.
@@ -104,7 +113,16 @@ export async function startExperiment(deps: StartDeps): Promise<StartOutcome> {
   }
 
   // 7. Start.
-  const res = await deps.start(picked, discard !== "", acknowledgeLatestFrameDrops);
+  let res = await deps.start(picked, discard !== "", acknowledgeLatestFrameDrops);
+  // The coordinator refuses Latest Frame without the acknowledgement on its own rule, wider than the readiness gate (the
+  // capture switched after the preflight, or an instrument with no live-camera gate): ask then, and start once more.
+  if (!res.ok && !acknowledgeLatestFrameDrops && deps.chooseLatestFrame && res.message.includes(LATEST_FRAME_REFUSAL)) {
+    const asked = await askLatestFrame(deps.chooseLatestFrame);
+    if (!asked) return { kind: "cancelled" };
+    acknowledgeLatestFrameDrops = true;
+    switchedNotice = asked.notice;
+    res = await deps.start(picked, discard !== "", true);
+  }
   if (!res.ok) {
     const wording = startOutcomeWording(res.outcome, res.message, picked);
     if (wording.explainGates) {

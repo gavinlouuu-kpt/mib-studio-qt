@@ -99,25 +99,21 @@ export interface ChooseOptions {
 }
 
 // A question with two or three labelled answers, such as Qt's QMessageBox with custom buttons (#858): the plugin's message
-// with custom buttons (plugin 2.4+), which resolves to the clicked label. Closing the dialog, an unknown answer or a dialog
-// error is "cancel", so a caller never proceeds on an answer the operator did not give. A browser has no such dialog: it asks
-// one window.confirm per answer, in order.
+// with custom buttons (plugin 2.4+), which resolves to the clicked label. Closing the dialog or an unknown answer is "cancel",
+// so a caller never proceeds on an answer the operator did not give. A dialog that cannot be shown rejects, as `ask` does, so
+// the caller can say so instead of doing nothing. A browser has no such dialog: it asks one window.confirm per answer, in order.
 export const choose = async (text: string, options: ChooseOptions): Promise<Choice> => {
-  try {
-    if (!isRemote) {
-      const buttons = options.no !== undefined
-        ? { yes: options.yes, no: options.no, cancel: options.cancel }
-        : { ok: options.yes, cancel: options.cancel };
-      const answer = await dialog.message(text, { title: options.title, kind: options.kind, buttons });
-      return choiceOf(answer, options);
-    }
-    const head = options.title ? `${options.title}\n\n${text}` : text;
-    if (window.confirm(`${head}\n\nOK: ${options.yes}\nCancel: ${options.no ?? options.cancel}`)) return "yes";
-    if (options.no !== undefined && window.confirm(`${head}\n\nOK: ${options.no}\nCancel: ${options.cancel}`)) return "no";
-    return "cancel";
-  } catch {
-    return "cancel";
+  if (!isRemote) {
+    const buttons = options.no !== undefined
+      ? { yes: options.yes, no: options.no, cancel: options.cancel }
+      : { ok: options.yes, cancel: options.cancel };
+    const answer = await dialog.message(text, { title: options.title, kind: options.kind, buttons });
+    return choiceOf(answer, options);
   }
+  const head = options.title ? `${options.title}\n\n${text}` : text;
+  if (window.confirm(`${head}\n\nOK: ${options.yes}\nCancel: ${options.no ?? options.cancel}`)) return "yes";
+  if (options.no !== undefined && window.confirm(`${head}\n\nOK: ${options.no}\nCancel: ${options.cancel}`)) return "no";
+  return "cancel";
 };
 
 /** The answer for a clicked label (custom buttons) or a default button name. */

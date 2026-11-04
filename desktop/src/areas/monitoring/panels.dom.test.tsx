@@ -83,6 +83,16 @@ describe("ExperimentTab (MON-022, 025, 028, 023)", () => {
     };
   };
 
+  it("lets the operator dismiss a Start refusal's alert; nothing is sent (#877 bench B3)", async () => {
+    const setReadinessMessage = vi.fn();
+    await render(tab({ readinessMessage: "/ro/run.h5: storage.output: not writable", setReadinessMessage }), <ExperimentTab />);
+    const alert = [...host.querySelectorAll("[role=alert]")].find((e) => e.textContent?.includes("storage.output"))!;
+    expect(alert.textContent).toContain("Experiment readiness: /ro/run.h5: storage.output: not writable");
+    const dismiss = alert.querySelector<HTMLButtonElement>("button.readiness-dismiss")!;
+    expect(dismiss.textContent).toBe("Dismiss");
+    await act(async () => dismiss.click());
+    expect(setReadinessMessage).toHaveBeenCalledWith("");
+  });
   it("puts the run state widget in the toolbar", async () => {
     await render(tab(), <ExperimentTab />);
     expect(host.querySelector(".toolbar .right [data-tour='monitoring-run-status']")!.textContent).toBe("◉Camera running");

@@ -30,13 +30,15 @@ describe("choose in the desktop shell", () => {
     expect(await choose("text", two)).toBe("yes");
     expect(plugin.message).toHaveBeenCalledWith("text", { title: "Start Experiment", kind: undefined, buttons: { ok: "Continue with Latest Frame", cancel: "Cancel" } });
   });
-  it("a closed dialog, an unknown answer or a dialog error is cancel: never an answer the operator did not give", async () => {
+  it("a closed dialog or an unknown answer is cancel: never an answer the operator did not give", async () => {
     plugin.message.mockResolvedValueOnce("Cancel");
     expect(await choose("text", two)).toBe("cancel");
     plugin.message.mockResolvedValueOnce("something else");
     expect(await choose("text", three)).toBe("cancel");
+  });
+  it("a dialog that cannot be shown rejects, so the caller can say so", async () => {
     plugin.message.mockRejectedValueOnce(new Error("dialog:allow-message denied"));
-    expect(await choose("text", three)).toBe("cancel");
+    await expect(choose("text", three)).rejects.toThrow("dialog:allow-message denied");
   });
   it("accepts the default button names too", () => {
     expect(choiceOf("Yes", three)).toBe("yes");
