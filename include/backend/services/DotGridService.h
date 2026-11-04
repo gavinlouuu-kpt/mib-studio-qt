@@ -83,6 +83,12 @@ public:
 
     using PoseCallback = std::function<void(const Pose&)>;
 
+    // The design registry compiled into this build (resources/defaults/dot_grid/registry.json,
+    // the file the Qt shell reads from its resource system). For shells without Qt resources
+    // (Tauri, the bridge server). Parsed once and shared; null with `errorOut` set when the
+    // embedded document is rejected.
+    static std::shared_ptr<const dotgrid::Registry> bundledRegistry(std::string* errorOut = nullptr);
+
     DotGridService();
     ~DotGridService();
 

@@ -279,6 +279,13 @@ namespace backend
         services::AutofocusService &autofocus();
         services::TriggerService &trigger();
         services::DotGridService &dotGrid();
+        // Wafer Grid for a shell without the Qt config watcher (Tauri, the bridge server; the Qt
+        // OverviewTab toggles the service config itself): switches decoding on or off. Switching
+        // on with no codebook source configured yet loads the bundled design registry
+        // (DotGridService::bundledRegistry) and sizes the blob detector from the processing
+        // pixel-to-micron factor, as AppConfigWatcher does for config.json's dot_grid section.
+        // False with the reason (`errorOut`) when no registry can be loaded or the config is rejected.
+        bool setDotGridEnabled(bool enabled, std::string *errorOut = nullptr);
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
         // Motorized Z stage (ADR 0013): observe-only until an operator homes it.

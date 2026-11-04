@@ -308,6 +308,27 @@ int main() {
         MIB_EXPECT(!p.valid && p.reason == "too few dots", "blank frame reason: " + p.reason);
     }
 
+    // A swapped frame store (a camera's Overview switch installs a new buffer whose indices restart):
+    // the new store's newest frame is decoded even when its index equals the last one decoded from
+    // the old store (CONNECT-054).
+    wd.mark("store swap");
+    {
+        const uint64_t oldLatest = store->latestCommittedIndex();
+        auto fresh = std::make_shared<backend::playback::FrameStore>(8);
+        const cv::Mat swapFrame = frameAt(cb, 52000.0, 41000.0, 8.0, 12);
+        for (uint64_t k = 0; k <= oldLatest; ++k) push(*fresh, swapFrame, 20000 + k);
+        MIB_REQUIRE(fresh->latestCommittedIndex() == oldLatest, "the fresh store reaches the old index");
+        service.setFrameStore(fresh);
+        bool swapped = false;
+        for (int i = 0; i < 200 && !swapped; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            DotGridService::Pose p;
+            swapped = service.getLatestPose(p) && p.valid && std::abs(p.centreXUm - 52000.0) < 1.0;
+        }
+        MIB_EXPECT(swapped, "the new store's frame is decoded after setFrameStore");
+        service.setFrameStore(store);
+    }
+
     wd.mark("stop");
     service.stop();
     service.stop(); // idempotent

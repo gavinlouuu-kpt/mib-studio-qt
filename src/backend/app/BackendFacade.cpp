@@ -45,6 +45,7 @@
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/services/StageService.h"
 #include "backend/services/MonitoringCellStore.h"
+#include "backend/services/DotGridService.h"
 
 #include <algorithm>
 #include "backend/pz/PzPlatformMonitor.h"
@@ -286,6 +287,10 @@ namespace backend::bridge
         }
 
         initialized_ = true;
+
+        // Wafer Grid decodes only while the Overview is on screen (CONNECT-054): the UI unpauses
+        // it there; until then, and in a UI that never shows the Overview, it costs nothing.
+        backend_.dotGrid().setPaused(true);
 
         // Shared experiment coordinator (issue #372): forward its status
         // stream as ExperimentStatusEvent, tie the running experiment to a
@@ -3956,6 +3961,76 @@ std::string BackendFacade::fetchCameraGeometryJson() const {
         {"min_height", g.minHeight},
         {"session", session},
     }.dump();
+}
+
+BackendCommandResult BackendFacade::setDotGridEnabled(bool enabled) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    std::string error;
+    if (!backend_.setDotGridEnabled(enabled, &error)) {
+        return {false, BackendCommandType::Camera, error.empty() ? "dot-grid configuration rejected" : error};
+    }
+    return {true, BackendCommandType::Camera, enabled ? "dot-grid localization on" : "dot-grid localization off"};
+}
+
+BackendCommandResult BackendFacade::setDotGridPaused(bool paused) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    backend_.dotGrid().setPaused(paused);
+    return {true, BackendCommandType::Camera, paused ? "dot-grid decoding paused" : "dot-grid decoding resumed"};
+}
+
+std::string BackendFacade::fetchDotGridPoseJson(std::uint64_t sinceSequence) const {
+    using nlohmann::json;
+    if (!initialized_) {
+        return json{{"available", false}, {"enabled", false}, {"paused", true}, {"designs", 0},
+                    {"sequence", 0}, {"has_pose", false}, {"unchanged", false}}.dump();
+    }
+    auto& service = backend_.dotGrid();
+    const auto registry = service.activeRegistry();
+    json out{
+        {"available", service.isRunning()},
+        {"enabled", service.isEnabled()},
+        {"paused", service.isPaused()},
+        {"designs", registry ? registry->size() : 0},
+        {"unchanged", false},
+    };
+    // The sequence is read before the pose: a publish between the two reads is picked up by the
+    // next poll (the pose is then newer than its sequence), never lost.
+    const std::uint64_t sequence = service.poseSequence();
+    out["sequence"] = sequence;
+    services::DotGridService::Pose pose;
+    const bool hasPose = service.isEnabled() && service.getLatestPose(pose);
+    out["has_pose"] = hasPose;
+    if (!hasPose) return out.dump();
+    if (sinceSequence != 0 && sinceSequence == sequence) {
+        out["unchanged"] = true;
+        return out.dump();
+    }
+    out["valid"] = pose.valid;
+    out["frame_index"] = pose.frameIndex;
+    out["image_width"] = pose.imageWidth;
+    out["image_height"] = pose.imageHeight;
+    out["dots"] = pose.dots;
+    out["votes"] = pose.votes;
+    out["decode_ms"] = pose.decodeMs;
+    out["reason"] = pose.reason;
+    if (pose.valid) {
+        out["centre_x_um"] = pose.centreXUm;
+        out["centre_y_um"] = pose.centreYUm;
+        out["theta_deg"] = pose.thetaDeg;
+        out["um_per_px"] = pose.umPerPx;
+        out["mirrored"] = pose.mirrored;
+        out["chip"] = pose.chip;
+        out["design_id"] = pose.designId;
+        out["design_name"] = pose.designName;
+        out["agreement"] = pose.agreement;
+        out["residual_px"] = pose.residualPx;
+        json dots = json::array();
+        const std::size_t n = std::min(pose.dotsPx.size(), kDotGridMaxDots);
+        for (std::size_t i = 0; i < n; ++i) dots.push_back(json::array({pose.dotsPx[i].x, pose.dotsPx[i].y}));
+        out["dots_px"] = std::move(dots);
+        out["dots_px_total"] = pose.dotsPx.size();
+    }
+    return out.dump();
 }
 
 std::string BackendFacade::fetchPreviewBufferJson() const {

@@ -1069,6 +1069,20 @@ namespace backend::bridge
         // Camera & Alignment geometry: mode, sensor size, saved experiment window, steps and
         // the last camera read-back (ABI 20).
         std::string fetchCameraGeometryJson() const;
+        // Wafer Grid (ABI 45, CONNECT-054): dot-grid localization of the live frame, shown on the
+        // Overview. Switching on loads the bundled design registry when no codebook source is
+        // configured; a failure carries the reason ("Dot-grid localization is not available:
+        // <reason>" is the UI's text). The bridge starts paused (initialize()): the Overview
+        // unpauses while it is on screen and pauses again when it is not, so nothing decodes
+        // next to an experiment.
+        // The most dots a pose document lists (the overlay draws that many; bridge-contract.json dot_grid.max_dots).
+        static constexpr std::size_t kDotGridMaxDots = 1024;
+        BackendCommandResult setDotGridEnabled(bool enabled);
+        BackendCommandResult setDotGridPaused(bool paused);
+        // The service state and the latest pose as JSON (see bridge-contract.json
+        // fetch_dot_grid_pose). With sinceSequence equal to the current sequence only the state
+        // block is returned (`unchanged`), so a 4 Hz poll copies the dot list only when it moved.
+        std::string fetchDotGridPoseJson(std::uint64_t sinceSequence = 0) const;
         // Where the science runs and what this build has (ABI 21): {science: host|pl,
         // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
         // `capabilities` (#501) says which surfaces exist on this instrument.

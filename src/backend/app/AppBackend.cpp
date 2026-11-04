@@ -2323,6 +2323,39 @@ namespace backend
     services::AutofocusService &AppBackend::autofocus() { return *autofocusService_; }
     services::TriggerService &AppBackend::trigger() { return *triggerService_; }
     services::DotGridService &AppBackend::dotGrid() { return *dotGridService_; }
+
+    bool AppBackend::setDotGridEnabled(bool enabled, std::string *errorOut)
+    {
+        if (!dotGridService_)
+        {
+            if (errorOut)
+                *errorOut = "the dot-grid service is not available";
+            return false;
+        }
+        services::DotGridService::Config cfg = dotGridService_->getConfig();
+        cfg.enabled = enabled;
+        if (enabled)
+        {
+            // Same hint rule as AppConfigWatcher: the decoder measures the true scale itself, the
+            // hint only sizes the blob detector.
+            if (processingService_)
+            {
+                const double factor = processingService_->getPixelToMicronFactor();
+                if (factor > 0.0)
+                    cfg.umPerPxHint = factor;
+            }
+            const bool hasSource =
+                !cfg.codebookPath.empty() ||
+                (cfg.registry && (!cfg.registry->empty() || !cfg.registry->unsupported().empty()));
+            if (!hasSource)
+            {
+                cfg.registry = services::DotGridService::bundledRegistry(errorOut);
+                if (!cfg.registry)
+                    return false;
+            }
+        }
+        return dotGridService_->setConfig(cfg, errorOut);
+    }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
     services::StageService &AppBackend::stage() { return *stageService_; }
@@ -2742,6 +2775,9 @@ namespace backend
         frameStore_ = std::move(store);
         captureService_->setFrameStore(frameStore_);
         playbackService_->setFrameStore(frameStore_);
+        // Wafer Grid follows the camera's frame buffer (CONNECT-054: the Overview of a MindVision or
+        // Aravis camera swaps it; the service would otherwise keep decoding the old, dead store).
+        if (dotGridService_) dotGridService_->setFrameStore(frameStore_);
         // Frame indices restart in the new store: monitoring cells of the old one are never
         // resolved against it (the live cell store clears its strip and ends its pins now).
         if (monitoringCells_) monitoringCells_->advanceCapture(reason);

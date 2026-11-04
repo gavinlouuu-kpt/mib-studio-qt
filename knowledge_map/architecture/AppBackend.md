@@ -87,6 +87,14 @@ of a core, 60/s at 8 %, 30/s at 4 %.
   it in the run snapshot v3 `led` block.
 - **Preview.** `fetchRunPreview` encodes one cell capture.
 
+**Wafer Grid.** `setDotGridEnabled(enabled, err)` (CONNECT-054) is the Qt-free
+shells' toggle of [[../services/DotGridService]]: it loads the compiled-in design
+registry (`DotGridService::bundledRegistry()`) when no codebook source is
+configured and sets the detector hint from the processing pixel-to-micron factor;
+the Qt shell configures the service through `AppConfigWatcher` instead.
+`installFrameStore` hands the new frame buffer to the dot-grid service too, so a
+MindVision/Aravis Overview switch does not leave it decoding the old store.
+
 **Camera & Alignment.** `setCameraOverview` / `saveCameraRoi` /
 `cameraGeometry` generalise the MindVision Overview to Aravis cameras. The
 Aravis profile `<data>/config/aravis-camera.json` (or `MIB_ARAVIS_PROFILE`)
