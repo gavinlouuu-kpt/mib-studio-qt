@@ -1,4 +1,4 @@
-/* Shared (owner: shell #862, coordinate changes): camera-actions and tab-body frame, buttons, toolbars, sub-tabs, ViewerGate, canvases, tables, config groups. Part of the App.css cascade. #853: the .subtab-body > .config-group rule below no longer matches the re-analysis panel inside its ViewerGate; the Review epic (#867) fixes it. */
+/* Shared (owner: shell #862, coordinate changes): camera-actions and tab-body frame, buttons, toolbars, sub-tabs, ViewerGate, canvases, tables, config groups. Part of the App.css cascade. #853: a config group inside a ViewerGate (a display:contents fieldset) is still a flex item of its sub-tab body, so the stacked-group rule below matches both `.subtab-body > .config-group` and `.subtab-body > fieldset.viewer-gate > .config-group` (the Review re-analysis panel); styles/subtabBodyGroup.test.tsx guards it. */
 .camera-actions {
   display: flex;
   gap: 6px;
@@ -245,8 +245,12 @@ fieldset.viewer-gate {
 
 /* Stacked in a sub-tab body (a content-height flex column since #543), a
    config group keeps its own height: with flex: 1 it shared the extra
-   height with the Review split and pushed the frames below the fold. */
-.subtab-body > .config-group {
+   height with the Review split and pushed the frames below the fold. A group
+   inside a ViewerGate (fieldset.viewer-gate, display: contents) is the same
+   flex item, so the gated Regenerate masks panel is matched too (#853: it
+   kept flex: 1 and covered the Valid/Invalid/Charts views). */
+.subtab-body > .config-group,
+.subtab-body > fieldset.viewer-gate > .config-group {
   flex: 0 0 auto;
 }
 
