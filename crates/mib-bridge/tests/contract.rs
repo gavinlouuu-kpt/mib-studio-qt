@@ -126,7 +126,9 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    assert_eq!(ffi::bridge_abi_version(), 44);
+    // v45 (#866 MON-052/053) monitoring_cells: the invalid strip (invalid_strip) and per-cell
+    // rejection reasons from the shared classifier; the strip cap 24 -> 25.
+    assert_eq!(ffi::bridge_abi_version(), 45);
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.
@@ -336,9 +338,11 @@ fn monitoring_cells_are_described() {
     let contract: serde_json::Value =
         serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
     let cells = &contract["monitoring_cells"];
-    for (key, value) in [("strip_max_cells", 24), ("strip_max_bytes", 4194304), ("max_pins", 16),
+    for (key, value) in [("strip_max_cells", 25), ("strip_max_bytes", 4194304), ("max_pins", 16),
                          ("pin_max_bytes", 4194304), ("crop_max_side", 256), ("crop_min_margin", 8),
-                         ("row_index_max", 4096)] {
+                         ("row_index_max", 4096),
+                         // ABI 45 (#866 MON-052/053): the invalid strip's own bounds.
+                         ("invalid_strip_max_cells", 25), ("invalid_strip_max_bytes", 4194304)] {
         assert_eq!(cells[key], serde_json::json!(value), "monitoring_cells.{key} (pinned in shim.cpp)");
     }
     for (key, needle) in [("identity", "capture_epoch"), ("commands", "captureEpoch"), ("listing", "ring_capture_epoch"),
@@ -350,9 +354,17 @@ fn monitoring_cells_are_described() {
                           ("capture_rules", "the camera opening or closing"), ("capture_rules", "another processing ROI"),
                           ("capture_rules", "a realtime stop"), ("capture_rules", "Tag at entry"),
                           ("capture_rules", "One authority"), ("listing", "pins_ended"),
-                          ("geometry", "ROI"), ("threading", "24-byte tag")] {
+                          ("geometry", "ROI"), ("threading", "24-byte tag"),
+                          // ABI 45: the invalid strip and its reasons.
+                          ("listing", "invalid_strip"), ("cell", "reasons"), ("invalid_strip", "oldest evicted first"),
+                          ("invalid_strip", "every rule of the strip"), ("invalid_strip", "monitoring_clear"),
+                          ("reasons", "classifyInvalidReasons"), ("reasons", "no_contour"), ("reasons", "wall"),
+                          ("reasons", "histogram"), ("commands", "then the invalid strip")] {
         assert!(cells[key].as_str().is_some_and(|d| d.contains(needle)), "monitoring_cells.{key} mentions {needle}");
     }
+    // ABI 45: the reason codes, in the classifier's InvalidReasonCode order (pinned in the C++ store test).
+    assert_eq!(cells["reason_codes"],
+               serde_json::json!(["no_contour", "border", "area", "ring", "deform", "area_ratio", "focus", "wall"]));
     // Review round 2: the error an image pull of another capture is refused with.
     assert_eq!(cells["error_codes"]["capture_mismatch"], serde_json::json!("CAPTURE_MISMATCH"));
     let kinds = &contract["frame_packet"]["pull_kinds"];
@@ -1186,7 +1198,7 @@ fn monitoring_cells_end_to_end() {
     // The strip: owned crops with their masks, metadata only in JSON.
     let listing: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
     let strip = listing["strip"].as_array().unwrap();
-    assert!(!strip.is_empty() && strip.len() <= 24, "{listing}");
+    assert!(!strip.is_empty() && strip.len() <= 25, "{listing}");
     let cell = strip.last().unwrap();
     assert!(cell["image"]["has_mask"] == true && cell["no_image_reason"].is_null(), "{cell}");
     assert!(listing.to_string().len() < 64 * 1024, "the listing carries no pixels");
@@ -1270,6 +1282,107 @@ fn monitoring_cells_end_to_end() {
     assert!(unpin.ok && unpin.message == "unpinned", "the ended pin is unpinned: {unpin:?}");
 
     assert!(bridge.pin_mut().stop_capture().ok);
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&frame_dir);
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+// A config under which the blob frames fail validation: the area gate (60..70 um^2) is far below
+// a blob's area at the calibration the test applies, so every detection is invalid with an Area
+// reason (the other gates are off). ABI 45 (#866 MON-053).
+const AREA_REJECTING_CONFIG: &str = r#"{"image_processing": {"gaussian_blur_size": 3, "bg_subtract_threshold": 8,
+    "morph_kernel_size": 3, "morph_iterations": 1, "empty_frame_pixel_threshold": 1, "auto_background_enabled": false,
+    "area_threshold_min": 60, "area_threshold_max": 70,
+    "filters": {"enable_border_check": false, "enable_area_range_check": true, "enable_deformability_range_check": false,
+                "enable_area_ratio_check": false, "enable_ring_ratio_check": false,
+                "enable_laplacian_variance_check": false, "require_single_inner_contour": false}}}"#;
+
+// ABI 45 (#866 MON-052/053): the invalid-cell strip end to end through the cxx bridge: blob frames
+// that fail the area gate reach the monitoring ring's invalid half, the store keeps their crops in
+// its own strip (never in the valid one) with the shared classifier's reasons (measured value and
+// the configured range), the pixels come out as frame packets, and monitoring_clear and a capture
+// change empty it.
+#[test]
+#[serial]
+fn monitoring_invalid_cells_end_to_end() {
+    let frame_dir = make_blob_frame_dir("invalid_cells");
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_invalid_cells_data_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let empty: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    assert!(empty["invalid_strip"].as_array().is_some_and(|a| a.is_empty()), "{empty}");
+    assert_eq!((empty["caps"]["strip_max_cells"].clone(), empty["caps"]["invalid_strip_max_cells"].clone(),
+                empty["caps"]["invalid_strip_max_bytes"].clone()),
+               (serde_json::json!(25), serde_json::json!(25), serde_json::json!(4194304)), "{empty}");
+
+    assert!(bridge.pin_mut().apply_processing_config_json(AREA_REJECTING_CONFIG).ok);
+    assert!(bridge.pin_mut().apply_processing(true, 0.5).ok);
+    assert!(bridge.pin_mut().configure_mock_camera(&frame_dir.to_string_lossy(), 5, true).ok);
+    assert!(bridge.pin_mut().monitoring_set_active(true).ok);
+    assert!(bridge.pin_mut().start_capture().ok);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let listing = loop {
+        let l: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+        if l["invalid_strip"].as_array().is_some_and(|a| a.len() >= 5) { break l; }
+        assert!(Instant::now() < deadline, "no invalid cells from the blob frames: {l}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let invalid = listing["invalid_strip"].as_array().unwrap();
+    assert!(invalid.len() <= 25, "bounded: {}", invalid.len());
+    assert!(listing["strip"].as_array().unwrap().is_empty(), "no valid cell: {listing}");
+    for cell in invalid {
+        assert_eq!(cell["valid"], false, "{cell}");
+        assert!(cell["image"]["has_mask"] == true && cell["no_image_reason"].is_null(), "{cell}");
+        assert_eq!(cell["capture_epoch"], listing["ring_capture_epoch"], "the current capture only");
+        let reasons = cell["reasons"].as_array().unwrap();
+        assert_eq!(reasons.len(), 1, "only the area gate rejects: {cell}");
+        let r = &reasons[0];
+        assert_eq!(r["code"], "area", "{cell}");
+        // The measured value is the cell's area in um^2 at the row's own calibration (0.5 um/px):
+        // a blob of radius 14 px is ~615 px^2 = ~154 um^2; the range is the configured one.
+        let (value, min, max) = (r["value"].as_f64().unwrap(), r["min"].as_f64().unwrap(), r["max"].as_f64().unwrap());
+        let expected = cell["area"].as_f64().unwrap() * 0.5 * 0.5;
+        assert!((value - expected).abs() < 1e-6 && value > 100.0, "{r} vs area {}", cell["area"]);
+        assert_eq!((min, max), (60.0, 70.0), "{r}");
+    }
+    assert_eq!(listing["stats"]["invalid_strip_cells"].as_u64().unwrap() as usize, invalid.len(), "{listing}");
+    assert!(listing["stats"]["invalid_strip_admitted"].as_str().unwrap().parse::<u64>().unwrap() >= invalid.len() as u64);
+    assert!(listing.to_string().len() < 128 * 1024, "the listing carries no pixels");
+
+    // The pixels of an invalid cell are pulled like a strip cell's.
+    let cell = invalid.last().unwrap();
+    let (gen, epoch, frame, object) = (
+        cell["start_generation"].as_str().unwrap().parse::<u64>().unwrap(),
+        cell["capture_epoch"].as_str().unwrap().parse::<u64>().unwrap(),
+        cell["frame_index"].as_str().unwrap().parse::<u64>().unwrap(),
+        cell["object_id"].as_i64().unwrap() as i32,
+    );
+    let image = bridge.pin_mut().fetch_monitoring_cell_image(gen, epoch, frame, object, false).frame;
+    assert!(image.valid && image.data.iter().any(|&p| p >= 200), "the crop holds the blob: {image:?}");
+    assert_eq!((image.width, image.height), (cell["image"]["width"].as_u64().unwrap(), cell["image"]["height"].as_u64().unwrap()));
+    let mask = bridge.pin_mut().fetch_monitoring_cell_image(gen, epoch, frame, object, true).frame;
+    assert!(mask.valid && mask.data.iter().any(|&p| p > 0), "the mask crop");
+
+    // A pin of an invalid cell carries its reasons.
+    let pin: serde_json::Value =
+        serde_json::from_str(&bridge.pin_mut().monitoring_cell_pin(gen, epoch, frame, object)).unwrap();
+    assert!(pin["ok"] == true && pin["cell"]["reasons"][0]["code"] == "area", "{pin}");
+    assert!(bridge.pin_mut().monitoring_cell_clear_pins().ok);
+
+    // monitoring_clear empties both strips with the ring (accumulation off first, so nothing refills
+    // them): no capture change, the same capture.
+    assert!(bridge.pin_mut().monitoring_set_active(false).ok);
+    assert!(bridge.pin_mut().monitoring_clear().ok);
+    let cleared: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    assert!(cleared["invalid_strip"].as_array().unwrap().is_empty() && cleared["strip"].as_array().unwrap().is_empty(),
+            "{cleared}");
+    assert_eq!(cleared["ring_capture_epoch"], listing["ring_capture_epoch"], "a clear is not a capture change");
+    // Stopping the camera is one: the next capture begins, the listing says why.
+    assert!(bridge.pin_mut().stop_capture().ok);
+    let stopped: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    assert_ne!(stopped["ring_capture_epoch"], listing["ring_capture_epoch"], "a new capture began");
+    assert!(stopped["last_capture_change"]["invalid_strip_dropped"].is_number(), "{stopped}");
+
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&frame_dir);
     let _ = std::fs::remove_dir_all(&data_dir);

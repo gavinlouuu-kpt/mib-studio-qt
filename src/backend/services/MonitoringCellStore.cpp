@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <utility>
 
@@ -82,6 +83,92 @@ MonitoringCellMetrics monitoringCellMetrics(const FilterResult& v, std::uint64_t
     return m;
 }
 
+const char* monitoringReasonName(processing::science::InvalidReasonCode code)
+{
+    using Code = processing::science::InvalidReasonCode;
+    switch (code) {
+    case Code::NoContour: return "no_contour";
+    case Code::Border: return "border";
+    case Code::Area: return "area";
+    case Code::Ring: return "ring";
+    case Code::Deform: return "deform";
+    case Code::AreaRatio: return "area_ratio";
+    case Code::Laplacian: return "focus";
+    case Code::Channel: return "wall";
+    }
+    return "unknown";
+}
+
+std::vector<MonitoringCellReason> monitoringCellReasons(const MonitoringCellMetrics& metrics,
+                                                        const MonitoringCellVerdictInputs& verdict,
+                                                        const MonitoringReasonContext& context)
+{
+    namespace science = processing::science;
+    std::vector<MonitoringCellReason> out;
+    if (metrics.valid) return out;
+    // The row as the classifier reads it (every field it reads, nothing else).
+    FilterResult r;
+    r.isValid = false;
+    r.touchesBorder = verdict.touchesBorder;
+    r.inChannel = verdict.inChannel;
+    r.degenerateContour = verdict.degenerateContour;
+    r.innerContourCount = verdict.innerContourCount;
+    r.laplacianVariance = verdict.laplacianVariance;
+    r.centroidY = verdict.centroidRow;
+    r.area = metrics.area;
+    r.ringRatio = metrics.ringRatio;
+    r.deformability = metrics.deformability;
+    r.areaRatio = metrics.areaRatio;
+    // The calibration the row was analysed with decided its area gate; the current one only
+    // when the row does not carry it.
+    double p2m = metrics.pixelToMicron > 0.0 ? metrics.pixelToMicron : context.pixelToMicron;
+    if (!(p2m > 0.0)) p2m = 1.0;
+    const ProcessingConfig& cfg = context.config;
+    for (const auto code : science::classifyInvalidReasons(r, cfg, p2m)) {
+        MonitoringCellReason reason;
+        reason.code = code;
+        using Code = science::InvalidReasonCode;
+        switch (code) {
+        case Code::NoContour:
+        case Code::Border:
+            break; // early exits: no metric was computed
+        case Code::Area:
+            reason.value = r.area * p2m * p2m;
+            reason.min = cfg.area_threshold_min;
+            reason.max = cfg.area_threshold_max;
+            break;
+        case Code::Ring:
+            reason.value = r.ringRatio;
+            reason.min = cfg.ring_ratio_min;
+            reason.max = cfg.ring_ratio_max;
+            break;
+        case Code::Deform:
+            reason.value = r.deformability;
+            reason.min = cfg.deformability_threshold_min;
+            reason.max = cfg.deformability_threshold_max;
+            break;
+        case Code::AreaRatio:
+            reason.value = r.areaRatio;
+            reason.max = cfg.area_ratio_threshold_max; // a ceiling only
+            break;
+        case Code::Laplacian:
+            reason.value = r.laplacianVariance;
+            reason.min = cfg.laplacian_variance_min;
+            reason.max = cfg.laplacian_variance_max;
+            break;
+        case Code::Channel:
+            reason.value = r.centroidY;
+            if (cfg.channel_band_h > 0) {
+                reason.min = cfg.channel_band_y;
+                reason.max = static_cast<double>(cfg.channel_band_y) + cfg.channel_band_h;
+            }
+            break;
+        }
+        out.push_back(reason);
+    }
+    return out;
+}
+
 MonitoringCellStore::MonitoringCellStore(MonitoringCellSource& source) : MonitoringCellStore(source, Policy{}) {}
 
 MonitoringCellStore::MonitoringCellStore(MonitoringCellSource& source, Policy policy)
@@ -105,7 +192,8 @@ cv::Rect MonitoringCellStore::cropRect(int imageWidth, int imageHeight, const Mo
         w = m.bboxWidth + 2.0 * margin;
         h = m.bboxHeight + 2.0 * margin;
     } else if (finite(m.centroidX) && finite(m.centroidY) && m.centroidX >= 0.0 && m.centroidY >= 0.0 &&
-               m.centroidX < imageWidth && m.centroidY < imageHeight) {
+               m.centroidX < imageWidth && m.centroidY < imageHeight &&
+               !(m.centroidX == 0.0 && m.centroidY == 0.0)) { // exactly (0, 0): nothing was measured
         cx = m.centroidX;
         cy = m.centroidY;
     }
@@ -119,11 +207,13 @@ cv::Rect MonitoringCellStore::cropRect(int imageWidth, int imageHeight, const Mo
 }
 
 MonitoringCellStore::Entry MonitoringCellStore::copyCandidate(const MonitoringCellCandidate& c,
-                                                              const std::string& noImageReason) const
+                                                              const std::string& noImageReason,
+                                                              const MonitoringReasonContext* reasons) const
 {
     Entry e;
     e.info.key = c.key;
     e.info.metrics = c.metrics;
+    if (reasons && !c.metrics.valid) e.info.reasons = monitoringCellReasons(c.metrics, c.verdict, *reasons);
     if (c.image.empty()) {
         e.info.noImageReason = noImageReason;
         return e;
@@ -189,7 +279,9 @@ std::uint64_t MonitoringCellStore::advanceLocked(const std::string& reason,
     change.captureEpoch = next;
     change.reason = reason;
     change.stripDropped = strip_.size();
+    change.invalidStripDropped = invalid_.size();
     counters_.stripEvicted += strip_.size();
+    counters_.invalidStripEvicted += invalid_.size();
     const auto release = [&freed](Entry& e) {
         if (!e.image.empty()) freed.push_back(std::move(e.image));
         if (!e.mask.empty()) freed.push_back(std::move(e.mask));
@@ -199,6 +291,9 @@ std::uint64_t MonitoringCellStore::advanceLocked(const std::string& reason,
     for (auto& e : strip_) release(e);
     strip_.clear();
     stripBytes_ = 0;
+    for (auto& e : invalid_) release(e);
+    invalid_.clear();
+    invalidBytes_ = 0;
     if (dropPins) {
         change.pinsDropped = pins_.size();
         for (auto& e : pins_) release(e);
@@ -269,14 +364,17 @@ std::string MonitoringCellStore::captureRefusalLocked(const char* what, const Mo
 
 void MonitoringCellStore::clearStrip()
 {
-    std::deque<Entry> strip;
+    std::deque<Entry> strip, invalid;
     {
         std::scoped_lock lk(mutex_);
         ++epoch_;
-        if (!strip_.empty()) ++revision_;
+        if (!strip_.empty() || !invalid_.empty()) ++revision_;
         counters_.stripEvicted += strip_.size();
+        counters_.invalidStripEvicted += invalid_.size();
         strip.swap(strip_);
+        invalid.swap(invalid_);
         stripBytes_ = 0;
+        invalidBytes_ = 0;
         index_.clear();
         indexOrder_.clear();
     }
@@ -305,11 +403,18 @@ void MonitoringCellStore::trimStripLocked()
         ++counters_.stripEvicted;
         ++revision_;
     }
+    while (!invalid_.empty() &&
+           (invalid_.size() > policy_.invalidStripMaxCells || invalidBytes_ > policy_.invalidStripMaxBytes)) {
+        invalidBytes_ -= std::min(invalidBytes_, invalid_.front().info.bytes);
+        invalid_.pop_front();
+        ++counters_.invalidStripEvicted;
+        ++revision_;
+    }
 }
 
 void MonitoringCellStore::raisePeakLocked()
 {
-    peakBytes_ = std::max(peakBytes_, stripBytes_ + pinBytes_);
+    peakBytes_ = std::max(peakBytes_, stripBytes_ + invalidBytes_ + pinBytes_);
 }
 
 const MonitoringCellStore::Entry* MonitoringCellStore::findLocked(const MonitoringCellKey& key, bool pinsFirst) const
@@ -319,8 +424,11 @@ const MonitoringCellStore::Entry* MonitoringCellStore::findLocked(const Monitori
             if (e.info.key == key) return &e;
         return nullptr;
     };
+    // The strips (valid, then invalid): a row is in at most one of them (its validity is fixed).
     auto inStrip = [&]() -> const Entry* {
         for (auto it = strip_.rbegin(); it != strip_.rend(); ++it)
+            if (it->info.key == key) return &*it;
+        for (auto it = invalid_.rbegin(); it != invalid_.rend(); ++it)
             if (it->info.key == key) return &*it;
         return nullptr;
     };
@@ -336,19 +444,22 @@ void MonitoringCellStore::refreshStrip()
     const auto t0 = Clock::now();
     std::uint64_t epoch = 0;
     std::uint64_t current = 0;
-    std::vector<MonitoringCellKey> held;
+    std::vector<MonitoringCellKey> held, heldInvalid;
     {
         std::scoped_lock lk(mutex_);
         epoch = epoch_;
         current = current_;
         held.reserve(strip_.size());
         for (const auto& e : strip_) held.push_back(e.info.key);
+        heldInvalid.reserve(invalid_.size());
+        for (const auto& e : invalid_) heldInvalid.push_back(e.info.key);
     }
-    // The ring's lock is held inside this call only (headers, no pixels).
-    auto newest = source_.newestValid(policy_.stripMaxCells);
+    // The ring's lock is held inside this call only (headers, no pixels), once for both halves.
+    auto newest = source_.newestRows(policy_.stripMaxCells, policy_.invalidStripMaxCells);
     const auto tSource = Clock::now();
-    std::vector<Entry> fresh;
+    std::vector<Entry> fresh, freshInvalid;
     fresh.reserve(newest.rows.size());
+    freshInvalid.reserve(newest.invalidRows.size());
     std::size_t otherCapture = 0;
     const auto inRun = [&newest](const MonitoringCellKey& k) { return k.startGeneration == newest.ringGeneration; };
     for (const auto& c : newest.rows) {
@@ -360,7 +471,24 @@ void MonitoringCellStore::refreshStrip()
         if (std::find(held.begin(), held.end(), c.key) != held.end()) continue;
         fresh.push_back(copyCandidate(c, kNoImageResultsOnly)); // crop + clone, no lock held
     }
-    source_.releaseShares(newest.rows); // keys and metrics stay for the index below
+    // The invalid half: the same rules, plus the reasons (the config is read once, only when a
+    // new invalid row is admitted, outside every lock).
+    std::optional<MonitoringReasonContext> reasonContext;
+    for (const auto& c : newest.invalidRows) {
+        if (!inRun(c.key)) continue;
+        if (c.key.captureEpoch != current) {
+            ++otherCapture;
+            continue;
+        }
+        if (std::find(heldInvalid.begin(), heldInvalid.end(), c.key) != heldInvalid.end()) continue;
+        if (!reasonContext) reasonContext = source_.reasonContext();
+        freshInvalid.push_back(copyCandidate(c, kNoImageResultsOnly, &*reasonContext));
+    }
+    // One return of the shares for both halves; keys and metrics stay for the index below.
+    newest.rows.insert(newest.rows.end(), std::make_move_iterator(newest.invalidRows.begin()),
+                       std::make_move_iterator(newest.invalidRows.end()));
+    newest.invalidRows.clear();
+    source_.releaseShares(newest.rows);
     std::deque<Entry> dropped; // freed when this returns, after the lock
     std::function<void(const char*)> droppedHook; // tests only
     {
@@ -387,6 +515,17 @@ void MonitoringCellStore::refreshStrip()
                 ++it;
             }
         }
+        for (auto it = invalid_.begin(); it != invalid_.end();) {
+            if (!inRun(it->info.key)) {
+                invalidBytes_ -= std::min(invalidBytes_, it->info.bytes);
+                dropped.push_back(std::move(*it));
+                it = invalid_.erase(it);
+                ++counters_.invalidStripEvicted;
+                ++revision_;
+            } else {
+                ++it;
+            }
+        }
         for (auto& e : fresh) {
             // The insert rule, under the mutex the capture changes take: the row's carried capture
             // is the current one.
@@ -398,6 +537,17 @@ void MonitoringCellStore::refreshStrip()
             stripBytes_ += e.info.bytes;
             strip_.push_back(std::move(e));
             ++counters_.stripAdmitted;
+            ++revision_;
+        }
+        for (auto& e : freshInvalid) {
+            if (e.info.key.captureEpoch != current_) {
+                ++otherCapture;
+                continue;
+            }
+            if (findLocked(e.info.key, false)) continue;
+            invalidBytes_ += e.info.bytes;
+            invalid_.push_back(std::move(e));
+            ++counters_.invalidStripAdmitted;
             ++revision_;
         }
         for (const auto& c : newest.rows)
@@ -515,7 +665,9 @@ MonitoringCellStore::PinResult MonitoringCellStore::pin(const MonitoringCellKey&
     for (const auto& c : found.rows) {
         if (c.key.captureEpoch != key.captureEpoch) continue; // another capture's frame: unrelated
         if (c.key.startGeneration == expectedStartGeneration) {
-            copy = copyCandidate(c, kNoImageResultsOnly);
+            std::optional<MonitoringReasonContext> reasons; // an invalid row's reasons, outside every lock
+            if (!c.metrics.valid) reasons = source_.reasonContext();
+            copy = copyCandidate(c, kNoImageResultsOnly, reasons ? &*reasons : nullptr);
             break;
         }
         if (!otherGeneration) otherGeneration = c.key.startGeneration;
@@ -603,12 +755,17 @@ MonitoringCellStore::Listing MonitoringCellStore::listing() const
     out.strip.reserve(strip_.size());
     for (const auto& e : strip_)
         if (e.info.key.captureEpoch == out.ringCaptureEpoch) out.strip.push_back(e.info);
+    out.invalidStrip.reserve(invalid_.size());
+    for (const auto& e : invalid_)
+        if (e.info.key.captureEpoch == out.ringCaptureEpoch) out.invalidStrip.push_back(e.info);
     out.pins.reserve(pins_.size());
     for (const auto& e : pins_) out.pins.push_back(e.info); // an ended capture's pin has no image
     out.lastCaptureChange = lastChange_;
     out.stats = counters_;
     out.stats.stripCells = strip_.size();
     out.stats.stripBytes = stripBytes_;
+    out.stats.invalidStripCells = invalid_.size();
+    out.stats.invalidStripBytes = invalidBytes_;
     out.stats.pins = pins_.size();
     out.stats.pinBytes = pinBytes_;
     out.stats.indexedRows = index_.size();
@@ -651,16 +808,34 @@ diagnostics::MemoryOwnerStats MonitoringCellStore::memoryStats() const
     o.name = "monitoring.cellStore";
     o.knowledge = diagnostics::MemoryKnowledge::Measured;
     std::scoped_lock lk(mutex_);
-    o.currentBytes = stripBytes_ + pinBytes_;
+    o.currentBytes = stripBytes_ + invalidBytes_ + pinBytes_;
     o.peakBytes = peakBytes_;
-    o.currentCount = strip_.size() + pins_.size();
+    o.currentCount = strip_.size() + invalid_.size() + pins_.size();
     o.peakCount = o.currentCount;
-    o.capacityBytes = policy_.stripMaxBytes + policy_.pinMaxBytes;
-    o.capacityCount = policy_.stripMaxCells + policy_.maxPins;
-    o.evictedByBudget = counters_.stripEvicted;
-    o.note = "owned crops of the live detected-cell strip and the pinned cells (bridge ABI 41); a pinned strip cell "
-             "has a copy of its own in each (#789)";
+    o.capacityBytes = policy_.stripMaxBytes + policy_.invalidStripMaxBytes + policy_.pinMaxBytes;
+    o.capacityCount = policy_.stripMaxCells + policy_.invalidStripMaxCells + policy_.maxPins;
+    o.evictedByBudget = counters_.stripEvicted + counters_.invalidStripEvicted;
+    o.note = "owned crops of the live valid and invalid detected-cell strips and the pinned cells (bridge ABI 41, "
+             "invalid strip ABI 45); a pinned strip cell has a copy of its own in each (#789)";
     return o;
+}
+
+MonitoringCellSource::Rows MonitoringCellSource::newestInvalid(std::size_t)
+{
+    return {};
+}
+
+MonitoringCellSource::Rows MonitoringCellSource::newestRows(std::size_t maxValid, std::size_t maxInvalid)
+{
+    Rows out = newestValid(maxValid);
+    Rows invalid = newestInvalid(maxInvalid);
+    out.invalidRows = std::move(invalid.rows);
+    return out;
+}
+
+MonitoringReasonContext MonitoringCellSource::reasonContext() const
+{
+    return {};
 }
 
 void MonitoringCellSource::releaseShares(std::vector<MonitoringCellCandidate>& rows)
@@ -687,16 +862,25 @@ public:
         processing_.publishMonitoringCapture(captureEpoch, cameraSessionFloor); // atomic stores
     }
 
-    Rows newestValid(std::size_t maxRows) override
+    Rows newestValid(std::size_t maxRows) override { return read(maxRows, 0); }
+
+    Rows newestInvalid(std::size_t maxRows) override
     {
-        Rows out;
-        out.rows.reserve(maxRows); // allocated before the lock is taken
-        const auto view = processing_.visitMonitoringNewest(
-            maxRows, false, [&out](const ProcessedFrame& f, const ProcessingService::MonitoringRowTag& tag, bool) {
-                out.rows.push_back(candidate(f, tag));
-            });
-        out.ringGeneration = view.runGeneration;
+        Rows out = read(0, maxRows);
+        out.rows = std::move(out.invalidRows);
+        out.invalidRows.clear();
         return out;
+    }
+
+    Rows newestRows(std::size_t maxValid, std::size_t maxInvalid) override { return read(maxValid, maxInvalid); }
+
+    MonitoringReasonContext reasonContext() const override
+    {
+        // Reads under the config's own mutex, never under the ring's lock or the store's.
+        MonitoringReasonContext c;
+        c.config = processing_.getEffectiveProcessingConfig();
+        c.pixelToMicron = processing_.getPixelToMicronFactor();
+        return c;
     }
 
     Rows find(std::uint64_t frameIndex, int objectId) override
@@ -727,13 +911,40 @@ public:
     }
 
 private:
-    // Under the ring's lock: scalars and Mat headers; geometry into image (ROI) coordinates.
+    // The newest rows of the two rings under one hold of the ring's lock.
+    Rows read(std::size_t maxValid, std::size_t maxInvalid)
+    {
+        Rows out;
+        out.rows.reserve(maxValid); // allocated before the lock is taken
+        out.invalidRows.reserve(maxInvalid);
+        const auto view = processing_.visitMonitoringNewestPerRing(
+            maxValid, maxInvalid,
+            [&out](const ProcessedFrame& f, const ProcessingService::MonitoringRowTag& tag, bool valid) {
+                (valid ? out.rows : out.invalidRows).push_back(candidate(f, tag));
+            });
+        out.ringGeneration = view.runGeneration;
+        return out;
+    }
+
+    // Under the ring's lock: scalars and Mat headers; geometry into image (ROI) coordinates. An
+    // invalid row also carries the handful of scalars the classifier reads.
     static MonitoringCellCandidate candidate(const ProcessedFrame& f, const ProcessingService::MonitoringRowTag& tag)
     {
-        return MonitoringCellCandidate{
+        MonitoringCellCandidate c{
             {tag.runGeneration, f.index, f.validation.objectId, tag.captureEpoch},
             monitoringCellMetrics(f.validation, f.timestampNs, {tag.geometryOriginX, tag.geometryOriginY}),
+            {},
             f.originalImage, f.processedImage};
+        if (!f.validation.isValid) {
+            const auto& v = f.validation;
+            c.verdict.touchesBorder = v.touchesBorder;
+            c.verdict.inChannel = v.inChannel;
+            c.verdict.degenerateContour = v.degenerateContour;
+            c.verdict.innerContourCount = v.innerContourCount;
+            c.verdict.laplacianVariance = v.laplacianVariance;
+            c.verdict.centroidRow = v.centroidY;
+        }
+        return c;
     }
 
     ProcessingService& processing_;

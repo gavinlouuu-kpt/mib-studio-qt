@@ -1,8 +1,9 @@
 # MonitoringCellStore
 
 > Backend-owned, bounded per-row cell images for the live Monitoring / Live views (bridge ABI 41,
-> #716 A6a): a strip of the most recently detected cells and the operator's pins, each an owned
-> crop (and mask) that outlives the monitoring ring. Every shell reads the same copies; pixels
+> #716 A6a): a strip of the most recently detected valid cells, a strip of the most recent invalid
+> ones with the reasons they failed validation (ABI 45, #866) and the operator's pins, each an
+> owned crop (and mask) that outlives the monitoring ring. Every shell reads the same copies; pixels
 > travel as frame packets, never in JSON.
 
 **Source:** `src/backend/services/MonitoringCellStore.cpp`,
@@ -30,12 +31,33 @@
   Review round 1 of #749 found async-batch crops shifted by the ROI origin (background or the
   neighbouring object); `processing.monitoring_cell_pipeline` pins the fix on pixels.
 - **Strip.** `refreshStrip()` (called by `fetch_monitoring_cells`) asks the source for the newest
-  `stripMaxCells` valid rows, crops the new ones **outside every lock**, then admits them under the
-  store mutex: rows of another run context (another run, rows outside a run while one runs) are
-  dropped, and a row whose carried capture is not the current one is never admitted (the insert
-  rule, checked under the store mutex); the strip is trimmed oldest-first to 24 cells and 4 MiB,
-  every eviction counts in `stripEvicted`. A batch that raced a capture change, a `beginRun` or a
-  `clearStrip` is discarded.
+  `stripMaxCells` valid rows **and** `invalidStripMaxCells` invalid rows (one source call,
+  `newestRows`, one hold of the ring's lock), crops the new ones **outside every lock**, then admits
+  them under the store mutex: rows of another run context (another run, rows outside a run while one
+  runs) are dropped, and a row whose carried capture is not the current one is never admitted (the
+  insert rule, checked under the store mutex); each strip is trimmed oldest-first to its own 25 cells
+  and 4 MiB (`kStripMaxCells` 25 as the Qt tab's 25 thumbnails: 25 worst-case crops of 2 x 256 x 256
+  bytes are 3.1 MiB, inside the cap), every eviction counts in `stripEvicted` /
+  `invalidStripEvicted`. A batch that raced a capture change, a `beginRun` or a `clearStrip` is
+  discarded. The strip never holds an invalid row and the invalid strip never a valid one.
+- **Invalid strip and reasons (ABI 45, #866 MON-053).** The ring's invalid half (every detection that
+  failed validation, a frame with no contour among them) feeds a second deque with the strip's rules.
+  Each invalid cell carries `reasons`: `{code, value, min, max}` per failed gate, derived by
+  `monitoringCellReasons` over the shared `science::classifyInvalidReasons` (the classifier the live
+  invalid-reason histogram uses, so the two cannot disagree; `testReasonsAgreeWithTheClassifier`
+  compares them over 3 contracts x 64 configs x 32 rows). **Where computed:** the ring read copies the
+  six scalars the classifier needs besides the measurements (`MonitoringCellVerdictInputs`: border,
+  in-channel and degenerate-contour flags, inner contour count, Laplacian variance, centroid row; only
+  for an invalid row, under the lock the read already holds), and the reasons are derived in
+  `refreshStrip` / `pin` **outside every lock**, once per new invalid cell, from the config read once
+  per refresh (`MonitoringCellSource::reasonContext`: `getEffectiveProcessingConfig` and the pixel
+  factor, only when an invalid row is admitted). Nothing is added to the acquisition/processing path.
+  **Which config:** the one in force when the cell is first listed (within one poll of its
+  detection), not the one at every redraw as Qt's tooltip reads it; the area is compared at the row's
+  own analysis calibration (`analysisPixelToMicronFactor`, what the gate used) else the current
+  factor. A pin of an invalid row from the ring carries reasons too; one from the bounded row index
+  (image gone, measurements only) has none. A frame with nothing measured has centroid (0, 0) and no
+  box: `cropRect` treats that centroid as unknown (image centre), not a corner crop.
 - **Pins.** `pin(key)` (`key.startGeneration` = the run the caller expects) in this order: a
   key whose `captureEpoch` is not the current one is **`CaptureMismatch`**, before every other
   rule; the expected run must be 0 or the latest run started (`scopeGeneration`), else
@@ -102,13 +124,15 @@
 `unpin` → `ReadResult{ok, captureMismatch, message}`, `clearPins`,
 `advanceCapture(reason[, cameraSessionFloor])` → the new epoch, `currentCapture()`, `noteRows`,
 `listing()` → `Listing{scopeGeneration, ringGeneration, ringCaptureEpoch (the current capture),
-revision, strip, pins (ended ones without an image), lastCaptureChange, stats, policy}`,
+revision, strip, invalidStrip (ABI 45), pins (ended ones without an image), lastCaptureChange, stats,
+policy}`, free `monitoringCellReasons` / `monitoringReasonName`,
 `image(key, mask, out, info)` → `ReadResult` (a private copy of the owned crop, or the refusal with
 its reason), `stats`, `memoryStats` (owner `monitoring.cellStore`), static `cropRect`, and the test
 seam `setReadHookForTests` (called under the mutex where `image()` / `listing()` have resolved what
 they serve). `MonitoringCellSource` is the seam (`currentCaptureEpoch`, `publishCapture`,
-`newestValid`, `find`, `releaseShares`): production `makeProcessingCellSource(ProcessingService&)`
-over `visitMonitoringNewest` and `publishMonitoringCapture`; tests use a fake ring.
+`newestValid`, `newestInvalid`, `newestRows`, `reasonContext`, `find`, `releaseShares`): production
+`makeProcessingCellSource(ProcessingService&)` over `visitMonitoringNewestPerRing`,
+`visitMonitoringNewest` and `publishMonitoringCapture`; tests use a fake ring.
 `PinOutcome` values (0 Pinned … 5 LimitReached, 6 CaptureMismatch) and the caps are pinned by `static_assert`s in
 `crates/mib-bridge/src/shim.cpp` and by `bridge-contract.json` `monitoring_cells` /
 `monitoring_cell_pin_outcomes`.
@@ -159,7 +183,9 @@ over `visitMonitoringNewest` and `publishMonitoringCapture`; tests use a fake ri
   and p99 200–218 ns with a client polling (round 2: 104–106 / 187–207); realtime throughput ratio
   0.94–1.04 over six runs on a loaded host (load average 14–20), median ~0.99.
   `processing.monitoring_cell_concurrency` (TSan lane) races the real realtime loop against two strip
-  clients, a snapshot reader, a pinner and a run switcher.
+  clients, a snapshot reader, a pinner, a run switcher and (ABI 45) a config switcher that toggles an
+  area gate no blob passes, so the invalid half fills and the reasons are derived while the config is
+  replaced.
 
 ## Gotchas
 
@@ -185,6 +211,10 @@ over `visitMonitoringNewest` and `publishMonitoringCapture`; tests use a fake ri
   arriving** ends the capture; frames of a closed camera session never adopt the next capture),
   `processing.monitoring_cell_concurrency`, `performance.monitoring_cell_hot_path`; Rust
   `contract.rs` `monitoring_cells_end_to_end` (an ROI change refuses the old images, ends the pin),
+  ABI 45: `backend.monitoring_cell_store` (invalid admission and separation, each code's value and
+  range, caps and byte cap of its own, run context, capture change, clear, pins carrying reasons,
+  the classifier parity grid), `e2e.monitoring_cells_facade` section 7, `contract.rs`
+  `monitoring_invalid_cells_end_to_end`,
   `dispatch.rs` `monitoring_cells_through_dispatch` (`CAPTURE_MISMATCH` after a camera stop, the
   ended pin listed and unpinned), `ws.rs` `live_cells_over_the_websocket`; `monitoringCells.test.ts`.
   Each round-3 test was checked against a mutant (completion-time tagging inline and in async

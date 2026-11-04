@@ -10,7 +10,11 @@
 //   - a pinner pinning the newest rows by their identity, unpinning and
 //     clearing when full;
 //   - a run switcher: setMonitoringRunGeneration + beginRun, as the
-//     coordinator does at Start and at the end of accumulation.
+//     coordinator does at Start and at the end of accumulation;
+//   - a config switcher (ABI 45, #866): live tuning toggles an area gate no
+//     blob passes, so the ring's invalid half fills too and the refreshes
+//     admit invalid cells, deriving their reasons from the config read
+//     (MonitoringCellSource::reasonContext) while it is being replaced.
 // Invariants checked on every listing: the caps hold (count and bytes), every
 // pin belongs to the scope's run or to none, every cell has exactly one of an
 // image and a reason, and a fetched image has the listed size. The run must
@@ -70,6 +74,16 @@ backend::services::ProcessingConfig lenient()
 }
 
 // Failures from worker threads, reported on the main thread.
+// Live tuning: the area gate no blob passes (every detection is rejected with an Area reason).
+backend::services::ProcessingConfig strict()
+{
+    auto c = lenient();
+    c.enable_area_range_check = true;
+    c.area_threshold_min = 0;
+    c.area_threshold_max = 1;
+    return c;
+}
+
 std::mutex gFailMutex;
 std::vector<std::string> gFailures;
 void fail(const std::string& what)
@@ -83,6 +97,8 @@ void checkListing(const MonitoringCellStore::Listing& l)
     const auto& p = l.policy;
     if (l.strip.size() > p.stripMaxCells) fail("strip over its count cap");
     if (l.stats.stripBytes > p.stripMaxBytes) fail("strip over its byte cap");
+    if (l.invalidStrip.size() > p.invalidStripMaxCells) fail("invalid strip over its count cap");
+    if (l.stats.invalidStripBytes > p.invalidStripMaxBytes) fail("invalid strip over its byte cap");
     if (l.pins.size() > p.maxPins) fail("pins over their count cap");
     if (l.stats.pinBytes > p.pinMaxBytes) fail("pins over their byte cap");
     std::uint64_t stripBytes = 0, pinBytes = 0;
@@ -90,6 +106,19 @@ void checkListing(const MonitoringCellStore::Listing& l)
         stripBytes += c.bytes;
         if (c.hasImage == !c.noImageReason.empty()) fail("strip cell: image xor reason");
     }
+    std::uint64_t invalidBytes = 0;
+    for (const auto& c : l.strip)
+        if (!c.metrics.valid || !c.reasons.empty()) fail("a valid strip cell that is invalid or lists reasons");
+    for (const auto& c : l.invalidStrip) {
+        invalidBytes += c.bytes;
+        if (c.hasImage == !c.noImageReason.empty()) fail("invalid strip cell: image xor reason");
+        if (c.metrics.valid) fail("a valid cell in the invalid strip");
+        if (c.key.captureEpoch != l.ringCaptureEpoch) fail("an invalid strip cell of another capture");
+        for (const auto& r : c.reasons)
+            if (static_cast<int>(r.code) < 0 || static_cast<int>(r.code) >= backend::processing::science::kInvalidReasonCount)
+                fail("an unknown reason code");
+    }
+    if (invalidBytes != l.stats.invalidStripBytes) fail("invalid strip byte accounting drifted");
     for (const auto& c : l.pins) {
         pinBytes += c.bytes;
         if (c.key.startGeneration != 0 && c.key.startGeneration != l.scopeGeneration)
@@ -149,7 +178,7 @@ int main()
                 const auto l = cells.listing();
                 checkListing(l);
                 listings.fetch_add(1, std::memory_order_relaxed);
-                for (const auto* group : {&l.strip, &l.pins}) {
+                for (const auto* group : {&l.strip, &l.invalidStrip, &l.pins}) {
                     for (const auto& c : *group) {
                         for (bool mask : {false, true}) {
                             cv::Mat image;
@@ -233,6 +262,18 @@ int main()
         }
     });
 
+    // Config switcher: live tuning while the strips refresh.
+    std::atomic<uint64_t> configSwitches{0};
+    threads.emplace_back([&] {
+        bool tight = false;
+        while (!stop.load(std::memory_order_relaxed)) {
+            tight = !tight;
+            proc.setProcessingConfig(tight ? strict() : lenient());
+            configSwitches.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(7));
+        }
+    });
+
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     while (std::chrono::steady_clock::now() < deadline) {
         wd.mark("stress");
@@ -265,6 +306,8 @@ int main()
     MIB_EXPECT(imageCopies.load() > 0, "images were copied out under load");
     MIB_EXPECT(pinsTaken.load() > 0, "pins were taken under load");
     MIB_EXPECT(runSwitches.load() > 2, "runs switched under load");
+    MIB_EXPECT(configSwitches.load() > 2 && view.invalidAppended > 0, "the ring's invalid half filled while the config switched");
+    MIB_EXPECT(cells.listing().stats.invalidStripAdmitted > 0, "the invalid strip took copies under load");
     std::printf("monitoring_cell_concurrency_test: %s\n", mib::test::exitCode() == 0 ? "PASS" : "FAIL");
     return mib::test::exitCode();
 }

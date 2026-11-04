@@ -36,8 +36,19 @@
 //      never served after the change;
 //  10. one owner per copy (#789): a pinned strip cell has its own copy, so the
 //      refresh that drops the strip's frees nothing a reader of the pin copied
-//      (the interleaving replayed through the "refresh-dropped" hook).
+//      (the interleaving replayed through the "refresh-dropped" hook);
+//  11. the invalid strip (ABI 45, #866 MON-053): invalid rows of the ring are
+//      admitted to a strip of their own (never the valid one), with its own
+//      count and byte caps, eviction counters, run context and capture rules,
+//      cleared by clearStrip and by a capture change; each invalid cell carries
+//      the reasons the shared classifier gives it, with the measured value and
+//      the configured range; the config is read once per refresh and only when
+//      an invalid row is admitted; an invalid cell's image and mask are served
+//      like a strip cell's; a pin of an invalid cell carries its reasons;
+//  12. monitoringCellReasons: every reason code with its value and range, early
+//      exits, the row's own calibration, and parity with the classifier itself.
 
+#include "backend/processing/ProcessingContract.h"
 #include "backend/services/MonitoringCellStore.h"
 
 #include "support/assert.h"
@@ -45,8 +56,10 @@
 
 #include <opencv2/core.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <deque>
 #include <functional>
@@ -60,9 +73,14 @@ using backend::services::MonitoringCellCandidate;
 using backend::services::MonitoringCellInfo;
 using backend::services::MonitoringCellKey;
 using backend::services::MonitoringCellMetrics;
+using backend::services::MonitoringCellReason;
 using backend::services::MonitoringCellSource;
+using backend::services::MonitoringCellVerdictInputs;
+using backend::services::MonitoringReasonContext;
 using backend::services::MonitoringCellStore;
 using Outcome = MonitoringCellStore::PinOutcome;
+namespace science = backend::processing::science;
+using Code = science::InvalidReasonCode;
 
 namespace {
 
@@ -124,6 +142,24 @@ public:
         if (onNewest) onNewest();
         return out;
     }
+    // The invalid half (ABI 45): served only when a test asks for it, so the tests of the valid
+    // strip keep their invalid rows out of the way.
+    Rows newestInvalid(std::size_t maxRows) override
+    {
+        Rows out;
+        out.ringGeneration = generation;
+        if (!serveInvalid) return out;
+        std::vector<MonitoringCellCandidate> invalid;
+        for (auto it = rows_.rbegin(); it != rows_.rend() && invalid.size() < maxRows; ++it)
+            if (!it->metrics.valid) invalid.push_back(*it);
+        out.rows.assign(invalid.rbegin(), invalid.rend());
+        return out;
+    }
+    MonitoringReasonContext reasonContext() const override
+    {
+        ++reasonCalls;
+        return reasonCtx;
+    }
     Rows find(std::uint64_t frameIndex, int objectId) override
     {
         Rows out;
@@ -157,6 +193,9 @@ public:
     int newestCalls{0};
     int releaseCalls{0};
     int releasedShares{0};
+    bool serveInvalid{false};
+    MonitoringReasonContext reasonCtx; // the config reasons are derived with (defaults: contract 1)
+    mutable int reasonCalls{0};
     std::function<void()> onNewest; // runs inside the source call (a racing beginRun)
     std::function<void()> onFind;
 
@@ -185,6 +224,26 @@ const MonitoringCellInfo* inStrip(const MonitoringCellStore::Listing& l, std::ui
 }
 // The result points into the listing: never call it on a temporary (ASan caught one).
 const MonitoringCellInfo* inStrip(MonitoringCellStore::Listing&&, std::uint64_t) = delete;
+
+const MonitoringCellInfo* inInvalid(const MonitoringCellStore::Listing& l, std::uint64_t frameIndex)
+{
+    for (const auto& c : l.invalidStrip)
+        if (c.key.frameIndex == frameIndex) return &c;
+    return nullptr;
+}
+const MonitoringCellInfo* inInvalid(MonitoringCellStore::Listing&&, std::uint64_t) = delete;
+
+// An invalid row that fails the area gate only (with the default config: 10 um^2 < 60; the ring ratio sits
+// inside its range, one inner contour, no border): reasons [Area].
+MonitoringCellCandidate& appendInvalid(FakeRing& ring, std::uint64_t frame, int object, std::uint8_t value,
+                                       double area = 10.0)
+{
+    auto& c = ring.append(frame, object, false, value);
+    c.verdict.innerContourCount = 1;
+    c.metrics.area = area;
+    c.metrics.ringRatio = 20.0;
+    return c;
+}
 
 void testCropPolicy()
 {
@@ -229,6 +288,11 @@ void testCropPolicy()
     outside.centroidX = -1;
     r = MonitoringCellStore::cropRect(kW, kH, outside, p);
     MIB_EXPECT(r.x == 36 && r.width == 128, "image centre when nothing usable");
+    // A frame with no contour measures nothing: a centroid of exactly (0, 0) is not a position, the
+    // crop is centred on the image instead of sitting in its corner (an invalid cell of ABI 45).
+    MonitoringCellMetrics none;
+    r = MonitoringCellStore::cropRect(kW, kH, none, p);
+    MIB_EXPECT(r.x == 36 && r.width == 128 && r.height == kH, "nothing measured: the image centre");
     MIB_EXPECT(MonitoringCellStore::cropRect(0, 0, m, p).empty(), "empty image, empty rect");
 }
 
@@ -843,6 +907,459 @@ void testGeometryOrigin()
     MIB_EXPECT(inline_.bboxX == 140 && inline_.centroidY == 58, "origin (0, 0) leaves inline rows as measured");
 }
 
+
+void testInvalidStrip()
+{
+    std::printf("invalid strip: admission, reasons, separation from the strip\n");
+    FakeRing ring;
+    ring.serveInvalid = true;
+    MonitoringCellStore store(ring);
+    MIB_EXPECT(MonitoringCellStore::kStripMaxCells == 25 && MonitoringCellStore::kInvalidStripMaxCells == 25,
+               "25 cells each, as the Qt tab shows");
+    ring.append(1, 0, true, 10);
+    appendInvalid(ring, 2, 0, 20);
+    ring.append(3, 0, true, 30);
+    auto& two = appendInvalid(ring, 4, 0, 40, 400.0); // 400 um^2 > 290: Area; ring ratio 5 <= 15: Ring
+    two.metrics.ringRatio = 5.0;
+    appendInvalid(ring, 5, 1, 50);
+
+    store.refreshStrip();
+    auto l = store.listing();
+    MIB_REQUIRE(l.strip.size() == 2 && l.invalidStrip.size() == 3, "two valid cells, three invalid ones");
+    MIB_EXPECT(l.strip[0].key.frameIndex == 1 && l.strip[1].key.frameIndex == 3, "the strip: valid cells only");
+    MIB_EXPECT(!inStrip(l, 2) && !inStrip(l, 4) && !inStrip(l, 5), "an invalid row is never a valid strip cell");
+    MIB_EXPECT(!inInvalid(l, 1) && !inInvalid(l, 3), "nor a valid row an invalid one");
+    MIB_EXPECT(l.invalidStrip[0].key.frameIndex == 2 && l.invalidStrip[2].key.frameIndex == 5, "oldest -> newest");
+    for (const auto& c : l.invalidStrip) {
+        MIB_EXPECT(!c.metrics.valid && c.hasImage && c.hasMask && c.width == 40 && c.height == 36 &&
+                       c.bytes == 2u * 40 * 36,
+                   "an invalid cell is a crop around the object with its mask");
+        MIB_EXPECT(c.key.captureEpoch == l.ringCaptureEpoch, "of the current capture");
+    }
+    for (const auto& c : l.strip) MIB_EXPECT(c.reasons.empty(), "a valid cell has no reasons");
+    MIB_REQUIRE(l.invalidStrip[0].reasons.size() == 1, "frame 2 fails the area gate only");
+    MIB_EXPECT(l.invalidStrip[0].reasons[0].code == Code::Area && l.invalidStrip[0].reasons[0].value == 10.0 &&
+                   l.invalidStrip[0].reasons[0].min == 60.0 && l.invalidStrip[0].reasons[0].max == 290.0,
+               "Area: the measured um^2 and the configured range");
+    MIB_REQUIRE(l.invalidStrip[1].reasons.size() == 2, "frame 4 fails two gates");
+    MIB_EXPECT(l.invalidStrip[1].reasons[0].code == Code::Area && l.invalidStrip[1].reasons[0].value == 400.0 &&
+                   l.invalidStrip[1].reasons[1].code == Code::Ring && l.invalidStrip[1].reasons[1].value == 5.0 &&
+                   l.invalidStrip[1].reasons[1].min == 15.0 && l.invalidStrip[1].reasons[1].max == 25.0,
+               "in the classifier's priority order: Area, then Ring");
+    MIB_EXPECT(l.stats.stripCells == 2 && l.stats.invalidStripCells == 3 && l.stats.invalidStripBytes == 3u * 2 * 40 * 36 &&
+                   l.stats.stripBytes == 2u * 2 * 40 * 36,
+               "each strip counts its own cells and bytes");
+    MIB_EXPECT(l.stats.stripAdmitted == 2 && l.stats.invalidStripAdmitted == 3 && l.stats.invalidStripEvicted == 0,
+               "and its own admissions");
+    MIB_EXPECT(ring.reasonCalls == 1, "the config is read once for the refresh");
+    MIB_EXPECT(ring.releaseCalls == 1 && ring.releasedShares == 10, "one return of the shares for both halves");
+    const auto rev = l.revision;
+
+    // Unchanged ring: nothing new, nothing read, the same revision.
+    store.refreshStrip();
+    l = store.listing();
+    MIB_EXPECT(l.revision == rev && l.stats.invalidStripAdmitted == 3, "an unchanged ring changes nothing");
+    MIB_EXPECT(ring.reasonCalls == 1, "no new invalid row, no config read");
+    MIB_EXPECT(ring.releaseCalls == 2 && ring.releasedShares == 20, "every refresh returns its shares");
+
+    // An invalid cell's pixels are served like a strip cell's, as private copies.
+    cv::Mat image, mask;
+    MIB_REQUIRE(store.image(key(ring, 0, 2, 0), false, image) && store.image(key(ring, 0, 2, 0), true, mask),
+                "the invalid cell's image and mask");
+    MIB_EXPECT(image.size() == cv::Size(40, 36) && cv::countNonZero(image != 20) == 0, "the crop holds the row's pixels");
+    MIB_EXPECT(cv::countNonZero(mask) == 20 * 16, "and its mask");
+    MIB_EXPECT(!sharesMemory(image, ring.held(2, 0)->image), "the copy does not alias the ring");
+    auto other = store.image({0, 2, 0, ring.captureEpoch + 1}, false, image);
+    MIB_EXPECT(!other && other.captureMismatch, "another capture's invalid cell is refused");
+
+    // A change of the config between refreshes: the cell keeps the reasons it was admitted with; a new
+    // row is classified with the config then in force.
+    ring.reasonCtx.config.area_threshold_max = 1000;
+    appendInvalid(ring, 6, 0, 60, 400.0).metrics.ringRatio = 20.0; // 400 um^2 now inside 60..1000: rejected for no reason
+    store.refreshStrip();
+    l = store.listing();
+    MIB_REQUIRE(inInvalid(l, 6) && inInvalid(l, 4), "both listed");
+    MIB_EXPECT(inInvalid(l, 6)->reasons.empty(), "the config in force at admission says the row passes every gate now");
+    MIB_EXPECT(inInvalid(l, 4)->reasons.size() == 2 && inInvalid(l, 4)->reasons[0].max == 290.0,
+               "an admitted cell keeps its reasons");
+    MIB_EXPECT(ring.reasonCalls == 2, "one more config read for the new row");
+}
+
+void testInvalidStripCaps()
+{
+    std::printf("invalid strip: its own count and byte caps\n");
+    FakeRing ring;
+    ring.serveInvalid = true;
+    MonitoringCellStore::Policy p;
+    p.invalidStripMaxCells = 4;
+    MonitoringCellStore store(ring, p);
+    for (std::uint64_t i = 1; i <= 3; ++i) ring.append(i, 0, true, static_cast<std::uint8_t>(i));
+    for (std::uint64_t i = 11; i <= 13; ++i) appendInvalid(ring, i, 0, static_cast<std::uint8_t>(i));
+    store.refreshStrip();
+    for (std::uint64_t i = 14; i <= 16; ++i) appendInvalid(ring, i, 0, static_cast<std::uint8_t>(i));
+    store.refreshStrip();
+    auto l = store.listing();
+    MIB_REQUIRE(l.invalidStrip.size() == 4, "count cap");
+    MIB_EXPECT(l.invalidStrip.front().key.frameIndex == 13 && l.invalidStrip.back().key.frameIndex == 16,
+               "oldest evicted first");
+    MIB_EXPECT(l.stats.invalidStripEvicted == 2 && l.stats.stripEvicted == 0 && l.strip.size() == 3,
+               "its evictions are counted apart; the valid strip is untouched");
+    cv::Mat px;
+    MIB_EXPECT(!store.image(key(ring, 0, 11, 0), false, px), "an evicted invalid cell is gone");
+
+    // The valid strip's cap does not limit the invalid one, nor the reverse.
+    FakeRing ring2;
+    ring2.serveInvalid = true;
+    MonitoringCellStore::Policy q;
+    q.stripMaxCells = 2;
+    q.invalidStripMaxCells = 5;
+    MonitoringCellStore store2(ring2, q);
+    for (std::uint64_t i = 1; i <= 5; ++i) {
+        ring2.append(i, 0, true, 1);
+        appendInvalid(ring2, 100 + i, 0, 2);
+    }
+    store2.refreshStrip();
+    l = store2.listing();
+    MIB_EXPECT(l.strip.size() == 2 && l.invalidStrip.size() == 5, "each strip is held to its own cap");
+
+    // Byte cap: room for two invalid cells only.
+    FakeRing ring3;
+    ring3.serveInvalid = true;
+    MonitoringCellStore::Policy small;
+    small.invalidStripMaxBytes = 2u * 2 * 40 * 36;
+    MonitoringCellStore tight(ring3, small);
+    for (std::uint64_t i = 1; i <= 5; ++i) appendInvalid(ring3, i, 0, 9);
+    tight.refreshStrip();
+    l = tight.listing();
+    MIB_EXPECT(l.invalidStrip.size() == 2 && l.stats.invalidStripBytes <= small.invalidStripMaxBytes,
+               "its own byte cap holds");
+    MIB_EXPECT(l.invalidStrip.front().key.frameIndex == 4 && l.stats.invalidStripEvicted == 3,
+               "the newest that fit are kept, byte evictions counted");
+    MIB_EXPECT(l.stats.stripBytes == 0, "the valid strip's bytes are separate");
+
+    // At most the cap of new crops per refresh, never the ring's size.
+    FakeRing big;
+    big.serveInvalid = true;
+    MonitoringCellStore bounded(big);
+    for (std::uint64_t i = 1; i <= 500; ++i) appendInvalid(big, i, 0, 1);
+    bounded.refreshStrip();
+    MIB_EXPECT(bounded.listing().stats.invalidStripAdmitted == MonitoringCellStore::kInvalidStripMaxCells,
+               "at most invalid_strip_max_cells copies per refresh");
+    // The worst case fits the byte cap: 25 crops of 256 x 256 (image + mask).
+    MIB_EXPECT(MonitoringCellStore::kStripMaxCells * 2ull * MonitoringCellStore::kCropMaxSide *
+                       MonitoringCellStore::kCropMaxSide <=
+                   MonitoringCellStore::kStripMaxBytes &&
+                   MonitoringCellStore::kInvalidStripMaxCells * 2ull * MonitoringCellStore::kCropMaxSide *
+                           MonitoringCellStore::kCropMaxSide <=
+                       MonitoringCellStore::kInvalidStripMaxBytes,
+               "25 crops of the largest size fit each strip's byte cap");
+}
+
+void testInvalidStripContextAndCapture()
+{
+    std::printf("invalid strip: run context, capture changes, clear\n");
+    FakeRing ring;
+    ring.serveInvalid = true;
+    ring.captureEpoch = 5;
+    MonitoringCellStore store(ring);
+    appendInvalid(ring, 1, 0, 1);
+    appendInvalid(ring, 2, 0, 2);
+    store.refreshStrip();
+    MIB_EXPECT(store.listing().invalidStrip.size() == 2 && store.listing().ringGeneration == 0, "outside a run");
+
+    ring.generation = 7; // run 7 starts tagging rows; a run start is a capture change
+    store.beginRun(7);
+    store.refreshStrip();
+    MIB_EXPECT(store.listing().invalidStrip.empty(), "pre-run cells never enter the run's invalid strip");
+    appendInvalid(ring, 3, 0, 3);
+    store.refreshStrip();
+    auto l = store.listing();
+    MIB_EXPECT(l.invalidStrip.size() == 1 && l.invalidStrip[0].key.startGeneration == 7, "the run's invalid cells");
+    MIB_REQUIRE(l.lastCaptureChange, "the run start changed the capture");
+    MIB_EXPECT(l.lastCaptureChange->invalidStripDropped == 2, "(it dropped the two cells of the capture before)");
+
+    ring.generation = 0; // the run stopped accumulating
+    appendInvalid(ring, 4, 0, 4);
+    appendInvalid(ring, 5, 0, 5);
+    store.refreshStrip();
+    l = store.listing();
+    MIB_EXPECT(!inInvalid(l, 3) && inInvalid(l, 4) && inInvalid(l, 5), "after the run, the run's cells leave the strip");
+    MIB_EXPECT(l.stats.invalidStripEvicted == 3 && l.stats.invalidStripCells == 2,
+               "counted as an eviction (after the 2 the run start's capture change dropped)");
+
+    // A capture change clears the invalid strip with the strip, at once, and says how many.
+    ring.append(6, 0, true, 6);
+    store.refreshStrip();
+    const auto oldEpoch = store.currentCapture();
+    const auto revision = store.listing().revision;
+    MIB_REQUIRE(store.listing().invalidStrip.size() == 2 && store.listing().strip.size() == 1, "both strips filled");
+    const auto fresh = store.advanceCapture("the processing ROI changed");
+    l = store.listing();
+    MIB_EXPECT(l.invalidStrip.empty() && l.strip.empty() && l.stats.invalidStripCells == 0 &&
+                   l.stats.invalidStripBytes == 0 && l.revision > revision && store.memoryStats().currentBytes == 0,
+               "both strips are empty and every pixel copy released");
+    MIB_REQUIRE(l.lastCaptureChange, "the change is reported");
+    MIB_EXPECT(l.lastCaptureChange->stripDropped == 1 && l.lastCaptureChange->invalidStripDropped == 2,
+               "with the counts of each strip");
+    cv::Mat px;
+    auto read = store.image({0, 4, 0, oldEpoch}, false, px);
+    MIB_EXPECT(!read && read.captureMismatch, "the old capture's invalid cell is refused: " + read.message);
+
+    // The insert rule: an invalid row whose frame entered before the change is never admitted.
+    ring.captureEpoch = oldEpoch;
+    appendInvalid(ring, 7, 0, 7); // entered before the change, completed after it
+    ring.captureEpoch = fresh;
+    appendInvalid(ring, 8, 0, 8);
+    store.refreshStrip();
+    l = store.listing();
+    MIB_EXPECT(l.invalidStrip.size() == 1 && l.invalidStrip[0].key.frameIndex == 8 && l.invalidStrip[0].key.captureEpoch == fresh,
+               "only the new capture's invalid row is admitted");
+
+    // clearStrip (monitoring_clear) empties both strips, keeps the pins, bumps the revision.
+    ring.append(9, 0, true, 9);
+    store.refreshStrip();
+    MIB_REQUIRE(store.pin({0, 8, 0, fresh}).outcome == Outcome::Pinned, "pin an invalid cell");
+    const auto before = store.listing().revision;
+    store.clearStrip();
+    l = store.listing();
+    MIB_EXPECT(l.strip.empty() && l.invalidStrip.empty() && l.pins.size() == 1 && l.revision > before &&
+                   l.stats.invalidStripBytes == 0,
+               "clear empties the strips, pins stay");
+    MIB_EXPECT(store.image({0, 8, 0, fresh}, false, px) && px.size() == cv::Size(40, 36), "the pinned invalid cell still serves its pixels");
+}
+
+void testInvalidPins()
+{
+    std::printf("pins of invalid cells carry their reasons\n");
+    FakeRing ring;
+    ring.serveInvalid = true;
+    MonitoringCellStore store(ring);
+    appendInvalid(ring, 1, 0, 11);
+    store.refreshStrip();
+    MIB_REQUIRE(store.listing().invalidStrip.size() == 1, "an invalid cell");
+    // From the strip: a copy of the strip's copy, reasons included.
+    auto r = store.pin(key(ring, 0, 1, 0));
+    MIB_REQUIRE(r.outcome == Outcome::Pinned && r.cell, r.message);
+    MIB_EXPECT(r.cell->reasons.size() == 1 && r.cell->reasons[0].code == Code::Area && r.cell->reasons[0].value == 10.0,
+               "the pin carries the reasons");
+    cv::Mat a, b;
+    MIB_REQUIRE(store.image(key(ring, 0, 1, 0), false, a), "pins first");
+    store.clearStrip();
+    MIB_REQUIRE(store.image(key(ring, 0, 1, 0), false, b) && cv::countNonZero(b != 11) == 0, "the pin owns its pixels");
+
+    // From the ring (never in the strip: the invalid half is not served): reasons derived at pin time.
+    ring.serveInvalid = false;
+    appendInvalid(ring, 2, 0, 22, 400.0);
+    const int calls = ring.reasonCalls;
+    r = store.pin(key(ring, 0, 2, 0));
+    MIB_REQUIRE(r.outcome == Outcome::Pinned && r.cell, r.message);
+    MIB_EXPECT(ring.reasonCalls == calls + 1 && r.cell->reasons.size() == 1 && r.cell->reasons[0].value == 400.0,
+               "an invalid row pinned from the ring is classified");
+    // A valid row never reads the config.
+    ring.append(3, 0, true, 33);
+    store.pin(key(ring, 0, 3, 0));
+    MIB_EXPECT(ring.reasonCalls == calls + 1, "a valid row needs no reasons");
+
+    // The row index keeps measurements only: no classifier inputs, so no reasons, and it says nothing.
+    MonitoringCellMetrics m;
+    m.valid = false;
+    store.noteRows({{key(ring, 0, 50, 0), m}});
+    r = store.pin(key(ring, 0, 50, 0));
+    MIB_REQUIRE(r.outcome == Outcome::PinnedWithoutImage && r.cell, r.message);
+    MIB_EXPECT(r.cell->reasons.empty() && !r.cell->noImageReason.empty(), "measurements only: no reasons, the reason it has no image");
+}
+
+// Direct checks of the reason derivation: every code with its value and range.
+bool isNan(double v) { return std::isnan(v); }
+
+void testReasons()
+{
+    std::printf("reasons: every code with its measured value and range\n");
+    MonitoringReasonContext ctx; // defaults: contract 1; border, area, ring on; deformability and ratio off
+    MonitoringCellMetrics m;
+    m.valid = false;
+    m.area = 10.0;
+    m.ringRatio = 20.0;
+    m.deformability = 0.5;
+    MonitoringCellVerdictInputs v;
+    v.innerContourCount = 1;
+
+    MonitoringCellMetrics validRow = m;
+    validRow.valid = true;
+    MIB_EXPECT(backend::services::monitoringCellReasons(validRow, v, ctx).empty(), "a valid row has no reasons");
+
+    // No contour: an early exit with no numbers.
+    MonitoringCellVerdictInputs none;
+    none.innerContourCount = 0;
+    auto r = backend::services::monitoringCellReasons(m, none, ctx);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::NoContour, "no inner contour");
+    MIB_EXPECT(isNan(r[0].value) && isNan(r[0].min) && isNan(r[0].max), "no contour: no value, no range");
+
+    // Border: an early exit; the out-of-range area is not listed with it.
+    MonitoringCellVerdictInputs border = v;
+    border.touchesBorder = true;
+    r = backend::services::monitoringCellReasons(m, border, ctx);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::Border, "border suppresses the metric reasons");
+    MIB_EXPECT(isNan(r[0].value) && isNan(r[0].min) && isNan(r[0].max), "border: no value, no range");
+
+    // Area, at the row's own calibration (0.5 um/px: 1000 px^2 = 250 um^2, inside), then at the current one.
+    m.area = 1000.0;
+    m.pixelToMicron = 0.5;
+    ctx.pixelToMicron = 2.0; // the current factor would make it 4000 um^2: the row's own is used
+    MIB_EXPECT(backend::services::monitoringCellReasons(m, v, ctx).empty(), "inside the range at the row's own factor: no reason");
+    m.area = 100.0; // 25 um^2 < 60
+    r = backend::services::monitoringCellReasons(m, v, ctx);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::Area, "area below its minimum");
+    MIB_EXPECT(r[0].value == 25.0 && r[0].min == 60.0 && r[0].max == 290.0, "value in um^2, the configured range");
+    m.pixelToMicron = 0.0; // a row that does not carry its factor: the current one (2.0): 400 um^2 > 290
+    r = backend::services::monitoringCellReasons(m, v, ctx);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::Area && r[0].value == 400.0, "the current factor when the row has none");
+    ctx.pixelToMicron = 0.0; // unknown everywhere: pixels as micrometres
+    m.area = 1000.0;
+    r = backend::services::monitoringCellReasons(m, v, ctx);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::Area && r[0].value == 1000.0, "1 um/px when nothing is known");
+    ctx.pixelToMicron = 1.0;
+    m.area = 100.0; // inside 60..290 at 1 um/px: no area reason from here on
+
+    // Ring (contract 1 has a ring width).
+    m.ringRatio = 5.0;
+    r = backend::services::monitoringCellReasons(m, v, ctx);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::Ring, "ring ratio at or below its minimum");
+    MIB_EXPECT(r[0].value == 5.0 && r[0].min == 15.0 && r[0].max == 25.0, "ring ratio and range");
+    m.ringRatio = 20.0;
+
+    // Deformability.
+    ctx.config.enable_deformability_range_check = true;
+    ctx.config.deformability_threshold_min = 0.0;
+    ctx.config.deformability_threshold_max = 0.4;
+    r = backend::services::monitoringCellReasons(m, v, ctx);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::Deform, "deformability above its maximum");
+    MIB_EXPECT(r[0].value == 0.5 && r[0].min == 0.0 && r[0].max == 0.4, "deformability and range");
+    ctx.config.enable_deformability_range_check = false;
+
+    // Area ratio: a ceiling only.
+    ctx.config.enable_area_ratio_check = true;
+    ctx.config.area_ratio_threshold_max = 1.5;
+    m.areaRatio = 2.25;
+    r = backend::services::monitoringCellReasons(m, v, ctx);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::AreaRatio, "area ratio above its maximum");
+    MIB_EXPECT(r[0].value == 2.25 && isNan(r[0].min) && r[0].max == 1.5, "ratio, no minimum");
+    ctx.config.enable_area_ratio_check = false;
+
+    // Laplacian variance (focus), including a value that could not be computed.
+    ctx.config.enable_laplacian_variance_check = true;
+    ctx.config.laplacian_variance_min = 5.0;
+    ctx.config.laplacian_variance_max = 50.0;
+    MonitoringCellVerdictInputs blurry = v;
+    blurry.laplacianVariance = 3.0;
+    r = backend::services::monitoringCellReasons(m, blurry, ctx);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::Laplacian, "focus below its minimum");
+    MIB_EXPECT(r[0].value == 3.0 && r[0].min == 5.0 && r[0].max == 50.0, "variance and range");
+    r = backend::services::monitoringCellReasons(m, v, ctx); // NaN variance: not usable
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::Laplacian && isNan(r[0].value), "an unusable variance is a reason without a value");
+    ctx.config.enable_laplacian_variance_check = false;
+
+    // Wall: the centroid row as measured, the band when one is configured.
+    MonitoringCellVerdictInputs wall = v;
+    wall.inChannel = false;
+    wall.centroidRow = 7.5;
+    r = backend::services::monitoringCellReasons(m, wall, ctx);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::Channel, "outside the channel band");
+    MIB_EXPECT(r[0].value == 7.5 && isNan(r[0].min) && isNan(r[0].max), "no band configured: no range");
+    ctx.config.channel_band_y = 10;
+    ctx.config.channel_band_h = 20;
+    r = backend::services::monitoringCellReasons(m, wall, ctx);
+    MIB_EXPECT(r.size() == 1 && r[0].min == 10.0 && r[0].max == 30.0, "the band [y, y + h)");
+
+    // Contract 3 (U-Net cells): a border cut-off is a reason whether or not the check is on, and a
+    // degenerate outline is no contour.
+    MonitoringReasonContext unet;
+    unet.config.processing_contract_version = backend::processing::contract::kProcessingContractVersionV3;
+    unet.config.enable_border_check = false;
+    MonitoringCellVerdictInputs cut = v;
+    cut.touchesBorder = true;
+    r = backend::services::monitoringCellReasons(m, cut, unet);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::Border, "contract 3: a cut-off cell is rejected");
+    MonitoringCellVerdictInputs degenerate = v;
+    degenerate.degenerateContour = true;
+    r = backend::services::monitoringCellReasons(m, degenerate, unet);
+    MIB_REQUIRE(r.size() == 1 && r[0].code == Code::NoContour, "contract 3: a degenerate outline is no contour");
+
+    // Wire names: one per code, in the classifier's order: the contract's reason_codes (also pinned in
+    // crates/mib-bridge/tests/contract.rs and the generated desktop/src/bridgeContract.ts).
+    std::vector<std::string> names;
+    for (int i = 0; i < science::kInvalidReasonCount; ++i)
+        names.push_back(backend::services::monitoringReasonName(static_cast<Code>(i)));
+    MIB_EXPECT(names == std::vector<std::string>({"no_contour", "border", "area", "ring", "deform", "area_ratio", "focus",
+                                                  "wall"}),
+               "the eight wire names, in InvalidReasonCode order");
+    MIB_EXPECT(std::string(backend::services::monitoringReasonName(Code::Laplacian)) == "focus" &&
+                   std::string(backend::services::monitoringReasonName(Code::Channel)) == "wall" &&
+                   std::string(backend::services::monitoringReasonName(Code::AreaRatio)) == "area_ratio",
+               "the names the contract documents");
+}
+
+// The cell store's reasons never disagree with the classifier the live histogram uses: over a grid of
+// rows and configs, the codes (in order) equal science::classifyInvalidReasons on the same row.
+void testReasonsAgreeWithTheClassifier()
+{
+    std::printf("reasons agree with science::classifyInvalidReasons\n");
+    int compared = 0;
+    for (int contract : {1, 2, 3}) {
+        for (int mask = 0; mask < 64; ++mask) {
+            backend::services::ProcessingConfig cfg;
+            cfg.processing_contract_version = contract;
+            cfg.enable_border_check = mask & 1;
+            cfg.enable_area_range_check = mask & 2;
+            cfg.enable_ring_ratio_check = mask & 4;
+            cfg.enable_deformability_range_check = mask & 8;
+            cfg.enable_area_ratio_check = mask & 16;
+            cfg.enable_laplacian_variance_check = mask & 32;
+            cfg.laplacian_variance_min = 5.0;
+            cfg.laplacian_variance_max = 50.0;
+            cfg.deformability_threshold_max = 0.1;
+            for (int row = 0; row < 32; ++row) {
+                backend::services::FilterResult f;
+                f.isValid = false;
+                f.innerContourCount = (row & 1) ? 1 : 0;
+                f.touchesBorder = row & 2;
+                f.degenerateContour = row & 4;
+                f.inChannel = !(row & 8);
+                f.area = (row & 16) ? 5000.0 : 100.0;
+                f.ringRatio = (row & 1) ? 5.0 : 20.0;
+                f.deformability = 0.3;
+                f.areaRatio = 2.0;
+                f.laplacianVariance = (row & 2) ? 1.0 : 20.0;
+                f.centroidY = 12.0;
+                MonitoringReasonContext ctx;
+                ctx.config = cfg;
+                ctx.pixelToMicron = 0.5;
+                MonitoringCellMetrics m;
+                m.valid = false;
+                m.area = f.area;
+                m.ringRatio = f.ringRatio;
+                m.deformability = f.deformability;
+                m.areaRatio = f.areaRatio;
+                MonitoringCellVerdictInputs v;
+                v.touchesBorder = f.touchesBorder;
+                v.inChannel = f.inChannel;
+                v.degenerateContour = f.degenerateContour;
+                v.innerContourCount = f.innerContourCount;
+                v.laplacianVariance = f.laplacianVariance;
+                v.centroidRow = f.centroidY;
+                const auto expected = science::classifyInvalidReasons(f, cfg, 0.5);
+                const auto got = backend::services::monitoringCellReasons(m, v, ctx);
+                bool same = expected.size() == got.size();
+                for (std::size_t i = 0; same && i < got.size(); ++i) same = expected[i] == got[i].code;
+                MIB_EXPECT(same, "contract " + std::to_string(contract) + " config " + std::to_string(mask) + " row " +
+                                     std::to_string(row));
+                ++compared;
+            }
+        }
+    }
+    MIB_EXPECT(compared == 3 * 64 * 32, "every combination compared");
+}
+
 void testMemoryStats()
 {
     FakeRing ring;
@@ -852,8 +1369,15 @@ void testMemoryStats()
     const auto m = store.memoryStats();
     MIB_EXPECT(m.name == "monitoring.cellStore" && m.currentBytes == 2u * 40 * 36 && m.currentCount == 1,
                "memory owner reports the copies");
-    MIB_EXPECT(m.capacityBytes == MonitoringCellStore::kStripMaxBytes + MonitoringCellStore::kPinMaxBytes,
-               "declared budget");
+    MIB_EXPECT(m.capacityBytes == MonitoringCellStore::kStripMaxBytes + MonitoringCellStore::kInvalidStripMaxBytes +
+                                      MonitoringCellStore::kPinMaxBytes,
+               "declared budget: the strip, the invalid strip and the pins");
+    // The invalid strip is counted as well.
+    ring.serveInvalid = true;
+    ring.append(2, 0, false, 2);
+    store.refreshStrip();
+    const auto m2 = store.memoryStats();
+    MIB_EXPECT(m2.currentBytes == 2u * 2 * 40 * 36 && m2.currentCount == 2, "the invalid strip's copies are reported");
 }
 
 } // namespace
@@ -874,6 +1398,12 @@ int main()
     testReadsAgainstACaptureChange();
     testPinOwnsItsCopy();
     testGeometryOrigin();
+    testInvalidStrip();
+    testInvalidStripCaps();
+    testInvalidStripContextAndCapture();
+    testInvalidPins();
+    testReasons();
+    testReasonsAgreeWithTheClassifier();
     testMemoryStats();
     std::printf("monitoring_cell_store_test: %s\n", mib::test::exitCode() == 0 ? "PASS" : "FAIL");
     return mib::test::exitCode();

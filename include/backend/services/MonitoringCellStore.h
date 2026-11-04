@@ -3,7 +3,7 @@
 // React Live view (#716 A6a, bridge ABI 41), the backend counterpart of what
 // the Qt Monitoring tab shows from its own rolling buffer.
 //
-// Two collections, both owned copies that survive the monitoring ring:
+// Three collections, all owned copies that survive the monitoring ring:
 //   - the strip: the most recently detected valid cells, a crop around each
 //     object plus the same crop of the mask. Refreshed from the ring on read
 //     (refreshStrip), oldest evicted first when the count or byte cap is
@@ -11,6 +11,16 @@
 //     current context: rows of the active run while one runs, rows detected
 //     outside a run otherwise (a row of another run is dropped at the next
 //     refresh), and only of the current capture (see below).
+//   - the invalid strip (bridge ABI 45): the same for the most recently
+//     detected INVALID cells (the monitoring ring's invalid half), with its
+//     own count and byte caps, and per cell the reasons the detection failed
+//     validation (science::classifyInvalidReasons, the classifier the live
+//     invalid-reason histogram uses), each with the measured value and the
+//     configured range it was held against. Reasons are computed here, at
+//     admission, outside every lock, from the scalars the ring read carries
+//     (MonitoringCellVerdictInputs) and the processing config read once per
+//     refresh (MonitoringCellSource::reasonContext): nothing is added to the
+//     acquisition/processing path.
 //   - pins: rows the operator asked to keep, by identity (start generation,
 //     frame index, object id, capture epoch). A pin is refused for a run other
 //     than the latest one started (and run 0, "outside a run") and for any
@@ -58,6 +68,7 @@
 // ProcessingService's rtMutex_ and capture authority mutex) -> the store's.
 
 #include "backend/diagnostics/MemoryBudget.h"
+#include "backend/processing/ProcessingScience.h"
 #include "backend/processing/ProcessingTypes.h"
 
 #include <opencv2/core.hpp>
@@ -66,6 +77,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -136,11 +148,49 @@ struct MonitoringCellMetrics {
 MonitoringCellMetrics monitoringCellMetrics(const FilterResult& v, std::uint64_t timestampNs,
                                             cv::Point geometryOrigin = {});
 
+// What science::classifyInvalidReasons reads of a row besides its measurements
+// (MonitoringCellMetrics): scalars copied with the row under the ring's lock, only
+// for an invalid row, so the reasons can be derived later without the frame.
+struct MonitoringCellVerdictInputs {
+    bool touchesBorder{false};
+    bool inChannel{true};
+    bool degenerateContour{false};
+    int innerContourCount{0};
+    double laplacianVariance{std::numeric_limits<double>::quiet_NaN()};
+    double centroidRow{0.0}; // as the classifier saw it (the frame the row was measured in)
+};
+
+// One reason an invalid cell failed validation (bridge-contract.json monitoring_cells.reasons).
+// `value` is the measured value the classifier compared and [min, max] the configured range it
+// was held against; NaN where the reason has none (No contour, Border; no min for Ratio).
+struct MonitoringCellReason {
+    processing::science::InvalidReasonCode code{processing::science::InvalidReasonCode::NoContour};
+    double value{std::numeric_limits<double>::quiet_NaN()};
+    double min{std::numeric_limits<double>::quiet_NaN()};
+    double max{std::numeric_limits<double>::quiet_NaN()};
+};
+// The stable wire name of a reason code: "no_contour", "border", "area", "ring", "deform",
+// "area_ratio", "focus", "wall".
+const char* monitoringReasonName(processing::science::InvalidReasonCode code);
+// The processing config and calibration factor a classification reads (MonitoringCellSource::reasonContext).
+struct MonitoringReasonContext {
+    ProcessingConfig config;
+    double pixelToMicron{1.0};
+};
+// The reasons an invalid cell failed validation: science::classifyInvalidReasons over the row
+// rebuilt from its measurements and verdict inputs, with the measured value and range per reason.
+// The area is compared in um^2 at the row's own analysis calibration (metrics.pixelToMicron) when it
+// has one, else context.pixelToMicron. Empty for a valid row, or when the config no longer rejects it.
+std::vector<MonitoringCellReason> monitoringCellReasons(const MonitoringCellMetrics& metrics,
+                                                        const MonitoringCellVerdictInputs& verdict,
+                                                        const MonitoringReasonContext& context);
+
 // A ring row as the source hands it over: identity, measurements and refcount
 // shares of its frozen images (headers only, taken under the ring's lock).
 struct MonitoringCellCandidate {
     MonitoringCellKey key;
     MonitoringCellMetrics metrics;
+    MonitoringCellVerdictInputs verdict; // set for an invalid row only
     cv::Mat image; // read-only share; empty when the row has no image (PL rows); see releaseShares
     cv::Mat mask;  // read-only share of the processed mask; may be empty
 };
@@ -153,6 +203,7 @@ public:
     struct Rows {
         std::uint64_t ringGeneration{0}; // the run tag frames entering now get (the active run, or 0)
         std::vector<MonitoringCellCandidate> rows; // each with the run and capture its frame carried
+        std::vector<MonitoringCellCandidate> invalidRows; // newestRows() only: the invalid ring's, oldest -> newest
     };
     virtual ~MonitoringCellSource() = default;
     // The published capture epoch (the store starts from it); lock-free.
@@ -162,6 +213,16 @@ public:
     virtual void publishCapture(std::uint64_t captureEpoch, std::optional<std::uint64_t> cameraSessionFloor) = 0;
     // The newest valid rows, at most maxRows, oldest -> newest.
     virtual Rows newestValid(std::size_t maxRows) = 0;
+    // The newest invalid rows, at most maxRows, oldest -> newest (in `rows`). A source without an
+    // invalid ring has none.
+    virtual Rows newestInvalid(std::size_t maxRows);
+    // Both at once (what refreshStrip reads): the newest `maxValid` valid rows in `rows` and the
+    // newest `maxInvalid` invalid rows in `invalidRows`, one run tag. The default reads the two
+    // calls above; the production source reads both rings under one hold of the ring's lock.
+    virtual Rows newestRows(std::size_t maxValid, std::size_t maxInvalid);
+    // The config and calibration factor the reasons of invalid rows are derived with; read at most
+    // once per refresh, only when it admits an invalid row, outside every lock.
+    virtual MonitoringReasonContext reasonContext() const;
     // Every held row (valid or not) with this frame index and object id, any
     // run or capture, newest first.
     virtual Rows find(std::uint64_t frameIndex, int objectId) = 0;
@@ -189,13 +250,19 @@ struct MonitoringCellInfo {
     int sourceHeight{0};
     std::uint64_t bytes{0};    // pixels this copy keeps alive
     std::string noImageReason; // plain reason, set when !hasImage (e.g. a pin whose capture ended)
+    std::vector<MonitoringCellReason> reasons; // why an invalid cell failed validation; empty for a valid one
 };
 
 class MonitoringCellStore {
 public:
     // Contract-pinned caps (bridge-contract.json monitoring_cells, static_asserts in shim.cpp).
-    static constexpr std::size_t kStripMaxCells = 24;
+    // 25 as the Qt Monitoring tab shows (MAX_FRAMES_TO_SHOW): 25 crops of at most 2 x 256 x 256 bytes
+    // (image + mask) are 3.1 MiB, inside the byte cap.
+    static constexpr std::size_t kStripMaxCells = 25;
     static constexpr std::uint64_t kStripMaxBytes = 4ull * 1024 * 1024;
+    // The invalid strip (ABI 45): the same bounds, its own byte cap.
+    static constexpr std::size_t kInvalidStripMaxCells = 25;
+    static constexpr std::uint64_t kInvalidStripMaxBytes = 4ull * 1024 * 1024;
     static constexpr std::size_t kMaxPins = 16;
     static constexpr std::uint64_t kPinMaxBytes = 4ull * 1024 * 1024;
     static constexpr int kCropMaxSide = 256;
@@ -205,6 +272,8 @@ public:
     struct Policy {
         std::size_t stripMaxCells{kStripMaxCells};
         std::uint64_t stripMaxBytes{kStripMaxBytes};
+        std::size_t invalidStripMaxCells{kInvalidStripMaxCells};
+        std::uint64_t invalidStripMaxBytes{kInvalidStripMaxBytes};
         std::size_t maxPins{kMaxPins};
         std::uint64_t pinMaxBytes{kPinMaxBytes};
         int cropMaxSide{kCropMaxSide};
@@ -243,6 +312,7 @@ public:
         std::size_t pinsEnded{0};      // pins kept with their measurements only
         std::size_t pinsDropped{0};    // pins removed (a run start)
         std::size_t stripDropped{0};
+        std::size_t invalidStripDropped{0};
     };
 
     struct Stats {
@@ -254,6 +324,10 @@ public:
         std::uint64_t peakBytes{0};
         std::uint64_t stripAdmitted{0}; // copies taken into the strip
         std::uint64_t stripEvicted{0};  // strip entries evicted by a cap or a context change
+        std::size_t invalidStripCells{0};
+        std::uint64_t invalidStripBytes{0};
+        std::uint64_t invalidStripAdmitted{0}; // copies taken into the invalid strip
+        std::uint64_t invalidStripEvicted{0};  // invalid strip entries evicted by a cap or a context change
         std::uint64_t refreshes{0};
         std::uint64_t lastRefreshUs{0}; // wall time of the last refresh (source read + crops)
         std::uint64_t lastSourceUs{0};  // of which: the source read (the ring's lock is held inside)
@@ -265,6 +339,7 @@ public:
         std::uint64_t ringCaptureEpoch{0}; // the current capture: every strip cell is of it
         std::uint64_t revision{0};        // bumps whenever the strip or the pins change
         std::vector<MonitoringCellInfo> strip; // oldest -> newest
+        std::vector<MonitoringCellInfo> invalidStrip; // oldest -> newest; each with its reasons
         std::vector<MonitoringCellInfo> pins;  // in pin order; a pin of an ended capture has no image
         std::optional<CaptureChange> lastCaptureChange;
         Stats stats;
@@ -350,8 +425,10 @@ private:
         cv::Mat image; // owned, continuous CV_8UC1; immutable once admitted
         cv::Mat mask;
     };
-    // Owned copy of a candidate (outside every lock).
-    Entry copyCandidate(const MonitoringCellCandidate& c, const std::string& noImageReason) const;
+    // Owned copy of a candidate (outside every lock); an invalid row's reasons are derived with
+    // `reasons` when given.
+    Entry copyCandidate(const MonitoringCellCandidate& c, const std::string& noImageReason,
+                        const MonitoringReasonContext* reasons = nullptr) const;
     const Entry* findLocked(const MonitoringCellKey& key, bool pinsFirst) const;
     void indexLocked(const MonitoringCellKey& key, const MonitoringCellMetrics& m);
     // The capture change itself (advanceCapture, beginRun): the next epoch, published; the strip
@@ -376,8 +453,10 @@ private:
     std::function<void(const char*)> readHook_; // tests only
     std::uint64_t revision_{0};
     std::deque<Entry> strip_; // oldest -> newest
+    std::deque<Entry> invalid_; // the invalid strip, oldest -> newest
     std::vector<Entry> pins_;
     std::uint64_t stripBytes_{0};
+    std::uint64_t invalidBytes_{0};
     std::uint64_t pinBytes_{0};
     std::uint64_t peakBytes_{0};
     std::deque<MonitoringCellKey> indexOrder_;

@@ -1,17 +1,20 @@
 // Experiment start/stop and Monitoring (epic #866): the Monitoring sub-tab: buffer counts, the charts
-// beside the tune panel (TunePanel.tsx) and the latest result rows. The trigger tests in its toolbar are
-// areas/hardware. Moved from App.tsx (#869 wave 0); the tune panel replaced its processing-settings link.
+// beside the tune panel (TunePanel.tsx), the live valid / invalid cell strips (CellStrips.tsx) and the latest
+// result rows. The trigger tests in its toolbar are areas/hardware. Moved from App.tsx (#869 wave 0); the tune
+// panel replaced its processing-settings link.
 import { bridge } from "../../bridge";
 import { MonitoringCharts } from "../../components/MonitoringCharts";
 import { ResultMetricCells } from "../../components/ResultMetricCells";
 import { ViewerGate } from "../../components/ViewerGate";
 import { useStudio } from "../../studio/StudioContext";
 import { TriggerTestControls } from "../hardware/TriggerTestControls";
+import { CellStrips } from "./CellStrips";
 import { TunePanel } from "./TunePanel";
 import { latestRows, MONITORING_TABLE_ROWS } from "./monitoringChartModel";
+import { isMonitoringVisible } from "./useMonitoring";
 
 export function MonitoringPanel() {
-  const { append, ready, caps, trigStatus, monSnapshot } = useStudio();
+  const { append, ready, caps, trigStatus, monSnapshot, tab, expTab } = useStudio();
   return (
     <>
       <div className="toolbar">
@@ -45,6 +48,7 @@ export function MonitoringPanel() {
         </div>
         <TunePanel />
       </div>
+      <CellStrips ready={ready} visible={isMonitoringVisible(tab, expTab)} />
       <div className="table-panel" style={{ maxHeight: 180, overflow: "auto" }}>
         <table className="metrics-table">
           <thead>

@@ -45,7 +45,7 @@ an upper bound on what those owners keep resident together.
 | `playback.frameStore` | Measured (slot allocations, resident even when stale) | capacity × the latest reserved frame bytes (follows a smaller frame size down, #839) | [[../data-model/FrameStore]] `memoryStats()` |
 | `processing.experimentBuffer` | Measured | `maxBufferedFrames` **and** `maxBufferedBytes`, sized together from the camera window and rate at Start (#833; 512 MiB until a plan is applied) | `ExperimentFrameBuffer` |
 | `processing.monitoringRings` | Measured | 2 × 1000 entries (bytes follow the frame geometry) | `FrameRingBuffer` |
-| `monitoring.cellStore` | Measured (owned crops; a pinned strip cell has its own copy in each, #789) | 24 + 16 cells, 4 MiB + 4 MiB | [[../services/MonitoringCellStore]] (ABI 41) |
+| `monitoring.cellStore` | Measured (owned crops; a pinned strip cell has its own copy in each, #789) | 25 + 25 + 16 cells, 3 x 4 MiB (valid strip, invalid strip, pins; the invalid strip is ABI 45) | [[../services/MonitoringCellStore]] (ABI 41, 45) |
 | `processing.batchQueue` | Measured | `maxQueuedFrames` and `maxQueuedBytes` (default 256 MiB) | async batch pipeline |
 | `processing.flushQueue` | Measured | 3 batches in flight | `HdfWriteQueue<ExperimentBatch>` |
 | `processing.snapshot` | Measured | 1 | latest realtime snapshot mask |

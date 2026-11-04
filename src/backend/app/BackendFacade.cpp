@@ -1500,6 +1500,17 @@ namespace backend::bridge
                 {"youngs_modulus", finiteOrNull(m.youngsModulus)},
                 {"pixel_to_micron", finiteOrNull(m.pixelToMicron)},
             };
+            // Why an invalid cell failed validation (ABI 45): the shared classifier's codes, each with the
+            // measured value and the configured range; [] for a valid cell.
+            nlohmann::json reasons = nlohmann::json::array();
+            for (const auto &r : c.reasons)
+            {
+                reasons.push_back({{"code", services::monitoringReasonName(r.code)},
+                                   {"value", finiteOrNull(r.value)},
+                                   {"min", finiteOrNull(r.min)},
+                                   {"max", finiteOrNull(r.max)}});
+            }
+            j["reasons"] = std::move(reasons);
             if (c.hasImage)
             {
                 j["image"] = {{"width", c.width},        {"height", c.height},
@@ -1740,6 +1751,8 @@ namespace backend::bridge
         const auto l = cells->listing();
         nlohmann::json strip = nlohmann::json::array();
         for (const auto &c : l.strip) strip.push_back(monitoringCellJson(c));
+        nlohmann::json invalidStrip = nlohmann::json::array();
+        for (const auto &c : l.invalidStrip) invalidStrip.push_back(monitoringCellJson(c));
         nlohmann::json pins = nlohmann::json::array();
         for (const auto &c : l.pins) pins.push_back(monitoringCellJson(c));
         const auto &st = l.stats;
@@ -1751,7 +1764,8 @@ namespace backend::bridge
                       {"reason", l.lastCaptureChange->reason},
                       {"pins_ended", l.lastCaptureChange->pinsEnded},
                       {"pins_dropped", l.lastCaptureChange->pinsDropped},
-                      {"strip_dropped", l.lastCaptureChange->stripDropped}};
+                      {"strip_dropped", l.lastCaptureChange->stripDropped},
+                      {"invalid_strip_dropped", l.lastCaptureChange->invalidStripDropped}};
         }
         nlohmann::json doc{
             {"valid", true},
@@ -1760,23 +1774,30 @@ namespace backend::bridge
             {"ring_capture_epoch", dec(l.ringCaptureEpoch)},
             {"revision", dec(l.revision)},
             {"strip", std::move(strip)},
+            {"invalid_strip", std::move(invalidStrip)},
             {"pins", std::move(pins)},
             {"last_capture_change", std::move(change)},
             {"stats",
              {{"strip_cells", st.stripCells},
               {"strip_bytes", dec(st.stripBytes)},
+              {"invalid_strip_cells", st.invalidStripCells},
+              {"invalid_strip_bytes", dec(st.invalidStripBytes)},
               {"pins", st.pins},
               {"pin_bytes", dec(st.pinBytes)},
               {"indexed_rows", st.indexedRows},
               {"peak_bytes", dec(st.peakBytes)},
               {"strip_admitted", dec(st.stripAdmitted)},
               {"strip_evicted", dec(st.stripEvicted)},
+              {"invalid_strip_admitted", dec(st.invalidStripAdmitted)},
+              {"invalid_strip_evicted", dec(st.invalidStripEvicted)},
               {"refreshes", dec(st.refreshes)},
               {"last_refresh_us", dec(st.lastRefreshUs)},
               {"last_source_us", dec(st.lastSourceUs)}}},
             {"caps",
              {{"strip_max_cells", p.stripMaxCells},
               {"strip_max_bytes", p.stripMaxBytes},
+              {"invalid_strip_max_cells", p.invalidStripMaxCells},
+              {"invalid_strip_max_bytes", p.invalidStripMaxBytes},
               {"max_pins", p.maxPins},
               {"pin_max_bytes", p.pinMaxBytes},
               {"crop_max_side", p.cropMaxSide},

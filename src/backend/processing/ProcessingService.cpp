@@ -1009,6 +1009,26 @@ ProcessingService::MonitoringRingView ProcessingService::visitMonitoringNewest(
     return view;
 }
 
+ProcessingService::MonitoringRingView ProcessingService::visitMonitoringNewestPerRing(
+    size_t maxValid, size_t maxInvalid, const MonitoringVisitor& visit) const {
+    MonitoringRingView view;
+    std::scoped_lock lk(monitoringFramesMutex_);
+    view.validHeld = monitoringValidFrames_.size();
+    view.invalidHeld = monitoringInvalidFrames_.size();
+    view.validAppended = monitoringValidAppended_.load(std::memory_order_relaxed);
+    view.invalidAppended = monitoringInvalidAppended_.load(std::memory_order_relaxed);
+    view.runGeneration = monitoringRunGeneration_.load(std::memory_order_acquire);
+    view.captureEpoch = monitoringCaptureEpoch_.load(std::memory_order_acquire);
+    if (!visit) return view;
+    monitoringValidFrames_.forEachNewest(maxValid, [&visit](const ProcessedFrame& f, const MonitoringRowTag& tag) {
+        visit(f, tag, true);
+    });
+    monitoringInvalidFrames_.forEachNewest(maxInvalid, [&visit](const ProcessedFrame& f, const MonitoringRowTag& tag) {
+        visit(f, tag, false);
+    });
+    return view;
+}
+
 void ProcessingService::releaseMonitoringShares(std::vector<cv::Mat>& shares) const {
     std::scoped_lock lk(monitoringFramesMutex_);
     shares.clear();
