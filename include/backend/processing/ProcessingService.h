@@ -27,7 +27,7 @@
 #include "backend/recording/HdfWriteQueue.h"
 #include "backend/recording/TriggerEventRecord.h"
 
-namespace backend { namespace playback { class FrameStore; struct Frame; } }
+namespace backend { namespace playback { class FrameStore; struct Frame; enum class FrameReadOutcome; } }
 namespace backend::processing { struct ProviderFrame; }
 
 namespace backend::services {
@@ -857,6 +857,12 @@ private:
     MonitoringEntry monitoringEntryFor(const MonitoringEntryCache& cache, uint64_t storeGeneration,
                                        uint64_t captureSession) const;
     void runMonitoringAppendHook(uint64_t frameIndex);
+    // The ROI crop a monitoring row keeps: own copies unless the crop is the whole frame (#857).
+    struct MonitoringCrop {
+        cv::Mat original;
+        cv::Mat mask;
+    };
+    static MonitoringCrop monitoringCrop(const cv::Mat& gray, const cv::Mat& mask, const cv::Rect& roi);
     void appendRealtimeMonitoringFrame(uint64_t index,
                                        uint64_t timestampNs,
                                        const FilterResult& validation,
@@ -1040,6 +1046,9 @@ private:
     void bgCalFinishLocked(BackgroundCalibrationState state, const std::string& message);
     void noteRealtimeAdmitted(uint64_t idx);
     void noteRealtimeLost(uint64_t count);
+    // A frame of the current pass that could not be read (evicted or malformed): admitted and
+    // booked as a store loss, never skipped silently (#857).
+    void noteRealtimeUnreadable(uint64_t idx, backend::playback::FrameReadOutcome readOutcome);
     void noteRealtimeValidation(uint64_t idx, const std::vector<FilterResult>& validations);
     
     // Monitoring frames (always accumulated, separate from experiment)

@@ -886,6 +886,11 @@ mib_backend_test_link(experiment_accounting_test PRIVATE Threads::Threads)
 add_test(NAME processing.experiment_accounting COMMAND $<TARGET_FILE:mib_backend_tests> experiment_accounting_test)
 set_tests_properties(processing.experiment_accounting PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 240)
 
+mib_add_backend_test_executable(realtime_ring_loss_test processing/realtime_ring_loss_test.cpp)
+mib_backend_test_link(realtime_ring_loss_test PRIVATE Threads::Threads)
+add_test(NAME processing.realtime_ring_loss COMMAND $<TARGET_FILE:mib_backend_tests> realtime_ring_loss_test)
+set_tests_properties(processing.realtime_ring_loss PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 120)
+
 mib_add_backend_test_executable(experiment_flush_backpressure_test processing/experiment_flush_backpressure_test.cpp)
 mib_backend_test_link(experiment_flush_backpressure_test PRIVATE Threads::Threads)
 add_test(NAME processing.experiment_flush_backpressure COMMAND $<TARGET_FILE:mib_backend_tests> experiment_flush_backpressure_test)

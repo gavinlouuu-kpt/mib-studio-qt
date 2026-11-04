@@ -363,9 +363,17 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   off). When inactive, `appendRealtimeMonitoringFrame` returns immediately with
   no allocations. Wired to [[../frontend/ExperimentMonitoringTab]] show/hide —
   the rings only fill while that tab is visible (the Tauri shell gates the
-  same way via the bridge `monitoring_set_active` command, BE-5 #275). Stored
-  frames share cv::Mat refcounts with the processing loop (no per-frame
-  clone); consumers are read-only. Appended totals
+  same way via the bridge `monitoring_set_active` command, BE-5 #275). A row
+  keeps **its own copy of the ROI crop** (`monitoringCrop`: gray image and
+  mask, cloned once per frame and shared by that frame's rows; a crop that is
+  the whole frame stays a share). The every-frame inline path used to keep
+  views into the full-frame gray image and mask, so each row pinned about
+  0.5 MB at 1216x208, about 1 GB with the tab open at 5000 fps. That memory
+  churned instead of being reused, the loop fell to 4,100-4,700 fps (0.21-0.24
+  ms per frame against a 0.2 ms budget) and runs lost frames (#857; bench
+  2026-11-04: 0.11-0.13 ms per frame and 5000 fps after the change, page
+  faults ~10k/s instead of 100k-225k/s). The async-batch and drop-to-latest
+  paths already kept compact crops. Consumers are read-only. Appended totals
   (`getMonitoringValidAppended`/`getMonitoringInvalidAppended`, reset by
   `clearMonitoringFrames` under the rings' lock) make ring evictions
   observable (appended − held) for the bridge snapshot.
@@ -696,7 +704,18 @@ current/max queue depth, batch size, worker count, and running state. See
   failure *or* mask failure — the frame is skipped, counted in
   `getProcessingFailureCount()`, and reported as `PipelineSkipReason::KernelError`),
   `Processed` (a valid object) or `RejectedByScientificFilter`. Ring-behind
-  skips are admitted as `StoreOverwritten`. `appendExperimentFrame` is a
+  skips are admitted as `StoreOverwritten`, and so is a frame of the current
+  pass that was evicted before the loop read it (`noteRealtimeUnreadable`:
+  admitted, so the sequence stays contiguous, then `StoreOverwritten`, or
+  `StoreMalformed` for an unusable slot; the head of the ring, not yet
+  committed, ends the pass and is retried). Until #857 the every-frame and
+  async-batch `for` loops stepped over such a frame with `continue`: a run
+  that fell behind the ring reported thousands of `sequenceGaps` and almost
+  no `storeOverwritten` (bench: storeOverwritten 3, sequenceGaps 2571 for
+  ~7,900 lost frames). Guard: `processing.realtime_ring_loss`. While a run
+  loses frames, the inline loop logs a warning once per second (frames lost,
+  processed fps, ms per frame, frames behind the camera, Monitoring open or
+  closed). `appendExperimentFrame` is a
   persistence admission; frames evicted by the bounded experiment buffer are
   `persistenceCancelledByPolicy`; the flush writer adds `persistenceCommitted`.
   `experimentAccountingSnapshot()` derives the pending / failed persistence

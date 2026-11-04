@@ -33,7 +33,10 @@
   `ProcessingService::setMonitoringActive(true)`, `hideEvent` calls
   `setMonitoringActive(false)`. Monitoring rings only fill while this tab is
   visible — when hidden, the realtime loop skips the per-object frame copies
-  entirely (see [[../services/ProcessingService]] "Monitoring rings").
+  entirely (see [[../services/ProcessingService]] "Monitoring rings"). Rows
+  carry their own copy of the ROI crop: with views into the full frames, the
+  open tab pinned about 1 GB at 5000 fps and runs fell behind the camera
+  (#857).
 - **Top-row trigger controls:**
   - `sortTriggerBtn` — single manual pulse; calls
     `backend_.trigger().onTargetGroupResult(services::TargetGroupSignal{.isTargetGroup=true})`.
