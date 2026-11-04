@@ -643,7 +643,11 @@ completed dependency cache. It never caches a failed dependency install.
 Release documentation (#573): `scripts/release_notes.py --version X.Y.Z --check`
 gates stable Windows releases before the build. GitHub releases use the curated
 Markdown file; beta builds generate uncurated notes from recent fragments after
-the last reachable stable tag. `publish-update.py --release-notes-file` includes a
+the last reachable stable tag. GitHub rejects a release body over 125000 characters
+(HTTP 422), so the generator keeps beta notes under 120000: it drops whole entries
+from the oldest end and puts one line first that counts the omitted entries and links
+`compare/<stable tag>...<sha>`. Curated stable notes are never trimmed; `--check` fails
+above 120000 characters, before the build. `publish-update.py --release-notes-file` includes a
 16 KiB plain-text summary in latest.json and catalog entries. Qt deployment and
 both installers copy release notes and the manual with images under resources;
 Linux builds also copy these beside the executable (there were no app install rules). Tauri bundles the same

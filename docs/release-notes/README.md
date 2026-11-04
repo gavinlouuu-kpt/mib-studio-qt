@@ -7,7 +7,10 @@ user-visible change. Do not publish template placeholders. Highlights and Added
 must contain text; use “None.” when a category has no changes.
 Record SDK versions (including eGrabber and MindVision), required firmware and
 upgrade steps explicitly. Beta notes are generated from recent vault fragments
-and are labelled uncurated; they do not satisfy the stable gate.
+and are labelled uncurated; they do not satisfy the stable gate. GitHub refuses a
+release body over 125000 characters, so a beta keeps only the newest entries that
+fit in 120000 (a first line says how many older ones are left out and links the full
+comparison), and the stable gate fails on curated notes longer than 120000.
 
 ```markdown
 # MIB Studio vX.Y.Z — YYYY-MM-DD
