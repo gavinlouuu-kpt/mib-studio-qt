@@ -1197,3 +1197,34 @@ Issue #570: Review keeps unreadable run accounting as Unknown, displaying the
 existing `completion_reason` field rather than promoting `reconciled=false` to
 Failed when the outcome is Unknown. Known outcomes with unreconciled counters
 still show Failed. No bridge ABI or JSON field changes.
+
+### Review stage against Qt: open, status, lock, recording, factor (#867 PR 3)
+
+`areas/review/ReviewTab.tsx` and `useReview.ts` follow the Qt Review tab for the open path
+(parity rows REVIEW-003/004/006/007/068; `HdfReviewTab.cpp:540-728`, `MainWindow.cpp:1149-2020`):
+
+- **Open failure and status.** A load the backend answers "Recording load failed" shows the
+  shared `OpenFailureDialog` (`review/reviewOpen.tsx`, title "Cannot Open HDF5 File", Qt's
+  missing / interrupted-write text); a refusal about the instrument ("Experiment must be idle…")
+  stays in the log. `reviewOpenPhase` / `reviewOpenFailure` are `useReviewState()` state; the
+  status label ("Ready", "Loading...", "Error loading file", "Valid: N, Invalid: M",
+  "Recording: N frames, M empty skipped") is derived from the phase and the metadata.
+- **Lock.** While an experiment runs (`expActive`) the stage is a disabled `fieldset.review-lock`
+  (`display: contents`): Select HDF File, Close File, exports and the scrubbers are off, the
+  reason is their title and a note (`reviewLock.ts`: Qt's "Review tab is disabled while an
+  experiment is active. Please stop the experiment first."; while raw frames are recorded, the
+  backend's "Stop raw recording before loading review data"). The stage-tab button is the
+  shell's (`areas/shell/Workflow.tsx`) and is not locked or bounced back as Qt does.
+- **Recording files.** The raw tab is "Frames", the Valid and Invalid tabs are hidden, Charts,
+  Export Metrics and Export Charts are disabled and the table lists Index and Timestamp.
+- **Factor.** The Area (µm²) column (2 dp, `ResultMetricCells` `areaUm2Factor`) uses
+  `fetch_review_metadata` `pixel_to_micron` (the file's recorded factor, else the live one;
+  `pixel_to_micron_from_file`, `filtered_frames` are new additive fields) and the charts say
+  which factor they used (`pixel_to_micron_source`). Bridge ABI stays 44.
+- **#853.** `.subtab-body > fieldset.viewer-gate > .config-group` joins the stacked-group rule in
+  `styles/widgets.css`, so the Regenerate masks panel inside its `ViewerGate` no longer covers
+  the views; `styles/subtabBodyGroup.test.tsx` guards it.
+- A failed `fetch_run_accounting("review")` is logged instead of silently dropping the outcome notice.
+
+Tour anchors: `review-stage`, `review-locked`, `review-status`, `review-open-failure`,
+`review-area-um2`. Tests: `ReviewTab.test.tsx`, `useReview.test.tsx`, `reviewOpen.test.tsx`.

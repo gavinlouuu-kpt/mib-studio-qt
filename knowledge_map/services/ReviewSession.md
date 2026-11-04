@@ -307,7 +307,10 @@ bridge never starts them. The two export cancel models stay as they were:
   `runExportBatch`, cancel applied at each progress report, since #512 S3)
   with **each source's own recorded** factor (the
   fallback for files without one; 2026-10-04 — before, every source used the
-  open file's factor); chart snapshots arrive
+  open file's factor); since #867 (REVIEW-049) every experiment file's Export All also
+  gets the backend-rendered charts (`generateReviewCharts`, at the file's own factor and
+  its recorded ring-ratio range: `scatter_plot.tiff` + `histogram.tiff`, decision D5);
+  chart snapshots of a single Export All arrive
   encoded (PNG/TIFF) from the shell and are written beside the images; batch
   continues after per-file failures and reports them in the terminal
   message ("exported N of M file(s); failed: …"); batch metrics names
@@ -386,11 +389,15 @@ byte against the pre-slice facade code, kept in the test as the oracle).
 The builders behind the backend bridge's `fetch_review_charts_json` and
 `render_review_overlay` (MIB Studio, YOFO Studio), moved verbatim out of
 `src/backend/app/ReviewCharts.cpp`, which keeps the policy: the loaded file
-(its own reader, "Charts require an experiment HDF file"), the **live** factor
-and ring-ratio range (D3 / D4 keep them for the facade's JSON commands), and
+(its own reader, "Charts require an experiment HDF file"), the factor (since #867 the
+file's **recorded** one, the live one only for a file that records none; D3 is closed),
+the **live** ring-ratio range (D4 keeps it for the facade's JSON commands), and
 the facade's ROI style:
 
-- `reviewChartsJson(rows, source, factor, ringMin, ringMax)`:
+- `reviewChartsJson(rows, source, factor, ringMin, ringMax, factorSource = {})`:
+  `factorSource` ("recorded" | "live") is emitted as `pixel_to_micron_source` next to
+  `pixel_to_micron` when named (empty emits nothing, so the pinned JSON of the five-argument
+  call is unchanged); the facade names it from `ValidSet::pixelToMicronFromFile`.
   `recording::makeReviewChartData`, the 128 × 128 density (conserves every
   finite point), the exact 0.5-wide histogram, the bundled isoelastic curves,
   counters as decimal strings. It throws what `makeReviewChartData` throws (an
@@ -540,13 +547,25 @@ and YOFO Studio's review commands read it: `load_recording` →
 field, `fetch_review_metrics_page` → `framesPage` mapped to
 `MonitoringObjectRow`, `fetch_review_image` → `readRaw` (Mono8, channel 0),
 `fetch_run_accounting("review")` → the accounting read at open,
-`fetch_review_charts_json` → `validSet()` (one snapshot; no second reader),
+`fetch_review_charts_json` → `validSet()` (one snapshot; no second reader; it carries
+`pixelToMicron` / `pixelToMicronFromFile` beside the rows, so the factor and the rows
+belong to the same file),
 and `review_export_json`'s default source → `filePath()`. The load event's
 counts come from the same metadata. Nothing in the facade holds review state
 of its own any more, and none of it touches `AppBackend::hdf5()` (the
 experiment writer's handle): a load beside an open writer handle is refused
 only by the guards, and the writer is never closed or replaced by load or
 close.
+
+`fetch_review_metadata` also reports `pixel_to_micron` (the file's recorded factor, else
+the **live** processing factor, as the charts), `pixel_to_micron_from_file` and
+`filtered_frames` (recording files: frames filtered empty at record time), additive
+fields for MIB Studio's Area (µm²) column and its "Recording: N frames, M empty skipped"
+status (#867). A failed `open()` names the cause the way Qt's open dialog does
+(`QFile::exists`): "File not found: <path>" or "Cannot read the HDF5 file (corrupt or not
+an HDF5 review file): <path>"; the facade's load result stays "Recording load failed",
+except "Recording load failed: file not found" for the missing file (its event and
+operation messages keep the pinned text).
 
 The guards stay the facade's policy around `open()` / `close()`, inside the
 coordinator's idle transaction: "Experiment must be idle before loading review

@@ -69,6 +69,25 @@ with `review_set_pixel_to_micron` and the info re-read on change).
 `ReviewPanelHandle` exposes `openFile` / `openPath` / `closeFile` for menus.
 A file with no valid frames opens on its invalid set (`initialTab`).
 
+**Open failure and status line (#867, REVIEW-003/004).** `src/review/reviewOpen.tsx`
+holds what the Qt tab tells the operator when it opens a file
+(`HdfReviewTab.cpp:540-581`, `598-728`), and both Tauri surfaces use it. A file
+that cannot be opened shows `OpenFailureDialog`, a modal `alertdialog` titled
+"Cannot Open HDF5 File" with Qt's text ("Failed to open:\n<path>\n\n<detail>"). The
+detail is "File not found." for a missing file, else the interrupted-write text with
+the `h5recover` hint. Qt tells them apart with `QFile::exists`; here the backend does
+it where the file is: `ReviewSession::open` answers "File not found: <path>" or
+"Cannot read the HDF5 file (corrupt or not an HDF5 review file): <path>", and the
+facade's load result says "Recording load failed: file not found" (otherwise it is
+still the pinned "Recording load failed"), so a browser needs no file system. The
+failed open also clears the panel's info (the backend closed the previous file before it
+opened this one, so the old file's counts must not stay on screen). `ReviewStatus` is
+Qt's status label next to the path: "Ready", "Loading...", "Error loading file", "Valid:
+N, Invalid: M" and "Recording: N frames, M empty skipped", each followed by the accounting
+summary (YOFO moved it from the path label to the status, as in Qt). Tour anchors:
+`review-status`, `review-open-failure`. Tests: `reviewOpen.test.tsx`,
+`reviewOpenPanel.test.tsx`.
+
 The panel talks only to the **review bridge** (`src/review/reviewBridge.ts`
 → `src-tauri/src/review.rs` → `ReviewBridge` → [[../services/ReviewSession]]):
 `open`/`close`, `info` (counts, ROI, series, accounting summary, the
@@ -418,13 +437,16 @@ accounting text for recording files.
   - YOFO adds a "Core N% (full run, not saved)" family.
   - Exported charts use density colours when a result is ready.
 - **Exports:**
-  - Batch Export All writes no chart TIFFs per file.
+  - Batch Export All writes the charts of each file (#867, REVIEW-049) as the backend renders
+    them (`scatter_plot.tiff` and `histogram.tiff`, plan decision D5) at the file's own
+    recorded factor and ring-ratio range; Qt renders them from its on-screen chart views and
+    names the histogram `ring_width_histogram.tiff`. Recording files get images only.
   - Batch default names take one past the highest `_N`; Qt fills the first gap.
   - Batch series is one choice for all files; Qt prompts per file.
   - Export All asks the series question before the folder; Qt asks after it.
-- **Status text:** for experiment files, the Qt status line replaces the
-  accounting suffix with "Valid: N, Invalid: M" (metadata counts). YOFO shows
-  the accounting in the file label, with counts from the experiment info.
+- **Status text:** since #867 (REVIEW-004) YOFO has Qt's status label ("Ready", "Loading...",
+  "Valid: N, Invalid: M" + accounting, "Recording: N frames, M empty skipped", "Error loading
+  file"); the counts are the experiment info's, Qt prefers the metadata rows' count.
 - **Regenerate masks:** YOFO uses the recorded config and a median-of-32
   background. Qt uses the live config, a tiled synthetic background and
   timestamp order. Since #512 S8 these are options of the one reanalysis
@@ -500,7 +522,11 @@ Accepted until S13 (plan decisions):
   OpenCV paints as a 5 px band with rounded outer corners (`compare.roi_band`,
   checked against `cv2.rectangle` goldens).
 - **D3:** the as-opened px→µm on the two 0.25 µm/px fixtures (live 0.4886), with
-  the area extents scaled by (0.4886 / 0.25)².
+  the area extents scaled by (0.4886 / 0.25)². Closed by #867 (REVIEW-068, bug #854):
+  `fetch_review_charts_json` now uses the file's recorded factor and says so
+  (`pixel_to_micron_source` "recorded" | "live"), so as-opened charts equal the compared
+  pass on those fixtures. `tools/review_parity/compare.py` still expects the old D3 outcome
+  and will report a DIFF on its "px→µm as opened" row until it is updated.
 - **D4:** the probe's bins over [10, 30]. As opened, D4 is not exercised: every
   input records 15–25, the live default.
 - **D5:** Export All carries `scatter_plot.tiff` and `histogram.tiff`.

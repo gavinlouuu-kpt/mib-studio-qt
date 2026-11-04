@@ -42,6 +42,19 @@ Files larger than 2 GB are fine: frames load as you browse. Recordings
 made in raw recording mode have no masks or metrics. For those, YOFO Review
 shows a single frame list, and only raw image export is available.
 
+The status line on the toolbar says where the file stands, in the Qt
+tab's words: **Ready** (no file), **Loading...** while a file opens,
+**Valid: N, Invalid: M** (and the run's accounting) for a run,
+**Recording: N frames, M empty skipped** for a raw recording, and
+**Error loading file** after a failure.
+
+If a file cannot be opened, a **Cannot Open HDF5 File** box says why:
+**File not found.**, or that the file exists but its HDF5 metadata is
+corrupt, likely from an interrupted write (a crash or a forced close during
+an experiment). Frame data may then be partly recoverable with the
+`h5recover` tool of the HDF5 utilities. The previously open file is closed
+by then, so the window shows no file.
+
 ## Browse frames and charts
 
 Browsing works as in MIB Studio's Review tab (see
@@ -168,8 +181,9 @@ contours match. The visible differences:
 
 - The ring-width histogram spans the ring-ratio limits the file was
   recorded with (MIB Studio uses the current settings).
-- **Batch Export All** writes metrics and images for each file, but no
-  chart images.
+- **Batch Export All** writes the charts of each file as images
+  (`scatter_plot.tiff` and `histogram.tiff`, drawn by the backend at the
+  file's own factor and ring-ratio limits, not from the Charts view).
 - In a batch, the series question is asked once for all files.
 - **Regenerate masks** uses the file's recorded settings by default (see
   above).

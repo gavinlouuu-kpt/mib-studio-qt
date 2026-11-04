@@ -74,7 +74,10 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   an active experiment. Since #512 S5 the loaded file lives in the facade's
   own [[../services/ReviewSession]] (never `AppBackend::hdf5()`, the writer's
   handle); the metadata, page, image, `fetch_run_accounting("review")` and
-  charts shapes are filled from it field for field (no contract change), and
+  charts shapes are filled from it field for field (no contract change; since #867
+  `fetch_review_metadata` adds `pixel_to_micron`, `pixel_to_micron_from_file` and
+  `filtered_frames`, and `fetch_review_charts_json` adds `pixel_to_micron_source`: additive
+  keys, ABI stays 44), and
   a loaded file still keeps `experiment_start` and `start_frame_recording`
   refused with the same gate and messages (decision D1 (a),
   [[ExperimentCoordinator]]).

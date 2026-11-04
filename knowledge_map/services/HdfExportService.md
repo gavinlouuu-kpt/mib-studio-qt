@@ -162,8 +162,10 @@ the transactional export worker. Chart-only jobs export no source-frame images;
 failed chart writes never publish a successful output. Calibration/ring limits
 are explicit snapshots of current backend settings (the live factor and
 config), not claimed to be recovered recording calibration; the Qt tab and YOFO
-Review use each file's recorded factor (TD-17), and MIB Studio follows them once
-it mounts the review module (#512 decision D3). Fixed isoelastic reference conditions are
+Review use each file's recorded factor (TD-17). Since #867 MIB Studio's
+`fetchReviewChartsJson` does too (`pixel_to_micron_source` "recorded"; "live" only for a file
+that records none), and YOFO's batch Export All sets `generateReviewCharts` per file (the
+file's factor and recorded ring-ratio range). Fixed isoelastic reference conditions are
 labelled rather than automatically assumed to match the experiment.
 
 Tauri Review export options pass existing frame classes and inclusive series ranges to the shared service; fractional, negative and reversed ranges fail at the facade boundary.
