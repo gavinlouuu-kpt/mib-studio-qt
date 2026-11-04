@@ -61,7 +61,11 @@
   message ("Pump stop failed: write failed: serial write timed out ...");
   messages on success are unchanged.
 - Provide `scanModbusAddresses(comPort, baudRate, start, end, timeoutMs)` for
-  settings-time address discovery on a selected serial port.
+  settings-time address discovery on a selected serial port. An overload takes a
+  system port name (`scanModbusAddresses(portName, baudRate, start, end, timeoutMs,
+  std::string* error)`, reason on failure; the int version delegates through
+  `comPortName`). The Tauri pump settings dialog uses it for Scan 1-8 at 300 ms
+  through the `scan_pump_addresses` host-settings action ([[HostSettings]]).
 
 ## Enums
 

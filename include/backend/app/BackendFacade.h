@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/HostSettings.h"
 #include "backend/app/ProcessingConfigTransaction.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/processing/ProcessingService.h"
@@ -1272,6 +1273,17 @@ namespace backend::bridge
         // {"ports":[{system_name,system_location,description,manufacturer,serial_number,vendor_id,product_id}]}.
         std::string listSerialPortsJson() const;
 
+        // Instrument-host settings (HW-003/016/020/021/023/038, ABI 46): the saved pump connection and last rate, unit
+        // and direction (Qt's config.json keys), the boot service toggles, and the pump address scan. Stored in
+        // <data>/host_settings.json (HostSettings.h); the saved pump ports are reserved against discovery probes from
+        // initialize() on.
+        //   {"valid":true,"path":...,"settings":{...},"load_error":"","boot_env":"...",
+        //    "pump_scan":{"state":"idle|running|completed|failed","operation_id":"7","port":"COM3","found":[1,2],"error":""}}
+        std::string fetchHostSettingsJson() const;
+        // {"action":"set_pumps","settings":{...}} | {"action":"set_boot_services","services":["trigger",...]} |
+        // {"action":"scan_pump_addresses","port":"COM3","baud":115200,"start":1,"end":8,"timeout_ms":300}
+        BackendCommandResult hostSettingsCommandJson(const std::string &json);
+
         std::vector<uint8_t> renderReviewOverlayJson(const std::string& json) const;
         bool fetchReviewReanalysisPreviewJson(const std::string& json,BackendFrame& out) const;
         std::string fetchReviewChartsJson() const;
@@ -1388,6 +1400,18 @@ namespace backend::bridge
         // refused while it is (decision D1 (a), #722). Never reassigned; shared
         // so the review bridge can attach to it later (S10).
         const std::shared_ptr<review::ReviewSession> review_;
+        // The instrument-host settings file and the last pump address scan (hostSettingsCommandJson).
+        std::unique_ptr<app::HostSettingsStore> hostSettings_;
+        struct HostPumpScan
+        {
+            std::string state{"idle"};
+            std::uint64_t operationId{0};
+            std::string port;
+            std::vector<int> found;
+            std::string error;
+        };
+        mutable std::mutex hostScanMutex_;
+        HostPumpScan hostScan_;
         // Pump address scans and stage-operation waiters (tracked operations
         // that are not review jobs); joined at shutdown.
         std::vector<std::thread> operationWorkers_;

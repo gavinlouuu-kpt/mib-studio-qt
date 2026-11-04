@@ -12,6 +12,7 @@ below is the policy it cannot check for you.
 | A service under `src/backend/services/<Name>Service.{cpp,h}` | `knowledge_map/services/<Name>Service.md` |
 | A frontend tab / controller / dialog under `src/frontend/` | The matching note under `knowledge_map/frontend/` |
 | `src/backend/app/AppBackend.{cpp,h}` wiring | [[architecture/AppBackend]] |
+| `src/backend/app/HostSettings.cpp`, `include/backend/app/HostSettings.h`, the host-settings part of `BackendFacade.cpp` | [[services/HostSettings]] |
 | Threading, data flow, or layering | [[architecture/Threading-Model]], [[architecture/Data-Flow]], [[architecture/Overview]] |
 | `src/backend/playback/FrameStore.*` | [[data-model/FrameStore]] |
 | HDF5 schema / dataset paths (`Hdf5Service.cpp`) | [[data-model/HDF5-Storage]] + [[services/Hdf5Service]] |
@@ -19,7 +20,7 @@ below is the policy it cannot check for you.
 | Review bridge / YOFO Review (`crates/mib-bridge/src/review_*`, `desktop/src/review/`, `desktop/src-tauri/src/{review,review_update,isoelastic}.rs`, `scripts/release/publish-review-update.py`, `tauri.review.conf.json`) | [[frontend/YofoReview]] + [[architecture/Rust-Bridge]] |
 | Camera code under `src/backend/camera/` (ICamera, EGrabber, Mock) | The matching note under `knowledge_map/camera/` |
 | Rust command layer and transports (`crates/mib-app-commands/`, `desktop/src-tauri/`, `crates/mib-bridge-server/`) | [[architecture/Desktop-Shell]], [[architecture/Rust-Bridge]] |
-| Desktop classic view (`desktop/src/App.tsx`, `App.css`, `desktop/src/areas/**`, `desktop/src/studio/**`, `desktop/src/styles/**`, the hardware device panels `desktop/src/components/{HardwareControls,PumpControls,AutofocusControls,pumpControlModel,hardwareControlModel}.*`) | [[architecture/Desktop-Shell]] + `docs/howto/desktop-area-ownership.md` (owner map; a moved or new area file updates it) |
+| Desktop classic view (`desktop/src/App.tsx`, `App.css`, `desktop/src/areas/**`, `desktop/src/studio/**`, `desktop/src/styles/**`, the hardware device panels `desktop/src/components/{HardwareControls,PumpControls,AutofocusControls,pumpControlModel,hardwareControlModel,PumpSettingsDialog,pumpSettingsModel,hostSettingsStore,BootServicesDialog,HardwareDialogs,hardwareDialogEvents}.*`) | [[architecture/Desktop-Shell]] + `docs/howto/desktop-area-ownership.md` (owner map; a moved or new area file updates it) |
 | `CMakeLists.txt`, `conanfile.py`, `CMakePresets.json` | [[build-and-run/Build]], [[build-and-run/Dependencies]], [[build-and-run/Run-Modes]] |
 | `env/assets.json`, `scripts/assets_manifest.py`, `scripts/provision-assets.py` | [[build-and-run/Assets]] |
 | Conventions / logging patterns | [[conventions/Code-Conventions]], [[conventions/Logging]] |

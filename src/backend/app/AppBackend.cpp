@@ -654,7 +654,11 @@ namespace backend
         bool bootDotGrid = true;
         bool bootCapture = true;
         bool bootPlayback = true;
-        if (const char *rawDisabledServices = std::getenv("MIB_DISABLED_SERVICES"))
+        // The environment wins when set (Qt's main.cpp does the same); else the host's saved toggles.
+        const char *rawDisabledServices = std::getenv("MIB_DISABLED_SERVICES");
+        if (!rawDisabledServices || !*rawDisabledServices)
+            rawDisabledServices = bootDisabledServices_.empty() ? rawDisabledServices : bootDisabledServices_.c_str();
+        if (rawDisabledServices)
         {
             std::string disabled(rawDisabledServices);
             auto normalize = [](std::string token)

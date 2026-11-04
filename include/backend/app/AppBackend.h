@@ -89,6 +89,10 @@ namespace backend
         bool initialize(const std::string &dataDir);
         // Shell-resolved read-only install resources; set before initialize.
         void setResourceRoot(std::string path) { resourceRoot_ = std::move(path); }
+        // Boot service tokens to leave off (MIB_DISABLED_SERVICES syntax), saved by the host's Boot Service Toggles
+        // (HostSettings). Used only when the MIB_DISABLED_SERVICES environment variable is unset or empty; set before
+        // initialize.
+        void setBootDisabledServices(std::string csv) { bootDisabledServices_ = std::move(csv); }
 
         // Inject the HTTP GET used to fetch the E-modulus LUT manifest/blob
         // (ADR 0002); the shell supplies it so the backend links no Qt
@@ -601,6 +605,7 @@ namespace backend
         HttpGetFn lutHttpGet_;
         std::string lutAppDataDir_;
         std::string resourceRoot_;
+        std::string bootDisabledServices_;
 
         // Last selected hardware device (for script apply)
         int selectedIfIndex_{-1};

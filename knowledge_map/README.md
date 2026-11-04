@@ -31,7 +31,8 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - Device discovery jobs + startup policy: [[services/DeviceDiscoveryService]]
 - Hardware I/O: [[services/CameraControlService]], [[services/AutofocusService]],
   [[services/TriggerService]], [[services/SyringePumpService]],
-  [[services/ISerialPort]], [[services/SerialPortClaims]], [[services/SimulatedSerial]]
+  [[services/ISerialPort]], [[services/SerialPortClaims]], [[services/SimulatedSerial]],
+  [[services/HostSettings]]
   [[services/TriggerService]], [[services/SerialBus]],
   [[services/SyringePumpService]], [[services/PulseGeneratorService]],
   [[services/StageService]] (Z stage, driver [[services/ZC300Stage]])

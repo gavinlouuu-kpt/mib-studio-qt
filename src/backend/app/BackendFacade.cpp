@@ -276,8 +276,16 @@ namespace backend::bridge
         }
 
         if (!resourceRoot.empty()) backend_.setResourceRoot(resourceRoot);
+        // The host's saved settings come first (HW-023, HW-038): the saved pump ports are reserved before any client
+        // can start a discovery probe, and the saved boot toggles are the service list this start uses.
+        hostSettings_ = std::make_unique<app::HostSettingsStore>(
+            dataDir.empty() ? std::string{} : (std::filesystem::path(dataDir) / "host_settings.json").string());
+        hostSettings_->load();
+        hostSettings_->applyReservation();
+        backend_.setBootDisabledServices(hostSettings_->bootDisabledServicesCsv());
         if (!backend_.initialize(dataDir))
         {
+            app::HostSettingsStore::clearReservation();
             emitEvent(BackendErrorEvent{
                 BackendErrorSource::Lifecycle,
                 BackendCommandType::Camera,
@@ -388,6 +396,7 @@ namespace backend::bridge
         // or connects anything. AppBackend::shutdown() repeats this idempotently.
         backend_.startupDiscovery().stop();
         backend_.deviceDiscovery().shutdownDiscovery();
+        app::HostSettingsStore::clearReservation();
 
         backend_.stopFrameRecording();
         backend_.capture().stop();
@@ -4194,6 +4203,100 @@ std::string BackendFacade::listSerialPortsJson() const {
                          {"serial_number", port.serialNumber}, {"vendor_id", port.vendorId},
                          {"product_id", port.productId}});
     return nlohmann::json{{"ports", ports}}.dump();
+}
+
+std::string BackendFacade::fetchHostSettingsJson() const {
+    using nlohmann::json;
+    if (!initialized_ || !hostSettings_) return R"({"valid":false})";
+    json scan;
+    {
+        std::lock_guard<std::mutex> lock(hostScanMutex_);
+        scan = {{"state", hostScan_.state}, {"operation_id", std::to_string(hostScan_.operationId)},
+                {"port", hostScan_.port}, {"found", hostScan_.found}, {"error", hostScan_.error}};
+    }
+    const char* env = std::getenv("MIB_DISABLED_SERVICES");
+    return json{{"valid", true}, {"path", hostSettings_->path()}, {"settings", hostSettings_->document()},
+                {"load_error", hostSettings_->loadError()}, {"boot_env", env ? env : ""}, {"pump_scan", scan}}.dump();
+}
+
+BackendCommandResult BackendFacade::hostSettingsCommandJson(const std::string& text) {
+    using nlohmann::json;
+    const auto refuse = [](const std::string& message) { return BackendCommandResult{false, BackendCommandType::Pump, message}; };
+    if (!initialized_ || !hostSettings_) return refuse("Backend is not initialized");
+    if (text.size() > 64 * 1024) return refuse("Host settings request too large");
+    try {
+        const auto request = json::parse(text);
+        if (!request.is_object() || !request.contains("action") || !request.at("action").is_string()) return refuse("Host settings request needs an action");
+        const auto action = request.at("action").get<std::string>();
+        if (action == "set_pumps") {
+            if (!request.contains("settings")) return refuse("set_pumps needs settings");
+            const auto saved = hostSettings_->setPumps(request.at("settings"));
+            return {saved.ok, BackendCommandType::Pump, saved.message};
+        }
+        if (action == "set_boot_services") {
+            if (!request.contains("services") || !request.at("services").is_array()) return refuse("set_boot_services needs a services list");
+            std::vector<std::string> tokens;
+            for (const auto& item : request.at("services")) {
+                if (!item.is_string()) return refuse("Service names must be text");
+                tokens.push_back(item.get<std::string>());
+            }
+            const auto saved = hostSettings_->setBootDisabledServices(tokens);
+            return {saved.ok, BackendCommandType::Operation, saved.message};
+        }
+        if (action == "scan_pump_addresses") {
+            // Qt's Scan: addresses 1-8, 300 ms each, read-only (SyringePumpSettingsDialog::scanAddresses). It runs as a tracked
+            // operation so the bridge stays responsive; the dialog polls fetchHostSettingsJson()'s pump_scan for the answer.
+            const auto port = request.value("port", std::string{});
+            const auto number = [&](const char* key, int low, int high, int fallback) -> std::optional<int> {
+                if (!request.contains(key)) return fallback;
+                const auto& value = request.at(key);
+                if (!value.is_number_integer() || value.get<int>() < low || value.get<int>() > high) return std::nullopt;
+                return value.get<int>();
+            };
+            const auto baud = number("baud", 1, 4000000, 115200), start = number("start", 1, 247, 1), end = number("end", 1, 247, 8),
+                       timeout = number("timeout_ms", 10, 5000, 300);
+            if (port.empty() || port.size() > 512 || port.find('\0') != std::string::npos) return refuse("Select a COM port first");
+            if (!baud || !start || !end || !timeout || *start > *end) return refuse("Invalid scan range");
+            {
+                std::lock_guard<std::mutex> lock(hostScanMutex_);
+                if (hostScan_.state == "running") return refuse("A pump address scan is already running");
+            }
+            const std::uint64_t operationId = beginOperation(BackendOperationKind::PumpScan, nullptr, "pump address scan on " + port);
+            {
+                std::lock_guard<std::mutex> lock(hostScanMutex_);
+                hostScan_ = HostPumpScan{"running", operationId, port, {}, {}};
+            }
+            std::thread worker([this, operationId, port, baud = *baud, start = *start, end = *end, timeout = *timeout]() {
+                std::string error;
+                const auto addresses = backend_.syringePump().scanModbusAddresses(
+                    port, baud, static_cast<std::uint8_t>(start), static_cast<std::uint8_t>(end), timeout, &error);
+                std::vector<int> found;
+                std::string joined;
+                for (const auto address : addresses) {
+                    found.push_back(address);
+                    joined += (joined.empty() ? "" : ",") + std::to_string(static_cast<int>(address));
+                }
+                {
+                    std::lock_guard<std::mutex> lock(hostScanMutex_);
+                    if (hostScan_.operationId == operationId) {
+                        hostScan_.found = found;
+                        hostScan_.error = error;
+                        hostScan_.state = error.empty() ? "completed" : "failed";
+                    }
+                }
+                finishOperation(operationId, error.empty() ? BackendOperationState::Completed : BackendOperationState::Failed,
+                                error.empty() ? joined : error);
+            });
+            {
+                std::scoped_lock lock(operationWorkersMutex_);
+                operationWorkers_.push_back(std::move(worker));
+            }
+            return {true, BackendCommandType::Pump, "Pump address scan started", operationId};
+        }
+        return refuse("Unknown host settings action");
+    } catch (const std::exception& e) {
+        return refuse(std::string("Invalid host settings request: ") + e.what());
+    }
 }
 
 std::string BackendFacade::fetchProfileCatalogUrl(const std::string& url) { return app::fetchProfileUrl(url); }
