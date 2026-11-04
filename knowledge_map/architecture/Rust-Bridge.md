@@ -172,6 +172,14 @@ depends on `kind` (`FrameReady` / `CameraStatus` / `RecordingStatus` /
 `shim.cpp` and is part of the versioned contract — new fields append slots,
 never repurpose them.
 
+`BackendError` events also carry failures that happen away from a command's reply. Since 2026-11-05 (HW-033, #868)
+the facade installs `AutofocusService::setFailureCallback` at `initialize` (detached in `shutdown` and the
+destructor behind a shared gate, so a late call from the control thread finds no target) and reports a refused
+connect's reason, a failed manual or automatic voltage write and a safe shutdown voltage that was not applied as
+`BackendError` (source `Hardware`, command `Autofocus`); the same message is not reported twice within 5 s. No
+new event kind, struct field or ABI step: the shell routes them to the nanopositioner panel
+([[Desktop-Shell]]). Test: `tests/backend/autofocus_failure_events_test.cpp`.
+
 ## Versioned contract + test
 
 Since v4 the identities live in one machine-checked source of truth:

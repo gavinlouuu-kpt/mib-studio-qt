@@ -1345,6 +1345,15 @@ namespace backend::bridge
         EventSink eventSink_;
         bool initialized_{false};
 
+        // Autofocus failure messages (a failed connect, a failed voltage write) reach the shell as
+        // BackendErrorEvents (HW-033, #868). The gate keeps a late call from the control thread off a
+        // destroyed facade and repeats of one message (a failing control step retries every 50 ms) off the
+        // event queue. Defined in the .cpp.
+        struct AutofocusFailureGate;
+        std::shared_ptr<AutofocusFailureGate> autofocusFailures_;
+        void attachAutofocusFailures();
+        void detachAutofocusFailures();
+
         std::string startupPreferenceJson_{
             R"({"backend":"auto","endpoint":"","com_port":-1,"baud":115200,"address":1})"};
         mutable std::mutex startupActionsMutex_;

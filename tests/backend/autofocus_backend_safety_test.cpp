@@ -6,15 +6,19 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 
 namespace {
 
 struct FakeState {
+    std::atomic<bool> failWrites{false};
+    std::atomic<int> attempts{0};
     std::atomic<int> writes{0};
     std::atomic<double> voltage{10.0};
     std::atomic<bool> connected{false};
@@ -37,7 +41,12 @@ public:
         volts = state_->voltage.load();
         return true;
     }
-    bool setVoltage(double volts, std::string&) override {
+    bool setVoltage(double volts, std::string& error) override {
+        state_->attempts.fetch_add(1);
+        if (state_->failWrites.load()) {
+            error = "fake write failure";
+            return false;
+        }
         state_->voltage.store(volts);
         state_->writes.fetch_add(1);
         return true;
@@ -124,6 +133,57 @@ int main() {
         MIB_EXPECT(state->voltage.load() == 3.0,
                    "active-session disconnect applies configured safe voltage");
         watchdog.mark("active disconnect");
+    }
+
+    // HW-033 (#868): failures reach the failure callback as well as the status callback; information does not.
+    {
+        const auto state = std::make_shared<FakeState>();
+        backend::services::AutofocusService service([state](backend::nanopositioner::BackendKind) {
+            return std::make_unique<FakeBackend>(state);
+        });
+        std::mutex mutex;
+        std::vector<std::string> status;
+        std::vector<std::string> failures;
+        service.setStatusCallback([&](const std::string& message) {
+            std::scoped_lock lock(mutex);
+            status.push_back(message);
+        });
+        service.setFailureCallback([&](const std::string& message) {
+            std::scoped_lock lock(mutex);
+            failures.push_back(message);
+        });
+        MIB_REQUIRE(service.connect(fakeEndpoint()), "failure-callback test connects");
+        service.setEnabled(true);
+        service.setEnabled(false);
+        {
+            std::scoped_lock lock(mutex);
+            MIB_EXPECT(failures.empty(), "connect, enable and disable are information, not failures");
+            MIB_EXPECT(status.size() == 3, "the status callback (Qt) still receives every message");
+        }
+        state->failWrites.store(true);
+        service.increaseVoltage();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (state->attempts.load() == 0 && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            watchdog.mark("waiting for failing jog");
+        }
+        MIB_REQUIRE(state->attempts.load() == 1, "the jog reached the device");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        {
+            std::scoped_lock lock(mutex);
+            MIB_REQUIRE(failures.size() == 1, "one failure delivered");
+            MIB_EXPECT(failures[0] == "Voltage change failed: fake write failure", failures[0]);
+            MIB_EXPECT(status.back() == failures[0], "the same text went to the status callback");
+        }
+        service.setFailureCallback({});
+        service.increaseVoltage();
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        {
+            std::scoped_lock lock(mutex);
+            MIB_EXPECT(failures.size() == 1, "no failure is delivered after the callback is cleared");
+        }
+        service.disconnect();
+        watchdog.mark("failure callback");
     }
 
     return mib::test::exitCode();

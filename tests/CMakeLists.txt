@@ -291,6 +291,14 @@ set_tests_properties(backend.autofocus_backend_safety PROPERTIES
     LABELS "backend;nanopositioner;concurrency"
     TIMEOUT 30)
 
+# HW-033 (#868): AutofocusService failures reach the shell as BackendErrorEvents through the facade.
+mib_add_backend_test_executable(autofocus_failure_events_test backend/autofocus_failure_events_test.cpp)
+mib_backend_test_link(autofocus_failure_events_test PRIVATE Threads::Threads)
+add_test(NAME backend.autofocus_failure_events COMMAND $<TARGET_FILE:mib_backend_tests> autofocus_failure_events_test)
+set_tests_properties(backend.autofocus_failure_events PROPERTIES
+    LABELS "backend;bridge;nanopositioner;concurrency"
+    TIMEOUT 60)
+
 if(UNIX AND NOT APPLE)
     mib_add_backend_test_executable(oeabt_serial_pty_test backend/oeabt_serial_pty_test.cpp)
     mib_backend_test_link(oeabt_serial_pty_test PRIVATE Threads::Threads)
