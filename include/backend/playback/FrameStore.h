@@ -179,10 +179,22 @@ public:
     // Returns true on success, false on failure
     bool resize(size_t newCapacity);
 
-    // Pre-reserve each ring slot's data buffer to at least frameBytes so the
-    // per-frame pushFrame hot path performs no heap allocation for frames of
-    // that size or smaller. Call at capture start once the frame geometry is
-    // known. Idempotent: only grows slots whose capacity is below frameBytes.
+    // Size each ring slot's data buffer to frameBytes so the per-frame
+    // pushFrame hot path performs no heap allocation for frames of that size
+    // or smaller. Call at capture start once the frame geometry is known.
+    // Idempotent. The reservation follows the current need in both directions
+    // (#839): a slot below frameBytes is grown; a slot above it (an earlier,
+    // larger frame size, e.g. an Overview session before an Experiment
+    // window) is re-allocated at frameBytes and the excess is freed, so the
+    // retained bytes (memoryStats) and the process's memory follow the frame
+    // size in use. A stored frame that still fits is kept; one larger than
+    // frameBytes is dropped (its slot then reads Malformed). CaptureService
+    // calls this once per session and again only when the geometry grows, so
+    // frames of the running session are never dropped by it. The structural
+    // lock is held for the swap only: the freed buffers are released after it,
+    // and a release of 16 MiB or more on its own thread (freeing ~10 GiB takes
+    // ~0.5 s, which would stall the capture thread that calls this and every
+    // reader). The accounting is final when the call returns.
     void reserveFrameBytes(size_t frameBytes);
 
     // Get available index range
@@ -199,8 +211,10 @@ public:
 
     // Measured retained memory (issue #370): bytes allocated by the ring
     // slots (capacity, not just size — that is what stays resident), the
-    // peak, frames retained, and the declared bound (capacity × reserved
-    // frame bytes when reserveFrameBytes was called). Lock-free.
+    // peak (a high-water mark for the store's life: it keeps the larger
+    // figure after reserveFrameBytes shrinks the slots), frames retained, and
+    // the declared bound (capacity × the frame bytes of the latest
+    // reserveFrameBytes call). Lock-free.
     backend::diagnostics::MemoryOwnerStats memoryStats() const;
 
 private:

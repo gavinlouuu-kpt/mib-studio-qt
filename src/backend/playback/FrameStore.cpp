@@ -12,6 +12,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
+#include <thread>
 
 namespace backend::playback {
 
@@ -57,17 +58,69 @@ backend::diagnostics::MemoryOwnerStats FrameStore::memoryStats() const {
 
 void FrameStore::reserveFrameBytes(size_t frameBytes) {
     if (frameBytes == 0) return;
-    std::unique_lock structLk(structureMutex_);
-    for (size_t i = 0; i < ring_.size(); ++i) {
-        auto& f = ring_[i];
-        if (f.data.capacity() < frameBytes) f.data.reserve(frameBytes);
-        noteSlotBytes(i, f.data.capacity());
+    // The reservation follows the current need in both directions (#839).
+    // Growing was always so; a slot that kept an earlier, larger frame size
+    // (an Overview full-sensor session, then an Experiment window) stayed
+    // allocated for the life of the process, and the experiment buffer plan,
+    // which sizes itself from the RAM still available, was cut by it.
+    //
+    // The swapped-out buffers are collected here and freed after the lock is
+    // released (`released` is declared before the lock, so it outlives it):
+    // returning ~10 GiB of resident pages to the OS takes about half a second,
+    // and every reader waits on the lock meanwhile.
+    std::vector<std::vector<uint8_t>> released;
+    uint64_t releasedBytes = 0;
+    size_t droppedFrames = 0;
+    {
+        // Exclusive structural lock: every slot access takes the structural
+        // lock shared first, so no push or read holds a slot lock while this
+        // runs and the slots can be re-allocated without taking them.
+        std::unique_lock structLk(structureMutex_);
+        for (size_t i = 0; i < ring_.size(); ++i) {
+            auto& f = ring_[i];
+            const size_t capacity = f.data.capacity();
+            if (capacity < frameBytes) {
+                f.data.reserve(frameBytes);
+            } else if (capacity > frameBytes) {
+                // Swap the slot's buffer for one of the new size. A stored
+                // frame that still fits is carried over; one larger than the
+                // new size (a stale frame of an earlier session) is dropped:
+                // its slot keeps its identity but holds no data, so a read
+                // reports it Malformed instead of returning a frame.
+                std::vector<uint8_t> fresh;
+                fresh.reserve(frameBytes);
+                if (f.data.size() <= frameBytes) {
+                    fresh.assign(f.data.begin(), f.data.end());
+                } else {
+                    ++droppedFrames;
+                }
+                f.data.swap(fresh);
+                if (capacity > f.data.capacity()) releasedBytes += capacity - f.data.capacity();
+                released.push_back(std::move(fresh));
+            }
+            noteSlotBytes(i, f.data.capacity());
+        }
+        reservedFrameBytes_.store(frameBytes, std::memory_order_relaxed);
+        if (!released.empty()) {
+            SPDLOG_INFO("FrameStore: reserved {} bytes per slot across {} slots ({:.1f} MB retained); the frame size "
+                        "dropped: releasing {:.1f} MB from {} slots ({} stored frames larger than the new size "
+                        "dropped)",
+                        frameBytes, ring_.size(), retainedBytes_.load(std::memory_order_relaxed) / (1024.0 * 1024.0),
+                        releasedBytes / (1024.0 * 1024.0), released.size(), droppedFrames);
+        } else {
+            SPDLOG_INFO("FrameStore: reserved {} bytes per slot across {} slots ({:.1f} MB retained)", frameBytes,
+                        ring_.size(), retainedBytes_.load(std::memory_order_relaxed) / (1024.0 * 1024.0));
+        }
     }
-    size_t prev = reservedFrameBytes_.load(std::memory_order_relaxed);
-    while (frameBytes > prev && !reservedFrameBytes_.compare_exchange_weak(prev, frameBytes, std::memory_order_relaxed)) {
+    // The lock is released. A large release is freed on its own thread: the
+    // caller is the capture thread on the first frame of a session, and a
+    // stall of half a second there would overrun the SDK's input buffers (the
+    // camera streams at thousands of frames per second) and be counted as
+    // buffer underruns of the session. The buffers belong to nothing else.
+    constexpr uint64_t kFreeOnOwnThreadBytes = 16ULL * 1024 * 1024;
+    if (releasedBytes >= kFreeOnOwnThreadBytes) {
+        std::thread([graveyard = std::move(released)]() mutable { graveyard.clear(); }).detach();
     }
-    SPDLOG_INFO("FrameStore: reserved {} bytes per slot across {} slots ({:.1f} MB retained)", frameBytes,
-                ring_.size(), retainedBytes_.load(std::memory_order_relaxed) / (1024.0 * 1024.0));
 }
 
 void FrameStore::pushFrame(const uint8_t* src, size_t size, uint64_t width, uint64_t height,
