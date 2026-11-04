@@ -1,0 +1,294 @@
+/* Shared (owner: shell #862, coordinate changes): camera-actions and tab-body frame, buttons, toolbars, sub-tabs, ViewerGate, canvases, tables, config groups. Part of the App.css cascade. #853: the .subtab-body > .config-group rule below no longer matches the re-analysis panel inside its ViewerGate; the Review epic (#867) fixes it. */
+.camera-actions {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 3px;
+}
+
+.tab-body {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 8px;
+}
+
+/* ---- Shared widgets ---- */
+
+button.btn,
+.toolbar button,
+.camera-actions button {
+  border: 1px solid #aaa;
+  background: #f6f6f6;
+  padding: 4px 10px;
+  font: inherit;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+button.btn:hover:not(:disabled),
+.toolbar button:hover:not(:disabled),
+.camera-actions button:hover:not(:disabled) {
+  background: #e8e8e8;
+}
+
+button.btn:disabled,
+.toolbar button:disabled,
+.camera-actions button:disabled {
+  color: var(--muted);
+  background: #f0f0f0;
+  cursor: not-allowed;
+}
+
+/* ViewerGate (#763 F19): a fieldset that only carries `disabled` for a viewer; no box. */
+fieldset.viewer-gate {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.toolbar .right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar input[type="number"],
+.toolbar input[type="text"] {
+  width: 72px;
+  padding: 3px 5px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  font: inherit;
+}
+
+.toolbar input:disabled {
+  background: #eee;
+  color: var(--muted);
+}
+
+.subtabs {
+  display: flex;
+  gap: 1px;
+  margin-bottom: 0;
+}
+
+.subtabs button {
+  border: 1px solid var(--border);
+  border-bottom: none;
+  background: #e8e8e8;
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px 3px 0 0;
+}
+
+.subtabs button.active {
+  background: #fff;
+  font-weight: 600;
+}
+
+.subtabs button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.subtab-body {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 8px;
+  flex: 1 0 auto;
+  min-height: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+/* ---- Canvas / live view ---- */
+
+.canvas-wrap {
+  flex: 1;
+  min-height: 160px;
+  background: #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  position: relative;
+}
+
+.canvas-wrap[hidden] {
+  display: none;
+}
+
+.canvas-wrap canvas {
+  image-rendering: pixelated;
+  background: #111;
+}
+
+.canvas-wrap canvas.fit {
+  width: 100%;
+  height: auto;
+}
+
+.canvas-hint {
+  position: absolute;
+  color: #888;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* ---- Misc regions ---- */
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.legend .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend .swatch {
+  width: 10px;
+  height: 10px;
+  display: inline-block;
+  border: 1px solid #0003;
+}
+
+.pending-note {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  background: #fcfcfc;
+  margin-top: 6px;
+}
+
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.metrics-table th,
+.metrics-table td {
+  border: 1px solid var(--border);
+  padding: 3px 6px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.metrics-table th {
+  background: #ececec;
+  font-weight: 600;
+}
+
+.review-split {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.review-split .frames {
+  flex: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.review-split .table-panel {
+  flex: 2;
+  min-width: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.config-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.config-group {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 8px;
+  min-width: 240px;
+  flex: 1;
+}
+
+/* Stacked in a sub-tab body (a content-height flex column since #543), a
+   config group keeps its own height: with flex: 1 it shared the extra
+   height with the Review split and pushed the frames below the fold. */
+.subtab-body > .config-group {
+  flex: 0 0 auto;
+}
+
+.config-group h5 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.config-group .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.script-editor {
+  width: 100%;
+  min-height: 90px;
+  font-family: monospace;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  resize: vertical;
+}
+
+.script-editor:disabled {
+  background: #f5f5f5;
+  color: var(--muted);
+}
+
+.scrub {
+  width: 100%;
+}
+
+.mono {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.path-label {
+  color: #444;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

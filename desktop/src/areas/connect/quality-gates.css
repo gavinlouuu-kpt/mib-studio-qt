@@ -1,0 +1,98 @@
+/* Connect and Overview (#863). Part of the App.css cascade. */
+/* ---- UX-4 image quality gates (issue #308) ---- */
+.quality-panel {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.quality-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quality-head h4 {
+  margin: 0;
+}
+
+.quality-summary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quality-gates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.quality-gate {
+  flex: 1 1 120px;
+  min-width: 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.gate-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Status shown by text (.gate-status) AND the dot — never colour alone. */
+.gate-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: var(--border);
+}
+.gate-dot.pass {
+  background: var(--ok);
+}
+.gate-dot.warn {
+  background: var(--warn);
+}
+.gate-dot.fail {
+  background: var(--err);
+}
+.gate-dot.unknown {
+  background: transparent;
+}
+
+.gate-label {
+  font-weight: 600;
+}
+
+.gate-value {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gate-status {
+  font-size: 11px;
+  font-weight: 600;
+}
+.quality-gate.pass .gate-status {
+  color: var(--ok);
+}
+.quality-gate.warn .gate-status {
+  color: var(--warn);
+}
+.quality-gate.fail .gate-status {
+  color: var(--err);
+}
+.quality-gate.unknown .gate-status {
+  color: var(--muted);
+}

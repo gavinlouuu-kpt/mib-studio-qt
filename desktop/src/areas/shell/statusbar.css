@@ -1,0 +1,40 @@
+/* Shell (#862). Part of the App.css cascade. */
+/* ---- Status bar ---- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.statusbar .metrics {
+  margin-left: auto;
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusbar .log-toggle {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.log-drawer {
+  max-height: 110px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  background: #fff;
+  padding: 4px 10px;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}

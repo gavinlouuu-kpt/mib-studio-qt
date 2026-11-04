@@ -1,0 +1,61 @@
+/* Shell (#862). Part of the App.css cascade: keep it imported where App.css lists it. */
+/* ---- Menu row ---- */
+
+.menubar {
+  display: flex;
+  gap: 2px;
+  padding: 2px 6px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 30;
+}
+
+.menubar-item {
+  position: relative;
+}
+
+.menubar-item > button {
+  border: none;
+  background: transparent;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.menubar-item > button:hover,
+.menubar-item > button[aria-expanded="true"] {
+  background: #dcdcdc;
+}
+
+.menu-popup {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 230px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  z-index: 40;
+}
+
+.menu-popup button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.menu-popup button:hover:not(:disabled) {
+  background: #e2e8f0;
+}
+
+.menu-popup button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}

@@ -1,0 +1,145 @@
+/* Connect and Overview (#863). Part of the App.css cascade. */
+/* ---- UX-3 hardware preflight checklist (issue #307) ---- */
+.preflight-panel {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.preflight-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.preflight-head h4 {
+  margin: 0;
+}
+
+.preflight-summary {
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.preflight-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.preflight-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #eee;
+}
+.preflight-check:last-child {
+  border-bottom: none;
+}
+
+/* Status shown by text (.check-status) AND the dot — never colour alone. */
+.check-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: var(--border);
+}
+.check-dot.passed {
+  background: var(--ok);
+}
+.check-dot.warning {
+  background: var(--warn);
+}
+.check-dot.failed {
+  background: var(--err);
+}
+.check-dot.not-required {
+  background: transparent;
+}
+
+.check-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.check-label {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.req-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.check-detail {
+  font-size: 12px;
+}
+
+.check-identity {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.check-status {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 84px;
+  text-align: right;
+}
+.preflight-check.passed .check-status {
+  color: var(--ok);
+}
+.preflight-check.warning .check-status {
+  color: var(--warn);
+}
+.preflight-check.failed .check-status {
+  color: var(--err);
+}
+.preflight-check.not-required .check-status {
+  color: var(--muted);
+}
+
+.check-recovery {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+}
+
+.btn.small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.preflight-foot {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+.preflight-foot.ok {
+  color: var(--ok);
+}
+.preflight-foot.warn {
+  color: var(--warn);
+}

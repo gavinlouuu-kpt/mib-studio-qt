@@ -18,8 +18,9 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
 `desktop/`:
 
 - `desktop/src/` — React frontend. `bridge.ts` is the typed IPC client
-  (mirrors the `src-tauri` command DTOs); `App.tsx` + `App.css` are the
-  operator shell aligned with the Qt UI on `main` (UI-1, issue #266): a
+  (mirrors the `src-tauri` command DTOs); `App.tsx` + `App.css` compose the
+  operator shell, whose parts live in `areas/<area>/` (see *Classic view
+  modules* below), aligned with the Qt UI on `main` (UI-1, issue #266): a
   File/Settings/Help menu row, a persistent collapsible telemetry sidebar
   (collapse state in `localStorage`), Connect / Overview / Experiment / Review
   tabs with Start/Stop Camera in the tab header, nested Preview / Monitoring
@@ -62,6 +63,24 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   (UX-8), with `desktop/src/contextBar.test.ts` vitest coverage.
 - `desktop/src/commissioning.ts` — pure Operator/Service-mode actuation gate
   (UX-9), with `desktop/src/commissioning.test.ts` vitest coverage.
+
+**Classic view modules (#869 wave 0).** The classic view was one 2685-line `App.tsx` and one
+1266-line `App.css`; it is split by area, with no change in behaviour, so the Tauri parity streams
+(#862–#868) own separate files. `App.tsx` only provides `StudioContext` and lays out the area views
+(`areas/shell/MenuBar`, `Sidebar`, `Workflow`, `RecoveryBanners`, `StatusBar`, `Dialogs`;
+`areas/connect/ConnectTab`, `OverviewTab`, `CameraActions`, `MockCameraDialog`;
+`areas/monitoring/ExperimentTab`, `MonitoringPanel`; `areas/preview/PreviewPanel`;
+`areas/config/ConfigPanel`; `areas/review/ReviewTab`; `areas/hardware/ServiceMode`,
+`HardwarePanel`, `TriggerTestControls`, `InstrumentLedPanel`). Each area keeps its state in
+`use<Area>State()` (state and render-time values, no effects) and its callbacks and effects in named
+hooks in `areas/<area>/use<Area>.ts`; `studio/useStudioController.ts` calls them all, in the order the
+effects had in the single component, because React runs effects in registration order (for
+example, the frame-pull invalidation on a tab change must precede a recovered review's first frame
+request). Views read the composed object with `useStudio()`. `App.css` is an `@import` manifest of
+the per-area style files (`areas/<area>/*.css`, shared `styles/*.css`) in the old file's order, so
+the built CSS is byte-identical. Owners, seams and rules:
+[desktop-area-ownership](../../docs/howto/desktop-area-ownership.md); program plan:
+[2026-11-05-tauri-parity-program](../../docs/exec-plans/active/2026-11-05-tauri-parity-program.md).
 
 **Guided workflow (UX-1, issue #305):** `desktop/src/workflow.ts` layers an
 authoritative *stage state* on the Connect / Overview / Experiment / Review
@@ -169,8 +188,9 @@ wraps each cluster of controls that sends a control command in a `fieldset.viewe
 reason as its title; single buttons inside a `<p>` (Resume Run, the Run Stop, the config Apply
 buttons) take `viewerOnly` in their own `disabled`, and File ▸ Open Recording… is `pending`.
 Navigation, view toggles, reads and the ring playback stepping stay open to a viewer. The desktop
-shell has no session, so nothing changes there. `ViewerGate.test.tsx` also checks App.tsx's
-control-command controls against the gate.
+shell has no session, so nothing changes there. `ViewerGate.test.tsx` also checks the classic
+view's control-command controls against the gate (it scans `App.tsx` and `areas/**/*.tsx`, so a
+control and its `<ViewerGate>` stay in the same file).
 
 **Reconnecting (#501).** `AuthGate` keeps probing `/auth` every 2 s after the app mounted. The
 server reports a `boot_id` (one value per server process; `mib-bridge-server` `Server::new`) on every
