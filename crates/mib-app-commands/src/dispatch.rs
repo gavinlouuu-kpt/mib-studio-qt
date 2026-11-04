@@ -103,6 +103,11 @@ pub const COMMANDS: &[&str] = &[
     "fetch_stage_status",
     "fetch_review_metadata",
     "fetch_review_metrics_page",
+    "analyze_population",
+    "analysis_read",
+    "analysis_write",
+    "analysis_job",
+    "fetch_live_evidence",
     "fetch_review_image",
     "review_image_bytes",
     "fetch_review_frame_packet",
@@ -142,10 +147,21 @@ pub const COMMANDS: &[&str] = &[
     "monitoring_cell_unpin",
     "monitoring_cell_clear_pins",
     "fetch_monitoring_cell_packet",
+    "workspace_read",
+    "workspace_write",
+    "recipe_list",
+    "recipe_get",
+    "recipe_create",
+    "recipe_derive",
+    "recipe_diff",
+    "recipe_apply_preview",
     "calibration_records_list",
     "calibration_record_get",
     "calibration_apply",
     "run_quick_look",
+    "camera_feature_tree",
+    "camera_feature_read",
+    "camera_feature_write",
     "trigger_set_pulse_duration",
     "trigger_manual_pulse",
     "trigger_periodic_start",
@@ -582,6 +598,35 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::pump_scan_addresses(state, a.com_port, a.baud_rate, a.start_address, a.end_address, a.timeout_ms).and_then(json)
         }
         "fetch_review_metadata" => crate::fetch_review_metadata(state).and_then(json),
+        "fetch_live_evidence" => crate::fetch_live_evidence(state).and_then(json),
+        "analysis_read" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: serde_json::Value }
+            let a: A = args(value)?;
+            crate::analysis_read(state, a.request).and_then(json)
+        }
+        "analysis_job" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: serde_json::Value }
+            let a: A = args(value)?;
+            crate::analysis_job(state, a.request).and_then(json)
+        }
+        "analysis_write" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: serde_json::Value }
+            let a: A = args(value)?;
+            crate::analysis_write(state, a.request).and_then(json)
+        }
+        "analyze_population" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: serde_json::Value }
+            let a: A = args(value)?;
+            crate::analyze_population(state, a.request).and_then(json)
+        }
         "fetch_review_metrics_page" => {
             #[derive(Deserialize)]
             struct A {
@@ -686,17 +731,19 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             #[derive(Deserialize)]
             struct A {
                 #[serde(rename = "jobId")] job_id: String,
+                #[serde(default)] instance: Option<String>,
             }
             let a: A = args(value)?;
-            crate::fetch_device_discovery(state, a.job_id).and_then(json)
+            crate::fetch_device_discovery(state, a.job_id, a.instance).and_then(json)
         }
         "cancel_device_discovery" => {
             #[derive(Deserialize)]
             struct A {
                 #[serde(rename = "jobId")] job_id: String,
+                #[serde(default)] instance: Option<String>,
             }
             let a: A = args(value)?;
-            crate::cancel_device_discovery(state, a.job_id).and_then(json)
+            crate::cancel_device_discovery(state, a.job_id, a.instance).and_then(json)
         }
         "fetch_camera_selection" => crate::fetch_camera_selection(state).and_then(json),
         "select_hardware_camera" => {
@@ -761,8 +808,23 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::monitoring_cell_pin(state, a.expected_start_generation, a.capture_epoch, a.frame_index, a.object_id)
                 .and_then(json)
         }
-        // ABI 42 (#716 A4a): calibration records. A malformed id or factor is an error reply and
-        // nothing reaches the backend.
+        // ABI 45: workspace metadata reads and controller-only writes.
+        "workspace_read" | "workspace_write" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: String }
+            let a: A = args(value)?;
+            if name == "workspace_write" { crate::workspace_write(state, a.request).and_then(json) }
+            else { crate::workspace_read(state, a.request).and_then(json) }
+        }
+        // ABI 50 (#807 I02): the native recipe provider. One argument, the request object.
+        "recipe_list" | "recipe_get" | "recipe_create" | "recipe_derive" | "recipe_diff" | "recipe_apply_preview" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: Value }
+            let a: A = args(value)?;
+            crate::recipe_command(state, name, a.request).and_then(json)
+        }
         "calibration_records_list" => crate::calibration_records_list(state).and_then(json),
         "calibration_record_get" => {
             #[derive(Deserialize)]
@@ -793,6 +855,23 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             }
             let a: A = args(value)?;
             crate::run_quick_look(state, a.paths, a.reference).and_then(json)
+        }
+        // ABI 49 (#806 E-1/E-2): the camera's GenApi node map. `request` is the contract's JSON
+        // object; tree and read are reads, write is a control command on the server.
+        "camera_feature_tree" | "camera_feature_read" | "camera_feature_write" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A {
+                #[serde(default)]
+                request: Value,
+            }
+            let a: A = args(value)?;
+            match name {
+                "camera_feature_tree" => crate::camera_feature_tree(state, a.request),
+                "camera_feature_read" => crate::camera_feature_read(state, a.request),
+                _ => crate::camera_feature_write(state, a.request),
+            }
+            .and_then(json)
         }
         "monitoring_cell_unpin" => {
             #[derive(Deserialize)]
@@ -1529,7 +1608,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(50)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

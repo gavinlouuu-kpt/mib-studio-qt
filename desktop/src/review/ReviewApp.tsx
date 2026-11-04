@@ -1,18 +1,25 @@
-import { PanelErrorBoundary } from "../components/PanelErrorBoundary";
-import { metricNumber } from "../metricFormat";
 // YOFO Review — the standalone review product (plan
-// 2026-10-01-standalone-review-app, ADR 0014). Mounted by `review.html` /
-// `main.tsx`. MIB Studio's Review tab does not use `ReviewPanel` yet (#512
-// step B5).
+// 2026-10-01-standalone-review-app, ADR 0014), rebuilt on the @mib/ui kit
+// (#717 B1, #269): AppShell with the Review app's stages Open (R1), Overview
+// (R2), Inspect and Export. Mounted by `review.html` / `main.tsx`. MIB Studio's
+// Review tab does not use `ReviewPanel` yet (#512 step B5).
 //
-// This shell owns what the panel does not: backend initialization, the
-// menu bar, preferences (px→µm fallback), the log drawer and the About
-// dialog. The panel drains review events and tracks its jobs itself. No
-// camera, experiment or hardware controls exist in this product.
+// This shell owns what the panel does not: backend initialization, the stage
+// tabs, preferences (px→µm fallback), updates, the log drawer and the About
+// dialog. Inspect is `ReviewPanel`, laid out as R3 on the kit (#717 B3a:
+// Scatter / Records / Frames, the record card, its toolbar's exports and
+// regenerate); it stays mounted while another stage shows, so the open run,
+// the selection and a running job survive a stage change. Selecting a stage only changes what is shown. No camera, experiment
+// or hardware controls exist in this product.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
+import "@mib/ui/fonts.css";
+import "@mib/ui/style.css";
+import { AppShell, Button, StateChip } from "@mib/ui";
+import { PanelErrorBoundary } from "../components/PanelErrorBoundary";
+import { metricNumber } from "../metricFormat";
 import { bridge } from "../bridge";
 import { isRemote, transport } from "../transport";
 import { REVIEW_ABI_VERSION } from "./reviewContract";
@@ -24,10 +31,19 @@ import {
   watchReviewConnection,
 } from "./reviewAvailability";
 import { FramePullScheduler } from "../framePullScheduler";
-import { ReviewPanel, type ReviewPanelHandle } from "./ReviewPanel";
+import { ReviewPanel, type OpenOutcome, type ReviewPanelHandle } from "./ReviewPanel";
 import { reviewBridge, type ReviewInfo } from "./reviewBridge";
 import { checkUpdate, loadUpdateChannel, saveUpdateChannel, UpdateDialog, type UpdateChannel } from "./updates";
+import { baseName } from "./exports/exportHelpers";
+import { OpenView } from "./open/OpenView";
+import { ExportNotice, OverviewNotice } from "./shell/StageNotices";
 import "../App.css";
+import "./shell/shell.css";
+
+/** The Review app's stages in this build (UI language: Open, Overview, Inspect, …, Export;
+ * Populations and Compare are reference views, not scheduled). */
+export const REVIEW_STAGES = ["Open", "Overview", "Inspect", "Export"] as const;
+export const STAGE = { Open: 0, Overview: 1, Inspect: 2, Export: 3 } as const;
 
 export const PRODUCT_NAME = "YOFO Review";
 /** Backend event: a file the OS asked to open (src-tauri review::OPEN_FILE_EVENT). */
@@ -108,35 +124,6 @@ function PreferencesDialog(props: {
   );
 }
 
-function Menu(props: { label: string; items: { label: string; onClick?: () => void; pending?: string }[] }) {
-  const [openMenu, setOpenMenu] = useState(false);
-  return (
-    <div className="menubar-item">
-      <button aria-expanded={openMenu} onClick={() => setOpenMenu((o) => !o)} onBlur={() => window.setTimeout(() => setOpenMenu(false), 150)}>
-        {props.label}
-      </button>
-      {openMenu && (
-        <div className="menu-popup" role="menu">
-          {props.items.map((it) => (
-            <button
-              key={it.label}
-              role="menuitem"
-              disabled={!!it.pending}
-              title={it.pending}
-              onClick={() => {
-                setOpenMenu(false);
-                it.onClick?.();
-              }}
-            >
-              {it.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function ReviewApp() {
   const [abi, setAbi] = useState<number | null>(null);
   const [appVersion, setAppVersion] = useState("");
@@ -152,6 +139,7 @@ export default function ReviewApp() {
   const [channel, setChannel] = useState<UpdateChannel>(() => loadUpdateChannel());
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateNotice, setUpdateNotice] = useState("");
+  const [stage, setStage] = useState<number>(STAGE.Open);
   // #763 F7: a server without the review commands (yofo-studio-server before
   // #512 S11) is "initialized" but cannot review; the panel stays disabled
   // and the shell says why instead of offering an Open that cannot work.
@@ -208,7 +196,8 @@ export default function ReviewApp() {
           if (reviewAvailability.get().state === "unavailable") return;
           const fromQuery = new URLSearchParams(window.location.search).get("open") ?? "";
           const launch = fromQuery || (await reviewBridge.launchPath().catch(() => ""));
-          if (launch) await panel.current?.openPath(launch);
+          // A file the operator double-clicked opens straight into Inspect.
+          if (launch && (await panel.current?.openPath(launch))?.ok) setStage(STAGE.Inspect);
         }
       } catch (e) {
         append(`init error: ${e}`);
@@ -258,7 +247,7 @@ export default function ReviewApp() {
     let disposed = false;
     void listen<string>(OPEN_FILE_EVENT, async () => {
       const path = await reviewBridge.takeOpenRequest().catch(() => "");
-      if (path) await panel.current?.openPath(path);
+      if (path && (await panel.current?.openPath(path))?.ok) setStage(STAGE.Inspect);
     }).then((un) => {
       if (disposed) un();
       else stop = un;
@@ -289,51 +278,89 @@ export default function ReviewApp() {
     ? `${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid} · invalid ${info.total_invalid} · px→µm ${metricNumber(info.pixel_to_micron, 4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}`
     : "no file";
 
-  return (
-    <div className="review-app">
-      <nav className="menubar" aria-label="Main menu">
-        <Menu
-          label="File"
-          items={[
-            { label: "Open…", onClick: () => void panel.current?.openFile() },
-            { label: "Close", onClick: () => void panel.current?.closeFile() },
-            { label: "Preferences…", onClick: () => setShowPrefs(true) },
-          ]}
-        />
-        <Menu label="View" items={[{ label: fitWindow ? "Fit: 1:1" : "Fit: Window", onClick: () => setFitWindow((f) => !f) }]} />
-        <Menu
-          label="Help"
-          items={[
-            { label: "Check for updates…", onClick: () => setShowUpdate(true) },
-            { label: "About", onClick: () => setShowAbout(true) },
-          ]}
-        />
-        <div className="menubar-spacer" />
-        <span className="product-name">{PRODUCT_NAME}</span>
-      </nav>
+  const openPath = useCallback(
+    async (path: string): Promise<OpenOutcome> => (await panel.current?.openPath(path)) ?? { ok: false, message: "The review view is not ready" },
+    [],
+  );
+  const openFile = useCallback(async () => {
+    await panel.current?.openFile();
+  }, []);
+  const closeFile = useCallback(async () => {
+    await panel.current?.closeFile();
+  }, []);
+  const inspect = useCallback(() => setStage(STAGE.Inspect), []);
+  // The backend chip says whether this server can review, not only whether the
+  // bridge initialized (#763 F7).
+  const backendChip: { tone: "confirmed" | "unknown" | "blocked"; text: string } = !ready
+    ? { tone: "unknown", text: "Backend · not initialized" }
+    : rechecking
+      ? { tone: "unknown", text: "Backend · checking review" }
+      : reviewUnavailable
+        ? { tone: "blocked", text: "Review not served by this server" }
+        : { tone: "confirmed", text: "Backend ready" };
 
-      <main className="review-main">
+  return (
+    <div className="review-app rv-app">
+      <AppShell
+        className="rv-shell"
+        brand={PRODUCT_NAME}
+        tag="Analysis · PC"
+        context={[{ label: "Open run", value: info?.file_open ? baseName(info.file_path) : "None" }]}
+        stages={[...REVIEW_STAGES]}
+        activeStage={stage}
+        onStageSelect={setStage}
+        status={
+          <>
+            <StateChip tone={backendChip.tone}>{backendChip.text}</StateChip>
+            <StateChip tone="neutral">Read-only · opening never modifies a file</StateChip>
+          </>
+        }
+        headerActions={
+          <div className="rv-header-actions">
+            <Button size="small" onClick={() => setFitWindow((f) => !f)} title="Image scaling in Inspect">
+              {fitWindow ? "Fit: 1:1" : "Fit: Window"}
+            </Button>
+            <Button size="small" onClick={() => setShowPrefs(true)}>
+              Settings
+            </Button>
+            <Button size="small" onClick={() => setShowUpdate(true)}>
+              Updates…
+            </Button>
+            <Button size="small" onClick={() => setShowAbout(true)}>
+              About
+            </Button>
+          </div>
+        }
+      >
         {reviewUnavailable && (
           <p className="pending-note" role="alert" data-testid="review-unavailable">
             <span data-testid="review-unavailable-text">{REVIEW_UNAVAILABLE_TEXT}</span>{" "}
-            <button className="btn" onClick={() => reviewAvailability.recheck()} disabled={rechecking}>
+            <Button size="small" onClick={() => reviewAvailability.recheck()} disabled={rechecking}>
               {rechecking ? "Checking…" : "Retry"}
-            </button>
+            </Button>
           </p>
         )}
-        <PanelErrorBoundary>
-        <ReviewPanel
-          ref={panel}
-          ready={reviewReady}
-          scheduler={scheduler.current}
-          fitWindow={fitWindow}
-          log={append}
-          onFileChange={setFilePath}
-          onInfo={setInfo}
-          fallbackPixelToMicron={pxToUm}
-        />
-        </PanelErrorBoundary>
-      </main>
+        <div className="rv-stage" hidden={stage !== STAGE.Open}>
+          <OpenView ready={reviewReady} reviewUnavailable={reviewUnavailable} info={info} onOpenPath={openPath} onOpenFile={openFile} onClose={closeFile} onInspect={inspect} log={append} />
+        </div>
+        {stage === STAGE.Overview && <OverviewNotice />}
+        {/* Inspect: today's review panel, always mounted (see the header). */}
+        <div className="review-main rv-inspect" data-testid="review-inspect" hidden={stage !== STAGE.Inspect}>
+          <PanelErrorBoundary>
+            <ReviewPanel
+              ref={panel}
+              ready={reviewReady}
+              scheduler={scheduler.current}
+              fitWindow={fitWindow}
+              log={append}
+              onFileChange={setFilePath}
+              onInfo={setInfo}
+              fallbackPixelToMicron={pxToUm}
+            />
+          </PanelErrorBoundary>
+        </div>
+        {stage === STAGE.Export && <ExportNotice fileOpen={!!info?.file_open} onInspect={inspect} />}
+      </AppShell>
 
       <div className="statusbar">
         <span className="metrics mono">{filePath || "No file"} · {summary}</span>

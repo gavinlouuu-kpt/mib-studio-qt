@@ -68,7 +68,27 @@ CaptureLifecycleSnapshot lifecycleSnapshot();   // authoritative state/generatio
 CaptureLifecycleState waitForState({...}, timeout);
 bool softTriggerActiveCamera();  // one software ACQUISITION trigger on the
                                  // live camera (not the sort pulse)
+// E02 (#806): GenApi access to the active camera under cameraMutex_.
+camera::features::Access withCameraFeatures(fn(Port&, CurrentSession&), reason, const CameraFeatureGate& gate);
+camera::features::Access withCameraFeatures(fn(Port&, CurrentSession&), reason, writeBlockReason);
 ```
+
+`withCameraFeatures` is the feature commands' session guard
+([[../camera/FeatureControl]]): `cameraMutex_` pins `activeCamera_`, the token is
+`{camera source, activeCameraGeneration_ (the capture generation that set the
+camera), featureRevision_, instanceId_}`; the revision restarts at 1 per generation and only
+advances (after a write that may have reached the device). `instanceId()` (E01, #806 E-4)
+is a random UUID v4 drawn at construction (`profiles::generateUuidV4`): generations
+restart at 1 in a new backend instance, so the instance is what makes a token from
+before a backend restart stale (`capture_camera_features_test` constructs a second
+`CaptureService` and shows its first token equals the old one in every other member). `NoSession` without
+an active camera or an open port; `Unsupported` when `featureSession()` is null.
+`CameraFeatureGate` (#806 review) is evaluated under `cameraMutex_`, before the
+port: `refuseAll` returns `Refused` with its reason (the facade: experiment
+Starting/Active/Stopping, realtime processing, autofocus), `refuseWrites` makes
+writes unauthorized (frame recording). The facade calls this inside
+`TriggerService::runSerializedWithPulses`, so the lock order is `pulseMutex_` →
+`cameraMutex_` → the camera's port guard; nothing takes them the other way.
 
 **`start()` returning true is request acceptance, not hardware readiness.**
 `lifecycleSnapshot().cameraReady` (true only between a successful

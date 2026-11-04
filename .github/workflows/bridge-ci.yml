@@ -18,7 +18,7 @@ on:
       - "CMakePresets.json"
       - ".github/workflows/bridge-ci.yml"
   pull_request:
-    branches: [dev/react-tauri, develop, "agent-b/**"]
+    branches: [dev/react-tauri, develop, "agent-b/**", feat/egrabber-workspace]
     paths:
       - "crates/mib-bridge/**"
       - "crates/mib-app-commands/**"

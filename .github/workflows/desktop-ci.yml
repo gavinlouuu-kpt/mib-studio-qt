@@ -21,7 +21,7 @@ on:
       - "tests/tools/test_publish_tauri_update.py"
       - ".github/workflows/desktop-ci.yml"
   pull_request:
-    branches: [dev/react-tauri, develop, "agent-b/**"]
+    branches: [dev/react-tauri, develop, "agent-b/**", feat/egrabber-workspace]
     paths:
       - "desktop/**"
       - "crates/mib-bridge/**"

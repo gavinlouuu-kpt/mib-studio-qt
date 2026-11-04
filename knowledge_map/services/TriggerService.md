@@ -132,6 +132,19 @@ OS scheduling in a 500 fps mock run).
   whole pulse (load pointer → rising edge → busy-wait → falling edge); lock
   order is `pulseMutex_` before `triggerMutex_` and the loop never holds
   both.
+- **Camera feature I/O interlock (#806 E02 review).** `runSerializedWithPulses(fn,
+  reason)` always runs `fn` under `pulseMutex_`, so a GenApi feature call can
+  never land between a pulse's edges (which would stretch the pulse to an SDK
+  call and sort the wrong cell). It refuses (with a reason, `fn` not called)
+  only while a pulse is pending or imminent: `pendingRequests_` not empty
+  (checked under `triggerMutex_`), `firing_` (set when the loop dequeues a
+  request, cleared when that pulse or drop is done), or the periodic test on. A
+  started, bound trigger with nothing queued is not a refusal. The camera feature
+  commands ([[../camera/FeatureControl]]) all go through it; the facade adds the
+  sorting conditions (run, realtime processing, autofocus). Lock order:
+  `pulseMutex_` before `triggerMutex_`, `CaptureService`'s `cameraMutex_` and the
+  camera's port guard. Test: `camera.trigger_feature_interlock` (refusal +
+  contention stress).
 - Not all cameras support `setTriggerOutput`. `ICamera::setTriggerOutput`
   returns `false` by default (see [[../camera/ICamera]]).
 - Requires `ProcessingService::enable_target_group` + thresholds to be set.

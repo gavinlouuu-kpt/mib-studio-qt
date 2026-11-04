@@ -1,5 +1,43 @@
 # Desktop Shell (React + Tauri v2)
 
+## Recorded calibration trends (#807 I11)
+
+`workspace/CalibrationTrends.tsx` mounts in the existing CalibrationCard and
+uses that card's live `useCalibration` list and selection path, without a new
+transport or controller. `calibrationTrendModel.ts` reads stored metrics,
+limits and verdicts; no frontend estimator or current-threshold re-evaluation.
+One point per latest record version is positioned at derivation time. Values
+without dates remain in the table, and null focus/flow never becomes zero.
+All-record display asserts no compatibility; setup filters include method
+revision, and incomplete identities remain separate. Keyboard/click selection
+calls existing `calibration_record_get`, never Apply. Invalid/cleared list state
+unmounts the chart so stale measurements are not presented as current.
+
+Tests: model edge cases, component interaction/clearing, and CalibrationCard's
+real controller over mocked IPC (read-only command assertion). Native reuse
+qualification is recorded in `docs/design/ique-workflow/NATIVE-EVIDENCE.md`.
+Persistent reversible exclusions and editable versioned trend policies remain
+open I11 requirements; this view does not create a second store.
+
+## iQue annotation groups (#807 I-A1)
+
+The single and queue Plan views mount `workspace/AnnotationGroups.tsx`, backed
+by the pure `annotationModel.ts`. Existing condition/unit/channel/medium and
+free key/value annotations supply selectable grouping layers. Grouping never
+changes queue order or sends a backend command. Condition colours reuse
+`conditionSlots`; other categories stay textual. Unit labels are deduplicated
+as labels, never asserted to be statistically independent replicates.
+
+The annotation-only JSON projection (`mib.planned-annotations`, version 1)
+validates through `buildStartRequest`, preserving its omission and UTF-8 rules.
+Invalid sheets disable export; a stale open JSON preview disappears immediately.
+No acquisition run index is exported. Group selection is not persisted, and
+copying this JSON does not save/reopen an experiment. Full continuity awaits
+the agreed workspace store, not another localStorage authority. Coverage:
+`annotationModel.test.ts`, `AnnotationGroups.test.tsx` and existing Plan/Queue
+interaction suites. Scope/evidence: `docs/design/ique-workflow/README.md` and
+`DEMO.md`.
+
 > The Phase 3 deliverable of epic #246: the React + Tauri v2 desktop app that
 > replaces the Qt frontend. It drives the Qt-free C++ backend through the
 > [[Rust-Bridge]] (`mib-bridge`, ADR 0003). First vertical slice: **mock camera
@@ -53,6 +91,40 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   with `desktop/src/workflow.test.ts` vitest coverage.
 - `desktop/src/preflight.ts` — pure hardware-preflight checklist derivation
   (UX-3), with `desktop/src/preflight.test.ts` vitest coverage.
+- `desktop/src/serialReads.ts` — one poll's reads one at a time, newest reply wins
+  (`SerialReads`, used by the checklist poll; #736 review), with `serialReads.test.ts`.
+- `desktop/src/confirmationSignature.ts` — pure Preflight confirmation
+  signature (#713), with `confirmationSignature.test.ts`.
+- `desktop/src/workspace/` — the opt-in four-stage workspace on the `@mib/ui`
+  kit (P1/P2, #713; P3 Align, #716 A3): `Workspace.tsx` (shell, stages), `PrepareView.tsx` (O1),
+  `prepareModel.ts` (pure tones and summaries), `usePrepareReadiness.ts`
+  (path-less readiness poll; stopping it drops a read in flight, `usePrepareReadiness.test.tsx`), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
+  probe, histogram, profile, `FrameInspector`), `quickControlModel.ts` + `useQuickControl.ts`
+  (requested → readback machine), `alignControls.ts` (which controls an instrument offers),
+  `cameraFeatures.ts` (#806 E-3: `SFNC_BINDINGS`, the standard names ExposureTime, Gain,
+  AcquisitionFrameRate, TriggerMode, resolved against the live `camera_feature_tree` reply into
+  absent / read-only with the access reason / writable / stale / refused (the backend's text: the
+  sort trigger armed, a run in progress) / unknown / unsupported; write replies shown as returned,
+  and a rejected write call kept apart as a `WriteFailure` (`viewer_only` / `not_sent` for a server
+  refusal code, `no_reply` for a transport failure), never as `unknown_write_outcome`; `treeLines`
+  for the browser), `useCameraFeatures.ts` (reads the remote tree on open, on camera start/stop,
+  after every write reply, and after a stale tree with a bounded backoff `STALE_RETRY_DELAYS_MS`;
+  the stale chip says "reading the tree again" only while a retry is due, then "press Refresh"),
+  `alignControls.ts` `alignLockedReason` (backend, run, or viewer: App passes `viewerOnly`),
+  `featureViews.tsx` (the binding's draft and readback cells; `FeatureTreeBrowser`, the
+  read-only tree behind Align's "Feature tree" button); tests `cameraFeatures.test.ts`,
+  `AlignView.test.tsx` (fixtures `cameraFeatureFixtures.ts`, tests only);
+  O3 Experiment · Plan (#716 A5): `ExperimentView.tsx` (sub-views Plan / Live / Run summary / Quick look),
+  `PlanView.tsx`, `planModel.ts` (pure: sheet, identity, `buildStartRequest`, bounds, refusals)
+  and `usePlan.ts` (the plan held by App, remembered operators); O4 Experiment · Live (#716 A6b):
+  `LiveView.tsx`, `liveModel.ts` (pure: names, ended pins, pin outcomes, scatter and its click
+  mapping, status lifecycle, the stops), `useLiveCells.ts` (the cell store's reads, crops and pin
+  commands) and `liveImages.ts` (a crop or mask packet as an image URL); O5 Run summary and O6
+  Quick look (#716 A7b, A7c): `RunSummaryView.tsx`, `QuickLookView.tsx`, `summaryParts.tsx`,
+  `QuickLookThumb.tsx`, `quickLookModel.ts` (pure: the plan's closed runs, formatting only),
+  `runSummaryModel.ts` (pure: O5's checklist, duration, End queue, the board's placeholders, the
+  calibration match), `useQuickLook.ts` (the `run_quick_look` reads) and `useRunCalibration.ts`.
+  See "Opt-in workspace" below.
 - `desktop/src/experimentCounters.ts` — operator saved counts by class, pending
   saves derived with exact u64 arithmetic, policy drops and writer failures
   from the existing experiment status fields (#546); Vitest covers labels.
@@ -71,8 +143,16 @@ plus explicit operator confirmations, returning each stage's status
 (`not-started` / `needs-attention` / `ready` / `running` / `complete`), its
 blocking checks, and the single recommended next action. Preflight and
 Alignment reach `complete` only via an explicit confirmation whose stored
-device+core *signature* still matches — detection alone never completes a
-stage, and changing the device invalidates the confirmation. The shell renders
+*signature* still matches — detection alone never completes a
+stage, and changing the device invalidates the confirmation. Since #713 the
+Preflight signature (`confirmationSignature.ts`, JSON) binds the camera (mode,
+label), the host core version, the PZ7035 PL build and weights ids, the pump
+identities (model, port, Modbus address), the coarse Z stage and nanopositioner
+identities, the applied profile id and revision, and the recording destination
+the backend reports (PZ7035 `instrument.storage.path`; none on the desktop before
+Start). A value not read yet is `null`, distinct from a device read as absent, and
+only identities are bound (never flow rate or position), so polling does not
+invalidate a confirmation. The Alignment signature is still the camera identity. The shell renders
 status on each tab (text + dot, never colour alone) and a "Next" action banner,
 and lands startup on the earliest incomplete stage. Unit-tested in
 `workflow.test.ts` (`npm test`, gated in Desktop CI). Detailed per-stage content
@@ -82,24 +162,756 @@ is the rest of epic #304 (UX-2…UX-11). Details:
 **Hardware preflight (UX-3, issue #307):** `desktop/src/preflight.ts` —
 `derivePreflight(input, requirements)` builds the Preflight stage's checklist
 (camera, processing-core/trust, capture stream, autofocus, sample/sheath pumps,
-trigger, storage), each a `passed`/`warning`/`failed`/`not-required` status with
-requirement, expected-vs-detected identity, cause, and recovery actions;
-`criticalPassed` gates on all `required` checks. Required/optional/n-a per device
+trigger, storage), each a `passed`/`warning`/`failed`/`unknown`/`unsupported`/`not-required`
+status with requirement, expected-vs-detected identity, cause, recovery actions and
+`blocks`; `criticalPassed` is true when no check blocks. Since #713: a value not read
+yet (backend not initialized, core status, PL core / sensor link / LED before the first
+instrument poll or while the link rates are still measured, a device snapshot with
+`valid: false`) is `unknown`, never `failed` or `not-required`; a PL build or weights that
+cannot be verified (`build_match` / `profile_match` "unknown": no
+`/etc/yofo/expected-core.json`, no pinned weights) is `unknown` too, with the same fix-it
+text; a capability the instrument lacks (`capabilities.autofocus`/`trigger` false) is
+`unsupported`; storage nothing reported is `unknown` (the desktop checks the file at Start).
+`checkGateStatus` maps the states to the backend's Pass / Warn / Fail / Unavailable /
+NotRequired (unknown → Unavailable, never Pass). Blocking is unchanged from #548, failing
+closed: a required check that failed, is unknown or warns blocks; unsupported and
+not-required rows never block. Backend gates never unblock a row (the `science.pl` gate,
+for one, never checks the PL build identity); relaxing a specific warning would need an
+audited per-warning acknowledgement (#310). Required/optional/n-a per device
 is meant to come from the selected profile (not bridged yet → `DEFAULT_REQUIREMENTS`
 until UX-2 #306). The shell polls camera/core/autofocus/pumps/trigger every 1.5 s
-while the Preflight tab is shown (off the capture loop) and renders the checklist
-in the Connect tab. Storage writability/free-space stays informational until a
-backend status contract exists. Details:
+(`PREFLIGHT_POLL_MS`) while the Preflight tab (or the workspace's Prepare stage, or
+Experiment's Plan) is shown, off the capture loop, plus the Z stage status on the desktop for
+the signature, and renders the checklist in the Connect tab. One read at a time
+(`serialReads.ts`, #736 review): a tick or Refresh while a read is in flight is skipped, a read
+stuck for 10 s (`PREFLIGHT_READ_STALE_MS`) stops holding the poll, and a reply older than one
+already applied is dropped, so stalled reads do not pile up and a late reply never overwrites
+newer state. Storage reads `unknown` until a backend reports the destination
+(the PZ7035 does). Details:
 `knowledge_map/task/2026-07-21-ux3-hardware-preflight.md`.
 
 **Required checks gate the workflow (#548).** `WorkflowFacts.requiredFailures` carries the
-checklist's `required` checks that are not `passed` ("Label: detail"). When present it is the
+checklist's blocking checks (`blocks`, "Label: detail"). When present it is the
 authority for the Preflight stage and replaces the host core pin test, because the checklist
 already holds the host core check on the desktop and the PL core check on the PZ7035. Each such
 check is a blocking reason, so the stage is "needs attention", the recommended action navigates
 instead of offering the confirmation, and a stage confirmed earlier goes back to "needs
-attention" if one starts failing. A required check in `warning` blocks as well (the checklist's
-`criticalPassed` rule). Tests: `workflow.test.ts` (#548).
+attention" if one starts failing. A required check in `warning` blocks as well, and since #713
+so does a required `unknown` (formerly rendered `failed`). The three #548 cases stay pinned as
+blocking in `preflightPz7035.test.ts`: an unverified PL build, sustained sensor-link errors, the
+LED on a service setting. Tests: `workflow.test.ts` (#548), `preflight.test.ts` and
+`preflightPz7035.test.ts` (#713).
+
+## Opt-in workspace (P1/P2, #713)
+
+`desktop/src/workspace/Workspace.tsx` is the four-stage Prepare / Align / Experiment /
+Review shell on the `@mib/ui` kit (`AppShell`, `StageTabs`, `Toolbar`, `Card`, `FactList`,
+`StateChip`, `Button`, `Notice`, `DataTable`, `OptionGroup`, `ConditionSwatch`, `Stepper`, `CellImage`,
+`CellStrip`, `AreaDeformChart`, `StatTile`), the Operation app's steps A1, A3, A4b, A5, A6b and A7b (#716). The kit stylesheets are imported once, there; `workspace.css`
+only places cards with the kit's spacing tokens (and styles the app-local number and text fields
+of the quick controls and the sample sheet, until the kit has them).
+
+- **Landing: the workspace branch opens in the workspace** (2026-10-22, Gavin's ask; `develop`
+  is unchanged until promotion). The app opens on Prepare unless the operator last chose the
+  classic view in this browser; the classic view is one click away (the header's "Classic view").
+  `workspace/landing.ts` holds the choice in `localStorage` (`yofo.workspace.landing`:
+  `"workspace"` / `"classic"`, default `"workspace"`; every access guarded, so blocked storage
+  falls back to the default). Only explicit switches record it: the menu row's "Workspace preview"
+  records `workspace`, and the workspace's `onExit` (the header's "Classic view", the Review
+  stage's "Back to the classic view", Align's "Classic view") records `classic`.
+  Task jumps to the classic view (Prepare's setup buttons, the Summary's Open in Review) do not.
+  The same `App` serves the Tauri desktop and the PZ7035 browser UI, so both get the same
+  default (the browser per origin, the desktop per webview); the Review app (`review.html`,
+  `review/main.tsx`) never imports `App` and is unaffected. Opening in the workspace acts on
+  nothing: the classic tab stays on Connect (it only reads) and the classic startup landing never
+  runs in a session that started in the workspace (`startedInWorkspace`), even when the operator
+  leaves before the first camera snapshot arrived, so no camera mode is switched and no LED is lit
+  (`navigation.test.tsx`, "the workspace branch opens in the workspace"). The band reads
+  "Workspace preview" and "Navigation never acts: only an explicit button switches or writes. The
+  classic view is one click away (Classic view)." (`WORKSPACE_BAND`). While the workspace is
+  shown, the classic menu row, body and context bar are hidden with `display: none`, not
+  unmounted, so nothing in the classic tree mounts, unmounts or changes tab because of it; the
+  status bar and log stay.
+- **Navigation never actuates.** The workspace never changes the classic `tab`: a classic tab
+  change can act (Camera & Alignment switches the camera to the full sensor, and the PZ7035 to
+  Align with its LED; Experiment to Run). Stages only change what is shown. In Align the
+  same switch is a button the operator presses ("Show the full sensor" / "Switch to Align").
+  Experiment opens on its Plan, where a run starts only on "Start run" (or a sample queue's
+  Start), stops only on the queue's "Next sample" (or Live's "Stop & finalize run"), and the camera
+  goes to the mode a run records in only on the Plan's "Switch to Run" (PZ7035) or "Show the
+  experiment window" (desktop). Its Live sub-view reads and turns monitoring on while shown (the
+  classic Monitoring tab's visibility gate), and pins, stops or stops the camera only on a button.
+  Its Run summary (O5) and Quick look (O6) sub-views read the run quick look while shown, and a
+  decision acts only on its button (nothing applies calibration there). The Review stage says "Not yet in the workspace" and offers "Back to the classic view".
+  Prepare's "Camera / Focus / Pump setup" leave for the classic Connect tab, which only reads.
+  The classic startup landing is skipped when the workspace is already open.
+- **Prepare (O1)** shows the checklist by subsystem (camera and acquisition, focus, fluidics,
+  data destination) and the authoritative backend gates read **without a path**:
+  `bridge.fetchExperimentReadiness("")` (`PREPARE_OUTPUT_PATH`), every 2 s
+  (`PREPARE_READINESS_POLL_MS`) while Prepare is shown and no run is active, one request at a
+  time. The backend then reports `storage.output` Unavailable ("no output path chosen yet") and
+  creates no probe file (`ExperimentCoordinator`, the `outputPath.empty()` branch); Start
+  re-evaluates every gate with the chosen file. A failed read clears the gates (never stale
+  gates as current). Gate rows show a plain label (`GATE_LABELS`, one table for every backend
+  gate id; an unmapped id is shown as itself) with the raw id as secondary text and title, the
+  state and reason as a chip, and the remediation ("Fix: …"). Tones: Pass → confirmed,
+  Warn → warn, Fail → blocked, Unavailable → unknown, NotRequired → neutral. Two remediations are
+  the workspace's own words (`GATE_REMEDIATIONS`, `gateRemediation`; #763): `camera.session`
+  ("in the classic view, press Start Camera …"; the backend names the Qt app's Start Live View, and
+  the workspace never starts the camera) and `processing.background` ("Set Background first …":
+  Background calibration with no background set finds no empty frame when every frame has cells).
+  Chips, facts and "Fix:" lines wrap inside their card (`min-width: 0`, a `fit-content(45%)` label
+  column; #763 F10).
+- **Calibration card (Prepare; #716 A4b, bridge ABI 42; the method report since ABI 43).**
+  `CalibrationCard.tsx`, its pure model
+  `calibrationModel.ts` and the hook `useCalibration.ts` (held by `Workspace`, so Prepare and the
+  Plan share one read). See [[../services/CalibrationRecords]].
+  - **Reads.** `calibration_records_list`, polled with the readiness (every 2 s, while Prepare or
+    the Plan is shown and no run is active, one request at a time; a read asked for meanwhile runs
+    once it ends). A failed read clears the list, so it reads "Unknown · <error>", never "None";
+    so does a store the backend cannot read (`store.error`: "Unknown · the calibration store cannot
+    be read", and the Plan declares nothing). A read started before an apply answered, or in an
+    earlier active period (before a run, another view), is dropped. `calibration_record_get` only
+    when the operator selects a record in the list (its versions); only the newest get's reply is
+    shown.
+  - **What it shows.** The `calibration.record` gate (label "Calibration record") with its state
+    and the backend's `Fix:`; the record in effect (the backend's `in_effect_record_id`, never
+    recomputed) with its id, factor, age since it was applied, method and revision, identity
+    (camera · ROI · chip · objective) and source file; the current factor and setup; an applied
+    record that is no longer in effect, with why (its factor is not the current one, e.g. after a
+    restart, or the setup changed); every proposed record with current → proposed, its evidence
+    and whether it is applicable here (a proposal of another setup, or with the identity unknown
+    or no factor reported, is shown with the reason and its button disabled; a record whose stored
+    evidence fails the backend's re-check, `evidenceFails`, gets no button at all); the newest
+    insufficient records with their failed gates in plain words ("Valid objects: 120, at least
+    200"), never with an Apply; and a plain `DataTable` of every record, newest first (at most 20
+    rows), no trend chart. A null stays "Not recorded", never 0.
+  - **Apply / Re-apply** (`calibration_apply(record_id, expected_current_factor)`) is the card's
+    only action, on its button, with the `current_factor` of the list read the page shows. After
+    a restart a `required` method's gate fails with "re-apply record <id>"; the card offers
+    "Re-apply <id>" directly beside that Fix (`fixAction`; a proposal of this setup otherwise), as
+    the PR #771 ruling asks. The reply's previous → new is shown ("Applied · cal-… · Pixel-to-micron
+    0.5 → 0.52 µm/px"). Every refusal is said in plain words and changes nothing on screen but the
+    re-read (`applyReplyNotice`: stale factor, a run active, insufficient, another setup, an unknown
+    identity, not applicable, store failure; `applyErrorNotice`: the server's VIEWER_ONLY, a lost
+    reply). Whatever the answer the list and the gates are read again at once; a list read that
+    started before the apply answered is dropped, as is a gates read in flight (an explicit refresh
+    in `usePrepareReadiness` reads once more), and the buttons stay locked until the list read
+    after the answer settles (at most `RECONCILE_MS`, 5 s), so a second press never acts on the list
+    from before the apply. A viewer's buttons are disabled with the shared
+    control block (`controlBlock("Apply")` in `planParts.tsx`, the words of the Plan's
+    `CONTROL_BLOCK`) and nothing is sent; during a run nothing is read or sent. Navigation, listing,
+    selecting and polling never send `calibration_apply` (`CalibrationCard.test.tsx` and
+    `navigation.test.tsx` count every IPC call).
+  - **The applied method (bridge ABI 43, #776; `methodCalibrationOf`).** The card reads the
+    readiness report's `method_calibration` from the readiness read that already happens (no extra
+    IPC), exactly as the `calibration.record` gate read it. Purpose and policy are never inferred
+    from the gate's text. Rows under the gate:
+    - **Applied method**: for `purpose: "calibration"`, "This method is a calibration method:
+      closing its run derives a record" (`CALIBRATION_METHOD_TEXT`); for `declared: false`,
+      "Measurement method · policy none: it declares no calibration requirements"; otherwise
+      "Measurement method".
+    - **Reference** (calibration methods only, `referenceText`): "7 ± 0.5 µm diameter · CV at most
+      10 % · nominal E 3 kPa", the nominal E only when the method declares one.
+    - **Policy** (`policyText`, `policyDetail`): the report's `calibration_policy` and
+      `calibration_max_age_hours` ("required · max age 24 h"), with what that means for the gate
+      (a calibration method itself needs no record).
+    - When `error` is set (the declarations cannot be read; the gate fails closed), the error is
+      shown in the gate row beside its Fix, the method reads "Unknown · its calibration
+      declarations cannot be read", and the default purpose / policy the report carries are not
+      shown as the method's.
+    - When the member is `null` (a backend before ABI 43, or the report not read or `valid: false`),
+      none of these rows appear and the A4b wording stays, with the purpose-gap note.
+  - **Running a calibration** is a normal run: the card says to apply the calibration method in the
+    classic view (or, with a calibration method applied, that it is applied:
+    `RUN_APPLIED_CALIBRATION_TEXT`) and record the beads from Experiment · Plan with Start run, and
+    what the backend derives when that run closes (`DERIVATION_TEXT`). There is no separate
+    acquisition path. Only when the method report is `null` does the card add the purpose-gap note
+    (`PURPOSE_GAP_TEXT`: the workspace cannot tell whether the applied method is a calibration
+    method; the gate row shows the backend's own words).
+- **One verdict** (`prepareVerdict`), the same words in the header chip and the "Ready to
+  operate?" card, combining the checklist and the gates. It never contradicts the Confirm
+  button, which the checklist alone drives:
+  - **Not ready**: a required check blocks. The counts and plain names follow ("Not ready ·
+    3 unknown, 1 warning").
+  - **Readiness paused · a run is active**: the gates are not read and Confirm is locked.
+  - **Ready to confirm · Start blocked: <labels>** (warn tone): the checklist passes, but a gate
+    other than the pending destination is Fail or Unavailable. Start refuses both. With the
+    gates not read: "Ready to confirm · gates not read yet" (unknown tone). Once the operator
+    confirmed readiness for this setup, the same states read **Confirmed · Start blocked: …** /
+    "Confirmed · gates not read yet" (#763 F9).
+  - **Ready with warnings**: nothing blocks, but a check or gate warns.
+  - **Ready**.
+  
+  The destination gate is never counted: "Ready · destination checked at Start".
+- **Confirmation.** "Confirm readiness" (the one primary action) stores the current Preflight
+  signature, the same state the classic workflow bar sets. It sends nothing to the backend.
+  - It is disabled while a required check blocks, with no camera, or during a run.
+  - It is not gated on the backend gates, as in the classic Preflight. Some gates can only pass
+    in a later stage: `processing.roi` needs live view (Align), and the destination comes at
+    Start.
+  - When disabled, a Notice next to it says why in plain words ("3 required checks not read
+    yet or not verified: PL core (build + weights), Sensor link, LED strobe";
+    `confirmBlockers`).
+  - When it is available but a gate refuses Start, a warn Notice says so ("Start will be
+    refused until: Processing core — activate the pinned core"; `startRefusalText`).
+  - It is advisory (#763 F23 ruling): it is kept per browser tab (`sessionStorage`, it survives a
+    reload of the tab) and Start does not require it. Without it, Plan's Start card and the Queue
+    card show "Not confirmed in this browser tab" beside Start, with that note (`startConfirmation`).
+- **Align (O2, P3; #716 A3).** Penpot board O2 (`7832aa3b-faed-4e2c-ae5c-0b72f1e4fecb`, read at
+  revn 218). Two cards: the live image and the quick controls.
+  - **The image is the classic preview's stream.** App's `live` frame view hands every packet it
+    already pulled (`fetch_frame_packet`, at the display rate) to one sink after the classic
+    draw (`subscribeAlignFrames`); there is no second capture path, and the sink only keeps a
+    reference. `FrameInspector` computes the histogram (at most 65,536 pixels on a regular grid)
+    and the line profile (at most 1,024 points) from the newest frame at most every 250 ms, on a
+    timer, never in the delivery callback; frames in between are skipped, not queued. Painting
+    is one `requestAnimationFrame` per delivery at most. A frame only the workspace shows counts
+    in the status bar's display rate (`countDisplayed`).
+  - **Image tools:** fit, 1:1, zoom (+ / −, wheel, keys) about the cursor, pan by drag or arrow
+    keys (`alignImageModel.ts`: one transform, clamped so the image never leaves the view), a
+    pixel probe (coordinates and the raw Mono8 value through the row stride), a click pins the
+    point the row or column profile runs through, the ROI outlined when the frame is the area it
+    is placed on, and "Freeze display", which holds the shown frame while capture and polling go
+    on. A frozen display keeps its frame's size too (the inspector refuses the packet, and only an
+    accepted packet changes the view's image size), so a camera that starts sending other
+    dimensions meanwhile (e.g. after "Show the full sensor") cannot skew fit, zoom or the probe.
+  - **Quick controls (requested → readback).** Only what the classic tab can write, through its
+    commands: the camera ROI (`save_camera_roi` via `useCameraWindow.save`, readback the
+    geometry read after the save), the PZ7035 Run window (placed, applied by the switch to Run;
+    readback `restoredRunWindow` of `fetch_instrument_status.mode`) or the processing ROI
+    (`set_processing_roi`, the classic Apply ROI's `applyProcessingRoi`; readback the applied
+    config's `roi`). Writing the processing ROI applies the processing settings, as Apply ROI does,
+    so it also starts realtime processing when the settings enable it, and the live cells begin a
+    new capture; the card says so (`PROCESSING_ROI_WRITE`, #763 F16). Exposure and frame rate are read-only readbacks of
+    `fetch_camera_geometry.session` (Aravis; "Unavailable · not reported" otherwise), the
+    PZ7035 Run rate and exposure read-only from `fetch_run_fps` (set in the camera document),
+    gain "Unavailable · not bridged". `alignControls.ts` derives the rows from the capabilities.
+    `quickControlModel.ts` is the machine: bounds and increments are checked before sending
+    (off-step values snapped with a note, out-of-range refused with the range); a write is
+    pending until its own reply, whose readback is read after the write; a readback seen
+    meanwhile never settles it; a refusal shows the reason and restores the readback; no reply
+    in 5 s (`WRITE_TIMEOUT_MS`) shows "Timed out" and the readback, and the late reply is
+    ignored (stale token). Geometry and processing-config reads that answer out of order are
+    dropped (`geometryReads`, `configReads` in App), so a readback from before a write never
+    replaces one from after (`alignReadback.test.tsx`: a late config readback of a timed-out
+    write after a newer write completed).
+    Locked while a run is active. All features, the XML and scripts stay in the classic view.
+  - **The mode switch is a button.** `alignMode` offers the classic tab's entry switch when the
+    image is not the full sensor (desktop camera with geometry: "Show the full sensor",
+    `set_camera_overview(true)`; PZ7035 outside Align: "Switch to Align", `set_instrument_mode`),
+    disabled during a run or while a stopped Run holds its frames. App's `applyCameraMode` is
+    the one function behind the classic tab change and this button.
+  - **Leaving the workspace never acts.** While the workspace is shown the hidden classic tab
+    switches nothing (its mode effect returns early, so a Run window placed in Align does not
+    send the hidden Experiment tab to Run). If the workspace switched the mode, or a classic
+    switch was skipped meanwhile, the classic Camera & Alignment or Experiment tab shows a kit
+    `Notice` (`components/ClassicModeNotice`, `classicModeNotice` in `cameraWindow.ts`) with
+    the mode the camera is in, the one the tab uses, and an explicit button ("Switch to Run",
+    "Show the experiment window", …) that calls the same `applyCameraMode`. The next classic
+    tab change switches as it always did.
+  - **Opening the workspace cancels a pending classic switch.** A classic tab change (or the
+    notice's button) first awaits a geometry read; "Workspace preview" sets the stage ref at
+    once, and `applyCameraMode` rechecks "cancelled or workspace shown" after every await and
+    again right before `set_camera_overview` / `set_instrument_mode`. A switch cancelled this
+    way sends nothing and leaves the classic tab showing the notice's mismatch, not a silently
+    wrong mode.
+  - While Align is shown, App polls `fetch_camera_geometry` every 2 s, as the classic tab does.
+- **Experiment · Plan (O3, P4; #716 A5).** Penpot board O3 (`14db68fb-c9d2-4e21-ae5a-bd4291fc6273`,
+  read at revn 218; per-run auto-stop, the queue's duration/size preview and "Base on …" are later
+  steps), with O4's queue strip and run lifecycle (`22f62c97-3b47-43f4-bb9c-96eb2be8c257`) and O5's
+  "Next sample" (`eb7b196d-6e3e-47c2-bb65-183b19329704`), both read at revn 218. Three cards and a
+  Start card (a Queue card for a sample queue); the plan is local until a button acts.
+  - **The plan lives in App** (`usePlan`), so it survives stage changes and leaving the workspace;
+    a reload starts a new one. It holds the format, the sheet rows and the selected operator.
+    Creating or editing it sends nothing.
+  - **Sample format** (`OptionGroup`): "Single sample" (one run, one file) and "Sample queue"
+    (one run and one file per sample, below). With more than one sample in the sheet "Single
+    sample" is inert with the reason ("The sheet has 3 samples · remove all but one first"); the
+    format is fixed once a run started.
+  - **Sample sheet**, the fixed schema of `/experiment_annotation` ([[../data-model/HDF5-Storage]]):
+    sample, condition, experimental unit, concentration (value + unit), channel, medium,
+    temperature (°C), notes and free key/values (strings, unique keys). A compact `DataTable`
+    shows the row as it will be recorded ("–" = not declared), the condition with its
+    `ConditionSwatch` (`conditionSlots`: distinct conditions take slots 1–4 in sheet order;
+    slot 5 is the kit's calibration colour); the editor below it has one app-local field per
+    member. No `maxLength`: a long value stays as typed and is refused.
+  - **Client checks mirror the contract** (`planModel.ts`, the generated
+    `EXPERIMENT_START_REQUEST`, bytes of UTF-8 as the backend counts them): every text bound,
+    control characters (notes may hold tab, CR, LF), concentration value and unit both or neither
+    (a finite number ≥ 0), temperature from `temperature_c_min` to `temperature_c_max`, at most
+    `max_free_entries` free entries, a half-filled or repeated key/value row, and
+    `max_request_bytes` of the text as sent. Each refusal names the field and the limit next to
+    the field and in the Start card ("Condition: too long: 257 bytes, at most 256. Shorten it;
+    nothing is cut off."), one message per issue: a line of its own under the field, a list item in
+    the Start card (#763 F21); nothing is truncated. Spaces around a value are not part of it; an
+    empty field is not declared and its key is left out, never sent as `""` or `null`. The
+    backend checks the same request again and stays the authority.
+  - **Identity** (`buildStartRequest`, one ordered serializer so the text is exact):
+    `experiment_id` is a UUID v4 minted with `crypto.getRandomValues` when the plan is created
+    (lowercase; `randomUUID` is missing outside a secure context, as on the instrument's HTTP
+    UI), `run_index` 1, `sample_ref` the row's ref ("S1"), `operator {id, name}` when one is
+    given, `calibration_record_id` (below), then `annotation` when anything is declared.
+    The operator is the one the operator selected or typed (#393 phase 1), recorded by the
+    backend with assurance "selected"; the card says it is not authentication. Operators are
+    remembered on this machine (`localStorage` `mib.workspace.operators`, most recent first, at
+    most 8) when a run starts with them. A remembered operator is only a suggestion (#763 F6): the
+    plan a page load creates names no operator, the remembered ones are offered unselected, and an
+    operator is sent only once it was typed or picked in this page's Plan (the contract has no
+    other assurance value, so nothing else is recorded as "selected").
+  - **The calibration record a Start declares (#716 A4b).** `buildStartRequest(plan, row, run,
+    calibrationRecordId)` declares `calibration_record_id` only as the record the page showed as in
+    effect (`declaredCalibration`: `in_effect_record_id` of the last successful list read); with
+    none in effect, or the list not read, nothing is declared and the backend records the record in
+    effect itself. The Run identity card (single and queue) shows it ("cal-… · in effect (0.52 µm/px)
+    · declared at Start"; "None in effect when last read · not declared; the backend records the record in effect at Start"; "Unknown · … · not declared") and the
+    calibration gate in the backend's words. Since ABI 42 the id is a check: a record applied,
+    re-applied or taken out of effect between that read and Start makes the backend refuse the
+    Start (`InvalidRequest`, key `calibration_record_id`, "(mismatch)"); the Plan says "Not started ·
+    the applied calibration changed since this page read it" beside the calibration record
+    (`calibrationChanged`, `calibrationChangedText`; the queue's step says the same), keeps the plan
+    and its identity (a refusal records nothing), and reads the list again. The queue's Start
+    declares what is shown at each press (`startCurrent(calibrationRecordId)`).
+  - **Start run** (the one primary action) runs App's `runExperimentStart`, the classic Start
+    flow (`experimentStart.ts`: ask before a stopped Run's frames are discarded, pick the file,
+    readiness with it, start) with the plan's `startRequestJson`; the classic Start button runs
+    the same function without one and sends none. It is disabled, each reason a `Notice` next to
+    it (`startBlocks`), while Prepare's checklist blocks (the same `prepareVerdict` title and
+    `confirmBlockers` lines as Prepare; the workspace reads the checklist and the path-less gates
+    while the Plan is shown, so the verdict is the same; `workspaceReadsPrepare(stage, view)` is
+    the one predicate for both polls, and the Live, Run summary and Quick look sub-views read neither, so App
+    holds the sub-view), for the classic Start button's reasons
+    (`startExperimentReason`: backend, camera stream or Run mode, a run active, a start pending),
+    while the sheet has an issue, while a start is pending, and once the plan's run has started.
+  - **The start reply alone decides the outcome** (#736 review). `startExperiment` returns
+    `started`, `refused` or `unknown` from the reply, `unknown` also when the start call itself
+    threw (the request was sent, its reply was lost), and throws only for failures before sending
+    (dialog, readiness). Since ABI 40 (#741) the reply's `start_outcome` decides, not its message
+    (`startReplyState`, `START_OUTCOME_STATES` in `experimentStart.ts`): Started → started;
+    StaleReadiness, AlreadyActive, Busy and InvalidRequest → refused (the coordinator returns them
+    before it begins the run: no start generation, no file); NotReady, StorageFailed and
+    ProvenanceFailed → `unknown` with the `code` (the coordinator can return them after it opened
+    the run's HDF5 file: `initializeDatasets` failing closes the file without removing it, a
+    snapshot or annotation write failing removes it best effort, and on the PZ7035 "execution
+    provider did not start" comes after the file and snapshot were written, under NotReady, which
+    the code cannot tell apart from the readiness refusal before anything). A code that contradicts
+    `ok`, or one the table does not know, is `unknown`. Without a code (a backend before ABI 40, or
+    a code the decoder dropped as unknown) `ok` decides, as before. App's status refresh after the reply is a separate read: its failure is
+    `refreshError`, shown as its own warn Notice ("Run status not refreshed"), never as the
+    outcome. The plan locks on `started` and on `unknown` (the run may exist), so a started run's
+    `experiment_id`/`run_index` are never sent again, whatever a later read did.
+  - **Outcomes.** The backend's `InvalidRequest` (start outcome 7, decided by the code; the
+    `invalid start request: ` prefix decides only for a reply without a code; the message is
+    "invalid start request: <key>: <why>", `invalidRequestReason(message, code)`) is shown in the sheet
+    card in plain words ("Condition: 300 bytes, at most 256. No file was created. The plan is
+    kept"), with the key as secondary text; the plan, its id and the values are kept and nothing
+    claims a run started. Not ready, another refusal or an error before sending are said as they
+    are and keep the plan; a cancelled dialog says nothing; a lost reply says "Start outcome not
+    known" and locks the plan; a locking code says "Not started · its file may exist" with the
+    backend's message and locks the plan too (its identity may be in a file left behind). A started run locks the plan ("Run 1
+    started · <path>"): its identity is in that run, so a single-sample plan has no second run;
+    "New plan" mints a new id and keeps the operator (typed or picked in this page's Plan) and the
+    format. The outcome points to Live, where the run is followed and stopped, with "Go to Live"
+    (#763 F12).
+  - **A viewer's Start.** In a tab or client that does not hold control, the single-sample Start is
+    disabled, as the queue's is, with "Another tab or client holds control" (`CONTROL_BLOCK` in
+    `planParts.tsx`); nothing is sent.
+  - **The camera mode a run records in (A5, #739 review).** `planCameraMode` (`planModel.ts`) and
+    the Start (or Queue) card's kit `Notice` "Camera · <mode>" offer the classic Experiment tab's
+    entry switch as a button: App's `switchPlanCameraMode` calls the shared
+    `applyCameraMode("experiment")` and marks the classic tab's mode stale for its
+    `ClassicModeNotice`. Navigation never switches.
+    - PZ7035, while the instrument is not in Run: "Switch to Run", disabled with the reason during a
+      run, with no Run window placed ("place the 512×96 Run window in Align first (Write Run
+      window)") or while a stopped Run holds its frames; a refused switch shows the backend's reason.
+      Start stays disabled with the classic reason ("The camera is not in Run mode yet").
+    - Desktop camera left on the full sensor (Align's "Show the full sensor"; the geometry's
+      `overview`): "Show the experiment window", and Start (single and queue) is disabled with "The
+      camera shows the full sensor, not the experiment window" (`startBlocks`' `camera` block), since a
+      run would record the full sensor. The classic Start is unchanged: the classic Experiment tab
+      switches on entry.
+- **Sample queue (O3/O4, P4; #716 A5, ADR 0015 items 1–2).** A guided flow over the existing
+  commands, with no backend queue state and no new bridge command; since ABI 40 (#741) it reads the
+  start and stop outcome codes and names its own run on `experiment_stop`.
+  `queueModel.ts` is the pure state machine; `usePlan` holds it (App, so it survives stage changes
+  and leaving the workspace) and is its controller; `QueuePlan.tsx` the view; `planParts.tsx` the
+  parts both formats share.
+  - **The sheet** holds N rows under the plan's one `experiment_id`, each with its own ref
+    (`sample_ref` S1, S2, …; `nextSampleRef` never gives a removed ref out again) and the same fixed
+    schema; one colour per condition. A selectable `DataTable` shows each row's run index (planned in
+    muted text until its Start, "1?" for a lost reply), state chip, issue count and output file (the
+    backend's `output_path`, the name with the path as tooltip); the editor edits the selected row.
+    "+ Sample" adds a row at any time; ↑ / ↓ / Remove only for rows not yet started (the started rows
+    are a fixed prefix). `editKeepsRecorded` refuses any edit that would change a row with a started
+    or unknown attempt, its order, the format, the operator or the experiment id once the queue began.
+  - **The flow**, each step one button and at most one command: **Start S1** (App's
+    `runExperimentStart`, the classic Start flow: pick the file, readiness with it, `experiment_start`
+    with `buildStartRequest(draft, row, nextRunIndex)`) → running → **Next sample** ("Stop last
+    sample" for the last row; App's `stopForPlan`: `experiment_stop` with `expectedStartGeneration`,
+    the row's own `start_generation` as seen in the status) → the drain and
+    finalize are followed in the experiment status App already polls every 500 ms (Stopping/flushing,
+    then terminal), with the counters and committed/admitted shown → **Confirm closed** (sends
+    nothing; the backend closed the file, the operator confirms) → "Swap the tube for S2 · …" →
+    **Start S2** (readiness with S2's file at its Start, as always). Nothing advances, stops or starts
+    on its own: a run that ends without Next sample (the classic Stop, the server's safe stop) is
+    followed to Finalized and still waits for the close confirmation and the next Start.
+  - **A run is the row's only on the row's own file (#739 review).** A Start records the
+    `start_generation` of the last status read (Start is unavailable until one was read). A status
+    counts for the row only when its `output_path` is the row's chosen file (`recordedPath`: the
+    backend appends ".h5" unless the path ends in ".h5" or ".hdf5") and its generation is newer than
+    that read; an older read answering late is ignored. A newer generation on another file, or a
+    later generation after the row's run was seen, means another run took over the instrument: the
+    row is **interrupted** ("another run started on this instrument", unknown tone), its run's end is
+    not known, and the queue never stops or confirms that run (Retry as a new run, Skip or End
+    queue). "Next sample" is enabled only while the status shows the row's own run active
+    (`ownRunActive`: its generation, its file, Active), because `experiment_stop` stops whatever run
+    is active; until the first such read the step says "waiting for the status to report its run".
+    **Next sample stops only the row's run (ABI 40, #741).** `usePlan.stopCurrent` passes the row's
+    `start_generation` (the generation `ownRunActive` matched, a canonical decimal string) and App's
+    `stopForPlan` sends it; the backend compares it under the lock that accepts the stop. A
+    `stop_outcome` RunMismatch (3: another run is active, or none is) stopped nothing: the row is
+    **interrupted** at the stop ("<ref> · not stopped · run N is not the backend's active run", chip
+    "Interrupted · not stopped", the backend's reason in the text), and the queue sends nothing more
+    for it, with or without the generation. A later status of another run keeps that reason; a
+    status of the row's own run Stopping or terminal (its generation, its file) is still followed, so
+    a run that had ended by itself reaches Finalized and its close. Busy and NotActive keep the
+    "stop was not accepted" handling, as does a reply without a code. The classic Stop Experiment is
+    not tied to a row and sends no generation; the single-sample plan has no stop of its own (it is
+    stopped in the classic view). Phases only move forward, except that a row interrupted at its stop
+    can still reach its own run's end.
+  - **Identity (#736 rules).** Each row's start reply alone decides started / refused / unknown.
+    Every Start sends `nextRunIndex`, which grows on started and unknown only, so a run index is
+    never sent twice; a refused Start recorded nothing and keeps its index. Started and unknown rows
+    are locked and stay visible.
+  - **Failures stop the flow at their step** with the reason (kit tones) and the operator's choice:
+    a refused Start (the InvalidRequest named in plain words, not ready, an error before sending, a
+    pending start) → correct and Start again, Skip or End queue; a lost start reply (unknown) →
+    "Retry S1 as run 2", Skip or End queue; a start answered with a locking code (NotReady,
+    StorageFailed, ProvenanceFailed) → "Not started · S1, run 1 · its file may exist", unknown and
+    locked like a lost reply (chip "Not started · file may exist"), "check whether the backend left
+    the run's file", Retry as run 2, Skip or End queue; a stop refused as RunMismatch → interrupted,
+    nothing more sent, Retry as a new run, Skip or End queue; a stop that is not accepted or gets no reply → the run is
+    shown running with the reason, Next sample sends it again, End queue says the run keeps running;
+    a failed run (Failed, finalization not ok, or a fault) → the reason and the kept file, Retry as a
+    new run, Skip or End queue. End queue is refused while a Start is pending, a run runs (unless its
+    stop failed) or a finalized run waits for its close confirmation.
+  - **Lifecycle stepper** (kit `Stepper`, `lifecycle`) for the current row: Planned → Starting →
+    Running → Stopping · drain → Finalized → Closed; a refused or failed step is `failed` and an
+    unknown Start `current`, each with a kit `StateChip` (the Stepper has no unknown state, #715).
+    The Queue card sits under the sheet while planning and above it once the queue began, so the
+    step to press is in view during a run.
+  - **A control loss withdraws a pending Start (#739 review).** `usePlan` bumps an epoch on every
+    control loss; each Start (single or queue) passes `stillWanted` to the Start flow
+    (`startExperiment`), which asks it after the discard question, after the file dialog (whose
+    answer is then not used), after readiness and immediately before `experiment_start`. A withdrawn
+    Start sends nothing (outcome `withdrawn`: "Not started · control was lost while the Start was
+    pending"); the operator presses Start again after Resume.
+  - **A lost controlling client pauses the queue** (`useHoldsControl` in
+    `transport/useControlRole.ts`: always held on the desktop; in a browser only while connected and
+    named the controller). Paused, every queue button is disabled and the machine refuses every
+    action; status facts still apply (the server's #711 safe stop may finalize the run meanwhile).
+    It never resumes on its own: "Resume queue" needs control again and sends nothing, and the
+    operator then presses the step (e.g. Confirm closed) again. Without control, Start says why.
+  - Not in this step: per-run auto-stop (a backend stop condition with its own ABI number),
+    "base on previous experiment", the queue's duration/size preview, Run summary and Quick look. Live is
+    the next bullet.
+    A backend restart that remounts the browser app (a new boot id) starts a new plan: the queue is
+    local by design, the recorded files stay.
+- **Experiment · Live (O4, P4; #716 A6b).** `LiveView.tsx` on the reviewed board O4, over the live
+  cell store of ABI 41 (A6a, [[../services/MonitoringCellStore]]) and today's commands; no new bridge
+  command. `liveModel.ts` holds the pure rules, `useLiveCells.ts` the cells' reads, crops and pin
+  commands, and `liveImages.ts` draws a packet for the kit.
+  - **Layout, as the board.** The toolbar: Plan · Live · Run summary · Quick look, then **Stop acquisition**,
+    **Freeze display** and **Stop & finalize run**. Then Live cells (the live frame and the strip)
+    beside Area–Deformability; Pinned cell beside Recording and run status; Sample queue beside Run
+    lifecycle. One column when narrow.
+  - **Reads only while shown.** `App` widens the monitoring visibility gate (BE-5) to the
+    workspace's Live (`workspaceLiveVisible`), with the 500 ms snapshot poll while shown (200 rows;
+    the sorter trigger's status only for the classic tab). The switch is the instrument's, shared by
+    every client: `monitoring_set_active(true)` while Live or the classic Monitoring tab is shown;
+    `false` when neither is, but only once the run status has been read and shows no run in progress
+    (`runInProgress`: Starting, Active, Stopping or flushing, not terminal). During a run nothing is
+    sent on leaving, so the controller moving to Plan or Prepare never cuts the feed viewer clients
+    watch; when the run ends off Live, `false` follows. Only the controlling client sends it (a
+    viewer only reads). The command only sets `ProcessingService`'s monitoring flag, which gates the
+    monitoring rings' appends (and so the cell strip fed from them); it does not touch acquisition,
+    recording, persistence or the run, and turning it off clears nothing. Live reads `fetch_monitoring_cells`
+    once a second (the backend refreshes its strip on that read) and pulls each shown cell's crop
+    once (`fetch_monitoring_cell_packet`, kind 5; the mask, kind 6, only for the Mask overlay), at
+    most two at a time, for the 12 newest strip cells and the pins; a cell that leaves the listing is
+    forgotten. The live frame is the one the classic preview already pulls (`subscribeFrames`, the
+    same single sink Align uses), painted once per animation frame at most.
+  - **The strip** is the kit's `CellStrip` / `CellImage`, newest first. A live cell has no record id
+    yet, so it is named by frame and object ("F41118·O1"). A crop still loading is an empty box (the
+    kit's missing state says "Image not recorded", which would be untrue; a loading state is asked on
+    #715); a cell without an image (the PZ7035's PL reports results only) or a crop refused as another
+    capture's (`CAPTURE_MISMATCH`, never retried, the listing read again) shows the kit's missing
+    state with the reason as its tooltip.
+  - **Click-to-pin** from the strip or the scatter, only by the controlling client: one
+    `monitoring_cell_pin` with the cell's or row's identity; the reply's outcome is said in plain
+    words with the backend's message (`pinNotice`: Pinned, PinnedWithoutImage, AlreadyPinned,
+    RunMismatch, NotFound, LimitReached with "ended pins count toward the limit too",
+    CaptureMismatch "pick a cell of the current capture"). The scatter is the kit's `AreaDeformChart`
+    with the classic chart's rows (valid, area in µm² with each row's own analysis-time px→µm; the
+    uncalibrated ones are counted), axes widened in whole steps when a point lies beyond 300 µm² /
+    0.20. A click maps to the nearest point within 8 px through the kit's plot margins
+    (`CHART_MARGIN`; `liveModel.test.ts` renders the kit chart and checks every point lands where the
+    mapping says) until the kit offers point selection (#715). A row without an identity (an older
+    backend) is not pinnable: nothing is sent and the view says so. Nor is an identity of another
+    capture or run than the listing's (`pinIdentityRefusal`, the backend's own CaptureMismatch /
+    RunMismatch rule): refused before anything is sent, with the reason.
+  - **The pinned cell**: the selected pin (the newest, or the last one pinned) with its crop, facts
+    (area µm², deformability, E, the image's state, run and capture), ◀ / ▶ through the pins, **Open
+    in window** (a modal dialog over the workspace, with Raw / Mask, ◀ Previous / Next ▶, the arrow
+    keys and Escape; not a second window, which would need a new Tauri window and capability in the
+    shared `src-tauri`), **Unpin**, **Clear ended pins (N)** (one `monitoring_cell_unpin` per pin of
+    an ended capture; there is no backend command for "ended only"; control is rechecked before each,
+    and a control loss cancels the rest for good, even if control comes back before the next one:
+    the operator presses again) and **Clear all pins**. The count
+    chip says "N of 16 pins" and "N ended". A pin without an image (an ended capture's, or a row that
+    had left the buffer) shows an app-local box with the reason, never a picture; its measurements
+    stay. Pins are one shared, bounded set per instrument: without control the strip's crops are not
+    buttons, the scatter takes no click, the pin buttons are disabled with the reason, and the hook
+    sends nothing even when asked.
+  - **Freeze display** holds the live frame, the strip and the scatter as they were (no crop is
+    pulled for the held strip); pins and the run status keep updating; nothing is sent. A listing
+    of another capture or latest run drops the held strip and its crops even while frozen, and the
+    frozen notice says the capture changed; the scatter stays held, and its earlier capture's points
+    are refused as above.
+  - **The stops are separate.** "Stop & finalize run" (`stopTarget`): in a queue that has begun,
+    only the queue's own row, through `queue.stopCurrent` (as Next sample: `experiment_stop` with the
+    row's `start_generation`), never while the queue is paused, and never another run (that one is
+    stopped in the classic view); otherwise the run the status shows Active, by its
+    `start_generation` (App's `stopForLive`, ABI 40), a RunMismatch reply said and nothing more
+    sent. "Stop acquisition" is the classic Stop Camera (`onStopCamera`, a recording clip first),
+    disabled while a run is active ("the camera never stops under a run") or the camera is not
+    running. Both need control.
+  - **Notices follow the state (#763 F13, F15).** "Stop requested · run generation N" goes once the
+    status shows that run terminal or another run (`stopRequestStale`); a refused stop stays until
+    the next stop. A notice that describes a pin ("Pinned · F…") goes once that pin's capture ended
+    or a listing at least as new as the pin's reply no longer holds it (`pinNoticeStale`). A run
+    start drops every pin (pins belong to the latest run); while the capture that run began is
+    current, Live says how many were cleared ("1 pin cleared · run generation 4 started",
+    `droppedPinsNotice` from `last_capture_change.pins_dropped`), until dismissed.
+  - **Run status and lifecycle.** The run's file, a state chip and the backend's counts (valid and
+    invalid saved, pending, dropped, failed to save). The queue's tiles show each row's chip (a
+    single sample's follows its run by the experiment operation its start reply named,
+    `StartResult.operation_id`, `followSingleRun` / `singleRunChip`: Started, then Finalized · file
+    closed, Finalized · cancelled or Failed from that operation's terminal OperationStatus event,
+    kept after another run starts; #763 F14). The backend finishes that operation when the run's
+    status turns terminal, so its end is this run's and no other's. The status is not used for the
+    sample: the start reply returns no start generation, and a status on the same file or with a
+    newer generation can be another client's run (Codex #766 review). A reply without an operation,
+    or events possibly lost since the Start (`OperationTrack.loss`: a notification overflow, a failed
+    poll, a dropped server connection) before the end was seen, reads "Outcome unknown · check the
+    file"; an end that still arrives is taken. Running and draining are shown by the run card, not
+    attributed to the sample. Binding the sample to the status as well would need the start
+    generation in the start reply (a contract field, not added); the
+    lifecycle is the queue's own (`lifecycle`, with Confirm closed for a finalized row and "Go to
+    Plan" for the next Start, which stays in the Plan with its file dialog and readiness) or, for
+    any other run, `statusLifecycle`: Starting → Running → Stopping · drain → Finalized, a step done
+    only once the status reports the next one. A control loss pauses the queue (the paused notice
+    and Resume are in Live too); nothing resumes on its own and resuming sends nothing.
+  - Not in this step: the population selection card (live populations are P5 / #523), Mark chapter
+    (chapters are deferred, ADR 0015), Inspect (Review), the stop-condition progress (per-run
+    auto-stop is not built) and the footer's camera / display / transport / writer line.
+- **Experiment · Run summary (O5) and Quick look (O6) (P4, S5; #716 A7b, aligned with the Penpot
+  boards in A7c).** Two sub-views, `RunSummaryView.tsx` and `QuickLookView.tsx`, with what they share
+  in `summaryParts.tsx` (the decisions, the per-run states and tiles), over the run quick look of A7a
+  (bridge ABI 44 `run_quick_look`, [[../services/RunQuickLook]]); the issue's A7 rulings bind them.
+  The Experiment sub-nav is Plan · Live · Run summary · Quick look; `ExperimentView` holds the run
+  the two inspect, so it stays while the operator moves between them. No backend or contract
+  change. The boards are O5 and O6 on the Operation app page of the sandbox file (renders in
+  `workspace-walk-2026-10-21/a7b/penpot-O5.png`, `penpot-O6.png`).
+  - **One function, no client arithmetic.** Every number is the backend's: counters are decimal
+    strings shown in digit groups, medians, the target-group % and the event rate are formatted to
+    fixed digits, and every delta is the backend's `run − reference` (`quickLookModel.ts` formats;
+    `quickLookModel.test.ts` reads `quickLookModel.ts`, `RunSummaryView.tsx`, `QuickLookView.tsx`,
+    `summaryParts.tsx` and `useQuickLook.ts` and refuses arithmetic on the quick look's fields,
+    `Math.`, `Number(`, `BigInt(` and `reduce(`; `summaryViews.test.tsx` shows a deliberately
+    inconsistent backend delta as sent). The one exemption is the file size's unit formatting
+    (`formatByteCount`, display, not statistics; coordinator ruling on #795). `runSummaryModel.ts` (O5's checklist, duration, board
+    placeholders, End queue, the calibration match) reads no quick look value
+    (`runSummaryModel.test.ts` checks it imports none).
+  - **The plan's closed runs** (`planClosedRuns`): a queue row once the backend finalized its run
+    (awaiting Confirm closed, or closed; `queueClosedRuns`), the runs Repeat sample kept, and a
+    single sample once its operation reported a good end (its recorded path). Quick look's one read
+    covers the newest 32 (`RUN_QUICK_LOOK.max_paths`); the rest are named as not read here.
+  - **Reads, never polled, per sub-view** (`useQuickLook`, unmounted with its sub-view): the Run
+    summary reads its one run (no reference: O5 has no deltas), Quick look the plan's closed runs and
+    the reference; each on showing, when what it reads changes (a run closed, the run chosen, the
+    reference), once the instrument turns idle (App's `expActive` going false) when the last reply
+    had a deferred run (also while a read is answered; the reference's own deferral counts), and on
+    Refresh. A reply is shown only for what it was read for: a change of paths or reference
+    invalidates reads in flight, so a late answer never shows an earlier reference's deltas. With no
+    closed run nothing is read. A viewer reads too (`run_quick_look` is not a control command).
+  - **O5 Run summary** (the newest closed run, or the one chosen in its "Run shown" list or with a
+    Quick look tile's Run summary): the board's layout, Outcome · Counts · Provenance written, then
+    Area–Deformability snapshot · Next. **No medians here**; they are Quick look's.
+    - **Outcome**: a lifecycle checklist, Start requested · Acknowledged · first frame seen · Active ·
+      recording · Stopping · Drain · finalizing · Confirmed closed (`outcomeChecklist`), each step
+      from what this page observed: the start reply, the statuses of the run's own generation and
+      file (`RunAttempt.seen`, recorded by `queueModel.ts` as it observes: Active, a nonzero frame
+      counter, Stopping or flushing, this page's accepted Next sample), the terminal status, and the
+      operator's Confirm closed. A step not observed reads "unknown · not observed", never ticked (a
+      status read twice a second can miss a short state). A single sample is followed by its
+      operation's end only (#763 F14), so its status steps are unknown and its close is the
+      backend's. Then the stop reason as observed (this page's accepted Next sample, or cancelled;
+      otherwise "not observed here", since the file's stop record is not in the quick look), the
+      **duration** only from the terminal status's recorded start and end (`RowEnd.startTimeNs` /
+      `endTimeNs`, the backend's wall clock; "Not recorded" otherwise, and always for a single
+      sample), the file with its size in decimal units (the shared `formatByteCount` in `ssdView.ts`,
+      the exact byte count in the tooltip), the experiment / run / sample from the identity, and the
+      writer.
+    - **Counts**: the file's counts and accounting as `StatTile`s, the flags as grey chips.
+      **Provenance written**: the identity. **Snapshot**: the run's display-only overlay subsample
+      on `AreaDeformChart`, "display only, the Review app does the analysis".
+    - **Next** ("statistics: Quick look (descriptive) and the Review app"): the next sample by name
+      (`upcomingIndex`: the row after a finalized one), then **Next sample**, **Repeat this
+      sample** and **End queue**, also in the toolbar (Next sample, End queue). **End queue** is the
+      queue's own `end` (sends nothing); on a finalized row it confirms the close first (the queue's
+      Confirm closed), since the queue never ends past an unconfirmed close; refused while a run is
+      in flight, at the last sample (Next sample completes the queue), when paused, ended, or for a
+      single sample (`endQueueState`).
+    - **Calibration run**: when the run's method was a calibration method (the readiness report read
+      with its file at Start, ABI 43 `method_calibration`, carried as `methodPurpose` on the start
+      outcome, the attempt and `PlanStarted`) or a record names the run, the record the backend
+      derived from it (`calibration_records_list`, matched by `source.run_id` to the run's id from its
+      quick look; `useRunCalibration`, read on showing, when the run changes and on Refresh; not for
+      a measurement run): status, pixel → µm current → proposed, the diameter CV with its limit and
+      the gates (met / not met with value and limit). **Apply in Prepare…** shows Prepare's
+      Calibration card with the record selected (`calibration_record_get`, a read); **Dismiss** hides
+      the proposal here, for that version only (a record applied, invalidated or revised since shows
+      again). Nothing is applied from O5. Without a record: "No calibration record was derived for
+      this run" only once the records were read, the store is readable and the run's id is known;
+      otherwise "Calibration record not known" with the reason (a failed read, an unreadable store,
+      the run's id not read or not recorded).
+  - **O6 Quick look.** The experiment board, in plan order (`boardEntries`): each row's closed runs
+    (condition swatch, n, the medians with deltas, the target group, the event rate, flags and
+    `differs` chips, a mini scatter of the backend's overlay points (`QuickLookThumb.tsx`, display
+    only), then Inspect · Run summary · Set as reference · Overlay), the run in progress in its row's
+    place ("Medians: numbers at close"), and a grey "Queued" placeholder with no numbers for each run
+    not yet made ("Repeat queued" for a repeat; "Not run" once ended). The reference run: none until
+    the operator chooses one (`PlanController.reference`, held by `usePlan`, cleared by New plan,
+    never persisted). The reply's reference chip says confirmed or not, with the backend's reason; a
+    withheld delta reads "withheld · <reason>"; the reference shows no delta to itself and is drawn
+    only once confirmed. The overlay (`AreaDeformChart`): the backend's point subsample, the
+    reference in slot 5 and up to four chosen runs in their condition's slot, "display only". Beside
+    it, **Refine the experiment** ("Decisions, not conclusions"): Continue · load S<n>, Repeat
+    S<n>, Adjust next sample… (the Plan; Align… beside it) and Open in Review (PC), each with a line
+    saying what the step does, never an assessment of the run. The toolbar has Next sample and Open
+    in Review.
+  - **Decisions (A7 ruling 8), each one step** (`decisionsFor`). **Repeat sample**: the queue event
+    `repeat` (`queueModel.ts`): a finalized (current) or closed row goes back to planned as the
+    current row, its run kept in `QueueRow.history`, its attempts kept, `nextRunIndex` unchanged, so
+    the next Start sends the same sample_ref with the next run index and a new file; only between
+    samples and one repeat at a time (`repeatReason`). **Adjust next**: the Plan or Align, navigation
+    only. **Next sample / Continue**: confirms the finalized row's close and shows the Plan;
+    otherwise it shows the Plan; disabled while a row runs (stopping stays on Next sample in the Plan
+    and Live). **End queue**: above. **Open in Review**: App's classic Review tab with the file
+    (`loadReviewSource(path)`, `load_recording`), leaving the workspace; unavailable during a run,
+    and while this page has a recording open in the classic Review the Plan's Start shows "A
+    recording is open in Review · close it there (Review → Close File) to start" and sends nothing
+    (coordinator ruling on #791, option (c)). A viewer's Next sample (when it confirms), Repeat, End
+    queue and Open in Review are disabled with the shared control block; reads, Adjust, the
+    reference choice and navigation are not.
+  - **Kept deviations from the boards** (rulings): the overlay is a point subsample, not KDE
+    contours (Q4 a); "% in declared target group", not "% in Population A" (Q2 a); no
+    recommendation text (ruling 6: the board's "Run 03 looks different from the vehicle and clean"
+    is not shown; `summaryViews.test.tsx` greps the sources and the rendered views for assessment
+    wording); no client arithmetic on the quick look; deltas only from the backend. O5's board says
+    "no statistics on the instrument (#501)"; Quick look shows descriptive numbers, so the Next card
+    says "statistics: Quick look (descriptive) and the Review app".
+  - Not in this step: live medians, isoelastic curves, tests, fits, CV, Compare, a persisted
+    reference, the board's header pills (run closed · queue paused).
+  - Tests: `summaryViews.test.tsx` (the real `usePlan` with its stop; each sub-view's reads on its
+    transitions and Refresh; deferred and the idle re-read; the checklist from observed status and
+    unknown when unobserved; the duration and the stop reason; End queue; the calibration block with
+    a record, without one, for an older backend and a measurement run, Apply leading to Prepare and
+    nothing sent; not available, error, legacy, no E, a recorded 0; withheld deltas, `differs`, a
+    replaced and an unconfirmed reference; the overlay; the placeholders in plan order; the decisions'
+    placement and a viewer's gating; no assessment wording), `runSummaryModel.test.ts`,
+    `quickLookModel.test.ts` (formatting, the closed runs, the no-arithmetic pin),
+    `queueModel.test.ts` (Repeat sample, the identity rules, the observations), `experimentStart.test.ts`
+    (the method purpose), `navigation.test.tsx` (the whole App: the quick look read on S1's close,
+    Repeat S1 started as run 2 with the same sample_ref, Open in Review's `load_recording`; a
+    recording opened in Review blocks the Plan's Start), `PlanView.test.tsx`.
+- **Gate (P1, extended for P3).** `workspace/navigation.test.tsx` runs the whole App over a
+  mocked transport, desktop and PZ7035: opening the workspace, visiting every stage, leaving,
+  coming back and Camera setup add no command to the idle app's steady state except two reads,
+  `fetch_experiment_readiness` with `outputPath: ""` and Align's `fetch_camera_geometry`, and
+  nothing that acts or writes (ROI, config, script, camera selection writes are on the list);
+  visiting Align sends no mode switch, pressing its button sends exactly the classic command,
+  typing in a quick control writes nothing and Write sends `save_camera_roi` (desktop) or
+  nothing (the PZ7035 Run window); from the classic Experiment tab, Align's switch then
+  "Classic view" sends nothing that acts (desktop and PZ7035, the PZ7035 with a Run window
+  placed in Align), and only the classic notice's button switches back; a classic tab change whose
+  geometry read is held until after "Workspace preview" sends nothing that acts once the read
+  answers, and the classic view then shows the notice (this case failed before the cancellation).
+  A control shows the classic Camera & Alignment tab does send
+  `set_camera_overview` / `set_instrument_mode`. For the Plan (A5), visiting it, typing in the
+  sheet and switching its sub-views add only the path-less readiness read and nothing that acts
+  (desktop and PZ7035, where the mock's checklist blocks and Start run says so); on a desktop host
+  that can start, "Start run" sends exactly one `experiment_start` with the plan's
+  `startRequestJson`, the classic Start Experiment still sends none, and an `InvalidRequest`
+  reply is shown next to the sheet with the plan kept. After review (#736): a successful start
+  followed by failing status reads keeps the plan locked (no second `experiment_start` after the
+  reads recover); with the core status read held, several periods send one read, not a pile, the
+  read after the stale bound is the only extra one, and the stalled older reply arriving last
+  does not overwrite the newer state; Live, Run summary and Quick look send neither the gates nor the checklist
+  reads, and Plan resumes them. Since A6b, showing Live adds only its reads and the monitoring
+  switch (`LIVE_COMMANDS`: `monitoring_set_active`, `fetch_monitoring_snapshot`,
+  `fetch_monitoring_cells`, `fetch_monitoring_cell_packet`), and monitoring is off again once Live
+  is left with no run in progress. With S1 running, leaving Live for Plan, Prepare or the classic
+  view sends no `monitoring_set_active(false)` (nor does leaving the classic Monitoring tab); S1's
+  end off Live sends it once; a viewer sends none at all, and on taking control it follows the view.
+  With S1 running, Live's control loss pauses the queue and sends nothing (Stop & finalize
+  and Stop acquisition disabled), control back keeps it paused, Resume sends nothing, and Stop &
+  finalize then sends exactly `experiment_stop` with S1's generation; Confirm closed sends nothing. For the sample queue (A5, desktop and PZ7035): choosing the queue,
+  adding, typing, moving and removing samples and switching sub-views send nothing that acts (only
+  the path-less readiness read), and the queue survives leaving the workspace; on a desktop host
+  whose mock runs experiments, two samples send exactly `experiment_start` (S1, run 1),
+  `experiment_stop`, `experiment_start` (S2, run 2), `experiment_stop`, each on its button and
+  nothing in between (not on the finalize, the close confirmation or the swap prompt); on the
+  PZ7035, visiting the Plan sends no switch, "Switch to Run" is disabled until the Run window is
+  placed in Align, then sends exactly `set_instrument_mode` run at the placed window. After review
+  (#739, `useHoldsControl` mocked as a store the test flips): losing and regaining control while
+  the Start's readiness read is held sends no `experiment_start`, and Start after Resume sends one;
+  when S1's post-start refresh fails and another client's run (its own file) is reported first, S1
+  is interrupted, never adopted, and nothing is stopped or confirmed; after Align's "Show the full
+  sensor", Start (queue and single) is disabled with the reason, navigating sends nothing, and "Show
+  the experiment window" sends exactly `set_camera_overview` false. With the mock answering as an
+  ABI 40 backend (#741: start and stop outcome codes, `expectedStartGeneration` compared with its
+  run): the two samples' stops carry `{expectedStartGeneration: "1"}` and `"2"`; another run
+  started between the last read and Next sample gets exactly one stop naming run 1, is not
+  stopped, S1 is "Interrupted · not stopped" with the backend's reason and nothing more is sent;
+  S1's run that ended by itself is refused ("no run is active") and still followed to Finalized;
+  the classic Stop Experiment sends no generation; a reply without codes is handled as before; the
+  InvalidRequest is shown next to the sheet by its code and, without one, by its prefix; a
+  StorageFailed reply locks the single plan. `experimentStart.test.ts` covers the withdrawal at
+  each step, and every start code of the contract (written out, so a change of the mapping or a
+  new code fails), a code against `ok`, an unknown code and the reply without one.
+  `queueModel.test.ts` covers every transition, a failure at each step, retry / skip / end, the
+  generation rules, the pause, editing locks, the stepper and a 50-trial sequence check that no run
+  index is sent twice, and (ABI 40) RunMismatch, Busy, NotActive and no-code stop replies, a
+  locking start code and a refusal code with a misleading message; `QueuePlan.test.tsx`
+  (StrictMode, the real `usePlan`) the two-sample flow, the exact text of each Start, each failure's
+  choice, the lost-client pause and resume, the Run switch, and (ABI 40, through the real
+  `startExperiment`) every start code's row state, the exact generation of each stop and the
+  RunMismatch row; `PlanView.test.tsx` also locks the single plan on each locking code. `serialReads.test.ts` covers the skip, stale and ordering rules. `PlanView.test.tsx` (StrictMode, the real
+  `usePlan`) covers the exact text sent, client refusals, outcomes, Prepare's and the classic
+  locks, and the started lock; `planModel.test.ts` the exact JSON of full, minimal and empty
+  plans, every bound at its limit and one past it, empty → absent, the UUID and the refusal
+  parser; `experimentStart.test.ts` the pass-through. `Workspace.test.tsx` proves Prepare polling
+  never passes a path and Align opens without a command; `AlignView.test.tsx` (StrictMode)
+  covers the image tools on delivered frames and the write states; `prepareModel.test.ts`,
+  `alignImageModel.test.ts`, `quickControlModel.test.ts` and `alignControls.test.ts` cover the
+  derivations.
+- **Not yet (later A-steps):** the other Prepare sub-views, storage budget and run plan,
+  fluidics estimates, the non-default-settings banner, the calibration card; in Align the focus
+  and illumination card, the quality signals, All Features / GenApi XML / scripts, selector
+  enumeration and restoration, and overrides recorded by S2 (#712); in Experiment per-run
+  auto-stop (a backend stop condition), "base on previous experiment", the queue preview.
 
 **Quality gates (UX-4 slice, issue #308):** `desktop/src/quality.ts` —
 `deriveQualityGates(input)` turns the Camera & Alignment stage's
@@ -158,7 +970,8 @@ loopback):
 **Who controls the instrument (#501).** In a browser one client at a time controls the instrument; the
 others only watch and their commands fail with `VIEWER_ONLY`. The server sends each client
 `{"session": {"client_id", "controller_id"}}` on connect and `{"session": {"controller_id"}}` when control
-changes; `wsTransport` keeps it (`transport.session`, reset on a lost link) and `useControlRole` exposes it.
+changes; `wsTransport` keeps it (`transport.session`, reset on a lost link) and `useControlRole` exposes it
+(`useHoldsControl` too: this client controls the instrument; the workspace's sample queue pauses without it).
 `ControlBanner` (in `AuthGate`) tells a viewer "Another client controls this instrument: you can watch,
 not operate." with a **Take control** button (`take_control`), which disappears for the new controller and
 appears for the old one. Without it a second browser, or an older tab that reconnected first after a
@@ -357,6 +1170,10 @@ explicit backend prerequisites and executed versus pending evidence.
 - Frontend: `npm install && npm run build` in `desktop/` → `desktop/dist`
   (Tauri's `frontendDist`): two pages, `index.html` (MIB Studio) and
   `review.html` (YOFO Review). `tsc` typechecks under strict mode.
+- UI language kit: `desktop/src` imports `@mib/ui` (and `@mib/ui/style.css`,
+  `@mib/ui/fonts.css`) from source through `resolve.alias` in `vite.config.ts`
+  and `paths` in `tsconfig.json`; no kit build step. See
+  [[../frontend/UI-Language-Kit]].
 - Version: `tauri.conf.json` and `package.json` carry the repository
   version, stamped by `scripts/release/stamp-tauri-version.py` from
   `cmake/MIBVersion.cmake` (`--check` runs in `review-ci.yml`).
@@ -433,14 +1250,16 @@ with typed fields, readiness gates, unknown enum refusal),
 **Start request (ABI 39, #712).** `experiment_start` takes an optional
 string `startRequestJson` (Tauri command arg `start_request_json`, `dispatch.rs`
 `startRequestJson`, `bridge.experimentStart(path, ack, startRequestJson?)`; the
-shell writes it with `JSON.stringify` of an `ExperimentStartRequestDoc`).
+document's shape is `ExperimentStartRequestDoc`).
 `mib-app-commands` passes the text to the bridge byte for byte, `""` when absent
 or null; it is never decoded in Rust or TypeScript, so duplicate keys and the
 byte bound reach the backend parser unchanged. Nothing is checked in Rust or TypeScript:
 the backend parses it strictly and refuses with `invalid start request: <key>`
-([[Rust-Bridge]] ABI 39). No UI sends it yet (the context bar's
-`operatorName: ""` stays); the bounds are in `bridgeContract.ts`
-`EXPERIMENT_START_REQUEST` for the Plan view (S5).
+([[Rust-Bridge]] ABI 39). The workspace's Experiment · Plan sends it (#716 A5, "Opt-in
+workspace" above): `planModel.buildStartRequest` writes the text with one ordered serializer and
+checks it first against `bridgeContract.ts` `EXPERIMENT_START_REQUEST`, so an over-bound plan is
+refused before it is sent; the backend still checks it and stays the authority. The classic Start
+sends none (the context bar's `operatorName: ""` stays).
 
 **Typed outcome and the run a stop names (ABI 40, #741).** `CmdResult`
 (`eventAdapter.ts`) gains `start_outcome?` (an `EXPERIMENT_START_OUTCOMES`
@@ -458,9 +1277,14 @@ argument without one; another run, or none, comes back `ok: false`,
 `stop_outcome: RunMismatch` (3) and nothing is stopped ([[Rust-Bridge]] ABI 40).
 The Tauri command takes `expected_start_generation: Option<String>`. The
 develop shell (`App.tsx`, `experimentStart.ts`) neither parsed the prefix nor
-passes a generation, so it is unchanged; the workspace queue and Plan switch on
-`feat/egrabber-workspace` after the next develop sync. Guards:
-`eventAdapter.test.ts`, `eventTransport.test.ts`.
+passes a generation, so it was unchanged by the contract step; the workspace's
+queue and Plan switched on `feat/egrabber-workspace` (#741 part 2, "Opt-in
+workspace" above: `startReplyState` maps each start code to started / refused /
+unknown, and only the queue's Next sample / Stop last sample pass the row's
+generation; the classic Stop Experiment sends none). Guards:
+`eventAdapter.test.ts`, `eventTransport.test.ts`, and for the workspace
+`experimentStart.test.ts`, `queueModel.test.ts`, `QueuePlan.test.tsx`,
+`PlanView.test.tsx`, `navigation.test.tsx`.
 
 **Run quick look (ABI 44, #716 A7a).** `runQuickLook.ts` types and checks the
 reply of [[../services/RunQuickLook]]; `bridge.runQuickLook(paths, reference?)`
@@ -473,8 +1297,9 @@ the display-only overlay) and `delta` (only with a confirmed reference; each
 median a value or a withheld reason; `differs` flags). Anything off contract is
 refused (`RUN_QUICK_LOOK_REPLY_INVALID`); `runQuickLookArgs` throws before
 sending for a malformed request (`INVALID_PATHS`, `INVALID_REFERENCE_*`). A read
-on the remote server for every client. No develop UI: the Summary (O5) and
-Quick look (O6) come with A7b on the workspace branch. Guards:
+on the remote server for every client. No develop UI: the Run summary (O5) and
+Quick look (O6) are the workspace branch's Experiment sub-views (A7b, A7c, "Opt-in workspace"
+above). Guards:
 `runQuickLook.test.ts` (the golden reply
 `crates/mib-bridge/contract/fixtures/run-quick-look-v1.json`, which
 `review_bridge.rs` pins to the backend's output).
@@ -491,8 +1316,8 @@ method) and `error`. An unknown purpose or policy, a missing member, a number
 outside the method document's bounds, or a reference that does not match the
 purpose is refused (`CALIBRATION_REPLY_INVALID`).
 A reply without the member (a backend before ABI 43) decodes as `null`: unknown,
-never assumed to be a measurement method. No develop UI reads it; the workspace
-Prepare card (A4b) switches to it after the next develop sync. Guards:
+never assumed to be a measurement method. The workspace Prepare Calibration card
+reads it ("Opt-in workspace" above); no classic UI does. Guards:
 `calibrationRecords.test.ts`, `eventAdapter.test.ts`.
 
 **Calibration records (ABI 42, #716 A4a).** `calibrationRecords.ts` types and
@@ -536,8 +1361,9 @@ listing cell or a monitoring snapshot row (`MonitoringRow.start_generation` and
 canonical decimal strings and throws
 `INVALID_U64` / `INVALID_OBJECT_ID` before anything is sent. Pin, unpin and
 clear are control commands on the remote server (`VIEWER_ONLY` for a viewer).
-No develop UI uses them; the workspace Live view (A6b) will. Guard:
-`monitoringCells.test.ts`, `framePacket.test.ts` (the cell golden).
+The workspace's Experiment · Live (A6b, "Opt-in workspace" above) uses them. Guard:
+`monitoringCells.test.ts`, `framePacket.test.ts` (the cell golden); for Live, `liveModel.test.ts`,
+`LiveView.test.tsx` and `navigation.test.tsx`.
 
 ## Central profile registry (ABI 25, issue #398)
 
@@ -739,6 +1565,9 @@ owned session. Desktop CI now runs this in addition to unit tests and launch smo
 Initial local pass: 2 persistence-admitted/committed frames, 2 exported images.
 The gate exposed and drove fixes for the disabled Start button and missing
 realtime processing consumer. It does not establish physical hardware timing.
+On `feat/egrabber-workspace` the harness first asserts that the app opens in the workspace,
+takes its "Classic view" (which records the choice) and restarts the webview, so the rest of
+the workflow runs in the classic view as on `develop`.
 
 ### Managed profiles and startup provenance
 
@@ -1177,3 +2006,52 @@ Issue #570: Review keeps unreadable run accounting as Unknown, displaying the
 existing `completion_reason` field rather than promoting `reconciled=false` to
 Failed when the outcome is Unknown. Known outcomes with unreconciled counters
 still show Failed. No bridge ABI or JSON field changes.
+
+## Shared stored-population controls (#808)
+
+Studio App.tsx and ReviewPanel mount the same `PopulationAnalysis` component.
+Studio routes through `analyze_population` (app-commands, WebSocket and Tauri)
+and BackendFacade's idle/recording fence; Review uses `review_analyze_population`
+and the review-only bridge. Both end at ReviewJobs/ReviewSession and the same
+native interval/statistics core. Backend 46 / Review 8 are additive, leaving
+reserved 45/7 untouched. See [[../services/AnalysisWorker]].
+
+### iQue recipe association boundary (#807)
+
+`workspace/recipeModel.ts` decodes version-1 immutable method/analysis references,
+creates detached unsaved copies with lineage, and rejects stale compatibility by
+exact pair/setup revision. `RecipePairing.tsx` renders these facts and an optional
+copy action only. It does not save or apply; the isolated `ique-demo.html` uses
+labelled fixtures. Live persistence awaits the single #393/#395 workspace authority
+and scientific validation awaits #808. Design proposal:
+`docs/design/ique-workflow/WORKSPACE-CONTRACT.md`.
+
+
+## Recipe library (#807 I02, ABI 50)
+
+Experiment → Plan mounts `RecipeLibrary` (`desktop/src/workspace/RecipeLibrary.tsx`) under
+`SavedPlan`. It lists, opens, creates and derives ("Base a new draft on this recipe") recipes
+through the `bridge.recipe*` wrappers, and renders `RecipePairing` with the backend's
+`recipe_diff` items verbatim and the `recipe_apply_preview` reply (the method-selection
+request is shown, never sent). Creating and deriving need control. No fixture is imported;
+`recipeModel.ts` decoders check shape only and refuse a preview that claims to have applied.
+See [[../services/RecipeProvider]].
+
+## Saved workspace plan (#807, ABI 48; first written as 45)
+
+Experiment → Plan includes `SavedPlan`: explicit native metadata save/new revision
+and reopen of a sample sheet (annotations and selected operator). It uses the same
+Tauri/WebSocket command layer as the app, never localStorage or demo data. Readback
+shows immutable annotations without replacing the active experiment, applying a
+method or starting acquisition. Unknown saves offer exact-command retry while the
+panel remains mounted; reopening a workspace ID reconciles its stored state after
+navigation/reload. Plan activation, recipe scientific validation and workspace
+listing remain unfinished. See `docs/design/ique-workflow/PRODUCTION-INTEGRATION.md`.
+**Camera GenApi features (ABI 49, #806 E-1/E-2).** `camera_feature_tree`, `camera_feature_read`
+and `camera_feature_write` are in `mib-app-commands` (`dispatch::COMMANDS`) and so on the
+WebSocket server; `camera_feature_write` is a control command. E-3 added the Tauri commands and
+`bridge.ts` wrappers and binds the Align quick controls (exposure, gain, FPS, trigger) to SFNC
+names resolved against the enumerated tree ([[../camera/FeatureControl]]). The Tauri
+`camera_feature_tree` is async (`spawn_blocking`): the tree is a backend job that
+`mib-app-commands` polls, so the wait is off the main thread and the bridge lock is held only
+per fetch (#806 review).

@@ -1,0 +1,24 @@
+name: eGrabber typed feature control
+on:
+  pull_request:
+    paths:
+      - 'include/backend/camera/features/**'
+      - 'src/backend/camera/features/**'
+      - 'tests/camera/features/**'
+      - 'tools/egrabber_acceptance/**'
+      - '.github/workflows/egrabber-feature-control.yml'
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SDK-free core with undefined-behavior checks
+        run: >-
+          cmake -S tools/egrabber_acceptance -B build/egrabber-acceptance
+          -DCMAKE_CXX_FLAGS='-fsanitize=undefined -fno-sanitize-recover=all'
+          -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=undefined
+      - run: cmake --build build/egrabber-acceptance -j2
+      - run: ctest --test-dir build/egrabber-acceptance --output-on-failure

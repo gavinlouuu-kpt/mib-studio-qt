@@ -881,6 +881,27 @@
   ]
  },
  {
+  "flow": "linked records and reprocess one record",
+  "calls": [
+   {
+    "cmd": "fetch_review_track_rows",
+    "args": {
+     "valid": true,
+     "trackId": 0,
+     "max": 256
+    }
+   },
+   {
+    "cmd": "review_reprocess_record",
+    "args": {
+     "valid": true,
+     "index": "0",
+     "settings": 0
+    }
+   }
+  ]
+ },
+ {
   "flow": "close file",
   "calls": [
    {

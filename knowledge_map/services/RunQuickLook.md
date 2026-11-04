@@ -19,6 +19,12 @@ the row path), [[Hdf5Service]] (the column reader), [[CalibrationRecords]] (shar
 [[../architecture/Rust-Bridge]] (ABI 44, review ABI 6), [[../architecture/Desktop-Shell]] (TS
 client), [[../frontend/YofoReview]] (the twin), [[../architecture/Threading-Model]].
 
+**Consumers.** The workspace's Experiment sub-views Run summary (O5) and Quick look (O6) (#716 A7b,
+A7c, on the workspace branch: `desktop/src/workspace/RunSummaryView.tsx` reads its one run,
+`QuickLookView.tsx` the plan's closed runs with the reference; each on its transitions and
+Refresh, shows the numbers and deltas as sent, never computes) and Review's B2 R2
+(through `review_run_statistics`).
+
 ## Responsibility
 
 - **The numbers** (the issue's A7 ruling 2), over the valid set (`/valid_frames/metadata` rows

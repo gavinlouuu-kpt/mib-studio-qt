@@ -1,0 +1,74 @@
+/*
+ * MIB / YOFO UI language — design tokens.
+ *
+ * One palette for MIB Studio, YOFO Studio and YOFO Review. Values match the
+ * Penpot "UI language" board (U0) and the eGrabber workspace views 00–36.
+ * Rule: state colours (confirmed / warn / blocked / unknown) are never reused
+ * for experimental conditions, and condition colours never carry a state.
+ */
+:root {
+  /* Surfaces */
+  --mib-color-bg: #ffffff;
+  --mib-color-band: #f3f6f6;
+  --mib-color-card: #ffffff;
+  --mib-color-tile: #f6f8f8;
+  --mib-color-line: #e1e6e6;
+
+  /* Text */
+  --mib-color-ink: #1b2626;
+  --mib-color-sub: #5f6b6b;
+  --mib-color-mute: #8c9797;
+  --mib-color-on-dark: #ffffff;
+
+  /* Interface accents */
+  --mib-color-dark: #1e2a2a; /* primary action */
+  --mib-color-accent: #2f6e6a; /* confirmed, selected */
+  --mib-color-accent-bg: #e4efee;
+  --mib-color-inspect: #3a6ea5; /* inspected record */
+  --mib-color-inspect-bg: #e6eef7;
+
+  /* States — backend truth, never invented by the UI */
+  --mib-color-confirmed: #2f6e6a;
+  --mib-color-confirmed-bg: #e4efee;
+  --mib-color-warn: #9a6a12;
+  --mib-color-warn-bg: #fbf0d9;
+  --mib-color-blocked: #b4433a;
+  --mib-color-blocked-bg: #f8e4e1;
+  --mib-color-unknown: #6b7575;
+  --mib-color-unknown-bg: #eef1f1;
+
+  /* Experimental conditions (from the sample sheet; reused everywhere) */
+  --mib-condition-1: #2f6e6a;
+  --mib-condition-2: #e2b79a;
+  --mib-condition-3: #c2703a;
+  --mib-condition-4: #5b6fb5;
+  --mib-condition-5: #8a8f94;
+
+  /* Type */
+  --mib-font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mib-font-size-xs: 10px;
+  --mib-font-size-sm: 11px;
+  --mib-font-size-md: 12px;
+  --mib-font-size-base: 13px;
+  --mib-font-size-lg: 14px;
+  --mib-font-size-title: 17px;
+  --mib-font-size-brand: 22px;
+  --mib-font-size-stat: 20px;
+  --mib-font-weight-regular: 400;
+  --mib-font-weight-medium: 500;
+  --mib-font-weight-semibold: 600;
+  --mib-font-weight-bold: 700;
+
+  /* Spacing (4 px grid) */
+  --mib-space-1: 4px;
+  --mib-space-2: 8px;
+  --mib-space-3: 12px;
+  --mib-space-4: 16px;
+  --mib-space-5: 18px;
+  --mib-space-6: 24px;
+
+  /* Shape */
+  --mib-radius-sm: 4px;
+  --mib-radius-md: 6px;
+  --mib-control-height: 36px;
+}

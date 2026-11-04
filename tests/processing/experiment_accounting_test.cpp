@@ -19,6 +19,7 @@
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
+#include <nlohmann/json.hpp>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -234,6 +235,17 @@ int main()
             svc.endExperiment();
             const auto a = svc.experimentAccountingSnapshot();
             admittedTotal += a.admitted;
+            const auto evidence = nlohmann::json::parse(svc.runEvidenceJson());
+            MIB_EXPECT(evidence.value("available", false), "run evidence available after settlement");
+            if (evidence.value("available", false)) {
+                MIB_EXPECT(evidence.at("admittedFrames") == std::to_string(a.admitted),
+                           "evidence and recording share run admissions under continuous capture");
+                MIB_EXPECT(evidence.at("completedFrames") ==
+                               std::to_string(a.empty + a.processed + a.scientificallyRejected),
+                           "evidence and recording settle identical completed frames");
+                MIB_EXPECT(evidence.at("errorFrames") == std::to_string(a.processingFailed + a.storeMalformed),
+                           "evidence and recording settle identical errors");
+            }
             // Every admitted frame terminates in exactly one outcome, including
             // the declared ones (pendingAtStop after a settlement, cancelledByPolicy).
             const bool frameTermsOk = a.frameTermsSum() == a.admitted;

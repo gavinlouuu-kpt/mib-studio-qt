@@ -987,11 +987,15 @@ namespace backend
                 // previous one are never served again, and its frames still in processing never
                 // become cells (the session floor). A close is reported twice (stop() and the
                 // capture thread) for the same session: one capture change.
+                if (cam && processingService_)
+                    processingService_->setEvidenceCameraSession(generation);
                 if (monitoringCells_) {
                     if (cam)
                         monitoringCells_->advanceCapture("the camera started a new capture session", generation);
                     else if (monitoringClosedCaptureSession_.exchange(generation) != generation)
-                        monitoringCells_->advanceCapture("the camera stopped", generation + 1);
+                        monitoringClosedCaptureEpoch_.store(
+                            monitoringCells_->advanceCapture("the camera stopped", generation + 1),
+                            std::memory_order_release);
                 }
                 if (!bootTrigger) return;
                 if (triggerService_) {
@@ -3205,6 +3209,13 @@ namespace backend
 
     services::MonitoringCellStore *AppBackend::monitoringCells() { return monitoringCells_.get(); }
 
+    bool AppBackend::monitoringCaptureEndedByCameraClose() const
+    {
+        if (!monitoringCells_) return false;
+        const auto closed = monitoringClosedCaptureEpoch_.load(std::memory_order_acquire);
+        return closed != 0 && monitoringCells_->currentCapture() == closed;
+    }
+
     services::serialbus::SerialBusManager &AppBackend::serialBus() { return *serialBusManager_; }
 
     bool AppBackend::isCameraConfigured() const
@@ -3579,6 +3590,10 @@ namespace backend
                 !hdf5Service_->writeAcquisitionProvenance(captureService_->timestampDescriptor(),
                                                           captureService_->telemetrySnapshot())) {
                 SPDLOG_ERROR("Frame recording: failed to persist acquisition provenance");
+            }
+            if (!hdf5Service_->writeLiveEvidenceJson(processingService_->liveEvidenceJson())) {
+                SPDLOG_ERROR("Frame recording: live evidence summary could not be stored");
+                reportFatalSaveError("Live evidence summary could not be stored");
             }
             hdf5Service_->closeFile();
 

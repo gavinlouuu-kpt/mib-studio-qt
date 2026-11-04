@@ -4,6 +4,7 @@
 > Composition and wiring happens in [[../architecture/AppBackend]].
 
 ## Realtime acquisition & analysis
+- [[AnalysisWorker]] — isolated Cytoflow process and shared native population core; not on acquisition threads
 - [[CaptureService]] — dedicated thread; `camera->grabFrame()` → FrameStore
 - [[ProcessingService]] — worker pool + realtime loop; OpenCV pipeline
 - [[PlaybackService]] — UI-facing wrapper over FrameStore
@@ -69,3 +70,5 @@
 [[../diagnostics/_MOC|Diagnostics MOC]]
 
 - [[ProfileRegistryService]] — central registry/cache foundation (#398).
+- [[WorkspaceStore]] — isolated versioned metadata document CAS/history core (#807); host integration pending.
+- [[RecipeProvider]] — immutable method + analysis-plan recipes, backend compatibility diff and apply preview (#807 I02, ABI 50).

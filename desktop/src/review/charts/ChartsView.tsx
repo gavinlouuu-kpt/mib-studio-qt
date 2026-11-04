@@ -1,10 +1,13 @@
 // The review Charts view (plan 2026-10-01-standalone-review-app, PR 3): the
 // Qt HdfReviewTab layout — scatter on the left, the selected cell's frame
-// pane over the ring-width histogram on the right. Data comes from the
+// pane (when the host passes one) over the ring-width histogram on the
+// right. R3 Inspect (#717 B3a) shows it as the Scatter sub-view, with the
+// selected record in its own card beside it. Data comes from the
 // review bridge: the columnar scatter, the density job's per-point levels
 // (started on open, polled until ready), stored KDE core records from the
 // file info, embedded isoelastic curves, and the compute-core job.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Button } from "@mib/ui";
 import { ask } from "../../transport/dialogs";
 import { reviewBridge, type ReviewDensity, type ReviewInfo, type ReviewScatter as ScatterData } from "../reviewBridge";
 import { recordContours } from "./chartMath";
@@ -27,8 +30,9 @@ export interface ChartsViewProps {
   /** Size of the valid set (arrow-key stepping wraps over it). */
   validTotal: number;
   onSelect: (validPosition: number) => void;
-  /** The frame pane (preview canvas + caption), owned by the panel. */
-  framePane: ReactNode;
+  /** The frame pane (preview canvas + caption), owned by the host; omitted
+   * when the host shows the selected record beside the view (R3 Inspect). */
+  framePane?: ReactNode;
   /** Re-read the file info (after a core record is saved). */
   refreshInfo: () => Promise<void>;
   /** What the view shows (zoom, toggles, unsaved record) for chart exports. */
@@ -208,12 +212,12 @@ export function ChartsView(props: ChartsViewProps) {
           <label>
             <input type="checkbox" checked={showCurves} onChange={(e) => setShowCurves(e.target.checked)} /> Isoelastic curves
           </label>
-          <button onClick={() => void computeCore()} disabled={busy || !hasPoints} title="KDE core contour over every valid cell in this file">
+          <Button size="small" onClick={() => void computeCore()} disabled={busy || !hasPoints} title="KDE core contour over every valid cell in this file">
             Compute core contour…
-          </button>
-          <button onClick={() => resetRef.current?.()} title="Back to the data extent (or double-click empty plot space)">
+          </Button>
+          <Button size="small" onClick={() => resetRef.current?.()} title="Back to the data extent (or double-click empty plot space)">
             Reset zoom
-          </button>
+          </Button>
           <span className="right mono charts-status">{status}</span>
         </div>
         <ReviewScatter
@@ -231,7 +235,7 @@ export function ChartsView(props: ChartsViewProps) {
         />
       </div>
       <div className="charts-right">
-        <div className="charts-frame">{framePane}</div>
+        {framePane ? <div className="charts-frame">{framePane}</div> : null}
         <Histogram values={scatter?.ring_ratio ?? []} min={info.ring_ratio_min} max={info.ring_ratio_max} />
       </div>
     </div>

@@ -423,6 +423,31 @@ mib_add_backend_test_executable(mindvision_config_test backend/mindvision_config
 add_test(NAME backend.mindvision_config COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_config_test)
 set_tests_properties(backend.mindvision_config PROPERTIES LABELS "backend;camera" TIMEOUT 30)
 
+# E02 (#806): GenApi typed feature control and node-map enumeration over fake
+# ports, and the capture-guarded path with MockCamera's fake node map.
+mib_add_backend_test_executable(feature_control_test camera/features/feature_control_test.cpp)
+add_test(NAME camera.feature_control COMMAND $<TARGET_FILE:mib_backend_tests> feature_control_test)
+set_tests_properties(camera.feature_control PROPERTIES LABELS "camera;genapi" TIMEOUT 30)
+mib_add_backend_test_executable(feature_tree_test camera/features/feature_tree_test.cpp)
+add_test(NAME camera.feature_tree COMMAND $<TARGET_FILE:mib_backend_tests> feature_tree_test)
+set_tests_properties(camera.feature_tree PROPERTIES LABELS "camera;genapi" TIMEOUT 30)
+mib_add_backend_test_executable(capture_camera_features_test camera/features/capture_camera_features_test.cpp)
+mib_backend_test_link(capture_camera_features_test PRIVATE Threads::Threads)
+add_test(NAME camera.capture_features COMMAND $<TARGET_FILE:mib_backend_tests> capture_camera_features_test)
+set_tests_properties(camera.capture_features PROPERTIES LABELS "camera;genapi;concurrency;stress" TIMEOUT 90)
+# #806 E02 review: feature I/O never lands between a pulse's edges and is refused only while pulses are
+# pending or imminent (TriggerService::runSerializedWithPulses; contention stress).
+mib_add_backend_test_executable(trigger_feature_interlock_test backend/trigger_feature_interlock_test.cpp)
+mib_backend_test_link(trigger_feature_interlock_test PRIVATE Threads::Threads)
+add_test(NAME camera.trigger_feature_interlock COMMAND $<TARGET_FILE:mib_backend_tests> trigger_feature_interlock_test)
+set_tests_properties(camera.trigger_feature_interlock PROPERTIES LABELS "camera;genapi;trigger;concurrency;stress;safety" TIMEOUT 120)
+# #806 E02 review: the facade's feature gates driven through backend state (default boot succeeds; experiment
+# Starting/Active/Stopping, realtime processing, queued pulses, autofocus, frame recording) and the tree job's in-flight-once rule.
+mib_add_backend_test_executable(camera_feature_facade_test backend/camera_feature_facade_test.cpp)
+mib_backend_test_link(camera_feature_facade_test PRIVATE Threads::Threads)
+add_test(NAME e2e.camera_feature_facade COMMAND $<TARGET_FILE:mib_backend_tests> camera_feature_facade_test)
+set_tests_properties(e2e.camera_feature_facade PROPERTIES LABELS "backend;bridge;e2e;camera;genapi;safety" TIMEOUT 180)
+
 # Issue #366: MindVision Mono8/geometry fail-closed conversion, driven through
 # the injectable SDK seam (no hardware, no vendor headers).
 mib_add_backend_test_executable(illuminated_live_test backend/illuminated_live_test.cpp)
@@ -1831,8 +1856,78 @@ mib_backend_test_link(hdf_write_queue_fault_test PRIVATE Threads::Threads)
 add_test(NAME backend.hdf_write_queue_fault COMMAND $<TARGET_FILE:mib_backend_tests> hdf_write_queue_fault_test)
 set_tests_properties(backend.hdf_write_queue_fault PROPERTIES LABELS "backend;recording;stress;fault-injection" TIMEOUT 30)
 
+mib_add_backend_test_executable(live_evidence_test processing/live_evidence_test.cpp)
+add_test(NAME backend.live_evidence COMMAND $<TARGET_FILE:mib_backend_tests> live_evidence_test)
+set_tests_properties(backend.live_evidence PROPERTIES LABELS "backend;pipeline;round-trip;fault-injection;stress" TIMEOUT 60)
+mib_add_backend_test_executable(workspace_store_test workspace/workspace_store_test.cpp)
+add_test(NAME analysis.workspace_store_test COMMAND $<TARGET_FILE:mib_backend_tests> workspace_store_test)
+set_tests_properties(analysis.workspace_store_test PROPERTIES TIMEOUT 40 LABELS "analysis;persistence;stress")
+mib_add_backend_test_executable(workspace_host_test workspace/workspace_host_test.cpp)
+add_test(NAME analysis.workspace_host_test COMMAND $<TARGET_FILE:mib_backend_tests> workspace_host_test)
+set_tests_properties(analysis.workspace_host_test PROPERTIES TIMEOUT 40 LABELS "analysis;persistence;stress")
+# #807 I02 (slice I-1): the native recipe provider: immutability, derive lineage, the
+# compatibility diff and apply preview without side effects, on the real metadata host.
+mib_add_backend_test_executable(recipe_provider_test workspace/recipe_provider_test.cpp)
+add_test(NAME workspace.recipe_provider COMMAND $<TARGET_FILE:mib_backend_tests> recipe_provider_test)
+set_tests_properties(workspace.recipe_provider PROPERTIES TIMEOUT 40 LABELS "backend;workspace;round-trip;fault-injection")
+mib_add_backend_test_executable(analysis_host_test analysis/analysis_host_test.cpp)
+add_test(NAME analysis.host COMMAND $<TARGET_FILE:mib_backend_tests> analysis_host_test)
+set_tests_properties(analysis.host PROPERTIES TIMEOUT 40 LABELS "analysis;persistence;stress")
+# F-4 (#808 F09, I09, I10): native inference/fits against scipy reference
+# values (tools/analysis_inference/generate_reference.py), and the
+# ComparisonSpec / fit authority through AnalysisHost (compatibility
+# exclusions, insufficient units, suspect fits).
+mib_add_backend_test_executable(analysis_inference_test analysis/inference_test.cpp)
+add_test(NAME analysis.inference COMMAND $<TARGET_FILE:mib_backend_tests> analysis_inference_test)
+set_tests_properties(analysis.inference PROPERTIES TIMEOUT 30 LABELS "analysis;backend;invariant")
+mib_add_backend_test_executable(analysis_comparison_spec_test analysis/comparison_spec_test.cpp)
+add_test(NAME analysis.comparison_spec COMMAND $<TARGET_FILE:mib_backend_tests> analysis_comparison_spec_test)
+set_tests_properties(analysis.comparison_spec PROPERTIES TIMEOUT 40 LABELS "analysis;backend;persistence")
+# F-1 (#808 F04/F05/F08/F16): the columnar full-recording evaluator equals the
+# keyed evaluator at every node and chunk size; explicit resource bounds refuse.
+mib_add_backend_test_executable(analysis_columnar_test analysis/columnar_test.cpp)
+add_test(NAME analysis.columnar COMMAND $<TARGET_FILE:mib_backend_tests> analysis_columnar_test)
+set_tests_properties(analysis.columnar PROPERTIES TIMEOUT 60 LABELS "analysis;backend;invariant")
+# F-1: a 300,000-event MIB experiment file (production writer, real schema)
+# gated by interval/polygon/Boolean populations through ReviewSession against
+# an independent oracle, with a stated chunk and peak-memory bound (F01: the
+# >64 MiB file fingerprints by streaming SHA-256).
+mib_add_backend_test_executable(review_population_scale_test review/review_population_scale_test.cpp)
+add_test(NAME review.population_scale COMMAND $<TARGET_FILE:mib_backend_tests> review_population_scale_test)
+set_tests_properties(review.population_scale PROPERTIES TIMEOUT 300 LABELS "review;analysis;backend;hdf5;roundtrip;performance")
+# F-1b: the analysis workspace path (AnalysisHost) over two 255k/260k-event
+# recordings: columnar source handles, saved strategy + report + plot +
+# retained file-pinned sources + comparison against an independent oracle,
+# row/columnar parity, paged browse metadata and a stated memory bound.
+mib_add_backend_test_executable(review_workspace_scale_test review/review_workspace_scale_test.cpp)
+add_test(NAME review.workspace_scale COMMAND $<TARGET_FILE:mib_backend_tests> review_workspace_scale_test)
+set_tests_properties(review.workspace_scale PROPERTIES TIMEOUT 300 LABELS "review;analysis;backend;hdf5;roundtrip;performance")
+# F-2 (F15 read side): the native FCS 3.0/3.1 reader against files the test
+# writes (byte orders, data types, delimiter escapes, refusals, unapplied
+# constructs) and a 250k-event FCS file through the evaluator and AnalysisHost.
+mib_add_backend_test_executable(analysis_fcs_reader_test analysis/fcs_reader_test.cpp)
+add_test(NAME analysis.fcs_reader COMMAND $<TARGET_FILE:mib_backend_tests> analysis_fcs_reader_test)
+set_tests_properties(analysis.fcs_reader PROPERTIES TIMEOUT 120 LABELS "analysis;backend;roundtrip;invariant")
+# F-2 acceptance: the private FlowJo 10.8.1 reference (229,585 / 190,705 and
+# both 4,096-bin exports) through the native reader and PopulationGraph. Runs
+# only with MIB_FLOWJO_REFERENCE_ROOT; otherwise exits 77 = SKIPPED (never a pass).
+mib_add_backend_test_executable(analysis_flowjo_reference_test analysis/flowjo_reference_test.cpp)
+add_test(NAME analysis.flowjo_reference COMMAND $<TARGET_FILE:mib_backend_tests> analysis_flowjo_reference_test)
+set_tests_properties(analysis.flowjo_reference PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+    LABELS "analysis;backend;acceptance")
+# F-2 review fixes: $PnR masks (64-bit high range must finish, $PnR 1/2),
+# FCS rewrite between descriptor and evaluation / during the scan, and an
+# 80-parameter file gated on two parameters with lazy columns.
+mib_add_backend_test_executable(analysis_fcs_hardening_test analysis/fcs_hardening_test.cpp)
+add_test(NAME analysis.fcs_hardening COMMAND $<TARGET_FILE:mib_backend_tests> analysis_fcs_hardening_test)
+set_tests_properties(analysis.fcs_hardening PROPERTIES TIMEOUT 60 LABELS "analysis;backend;roundtrip;fault")
+mib_add_backend_test_executable(review_population_rewrite_test review/review_population_rewrite_test.cpp)
+add_test(NAME review.population_rewrite COMMAND $<TARGET_FILE:mib_backend_tests> review_population_rewrite_test)
+set_tests_properties(review.population_rewrite PROPERTIES TIMEOUT 120 LABELS "review;analysis;backend;hdf5;fault")
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
+# F-2: tests that call the optional comparator script (tools/flowjo_acceptance).
+target_compile_definitions(mib_backend_tests PRIVATE MIB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 # The vendored PZ7035 ABI header, for tests that fake bridge registers
 # (processing.pz_platform_monitor).
 target_include_directories(mib_backend_tests PRIVATE ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)
@@ -1867,3 +1962,4 @@ set_property(TEST e2e.recording_403_partial_series_no_frames APPEND PROPERTY ENV
 
 set_property(TEST e2e.recording_403_partial_series_restart APPEND PROPERTY ENVIRONMENT
     "MIB_REPRO_RESTART=1")
+

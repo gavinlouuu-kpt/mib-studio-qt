@@ -14,13 +14,13 @@ import { ProcessedPreview } from "./components/ProcessedPreview";
 import { RunOutcomeNotice } from "./components/RunOutcomeNotice";
 import { describeReviewOutcome, describeRunOutcome, runKey } from "./runOutcome";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
-import {invoke, isRemote} from "./transport";
+import {invoke, isRemote, transport} from "./transport";
 import { productName } from "./brand";
 import { isString, isStringArray, usePersistedState } from "./persistedState";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {open, save, confirm} from "./transport/dialogs";
 import { volatileDataNotice } from "./diagnosticsView";
 import { useWallClockSync } from "./transport/wallClockSync";
@@ -30,7 +30,13 @@ import { SsdStrip } from "./components/SsdStrip";
 import { stripView, type SsdStatus } from "./ssdView";
 import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
 import { faultClearedNote } from "./ringPlayback";
-import { startExperiment } from "./experimentStart";
+import { startExperiment, type StartOutcome } from "./experimentStart";
+import { SerialReads } from "./serialReads";
+import { usePlan, type PlanStartResult, type StopReply } from "./workspace/usePlan";
+import { withOperationEnd, type OperationEnd, type OperationTrack } from "./workspace/queueModel";
+import { planCameraMode } from "./workspace/planModel";
+import { runInProgress } from "./workspace/liveModel";
+import { useHoldsControl } from "./transport/useControlRole";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
 import { FilesPanel } from "./components/FilesPanel";
@@ -57,11 +63,13 @@ import {
   type PumpStatus,
   type ReviewMetadata,
   type ReviewMetricsPage,
+  type StageStatus,
   type TriggerStatus,
 } from "./bridge";
-import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
+import { deviceIdentity as cameraIdentity, preflightSignature as signPreflight, type SignatureDevice } from "./confirmationSignature";
+import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, OPERATION_KINDS, OPERATION_STATES, PUMP_IDS } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
-import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
+import { CHECK_STATUS_LABEL, PREFLIGHT_POLL_MS, PREFLIGHT_READ_STALE_MS, derivePreflight, type PreflightInput } from "./preflight";
 import { capabilitiesOf, isPz7035, PL_IGNORED_SETTINGS_TEXT } from "./platformCapabilities";
 import { deriveQualityGates, GATE_STATUS_LABEL, type ImageQualityInput, type QualityInput } from "./quality";
 import { deriveContextBar, SEG_STATUS_LABEL, type ContextBarFacts } from "./contextBar";
@@ -82,7 +90,8 @@ import { previewIntervalMs } from "./previewPacing";
 import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
 import { rateSummary, RUN_WINDOW, snapRunWindow, type Rect } from "./cameraAlignment";
-import { runModeBlockReason, useCameraWindow, type CameraModeError } from "./cameraWindow";
+import { classicModeNotice, restoredRunWindow, runModeBlockReason, useCameraWindow, type CameraModeError } from "./cameraWindow";
+import { ClassicModeNotice } from "./components/ClassicModeNotice";
 import { latencyReadout, linkReadout, sensorReadout } from "./linkHealth";
 import { RunWindowNotice } from "./components/RunWindowNotice";
 import { RunRateControl } from "./components/RunRateControl";
@@ -93,12 +102,23 @@ import { runPreviewRgba, type RunPreview } from "./runPreview";
 import { InstrumentLedControls } from "./components/InstrumentLedControls";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
+import { AnalysisWorkspace } from "./review/AnalysisWorkspace";
+import { PopulationAnalysis, exampleGraph } from "./review/PopulationAnalysis";
 import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
 import { SavedReviewImage } from "./components/SavedReviewImage";
 import { ReviewCharts } from "./components/ReviewCharts";
 import { ExportStatus, ReviewExportOptions, useReviewExport } from "./exportControls";
+import { Workspace, workspaceReadsPrepare } from "./workspace/Workspace";
+import { initialWorkspaceStage, readLanding, writeLanding } from "./workspace/landing";
+import type { ExperimentSubView } from "./workspace/ExperimentView";
+import type { FrameSink } from "./workspace/AlignView";
+import { alignLockedReason, type RoiKind } from "./workspace/alignControls";
+import type { WriteResult } from "./workspace/quickControlModel";
 import { VIEWER_ONLY_REASON, ViewerGate, useViewerOnly, viewerReason } from "./components/ViewerGate";
 import "./App.css";
+
+// Align's SFNC quick controls and feature tree (#806 E-3): the bridge's GenApi node-map commands.
+const ALIGN_CAMERA_FEATURES = { tree: bridge.cameraFeatureTree, write: bridge.cameraFeatureWrite };
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
 const SIDEBAR_KEY = "mib.sidebar.collapsed";
@@ -190,6 +210,19 @@ export default function App() {
   const [preflightConfirmedFor, setPreflightConfirmedFor] = usePersistedState("yofo.preflightConfirmedFor", "", isString);
   const [alignmentConfirmedFor, setAlignmentConfirmedFor] = usePersistedState("yofo.alignmentConfirmedFor", "", isString);
   const didInitStage = useRef(false);
+  // The workspace (P1, #713): the stage shown, or null for the classic view. On this branch the app
+  // opens in the workspace (Prepare) unless the operator last chose the classic view in this
+  // browser (landing.ts). Opening there acts on nothing: the classic tab stays on Connect, and the
+  // classic startup landing is skipped while the workspace is open.
+  const [workspaceStage, setWorkspaceStage] = useState<number | null>(() => initialWorkspaceStage(readLanding()));
+  // The Experiment stage's sub-view (Plan / Live / Run summary / Quick look): what the workspace polls depends on it.
+  const [experimentView, setExperimentView] = useState<ExperimentSubView>("Plan");
+  const workspaceStageRef = useRef<number | null>(workspaceStage);
+  workspaceStageRef.current = workspaceStage;
+  // Started in the workspace: the classic startup landing never runs in this session, even when the
+  // operator leaves for the classic view before the first camera snapshot arrived (it would land on
+  // Camera & Alignment or Experiment and switch the camera mode behind the operator's back).
+  const startedInWorkspace = useRef(workspaceStage !== null);
   const [connectTab, setConnectTab] = useState<"cameras" | "mindvision" | "framegrabbers">("cameras");
   const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files" | "recordings">("preview");
   const [configTab, setConfigTab] = useState<"app" | "script">("app");
@@ -258,8 +291,13 @@ export default function App() {
   const {text:configText,dirty:configDirty,acceptRemote:acceptConfig,applied:configApplied,generation:configGeneration}=liveDraft;
   const [previewFpsLimit,setPreviewFpsLimit]=useState(30);
   const [coreStatus, setCoreStatus] = useState<ProcessingCoreStatus | null>(null);
+  // Coarse Z stage identity, read with the preflight snapshot for the confirmation signature (#713).
+  const [zStage, setZStage] = useState<StageStatus | null>(null);
   const [backgroundSet, setBackgroundSet] = useState(false);
   const [roiFields, setRoiFields] = useState({ x: "0", y: "0", w: "0", h: "0" });
+  // The processing ROI as the applied config reports it (the readback; roiFields is also the draft).
+  const [configRoi, setConfigRoi] = useState<Rect | null>(null);
+  const configRoiRef = useRef<Rect | null>(null);
 
   // Review.
   const [reviewPath, setReviewPath] = useState("");
@@ -279,6 +317,10 @@ export default function App() {
   const reviewCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewLoopRef = useRef<number | null>(null);
   const framePulls = useRef(new FramePullScheduler());
+  // The workspace's Align view (A3) inspects the frames this preview already pulls: the one sink
+  // gets each delivered packet after the classic draw, so there is no second capture path.
+  const alignFrameSink = useRef<FrameSink | null>(null);
+  const subscribeAlignFrames = useCallback((sink: FrameSink | null) => { alignFrameSink.current = sink; }, []);
   const tickBusy = useRef(false);
   const lastMetadataRenderMs = useRef(-Infinity);
   const tabRef = useRef<MainTab>("connect");
@@ -295,6 +337,8 @@ export default function App() {
   const instrumentModes = caps.align_mode && caps.run_mode;
   const instrumentModesRef = useRef(false);
   instrumentModesRef.current = instrumentModes;
+  const pz7035Ref = useRef(false);
+  pz7035Ref.current = pz7035;
   // PZ7035 Align (#501): the live frame's focus and brightness in the Run window, with the best
   // focus seen since the window last moved. draw() measures every displayed frame (about 50 k
   // pixels) and publishes at most every 200 ms.
@@ -329,7 +373,7 @@ export default function App() {
   const cameraGeometryRef = useRef<CameraGeometry | null>(null);
   cameraGeometryRef.current = cameraGeometry;
   const cameraWindowRef = useRef<Rect | null>(null);
-  const refreshCameraGeometryRef = useRef<() => Promise<unknown>>(async () => undefined);
+  const refreshCameraGeometryRef = useRef<() => Promise<CameraGeometry | null>>(async () => null);
   // Why the last Align/Run switch was refused (shown in the tab, not only logged); null when it worked.
   const [modeError, setModeError] = useState<CameraModeError | null>(null);
   const [modeRetry, setModeRetry] = useState(0);
@@ -396,15 +440,33 @@ export default function App() {
     return liveCanvasRef.current;
   }, []);
 
-  // Draw only the pixels owned by this exact immutable pull response.
+  // The display rate: frames actually shown, by the classic canvas or by the workspace's Align view.
+  const countDisplayed = useCallback((meta: FramePacket) => {
+    const r = ratesRef.current;
+    r.frames += 1;
+    r.bytes += meta.byte_len;
+    r.lastFrameIndex = meta.frame_index;
+    const now = performance.now();
+    const elapsed = now - r.windowStartMs;
+    if (elapsed >= 1000) {
+      r.displayFps = (r.frames * 1000) / elapsed;
+      r.dataRateMBs = (r.bytes * 1000) / elapsed / (1024 * 1024);
+      r.frames = 0;
+      r.bytes = 0;
+      r.windowStartMs = now;
+      setRatesTick((t) => t + 1);
+    }
+  }, []);
+
+  // Draw only the pixels owned by this exact immutable pull response. True when it was drawn.
   const draw = useCallback(
-    (meta: FramePacket, canvas: HTMLCanvasElement | null) => {
-      if (!meta.valid || !canvas) return;
+    (meta: FramePacket, canvas: HTMLCanvasElement | null): boolean => {
+      if (!meta.valid || !canvas) return false;
       const bytes = meta.data;
       canvas.width = meta.width;
       canvas.height = meta.height;
       const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      if (!ctx) return false;
       ctx.putImageData(mono8ToImageData(bytes, meta.width, meta.height, meta.stride_bytes), 0, 0);
       // Camera & Alignment: the experiment window over a full-sensor image.
       const geometry = cameraGeometryRef.current, experimentWindow = cameraWindowRef.current;
@@ -434,23 +496,25 @@ export default function App() {
         lastMetadataRenderMs.current = performance.now();
         setLastMeta(metadata);
       }
-      const r = ratesRef.current;
-      r.frames += 1;
-      r.bytes += meta.byte_len;
-      r.lastFrameIndex = meta.frame_index;
-      const now = performance.now();
-      const elapsed = now - r.windowStartMs;
-      if (elapsed >= 1000) {
-        r.displayFps = (r.frames * 1000) / elapsed;
-        r.dataRateMBs = (r.bytes * 1000) / elapsed / (1024 * 1024);
-        r.frames = 0;
-        r.bytes = 0;
-        r.windowStartMs = now;
-        setRatesTick((t) => t + 1);
-      }
+      countDisplayed(meta);
+      return true;
     },
-    [],
+    [countDisplayed],
   );
+
+  // The experiment operations' ends (BE-1), by operation id, from their terminal OperationStatus
+  // events, and how many times events may have been lost (a notification overflow, a failed poll, a
+  // dropped server connection). The workspace's single sample ends with the operation its start
+  // reply named, never by a status (#763 F14): an end not read after a loss is not known.
+  const [operationEnds, setOperationEnds] = useState<ReadonlyMap<string, OperationEnd>>(() => new Map());
+  const [eventLoss, setEventLoss] = useState(0);
+  const operations = useMemo<OperationTrack>(() => ({ ends: operationEnds, loss: eventLoss }), [operationEnds, eventLoss]);
+  const noteEventLoss = useCallback(() => setEventLoss((n) => n + 1), []);
+  useEffect(() => {
+    const session = transport.session;
+    // The server pushes events while connected; a dropped connection resets the session.
+    return session ? session.subscribe((state) => { if (state.clientId === undefined) noteEventLoss(); }) : undefined;
+  }, [noteEventLoss]);
 
   const applyEvents = useCallback((events: BridgeEvent[]) => {
     for (const e of events) {
@@ -461,9 +525,14 @@ export default function App() {
       } else if (e.kind === "BackendError") {
         append(`backend error: ${e.message}${e.textTruncated ? " (details truncated)" : ""}`);
       } else if (e.kind === "OperationStatus") {
+        if (e.operationKind === OPERATION_KINDS.Experiment && e.state >= OPERATION_STATES.Completed) {
+          const end: OperationEnd = { state: e.state, message: e.message };
+          setOperationEnds((ends) => withOperationEnd(ends, e.operationId, end));
+        }
         if (e.state === 2) append(`operation ${e.operationId} completed: ${e.message}`);
         else if (e.state >= 3) append(`operation ${e.operationId} ${e.state === 3 ? "failed" : e.state === 4 ? "cancelled" : "timed out"}: ${e.message}`);
       } else if (e.kind === "QueueOverflow") {
+        noteEventLoss();
         append(`notification loss: ${e.notificationsDropped} discarded (total ${e.notificationsDroppedTotal}); authoritative reconciliation required`);
       } else if (e.kind === "ExperimentStatus") {
         if(e.state === EXPERIMENT_STATES.Failed) append(`experiment failed: ${e.message}`);
@@ -473,7 +542,7 @@ export default function App() {
         append(`unrecognized notification ${e.receivedKind}; authoritative reconciliation required`);
       }
     }
-  },[append]);
+  },[append, noteEventLoss]);
 
   const procEnabledRef = useRef(procEnabled);
   procEnabledRef.current = procEnabled;
@@ -482,10 +551,14 @@ export default function App() {
     const scheduler = framePulls.current;
     // A pull discarded by this client while the source changes (opening a recording in Review) is
     // not an error; the next pull is unaffected (#763 F20).
-    const live = scheduler.mount("live", p => draw(p, activeLiveCanvas()), e => { if (!isFrameReplyRace(e)) append(`frame error: ${e}`); });
+    const live = scheduler.mount("live", p => {
+      const drawn = draw(p, activeLiveCanvas());
+      // A frame only the workspace shows still counts in the display rate (not while it is frozen).
+      if (alignFrameSink.current?.(p) && !drawn) countDisplayed(p);
+    }, e => { if (!isFrameReplyRace(e)) append(`frame error: ${e}`); });
     const review = scheduler.mount("review", p => draw(p, reviewCanvasRef.current), e => { if (!isFrameReplyRace(e)) append(`review frame error: ${e}`); });
     return () => { live(); review(); };
-  }, [draw, activeLiveCanvas, append]);
+  }, [draw, activeLiveCanvas, append, countDisplayed]);
 
   // Navigation/config/source changes retire presentation replies only.
   useEffect(() => { framePulls.current.invalidate(); }, [tab, reviewPath, camStatus]);
@@ -495,7 +568,7 @@ export default function App() {
     tickBusy.current = true;
     try {
       // State/fault notifications do not wait behind pixel decode/rendering.
-      applyEvents(await bridge.pollEvents());
+      applyEvents(await bridge.pollEvents().catch((e: unknown) => { noteEventLoss(); throw e; }));
       const runtime = await invoke<{capture_running: boolean; recording: boolean}>("fetch_preview_buffer");
       setRunning(runtime.capture_running); setRecording(runtime.recording);
       setStats(await bridge.fetchProcessingStats());
@@ -504,7 +577,7 @@ export default function App() {
     } catch (e) {
       append(`tick error: ${e}`);
     } finally { tickBusy.current = false; }
-  }, [applyEvents, append]);
+  }, [applyEvents, append, noteEventLoss]);
 
   const stopLoop = useCallback(() => {
     framePulls.current.invalidate("live");
@@ -526,25 +599,29 @@ export default function App() {
   }, [ready, tick]);
 
   // Monitoring is visibility-gated (BE-5): accumulation and its per-frame
-  // image clones run only while the Monitoring view is actually shown.
-  const monitoringVisible = tab === "experiment" && expTab === "monitoring";
+  // image clones run only while a monitoring view is actually shown: the classic
+  // Monitoring tab, or the workspace's Experiment · Live (O4, #716 A6b), which reads
+  // the snapshot for its scatter but not the sorter trigger's status. The switch
+  // itself is sent below (it waits for the control role and the run status); this
+  // effect only polls while a monitoring view is shown.
+  const classicMonitoringVisible = tab === "experiment" && expTab === "monitoring";
+  const workspaceLiveVisible = workspaceStage === 2 && experimentView === "Live";
+  const monitoringVisible = classicMonitoringVisible || workspaceLiveVisible;
   useEffect(() => {
-    if (!ready) return;
-    bridge.monitoringSetActive(monitoringVisible).catch(() => {});
-    if (!monitoringVisible) return;
+    if (!ready || !monitoringVisible) return;
     let polling = false, disposed = false;
     const id = window.setInterval(async () => {
       if (polling) return; polling = true;
       try {
         const snapshot = await bridge.fetchMonitoringSnapshot(200);
-        const trigger = await bridge.fetchTriggerStatus();
-        if (!disposed) { setMonSnapshot(snapshot); setTrigStatus(trigger); }
+        const trigger = classicMonitoringVisible ? await bridge.fetchTriggerStatus() : null;
+        if (!disposed) { setMonSnapshot(snapshot); if (trigger) setTrigStatus(trigger); }
       } catch {
         /* backend gone — next tick will surface it */
       } finally { polling = false; }
     }, 500);
     return () => { disposed = true; window.clearInterval(id); };
-  }, [monitoringVisible, ready]);
+  }, [monitoringVisible, classicMonitoringVisible, ready]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((c) => {
@@ -575,12 +652,17 @@ export default function App() {
 
   // ---- Camera discovery/selection (BE-2) + camera actions ----
 
+  // Config reads overlap (a write's readback, another write's, the boot read): one that answers
+  // after a newer one is dropped, so an old processing ROI never replaces a newer readback (A3).
+  const configReads = useRef({ started: 0, shown: 0 });
   const refreshConfig = useCallback(async (discardDraft=false) => {
     const generation=configGeneration();
     const quickToken=quickGeneration();
+    const seq = ++configReads.current.started;
     try {
       const doc = await bridge.fetchProcessingConfigJson();
-      if (doc.valid) {
+      if (doc.valid && seq > configReads.current.shown) {
+        configReads.current.shown = seq;
         const parsed = JSON.parse(doc.json);
         acceptConfig(JSON.stringify(parsed, null, 2),discardDraft,generation);
         setBackgroundSet(Boolean(parsed.background_set));
@@ -594,6 +676,9 @@ export default function App() {
             h: String(parsed.roi.h ?? 0),
           });
         }
+        const roi = parsed.roi ? { x: Number(parsed.roi.x ?? 0), y: Number(parsed.roi.y ?? 0), width: Number(parsed.roi.w ?? 0), height: Number(parsed.roi.h ?? 0) } : null;
+        configRoiRef.current = roi;
+        setConfigRoi(roi);
       }
       setCoreStatus(await bridge.fetchProcessingCoreStatus());
     } catch (e) {
@@ -618,26 +703,27 @@ export default function App() {
     }
   }, [configText, append, refreshConfig,configApplied,liveDraft.canApply]);
 
-  const onApplyRoi = useCallback(async () => {
+  // The processing ROI write, for the classic Apply ROI and the workspace's quick control (A3).
+  const applyProcessingRoi = useCallback(async (r: Rect): Promise<{ ok: boolean; message: string }> => {
     try {
-      const res = await bridge.setProcessingRoi(
-        Number(roiFields.x) || 0,
-        Number(roiFields.y) || 0,
-        Number(roiFields.w) || 0,
-        Number(roiFields.h) || 0,
-      );
+      const res = await bridge.setProcessingRoi(r.x, r.y, r.width, r.height);
       if (!res.ok) {
         append(`ROI apply failed: ${res.message}`);
         await refreshConfig();
-        return;
+        return res;
       }
-      append(`ROI set to ${roiFields.w}×${roiFields.h} @ (${roiFields.x}, ${roiFields.y})`);
+      append(`ROI set to ${r.width}×${r.height} @ (${r.x}, ${r.y})`);
       await refreshConfig();
+      return res;
     } catch (e) {
       append(`ROI error: ${e}`);
       await refreshConfig();
+      return { ok: false, message: String(e) };
     }
-  }, [roiFields, append, refreshConfig]);
+  }, [append, refreshConfig]);
+  const onApplyRoi = useCallback(async () => {
+    await applyProcessingRoi({ x: Number(roiFields.x) || 0, y: Number(roiFields.y) || 0, width: Number(roiFields.w) || 0, height: Number(roiFields.h) || 0 });
+  }, [roiFields, applyProcessingRoi]);
 
   const refreshCameraState = useCallback(async () => {
     try {
@@ -653,8 +739,17 @@ export default function App() {
   }, [ready, refreshCameraState]);
 
   // UX-3: poll every subsystem the preflight checklist needs. Runs off the
-  // capture loop so preflight works before the camera is started.
+  // capture loop so preflight works before the camera is started. One read at a time: a tick (or
+  // Refresh) while one is in flight is skipped, a read stuck for PREFLIGHT_READ_STALE_MS stops
+  // holding the poll, and a reply older than one already applied is dropped (#736 review).
+  const preflightReads = useRef(new SerialReads(PREFLIGHT_READ_STALE_MS));
   const refreshPreflight = useCallback(async () => {
+    const reads = preflightReads.current;
+    const seq = reads.begin();
+    if (seq === null) return;
+    // Separate from the batch so a backend without a Z stage cannot fail it. No Z stage on the
+    // PZ7035 (#464), so the instrument is not asked.
+    const stage = pz7035Ref.current ? null : bridge.fetchStageStatus().then((s) => s, () => null);
     try {
       const [sel, core, af, sample, sheath, trig] = await Promise.all([
         bridge.fetchCameraSelection(),
@@ -664,23 +759,31 @@ export default function App() {
         bridge.fetchPumpStatus(PUMP_IDS.Sheath),
         bridge.fetchTriggerStatus(),
       ]);
-      setCamSelection(sel);
-      setCoreStatus(core);
-      setAfStatus(af);
-      setSamplePump(sample);
-      setSheathPump(sheath);
-      setTrigStatus(trig);
+      if (reads.accept(seq)) {
+        setCamSelection(sel);
+        setCoreStatus(core);
+        setAfStatus(af);
+        setSamplePump(sample);
+        setSheathPump(sheath);
+        setTrigStatus(trig);
+      }
     } catch {
       /* backend gone — the capture loop / next poll surfaces it */
     }
+    try {
+      if (stage) { const z = await stage; if (reads.accept(seq)) setZStage(z); }
+    } finally { reads.end(seq); }
   }, []);
 
+  // The checklist is shown on the classic Connect tab and in the workspace's Prepare stage; the
+  // workspace's Experiment plan takes Prepare's verdict from it too (reads only).
+  const checklistShown = tab === "connect" || (workspaceStage !== null && workspaceReadsPrepare(workspaceStage, experimentView));
   useEffect(() => {
-    if (!ready || tab !== "connect") return;
+    if (!ready || !checklistShown) return;
     void refreshPreflight();
-    const id = window.setInterval(() => void refreshPreflight(), 1500);
+    const id = window.setInterval(() => void refreshPreflight(), PREFLIGHT_POLL_MS);
     return () => window.clearInterval(id);
-  }, [ready, tab, refreshPreflight]);
+  }, [ready, checklistShown, refreshPreflight]);
 
   const onConfigureMock = useCallback(async () => {
     try {
@@ -884,30 +987,99 @@ export default function App() {
   const [readinessMessage, setReadinessMessage] = useState("");
   // Non-blocking readiness warnings shown at run start (e.g. recording to RAM, #501).
   const [startNotice, setStartNotice] = useState("");
-  const onStartExperiment = useCallback(async () => {
-    if (experimentPending.current) return;
+  // One Start flow for the classic Start button (no start request) and the workspace's Plan, which
+  // passes the run's identity and planned annotation as startRequestJson (ABI 39, #716 A5).
+  // The outcome is decided by the start reply alone (startExperiment): the status refresh after it
+  // is a separate read, and its failure is reported as such (refreshError), never as the outcome,
+  // so a started run's identity is never offered again (#736 review).
+  // `stillWanted` (the workspace's Plan) withdraws a pending Start that lost its controlling
+  // client: checked after each answer and immediately before experiment_start (#716 A5 review).
+  const runExperimentStart = useCallback(async (startRequestJson?: string, stillWanted?: () => boolean): Promise<PlanStartResult> => {
+    if (experimentPending.current) return { kind: "busy" };
     experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
-      const outcome = await startExperiment({
-        fetchRingStatus: () => bridge.fetchRingStatus(),
-        confirm,
-        pickFile: () => save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" }),
-        fetchReadiness: (path) => bridge.fetchExperimentReadiness(path),
-        start: (path, acknowledgeDiscardRing) => bridge.experimentStart(path, acknowledgeDiscardRing),
-      });
-      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return; }
-      if (outcome.kind === "refused") {setReadinessMessage(`${outcome.path}: ${outcome.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${outcome.message}`); }
+      let outcome: StartOutcome;
+      try {
+        outcome = await startExperiment({
+          fetchRingStatus: () => bridge.fetchRingStatus(),
+          confirm,
+          pickFile: () => save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" }),
+          fetchReadiness: (path) => bridge.fetchExperimentReadiness(path),
+          start: (path, acknowledgeDiscardRing, request) => bridge.experimentStart(path, acknowledgeDiscardRing, request),
+        }, startRequestJson, stillWanted);
+      } catch (e) {
+        // Before the start request was sent (dialog or readiness): nothing was started.
+        append(`experiment start error: ${e}`);
+        return { kind: "error", message: String(e) };
+      }
+      const refreshStatus = async (): Promise<string> => {
+        try { setExpStatus(await bridge.fetchExperimentStatus()); return ""; }
+        catch (e) { append(`experiment status refresh error: ${e}`); return String(e); }
+      };
+      if (outcome.kind === "withdrawn") { append("experiment start withdrawn: control was lost while it was pending; nothing was sent"); return outcome; }
+      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return outcome; }
+      if (outcome.kind === "refused") {
+        setReadinessMessage(`${outcome.path}: ${outcome.message}`); append(`experiment start failed: ${outcome.message}`);
+        const refreshError = await refreshStatus();
+        return refreshError ? { ...outcome, refreshError } : outcome;
+      }
+      if (outcome.kind === "unknown") {
+        // A reply that was read but locks the identity (its code can follow an opened file) is still a
+        // refusal for the classic Start; only a lost reply is "not known".
+        if (outcome.code !== undefined) { setReadinessMessage(`${outcome.path}: ${outcome.message}`); append(`experiment start failed: ${outcome.message}`); }
+        else append(`experiment start error (outcome not known): ${outcome.message}`);
+        const refreshError = await refreshStatus();
+        return refreshError ? { ...outcome, refreshError } : outcome;
+      }
       if (outcome.kind === "started") {
-        // The backend's path: a relative one is resolved under the data directory (#762).
-        const status = await bridge.fetchExperimentStatus();
+        // One status read: it names the backend's path (a relative one is resolved under the data
+        // directory, #762), and its failure is the refresh error, never the outcome.
+        let status: Awaited<ReturnType<typeof bridge.fetchExperimentStatus>> | null = null;
+        let refreshError = "";
+        try { status = await bridge.fetchExperimentStatus(); setExpStatus(status); }
+        catch (e) { append(`experiment status refresh error: ${e}`); refreshError = String(e); }
         append(`experiment started → ${status?.output_path || outcome.path}`);
         if (outcome.notice) { setStartNotice(outcome.notice); append(outcome.notice); }
-        setExpStatus(status);
+        return refreshError ? { ...outcome, refreshError } : outcome;
       }
-    } catch (e) {
-      append(`experiment start error: ${e}`);
+      return outcome;
     } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
   }, [append]);
+  const onStartExperiment = useCallback(() => { void runExperimentStart(); }, [runExperimentStart]);
+  // The workspace's sample queue stops its row's run and is told the reply (the queue then follows
+  // the drain and finalize in the polled status). The stop names that run (ABI 40, #741): with another
+  // run active the backend refuses it (stop outcome RunMismatch) and stops nothing. The classic Stop
+  // below is tied to no row and sends no generation.
+  const stopForPlan = useCallback(async (expectedStartGeneration: string): Promise<StopReply> => {
+    const res = await bridge.experimentStop(expectedStartGeneration);
+    append(res.ok ? `experiment stop requested (sample queue, run generation ${expectedStartGeneration})` : `experiment stop failed (sample queue): ${res.message}`);
+    try { setExpStatus(await bridge.fetchExperimentStatus()); } catch (e) { append(`experiment status refresh error: ${e}`); }
+    return res;
+  }, [append]);
+  // The workspace's Live view stops the run the status shows active, by its start generation (ABI 40):
+  // with another run active by then the backend refuses it (stop outcome RunMismatch) and stops nothing.
+  const stopForLive = useCallback(async (expectedStartGeneration: string): Promise<StopReply> => {
+    const res = await bridge.experimentStop(expectedStartGeneration);
+    append(res.ok ? `experiment stop requested (Live, run generation ${expectedStartGeneration})` : `experiment stop failed (Live): ${res.message}`);
+    try { setExpStatus(await bridge.fetchExperimentStatus()); } catch (e) { append(`experiment status refresh error: ${e}`); }
+    return res;
+  }, [append]);
+  // Who controls the instrument: a browser that loses control pauses the sample queue (#711).
+  const controlHeld = useHoldsControl();
+  // The monitoring switch (BE-5; #716 A6b ruling). It is the instrument's, shared by every client,
+  // and only gates the monitoring rings and the cell strip they feed (never acquisition, recording
+  // or the run). On while a monitoring view is shown here. Off when none is, but only once the run
+  // status has been read and shows no run in progress: during a run it is left as it is, so the
+  // controller moving to Plan or Prepare never cuts the feed viewer clients watch, and after the
+  // run it follows the view again. Only the controlling client sends it.
+  const monitoringRunInProgress = runInProgress(expStatus);
+  const monitoringWanted: boolean | null = monitoringVisible ? true : expStatus !== null && !monitoringRunInProgress ? false : null;
+  useEffect(() => {
+    if (!ready || !controlHeld || monitoringWanted === null) return;
+    bridge.monitoringSetActive(monitoringWanted).catch(() => {});
+  }, [ready, controlHeld, monitoringWanted]);
+  // The workspace's Experiment plan (O3): local until its buttons (Start run, the queue's steps).
+  const plan = usePlan(runExperimentStart, { status: expStatus, stop: stopForPlan, controlHeld, operations });
 
   const onStopExperiment = useCallback(async () => {
     try {
@@ -962,11 +1134,13 @@ export default function App() {
     setReviewMeta(null);setMetricsPage(null);setReviewPath("");setReviewing(false);setReviewIndex("0");setReviewImgIndex(0);
     const canvas=reviewCanvasRef.current;if(canvas)canvas.getContext("2d")?.clearRect(0,0,canvas.width,canvas.height);
   },[]);
-  const onSelectHdf = useCallback(async () => {
+  // Opens a recording in the classic Review: the file the operator picks, or `given` (the workspace
+  // Quick look's Open in Review, #716 A7b).
+  const loadReviewSource = useCallback(async (given?: string) => {
     if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);
     const sourceGeneration=++reviewSourceGeneration.current;
     try {
-    const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
+    const picked = given ?? await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
     if (typeof picked !== "string") return;
     ++metricsGeneration.current;
     framePulls.current.invalidate("review");
@@ -977,7 +1151,7 @@ export default function App() {
       setReviewPath(picked);
       setReviewing(true);
       append(`loaded ${picked}`);
-      applyEvents(await bridge.pollEvents());
+      applyEvents(await bridge.pollEvents().catch((e: unknown) => { noteEventLoss(); throw e; }));
       const meta = await bridge.fetchReviewMetadata();
       setReviewMeta(meta);
       setReviewTab(meta.recording_file ? "raw" : "valid");
@@ -993,7 +1167,8 @@ export default function App() {
       try { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata); } catch { clearReviewSource(); }
     } finally {reviewSourcePending.current=false;setReviewSourceBusy(false);}
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage,clearReviewSource]);
+  }, [append, applyEvents, noteEventLoss, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage,clearReviewSource]);
+  const onSelectHdf = useCallback(() => loadReviewSource(), [loadReviewSource]);
 
   useEffect(()=>{
     if(!ready||tab!=="review"||!recoveredReview.current||!reviewMeta?.file_open)return;
@@ -1087,10 +1262,18 @@ export default function App() {
     refreshGeometry: () => refreshCameraGeometryRef.current(),
   });
   const cameraWindow = cameraWin.window, setCameraWindow = cameraWin.setWindow;
+  // Reads overlap (the 2 s poll, a save's readback, a mode switch): an older read that answers
+  // after a newer one is not shown, so a readback taken after a write is never replaced by one
+  // from before it.
+  const geometryReads = useRef({ started: 0, shown: 0 });
   const refreshCameraGeometry = useCallback(async (): Promise<CameraGeometry | null> => {
+    const seq = ++geometryReads.current.started;
     try {
       const geometry = await bridge.fetchCameraGeometry();
+      if (seq < geometryReads.current.shown) return cameraGeometryRef.current;
+      geometryReads.current.shown = seq;
       setCameraGeometry(geometry);
+      cameraGeometryRef.current = geometry;
       cameraWin.showDefault(geometry);
       return geometry;
     } catch {
@@ -1121,45 +1304,66 @@ export default function App() {
 
   // Qt parity (MainWindow tab change): Camera & Alignment shows the whole sensor, Experiment the
   // saved window, other tabs leave the camera as it is; never during a run. A running capture
-  // restarts in the new mode (backend).
+  // restarts in the new mode (backend). One function, used by the classic tab change, by the
+  // workspace's explicit "Show the full sensor" / "Switch to Align" button (A3) and by the classic
+  // notice's button after the workspace changed the mode; the workspace never calls it on
+  // navigation, and leaving the workspace never calls it. Resolves true when the camera is in the
+  // target mode afterwards (switched, or already there).
+  // True when the workspace switched the mode, or a classic switch was skipped while it was open:
+  // the classic tab then shows the mismatch with an explicit switch (ClassicModeNotice).
+  const [classicModeStale, setClassicModeStale] = useState(false);
+  const [classicModeBusy, setClassicModeBusy] = useState(false);
+  const applyCameraMode = useCallback(async (target: "overview" | "experiment", cancelled: () => boolean = () => false): Promise<boolean> => {
+    const geometry = await refreshCameraGeometry();
+    if (cancelled() || expActive) return false;
+    if (instrumentModes) {
+      // PZ7035 (#501 P1): the backend owns the switch (LED, cell path, producer timing).
+      const want = target === "overview" ? "align" : "run";
+      const current = instrumentRef.current?.mode;
+      const win = cameraWindowRef.current ? snapRunWindow(cameraWindowRef.current) : null;
+      // No placed window: stay as we are; the Experiment tab says so and offers the way there.
+      if (want === "run" && (!win || !cameraWin.placedRef.current)) return false;
+      if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) { setModeError(null); return true; }
+      // A stopped Run holds the frames the operator stopped to review: a tab change must not silently discard them (the backend refuses the
+      // switch as well). Resume Run ends it, and this effect then switches to the tab's mode.
+      if (instrumentRef.current?.ring?.run_frozen) {
+        append("Run is stopped to review the buffered frames: Resume Run before changing the camera mode");
+        return false;
+      }
+      if (cancelled()) return false; // checked again right before acting
+      append(want === "align" ? "switching to Align (full sensor)…" : `switching to Run at (${win!.x}, ${win!.y})…`);
+      const result = await bridge.setInstrumentMode(want, win?.x ?? 0, win?.y ?? 0);
+      append(result.ok ? result.message : `Camera mode: ${result.message}`);
+      if (cancelled()) return result.ok;
+      setModeError(result.ok ? null : {mode: want, message: result.message});
+      setRunning(result.ok && want === "align");
+      await refreshCameraGeometry();
+      return result.ok;
+    }
+    if (!geometry?.supported) return false;
+    const overview = target === "overview";
+    if (geometry.overview === overview) return true;
+    if (cancelled()) return false; // checked again right before acting
+    const result = await bridge.setCameraOverview(overview);
+    append(result.ok ? result.message : `Camera mode: ${result.message}`);
+    setModeError(result.ok ? null : {mode: overview ? "align" : "run", message: result.message});
+    if (!cancelled()) await refreshCameraGeometry();
+    return result.ok;
+  }, [expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placedRef]);
   useEffect(() => {
     if (!ready || (tab !== "overview" && tab !== "experiment")) return;
+    // While the workspace is shown the hidden classic tab switches nothing (a dependency change,
+    // such as a Run window placed in Align, would otherwise act behind the operator); the classic
+    // view says so when it is shown again, with an explicit switch.
+    if (workspaceStageRef.current !== null) { setClassicModeStale(true); return; }
+    setClassicModeStale(false);
     let cancelled = false;
-    void (async () => {
-      const geometry = await refreshCameraGeometry();
-      if (cancelled || expActive) return;
-      if (instrumentModes) {
-        // PZ7035 (#501 P1): the backend owns the switch (LED, cell path, producer timing).
-        const want = tab === "overview" ? "align" : "run";
-        const current = instrumentRef.current?.mode;
-        const win = cameraWindowRef.current ? snapRunWindow(cameraWindowRef.current) : null;
-        // No placed window: stay as we are; the Experiment tab says so and offers the way there.
-        if (want === "run" && (!win || !cameraWin.placedRef.current)) return;
-        if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) { setModeError(null); return; }
-        // A stopped Run holds the frames the operator stopped to review: a tab change must not silently discard them (the backend refuses the
-        // switch as well). Resume Run ends it, and this effect then switches to the tab's mode.
-        if (instrumentRef.current?.ring?.run_frozen) {
-          append("Run is stopped to review the buffered frames: Resume Run before changing the camera mode");
-          return;
-        }
-        append(want === "align" ? "switching to Align (full sensor)…" : `switching to Run at (${win!.x}, ${win!.y})…`);
-        const result = await bridge.setInstrumentMode(want, win?.x ?? 0, win?.y ?? 0);
-        append(result.ok ? result.message : `Camera mode: ${result.message}`);
-        if (cancelled) return;
-        setModeError(result.ok ? null : {mode: want, message: result.message});
-        setRunning(result.ok && want === "align");
-        await refreshCameraGeometry();
-        return;
-      }
-      if (!geometry?.supported) return;
-      const overview = tab === "overview";
-      if (geometry.overview === overview) return;
-      const result = await bridge.setCameraOverview(overview);
-      append(result.ok ? result.message : `Camera mode: ${result.message}`);
-      if (!cancelled) await refreshCameraGeometry();
-    })();
+    // A classic switch is cancelled by the workspace opening while it awaits a read: it then acts
+    // on nothing, and the classic tab shows the mismatch when it is shown again.
+    const stop = () => cancelled || workspaceStageRef.current !== null;
+    void applyCameraMode(tab, stop).then(() => { if (!cancelled && workspaceStageRef.current !== null) setClassicModeStale(true); });
     return () => { cancelled = true; };
-  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry, instrumentMode?.idle, instrument?.ring?.run_frozen]);
+  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry, instrumentMode?.idle, instrument?.ring?.run_frozen, applyCameraMode]);
 
   // The camera's read-back (applied window, sensor and delivered rate) follows its restart.
   useEffect(() => {
@@ -1167,6 +1371,71 @@ export default function App() {
     const id = window.setInterval(() => void refreshCameraGeometry(), 2000);
     return () => window.clearInterval(id);
   }, [ready, tab, refreshCameraGeometry]);
+  // The workspace's Align stage reads the same read-back while it is shown (reads only; A3).
+  const alignShown = workspaceStage === 1;
+  useEffect(() => {
+    if (!ready || !alignShown) return;
+    void refreshCameraGeometry();
+    const id = window.setInterval(() => void refreshCameraGeometry(), 2000);
+    return () => window.clearInterval(id);
+  }, [ready, alignShown, refreshCameraGeometry]);
+  // The workspace's explicit mode button: the classic tab's switch, never sent on navigation.
+  const switchFromWorkspace = useCallback(async () => {
+    setClassicModeStale(true);
+    await applyCameraMode("overview");
+  }, [applyCameraMode]);
+  // The Plan's explicit switch to the mode a run records in (#716 A5): the PZ7035's Run, a desktop
+  // camera's experiment window after the full sensor; the classic Experiment tab's entry switch,
+  // here only on its button.
+  const switchPlanCameraMode = useCallback(async () => {
+    setClassicModeStale(true);
+    await applyCameraMode("experiment");
+  }, [applyCameraMode]);
+  // Opening the workspace cancels a pending classic switch at once (the ref, before the render):
+  // a classic tab change that is still awaiting its read then sends nothing. The menu row's
+  // "Workspace preview" is an explicit choice: the next start opens the workspace again.
+  const openWorkspace = useCallback(() => { workspaceStageRef.current = 0; setWorkspaceStage(0); writeLanding("workspace"); }, []);
+  // Leaving the workspace never acts: a mode the workspace changed is shown, not reverted.
+  const exitWorkspace = useCallback(() => setWorkspaceStage(null), []);
+  // The workspace's "Classic view" is the operator's choice: the next start opens the classic view.
+  // Task jumps (Prepare's setup buttons, Open in Review) use exitWorkspace and change nothing.
+  const chooseClassic = useCallback(() => { setWorkspaceStage(null); writeLanding("classic"); }, []);
+  // The workspace Quick look's Open in Review (#716 A7b): the classic Review tab with the run's file. It
+  // loads the file there (`load_recording`, a control command: a viewer's button is disabled), and
+  // never during a run. While a file is open in Review the backend refuses Start (D1 (a), #722).
+  const summaryReviewReason = !ready ? "the backend is not initialized"
+    : expActive ? "a run is in progress: open the file in Review between runs (a file open in Review blocks Start)"
+    : reviewSourceBusy ? "the classic Review is opening a file" : "";
+  const openInReview = useCallback((path: string) => {
+    if (!controlHeld || expActive || reviewSourcePending.current) return;
+    setTab("review");
+    exitWorkspace();
+    void loadReviewSource(path);
+  }, [controlHeld, expActive, exitWorkspace, loadReviewSource]);
+  const modeNotice = workspaceStage === null ? classicModeNotice({
+    stale: classicModeStale, tab, instrumentModes, instrumentMode: instrument?.mode?.name, geometry: cameraGeometry,
+    windowPlaced: cameraWin.placed, expActive, runFrozen: !!instrument?.ring?.run_frozen,
+  }) : null;
+  const applyClassicMode = useCallback(async () => {
+    if (tab !== "overview" && tab !== "experiment") return;
+    setClassicModeBusy(true);
+    // Like a tab change: opening the workspace while this awaits its read cancels it.
+    try { if (await applyCameraMode(tab, () => workspaceStageRef.current !== null)) setClassicModeStale(false); } finally { setClassicModeBusy(false); }
+  }, [tab, applyCameraMode]);
+  // The workspace's ROI quick control writes through the classic tab's commands, and answers with
+  // the readback read after the write.
+  const writeAlignRoi = useCallback(async (kind: RoiKind, rect: Rect): Promise<WriteResult<Rect>> => {
+    if (kind === "processing") {
+      const res = await applyProcessingRoi(rect);
+      return res.ok ? { ok: true, readback: configRoiRef.current, message: res.message } : { ok: false, reason: res.message };
+    }
+    const saved = await cameraWin.save(rect);
+    if (!saved) return { ok: false, reason: "the camera reports no window it can save" };
+    if (!saved.ok) return { ok: false, reason: saved.message };
+    if (kind === "run") return { ok: true, readback: restoredRunWindow(instrumentRef.current?.mode), message: saved.message };
+    const roi = saved.geometry?.roi;
+    return { ok: true, readback: roi && roi.width > 0 && roi.height > 0 ? { ...roi } : null, message: saved.message };
+  }, [applyProcessingRoi, cameraWin.save]);
 
   const saveCameraWindow = cameraWin.save;
   const onWindowPointerDown = cameraWin.onPointerDown, onWindowPointerMove = cameraWin.onPointerMove, onWindowPointerUp = cameraWin.onPointerUp;
@@ -1215,15 +1484,26 @@ export default function App() {
         : undefined;
 
   // ---- UX-1 guided four-stage workflow (issue #305) ----
-  // Signatures the operator confirms against: change the device or the pinned
-  // processing core and the prior confirmation no longer matches.
-  const deviceIdentity = cameraConfigured
-    ? `${camSelection?.mode ?? ""}|${camSelection?.label ?? ""}`
-    : "";
-  const preflightSignature = cameraConfigured
-    ? `${deviceIdentity}|core:${coreStatus?.valid ? coreStatus.active_version : ""}`
-    : "";
-  const alignmentSignature = deviceIdentity;
+  // Signatures the operator confirms against: change the camera, the host core, the PL build or
+  // weights, a pump or stage, the applied profile or the reported destination and the prior
+  // Preflight confirmation no longer matches (#713, confirmationSignature.ts).
+  const cameraFacts = { configured: cameraConfigured, mode: camSelection?.mode ?? 0, label: camSelection?.label ?? "" };
+  const pumpIdentity = (p: PumpStatus | null): SignatureDevice | null =>
+    p && p.valid ? { connected: p.connected, identity: `${p.model ?? ""}@${p.port_name || `COM${p.com_port}`}#${p.modbus_address}` } : null;
+  const preflightSignature = signPreflight({
+    camera: cameraFacts,
+    coreVersion: coreStatus ? (coreStatus.valid ? coreStatus.active_version : "") : null,
+    plCore: instrument?.core ? { buildId: instrument.core.build_id, weightsId: instrument.core.profile_id } : null,
+    samplePump: pumpIdentity(samplePump),
+    sheathPump: pumpIdentity(sheathPump),
+    zStage: zStage && zStage.valid ? { connected: zStage.connected, identity: `${zStage.model} ${zStage.serial} @ ${zStage.port_name}` } : null,
+    nanopositioner: afStatus && afStatus.valid
+      ? { connected: afStatus.connected, identity: afStatus.endpoint_id || `${afStatus.backend_name || "Controller"} COM${afStatus.com_port}` }
+      : null,
+    profile: profiles.activeProfile ? { id: profiles.activeProfile.profile_id ?? profiles.activeProfile.name, revision: profiles.activeProfile.revision } : null,
+    storagePath: instrument?.storage ? instrument.storage.path : null,
+  });
+  const alignmentSignature = cameraIdentity(cameraFacts);
   // Saved rows plus Idle do not prove successful finalization. The accepted
   // backend must supply a retained exact terminal outcome before showing Complete.
   const experimentCompleted = false;
@@ -1239,6 +1519,7 @@ export default function App() {
     corePinSatisfied: coreStatus?.pin_satisfied ?? false,
     coreVersion: coreStatus?.active_version ?? "",
     requiredCoreVersion: coreStatus?.required_version ?? "",
+    coreKnown: coreStatus !== null,
     autofocus: {
       valid: afStatus?.valid ?? false,
       connected: afStatus?.connected ?? false,
@@ -1277,10 +1558,10 @@ export default function App() {
     coreValid: coreStatus?.valid ?? false,
     corePinSatisfied: coreStatus?.pin_satisfied ?? false,
     requiredCoreVersion: coreStatus?.required_version ?? "",
-    // The checklist's own rule ("Required checks must pass before Preflight can be confirmed"),
-    // so a failing required check (PL core, sensor link, LED strobe) cannot be confirmed (#548).
+    // The checklist's own rule: a required check that is not passed (failed, unknown or warning)
+    // cannot be confirmed (#548); unsupported and not-required rows never block (#713).
     requiredFailures: preflight.checks
-      .filter((c) => c.requirement === "required" && c.status !== "passed")
+      .filter((c) => c.blocks)
       .map((c) => `${c.label}: ${c.detail}`),
     experimentState: expState,
     experimentCompleted,
@@ -1327,7 +1608,9 @@ export default function App() {
 
   // ---- UX-8 persistent active-context bar (issue #312) ----
   // Warnings = unresolved attention items surfaced by preflight + quality.
-  const warningsCount = preflight.failed + preflight.warning + quality.warn + quality.fail;
+  // A required check that is not read yet needs attention as well (#713); optional unknowns do not.
+  const requiredUnknown = preflight.checks.filter((c) => c.status === "unknown" && c.requirement === "required").length;
+  const warningsCount = preflight.failed + preflight.warning + requiredUnknown + quality.warn + quality.fail;
   const contextFacts: ContextBarFacts = {
     profileName: profiles.activeProfile?.profile_id || profiles.activeProfile?.name || "",
     cameraConfigured,
@@ -1402,6 +1685,9 @@ export default function App() {
   useEffect(() => {
     if (didInitStage.current || !ready || camSelection === null) return;
     didInitStage.current = true;
+    // In the workspace the classic tab stays where it is: a landing on Camera & Alignment or
+    // Experiment would switch camera modes (and the PZ7035 LED) behind the operator's back.
+    if (workspaceStageRef.current !== null || startedInWorkspace.current) return;
     if (expActive || expState === EXPERIMENT_STATES.Failed) {
       setTab("experiment");
       return;
@@ -1411,10 +1697,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, camSelection, expActive, expState]);
 
+  // Hidden, not unmounted, while the workspace is shown: the classic view keeps its state and
+  // nothing in it mounts, unmounts or changes tab because of the workspace.
+  const classicHidden = workspaceStage !== null ? { display: "none" } : undefined;
   return (
     <div className="app">
       {/* ---- Menu row ---- */}
-      <nav className="menubar" aria-label="Main menu">
+      <nav className="menubar" aria-label="Main menu" style={classicHidden}>
         <Menu
           label="File"
           items={[
@@ -1467,6 +1756,14 @@ export default function App() {
         <div className="menubar-spacer" />
         <button
           type="button"
+          className="workspace-toggle"
+          onClick={openWorkspace}
+          title="Open the Prepare / Align / Experiment / Review workspace. Opening it acts on nothing; the app then opens in it at the next start."
+        >
+          Workspace preview
+        </button>
+        <button
+          type="button"
           className={`mode-toggle ${operatingMode}`}
           onClick={() => enterMode(operatingMode === "service" ? "operator" : "service")}
           title="Switch between routine Operator mode and Service / Commissioning mode"
@@ -1477,7 +1774,7 @@ export default function App() {
       </nav>
 
       {operatingMode === "service" && (
-        <div className="service-banner" role="alert">
+        <div className="service-banner" role="alert" style={classicHidden}>
           <span>
             <strong>Service / Commissioning mode</strong> — hardware-actuating controls are enabled.
             Not for routine operation.
@@ -1489,7 +1786,63 @@ export default function App() {
         </div>
       )}
 
-      <div className="body">
+      {workspaceStage !== null && (
+        <div className="workspace-host">
+          <Workspace
+            brand={brand}
+            source={cameraConfigured ? camSelection?.label || (camSelection?.mode === 1 ? "Mock camera" : "Camera") : ""}
+            method={profiles.activeProfile ? profiles.activeProfile.profile_id || profiles.activeProfile.name : ""}
+            stage={workspaceStage}
+            onStage={setWorkspaceStage}
+            onExit={chooseClassic}
+            serviceMode={operatingMode === "service"}
+            align={{
+              facts: {
+                pz7035, instrumentModes, hostProcessing, geometry: cameraGeometry,
+                instrumentMode: instrumentModes ? instrument?.mode?.name ?? null : null,
+                runFrozen, modeError: modeError?.mode === "align" ? modeError.message : "",
+                appliedRunWindow: restoredRunWindow(instrument?.mode),
+                placedRunWindow: cameraWin.placed ? cameraWindow : null,
+                processingRoi: configRoi, runFps: runFpsStatus, experimentActive: expActive, running,
+              },
+              subscribeFrames: subscribeAlignFrames,
+              onSwitchMode: switchFromWorkspace,
+              writeRoi: writeAlignRoi,
+              features: ALIGN_CAMERA_FEATURES,
+              lockedReason: alignLockedReason(ready, expActive, viewerOnly),
+            }}
+            preflightInput={preflightInput}
+            zStage={zStage}
+            signature={preflightSignature}
+            confirmedFor={preflightConfirmedFor}
+            onConfirm={() => { if (!expActive) setPreflightConfirmedFor(preflightSignature); }}
+            confirmLockedReason={!ready ? "Backend is not initialized" : expActive ? "Setup is locked while an experiment is active" : ""}
+            experimentActive={expActive}
+            // Prepare's calibration Apply is a control command: a viewer's sends nothing (#716 A4b).
+            controlHeld={controlHeld}
+            onRefreshChecks={() => void refreshPreflight()}
+            // The classic Connect tab only reads (it never switches camera modes).
+            onOpenSetup={() => { setTab("connect"); exitWorkspace(); }}
+            // O3 Plan: Start run is locked for the same reasons as the classic Start button.
+            experiment={{ plan, onOpenSource: async (path: string) => { if (summaryReviewReason) throw new Error(summaryReviewReason); await loadReviewSource(path); }, lockedReason: startExperimentReason ?? "", view: experimentView, onView: setExperimentView,
+              cameraMode: planCameraMode({ instrumentModes, mode: instrumentModes ? instrument?.mode?.name ?? null : null, windowPlaced: cameraWin.placed,
+                experimentActive: expActive, runFrozen: !!instrument?.ring?.run_frozen, modeError: modeError?.mode === "run" ? modeError.message : "",
+                fullSensor: !instrumentModes && cameraGeometry?.supported && cameraGeometry.overview
+                  ? { width: cameraGeometry.sensor_width, height: cameraGeometry.sensor_height } : null }),
+              onCameraMode: switchPlanCameraMode,
+              // O4 Live: the monitoring snapshot polled while it is shown, the live preview's frames,
+              // and the two separate stops (the classic Stop Camera; experiment_stop naming the run).
+              live: { snapshot: workspaceLiveVisible ? monSnapshot : null, running, experimentActive: expActive, hostProcessing,
+                subscribeFrames: subscribeAlignFrames, onStopAcquisition: onStopCamera, onStopRun: stopForLive },
+              // O5 Run summary / O6 Quick look (A7b, A7c): Open in Review, the classic Review tab with the run's file.
+              summary: { review: { reason: summaryReviewReason, open: openInReview } },
+              // A recording open in the classic Review blocks the Plan's Start (the backend refuses it).
+              reviewOpen: reviewFilePath }}
+          />
+        </div>
+      )}
+
+      <div className="body" style={classicHidden}>
         {/* ---- Telemetry sidebar ---- */}
         <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`} aria-label="Telemetry sidebar">
           {caps.host_background && <div className="side-section">
@@ -1677,6 +2030,7 @@ export default function App() {
           <ExportStatus model={reviewExport} />
           </ViewerGate>
           <div className="tab-body">
+            {modeNotice && <ClassicModeNotice notice={modeNotice} busy={classicModeBusy} onApply={() => void applyClassicMode()} />}
             <PanelErrorBoundary>{() => <>
             <div hidden={tab !== "connect"}><ViewerGate>
               <HardwareControls ready={ready} experimentActive={expActive} append={append} capabilities={caps}
@@ -1769,6 +2123,8 @@ export default function App() {
                     <h4>Hardware preflight</h4>
                     <span className="preflight-summary">
                       {preflight.passed} passed · {preflight.warning} warning · {preflight.failed} failed
+                      {preflight.unknown ? ` · ${preflight.unknown} unknown` : ""}
+                      {preflight.unsupported ? ` · ${preflight.unsupported} unsupported` : ""}
                       {preflight.notRequired ? ` · ${preflight.notRequired} n/a` : ""}
                     </span>
                     <button className="btn" onClick={() => void refreshPreflight()} disabled={!ready}>
@@ -1818,7 +2174,7 @@ export default function App() {
                   <p className={`preflight-foot ${preflight.criticalPassed ? "ok" : "warn"}`}>
                     {preflight.criticalPassed
                       ? "Required checks pass — confirm readiness in the workflow bar to complete Preflight."
-                      : "Required checks must pass before Preflight can be confirmed."}
+                      : "Required checks must pass (an unknown check is not a pass) before Preflight can be confirmed."}
                   </p>
                 </div>
               </>
@@ -2174,6 +2530,10 @@ export default function App() {
                 {expTab === "files" && isRemote && <FilesPanel ramWarning={instrument?.storage?.warning || undefined} />}
                 {expTab === "monitoring" && (
                   <>
+                    <details><summary>Live population strategies</summary>
+                      <AnalysisWorkspace path="" disabled={!ready || viewerOnly} graphText={JSON.stringify(exampleGraph)} feature="area"
+                        read={bridge.analysisRead} write={bridge.analysisWrite} job={bridge.analysisJob} live />
+                    </details>
                     <div className="toolbar">
                       <ViewerGate>
                       <button
@@ -2425,6 +2785,9 @@ export default function App() {
                 <div className="subtab-body">
                   <RunOutcomeNotice outcome={reviewOutcome} />
                   <ReviewExportOptions model={reviewExport}/>
+                  {reviewMeta?.file_open && !reviewMeta.recording_file && <PopulationAnalysis
+                    key={`${reviewMeta.file_path}:${reviewSourceGeneration.current}`} path={reviewMeta.file_path} evaluate={bridge.analyzePopulation} analysisRead={bridge.analysisRead} analysisWrite={bridge.analysisWrite} analysisJob={bridge.analysisJob} live
+                    disabled={!ready || expActive || reviewSourceBusy || reviewExport.busy || reanalysis.busy} />}
                   {caps.reanalysis && <ViewerGate><ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/></ViewerGate>}
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
                   <div className="review-split" style={reviewTab === "charts" ? { display: "none" } : undefined}>
@@ -2547,7 +2910,7 @@ export default function App() {
 
       {/* ---- Status bar ---- */}
       {/* ---- UX-8 persistent active-context bar (all stages) ---- */}
-      <div className="context-bar" role="region" aria-label="Active context">
+      <div className="context-bar" role="region" aria-label="Active context" style={classicHidden}>
         {contextBar.segments.map((s) => {
           const label = `${s.label}: ${s.value} (${SEG_STATUS_LABEL[s.status]})`;
           const clickable = !!s.tab;

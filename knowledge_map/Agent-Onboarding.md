@@ -20,6 +20,9 @@
 
 ## Step 3 — Pick the relevant cluster
 
+For the shared scientific analysis module, start with [[services/AnalysisWorker]];
+its internal worker protocol is not a new public Studio/Review ABI.
+
 Jump to the notes that match your task:
 
 | If you're touching... | Start here |
@@ -46,6 +49,7 @@ Jump to the notes that match your task:
 | React + Tauri migration / Rust bridge | [[architecture/Rust-Bridge]] + `docs/decisions/0003-rust-cxx-bridge.md` |
 | React + Tauri desktop app (`desktop/`) | [[architecture/Desktop-Shell]] |
 | YOFO Review (standalone review product, `desktop/src/review/`) | [[frontend/YofoReview]] + `docs/exec-plans/active/2026-10-01-standalone-review-app.md` |
+| Shared UI language kit (`desktop/ui/`, `@mib/ui`) | [[frontend/UI-Language-Kit]] |
 | Syringe pumps | [[services/SyringePumpService]] + [[frontend/SyringePumpTab]] |
 | Pulse generator / shared RS485 bus | [[services/PulseGeneratorService]] + [[services/SerialBus]] + [[frontend/ConfigTabs]] |
 | Motorized Z stage (ZC300 / TBZF6-60): Home, soft limits, read-only start-up | [[services/StageService]] + [[services/ZC300Stage]] + `docs/decisions/0013-motion-stage-device-class.md` |
@@ -112,3 +116,6 @@ If your PR has code changes but no vault changes, expect reviewers to push
 back.
 
 Central method registry/cache (#398): [[services/ProfileRegistryService]].
+
+Workspace persistence core (#807): [[services/WorkspaceStore]]; injected metadata connection, not a second method/journal authority.
+Recipe authority (#807 I02): [[services/RecipeProvider]]; recipes live in `recipe/` of the same store, create-only.

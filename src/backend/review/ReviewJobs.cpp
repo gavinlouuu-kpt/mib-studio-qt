@@ -699,6 +699,22 @@ namespace backend::review
         return impl_->session.probeRuns(paths, out, error);
     }
 
+    std::string ReviewJobs::analyzePopulation(const std::string& requestJson) {
+        std::scoped_lock lock(impl_->mutex);
+        for (const auto& lane : impl_->lanes)
+            if (lane.busy)
+                return R"({"ok":false,"message":"A review job is running; analysis is deferred"})";
+        return impl_->session.analyzePopulation(requestJson);
+    }
+
+    void ReviewJobs::withRecordingColumns(const std::string& path, const std::string& expectedFingerprint,
+                                          const std::function<void(const analysis::EventColumns&)>& use) {
+        std::scoped_lock lock(impl_->mutex);
+        for (const auto& lane : impl_->lanes)
+            if (lane.busy) throw std::invalid_argument("A review job is running; analysis is deferred");
+        impl_->session.withRecordingColumns(path, expectedFingerprint, use);
+    }
+
     RunStatisticsResult ReviewJobs::runStatistics(const std::string &path, const std::string &computedAt)
     {
         // The probe's rule (lock order: the lanes' mutex, then the session's).

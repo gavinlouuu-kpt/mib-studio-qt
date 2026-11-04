@@ -1,0 +1,38 @@
+## 2026-10-19 — Opt-in workspace with O1 Prepare; Unknown/Unsupported preflight states (#713)
+
+Step A1 of track A (#716), the rest of #713 after the probe cache (#719) and the kit wiring (#723).
+
+- **Opt-in workspace.** "Workspace preview" in the menu row opens a Prepare / Align / Experiment /
+  Review shell on `@mib/ui` (`desktop/src/workspace/`). Session state only: every start and
+  reload opens the classic view. The classic view stays mounted (hidden) and its tab never
+  changes, because classic tab changes switch camera modes (and the PZ7035 LED). Only Prepare
+  has content; the other stages say so and offer the way back.
+- **Prepare** shows the hardware checklist by subsystem and the backend readiness gates read
+  without a path (`fetchExperimentReadiness("")`, every 2 s while shown, paused during a run): the
+  backend reports `storage.output` Unavailable and writes no probe file; Start re-evaluates with
+  the chosen file. Gates show plain labels (raw id as secondary text).
+- **One verdict** combines the checklist and the gates, and never contradicts Confirm:
+  - Not ready (the checklist blocks);
+  - Readiness paused (a run is active);
+  - Ready to confirm · Start blocked: <labels> (the checklist passes, a gate refuses Start), with
+    a Notice "Start will be refused until: <label> — <remediation>";
+  - Ready with warnings;
+  - Ready.
+  
+  The destination gate is never counted.
+- **Confirm** follows the checklist only, as in the classic Preflight. Some gates can only pass
+  later (the ROI in Align, the destination at Start). A disabled Confirm says why next to the
+  button.
+- **Checklist states** (`preflight.ts`): not read yet is `unknown` (was `failed` or
+  `not-required`), an absent capability is `unsupported`, unreported storage is `unknown` (was
+  `not-required`). `checkGateStatus` maps them to Pass / Warn / Fail / Unavailable / NotRequired.
+  An unverifiable PL build or weights is `unknown` (was `warning`). Preflight blocking is
+  otherwise unchanged (#548, failing closed): required failed, unknown and warning rows block;
+  unsupported and not-required never do, and backend gates never unblock a row.
+- **Confirmation signature** (`confirmationSignature.ts`) now binds the PL build and weights,
+  pump, Z stage and nanopositioner identities, profile id and revision and the reported
+  destination, besides camera and core. Existing confirmations are invalidated once.
+- **Gate:** `workspace/navigation.test.tsx` (whole App, mocked transport, desktop and PZ7035):
+  pure navigation adds only the path-less readiness read and nothing that acts.
+
+See [[architecture/Desktop-Shell]] ("Opt-in workspace") and [[frontend/UI-Language-Kit]].

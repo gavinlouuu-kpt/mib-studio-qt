@@ -384,6 +384,23 @@ fn fetch_review_metadata(state: State<AppState>) -> Result<cmds::ReviewMetadata,
 }
 
 #[tauri::command]
+async fn analysis_job(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::analysis_job(&state, request)
+}
+#[tauri::command]
+async fn analysis_read(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::analysis_read(&state, request)
+}
+#[tauri::command]
+async fn analysis_write(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::analysis_write(&state, request)
+}
+#[tauri::command]
+async fn analyze_population(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::analyze_population(&state, request)
+}
+
+#[tauri::command]
 fn fetch_review_metrics_page(state: State<AppState>, valid: bool, offset: u64, count: u64) -> Result<cmds::ReviewMetricsPage, String> {
     cmds::fetch_review_metrics_page(&state, valid, offset, count)
 }
@@ -504,13 +521,17 @@ fn start_camera_discovery(state: State<AppState>) -> Result<cmds::DiscoveryStart
 }
 
 #[tauri::command]
-fn fetch_device_discovery(state: State<AppState>, job_id: String) -> Result<cmds::DiscoverySnapshot, String> {
-    cmds::fetch_device_discovery(&state, job_id)
+fn fetch_device_discovery(
+    state: State<AppState>,
+    job_id: String,
+    instance: Option<String>,
+) -> Result<cmds::DiscoverySnapshot, String> {
+    cmds::fetch_device_discovery(&state, job_id, instance)
 }
 
 #[tauri::command]
-fn cancel_device_discovery(state: State<AppState>, job_id: String) -> Result<bool, String> {
-    cmds::cancel_device_discovery(&state, job_id)
+fn cancel_device_discovery(state: State<AppState>, job_id: String, instance: Option<String>) -> Result<bool, String> {
+    cmds::cancel_device_discovery(&state, job_id, instance)
 }
 
 #[tauri::command]
@@ -635,8 +656,29 @@ fn fetch_monitoring_cell_packet(state: State<AppState>, start_generation: String
     cmds::fetch_monitoring_cell_packet(&state, start_generation, capture_epoch, frame_index, object_id, layer).map(Response::new)
 }
 
-// ABI 42 (#716 A4a): calibration records. The list and get are reads; apply is the one explicit
-// compare-and-set of the pixel-to-micron factor.
+// ABI 45: explicit workspace metadata operations, never hardware apply/start.
+#[tauri::command]
+fn workspace_read(state: State<AppState>, request: String) -> Result<serde_json::Value, String> {
+    cmds::workspace_read(&state, request)
+}
+#[tauri::command]
+fn workspace_write(state: State<AppState>, request: String) -> Result<serde_json::Value, String> {
+    cmds::workspace_write(&state, request)
+}
+// ABI 50 (#807 I02): the native recipe provider. Reads (list, get, diff, apply preview) and the
+// explicit writes (create, derive); none applies a method or actuates hardware.
+#[tauri::command]
+fn recipe_list(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_list", request) }
+#[tauri::command]
+fn recipe_get(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_get", request) }
+#[tauri::command]
+fn recipe_create(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_create", request) }
+#[tauri::command]
+fn recipe_derive(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_derive", request) }
+#[tauri::command]
+fn recipe_diff(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_diff", request) }
+#[tauri::command]
+fn recipe_apply_preview(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> { cmds::recipe_command(&state, "recipe_apply_preview", request) }
 #[tauri::command]
 fn calibration_records_list(state: State<AppState>) -> Result<serde_json::Value, String> {
     cmds::calibration_records_list(&state)
@@ -660,6 +702,30 @@ fn run_quick_look(
     reference: Option<cmds::QuickLookReference>,
 ) -> Result<serde_json::Value, String> {
     cmds::run_quick_look(&state, paths, reference)
+}
+
+// ABI 49 (#806 E-1/E-2/E-3): the camera's GenApi node map (bridge-contract.json camera_features).
+// Tree and read are reads; write is a camera control. The backend decides every outcome.
+// The tree is a backend job polled by mib-app-commands (camera_features.job): it waits off the
+// main thread, and the bridge lock is held only for each short fetch, never for the walk.
+#[tauri::command]
+async fn camera_feature_tree(app: tauri::AppHandle, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        cmds::camera_feature_tree(&state, request)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn camera_feature_read(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::camera_feature_read(&state, request)
+}
+
+#[tauri::command]
+fn camera_feature_write(state: State<AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::camera_feature_write(&state, request)
 }
 
 #[tauri::command]
@@ -890,6 +956,10 @@ pub fn run() {
             pump_scan_addresses,
             fetch_review_metadata,
             fetch_review_metrics_page,
+            analyze_population,
+            analysis_read,
+            analysis_write,
+            analysis_job,
             fetch_review_image,
             review_image_bytes,
             review_export_csv,
@@ -937,10 +1007,21 @@ pub fn run() {
             monitoring_cell_unpin,
             monitoring_cell_clear_pins,
             fetch_monitoring_cell_packet,
+            workspace_read,
+            workspace_write,
+            recipe_list,
+            recipe_get,
+            recipe_create,
+            recipe_derive,
+            recipe_diff,
+            recipe_apply_preview,
             calibration_records_list,
             calibration_record_get,
             calibration_apply,
             run_quick_look,
+            camera_feature_tree,
+            camera_feature_read,
+            camera_feature_write,
             trigger_set_pulse_duration,
             trigger_manual_pulse,
             trigger_periodic_start,

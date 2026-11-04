@@ -19,6 +19,98 @@ namespace camera::mock
     {
         constexpr uint64_t kPfncMono8 = 0x01080001;
 
+        // Fixture node map (E02, evidence "fixture/mock"). The names follow SFNC
+        // so later quick-control bindings can be exercised headless, but they
+        // drive nothing: the mock's frame source ignores them. Shapes covered:
+        // nested categories, a read-only string, bounded float/integer, an
+        // enumeration gating another node's write access, a selector with a
+        // selected node, and a boolean.
+        ::camera::features::FakeNodeMap makeMockNodeMap()
+        {
+            using namespace camera::features;
+            FakeNodeMap map;
+            const auto remote = Module::Remote;
+            const auto info = [](const char *display, const char *tip, const char *visibility = "Beginner")
+            { return NodeInfo{display, tip, {}, visibility}; };
+            map.addCategory(remote, "Root", info("Root", "Mock camera features"));
+            map.addCategory(remote, "DeviceControl", info("Device Control", "Mock device identity"), "Root");
+            map.addCategory(remote, "AcquisitionControl", info("Acquisition Control", "Mock acquisition settings"), "Root");
+            map.addCategory(remote, "AnalogControl", info("Analog Control", "Mock analog settings"), "Root");
+
+            FakeNode model;
+            model.name = "DeviceModelName";
+            model.kind = Kind::String;
+            model.info = info("Device Model Name", "Fixture model name (mock camera)");
+            model.writable = false;
+            model.value = std::string("MIB Mock Camera");
+            map.addFeature(remote, model, "DeviceControl");
+
+            FakeNode rate;
+            rate.name = "AcquisitionFrameRate";
+            rate.kind = Kind::Float;
+            rate.info = info("Acquisition Frame Rate", "Fixture value; does not pace mock frames");
+            rate.unit = "Hz";
+            rate.value = 30.0;
+            rate.minimum = 1.0;
+            rate.maximum = 1000.0;
+            map.addFeature(remote, rate, "AcquisitionControl");
+
+            FakeNode exposureAuto;
+            exposureAuto.name = "ExposureAuto";
+            exposureAuto.kind = Kind::Enumeration;
+            exposureAuto.info = info("Exposure Auto", "ExposureTime is writable only while Off");
+            exposureAuto.entries = {"Off", "Continuous"};
+            exposureAuto.value = std::string("Off");
+            map.addFeature(remote, exposureAuto, "AcquisitionControl");
+
+            FakeNode exposure;
+            exposure.name = "ExposureTime";
+            exposure.kind = Kind::Float;
+            exposure.info = info("Exposure Time", "Fixture value; does not change mock frames");
+            exposure.unit = "us";
+            exposure.value = 1000.0;
+            exposure.minimum = 10.0;
+            exposure.maximum = 1000000.0;
+            exposure.writableWhen = FakeNode::Condition{"ExposureAuto", std::string("Off")};
+            map.addFeature(remote, exposure, "AcquisitionControl");
+
+            FakeNode triggerSelector;
+            triggerSelector.name = "TriggerSelector";
+            triggerSelector.kind = Kind::Enumeration;
+            triggerSelector.info = info("Trigger Selector", "Selects the trigger TriggerMode configures", "Expert");
+            triggerSelector.entries = {"FrameStart", "AcquisitionStart"};
+            triggerSelector.value = std::string("FrameStart");
+            map.addFeature(remote, triggerSelector, "AcquisitionControl");
+
+            FakeNode triggerMode;
+            triggerMode.name = "TriggerMode";
+            triggerMode.kind = Kind::Enumeration;
+            triggerMode.info = info("Trigger Mode", "Per selected trigger", "Expert");
+            triggerMode.entries = {"Off", "On"};
+            triggerMode.selector = "TriggerSelector";
+            triggerMode.selected = {{"FrameStart", std::string("Off")},
+                                    {"AcquisitionStart", std::string("Off")}};
+            map.addFeature(remote, triggerMode, "AcquisitionControl");
+
+            FakeNode gain;
+            gain.name = "Gain";
+            gain.kind = Kind::Float;
+            gain.info = info("Gain", "Fixture value; does not change mock frames");
+            gain.unit = "dB";
+            gain.value = 0.0;
+            gain.minimum = 0.0;
+            gain.maximum = 24.0;
+            map.addFeature(remote, gain, "AnalogControl");
+
+            FakeNode reverse;
+            reverse.name = "ReverseX";
+            reverse.kind = Kind::Boolean;
+            reverse.info = info("Reverse X", "Fixture value; does not flip mock frames", "Expert");
+            reverse.value = false;
+            map.addFeature(remote, reverse, "AnalogControl");
+            return map;
+        }
+
         bool hasSupportedExtension(const std::filesystem::path &path)
         {
             static const std::vector<std::string> exts = {
@@ -30,8 +122,26 @@ namespace camera::mock
         }
     } // namespace
 
+    std::string MockCamera::source() const
+    {
+        return "mock:" + options_.folder.filename().string();
+    }
+
+    bool MockCamera::withPort(const std::function<void(::camera::features::Port &)> &fn,
+                              std::string &reason)
+    {
+        std::lock_guard<std::mutex> lock(featureMutex_);
+        if (!running_.load(std::memory_order_acquire))
+        {
+            reason = "The mock camera is not running; its node map opens with start().";
+            return false;
+        }
+        fn(nodeMap_);
+        return true;
+    }
+
     MockCamera::MockCamera(MockCameraOptions options)
-        : options_(std::move(options)) {}
+        : options_(std::move(options)), nodeMap_(makeMockNodeMap()) {}
 
     void MockCamera::applyConfig(const camera::common::CameraConfig &config)
     {

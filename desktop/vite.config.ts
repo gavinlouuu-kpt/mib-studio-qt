@@ -8,8 +8,23 @@ import react from "@vitejs/plugin-react";
 // Two pages, two products (plan 2026-10-01-standalone-review-app): `index.html`
 // is MIB Studio, `review.html` is YOFO Review. Both are built into the same
 // dist/; each Tauri config picks its page through `app.windows[].url`.
+//
+// The UI language kit `@mib/ui` (desktop/ui) is consumed from source: these
+// aliases point the package's three entry points at `ui/src`, so the dev
+// server, Vitest, `tsc` (tsconfig `paths`) and both production pages use the
+// kit without a prebuild step and with the app's single React. The kit's
+// source entry imports its own stylesheets, so `@mib/ui/style.css` resolves to
+// that entry (one copy of the CSS, however many modules import it).
+const kit = resolve(__dirname, "ui/src");
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: [
+      { find: /^@mib\/ui$/, replacement: resolve(kit, "index.ts") },
+      { find: /^@mib\/ui\/style\.css$/, replacement: resolve(kit, "index.ts") },
+      { find: /^@mib\/ui\/fonts\.css$/, replacement: resolve(kit, "styles/fonts.css") },
+    ],
+  },
   clearScreen: false,
   server: {
     port: 1420,

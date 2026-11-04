@@ -75,8 +75,13 @@ public:
     bool initializeDatasets(); // Create datasets with unlimited dimensions
     bool appendFrames(const std::vector<ProcessedFrame>& validFrames,
                       const std::vector<ProcessedFrame>& invalidFrames);
-    
+
     // Frame reading
+    // Caller serializes access to the normally opened recording (Review owns its mutex).
+    backend::evidence::RetainedImage readRunEvidenceImage(const std::string& sourceKey,
+                                                          const std::string& set,
+                                                          const std::string& ordinal,
+                                                          bool mask = false);
     bool readValidFrames(std::vector<ProcessedFrame>& frames);
     bool readInvalidFrames(std::vector<ProcessedFrame>& frames);
     
@@ -223,6 +228,20 @@ public:
     bool readMetadataColumns(bool valid, std::size_t chunkRows,
                              const std::function<bool(const MetadataColumnRow* rows, std::size_t count)>& sink) const;
 
+    // F-1b: browse metadata by page instead of every row at open. The row
+    // count of a set's metadata dataset (0 when the dataset is absent,
+    // nullopt when it cannot be queried), and rows [start, start + count)
+    // as readValidMetadata / readInvalidMetadata give them (count is clipped
+    // to the extent; false when start is past it or the read fails).
+    std::optional<std::uint64_t> metadataRowCount(bool valid) const;
+    bool readMetadataRange(bool valid, std::uint64_t start, std::uint64_t count,
+                           std::vector<ProcessedFrame>& frames) const;
+    // The same for a recording file's /recorded_frames/metadata (index and
+    // timestampNs only, as readRecordingMetadata); nullopt when absent.
+    std::optional<std::uint64_t> recordingMetadataRowCount() const;
+    bool readRecordingMetadataRange(std::uint64_t start, std::uint64_t count,
+                                    std::vector<ProcessedFrame>& frames) const;
+
     // Chart snapshot saving (for saving chart images to HDF5)
     bool saveChartSnapshot(const std::string& datasetPath, const cv::Mat& image);
     
@@ -344,6 +363,9 @@ public:
     //   /analysis   @kde_core_json  — computed from the full recorded run.
     // Writers refuse (false + warn) when no file is open or it was opened
     // read-only; readers return false when the record is absent.
+    // Host evidence summary at recording stop, explicitly not an event-row ACK.
+    bool writeLiveEvidenceJson(const std::string& json);
+    bool writeRunEvidenceJson(const std::string& json);
     bool writeKdeLiveJson(const std::string& json);
     bool readKdeLiveJson(std::string& json) const;
     bool writeKdeAnalysisJson(const std::string& json);
