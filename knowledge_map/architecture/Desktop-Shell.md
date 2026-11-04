@@ -31,7 +31,8 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   bridged yet render disabled with a tooltip naming the blocking issue
   (BE-2…BE-9, #272–#279) — backend/hardware state is never simulated.
 - `crates/mib-app-commands/` — the transport-neutral command layer (YOFO
-  Studio S5): `AppState` (`Mutex<UniquePtr<BackendBridge>>`), the DTOs, every
+  Studio S5): `AppState` (`BridgeLock<UniquePtr<BackendBridge>>` plus a
+  `StatusCache`, see "Long commands and status reads" below), the DTOs, every
   backend command as a plain function over `&AppState`, the event JSON and
   frame-packet encoders, and `dispatch::dispatch(state, host, name, args)` for
   non-Tauri transports (camelCase argument keys, exactly what `invoke` sends;
@@ -313,6 +314,39 @@ Thin wrappers over the bridge (all take the managed `AppState`; bodies in
 
 - **Live capture:** existing lifecycle commands remain serialized through
   `AppState.bridge`. `fetch_frame_packet` returns one owned binary response.
+
+### Long commands and status reads (#845)
+
+The C++ bridge is not safe to call concurrently, so one lock still serialises every
+command (`crates/mib-app-commands/src/bridge_lock.rs`). Before #845 a stop with no
+frames (camera on its parked external trigger) held it for about six minutes and every
+other invoke, including the 500 ms status pollers, queued behind it.
+
+- Every Tauri command that reaches the bridge is `#[tauri::command(async)]`, so it runs on
+  Tauri's blocking pool rather than the IPC thread.
+- Long commands (`init`, `configure_mock`, `start_capture`, `stop_capture`,
+  `load_recording`, `experiment_start/stop/cancel`, `select_hardware_camera`,
+  `select_mindvision_camera`, `apply_camera_script`, `reset_hardware_camera`,
+  `set_camera_overview`, `save_camera_roi`, `set_instrument_mode`) take the lock with
+  `lock_for(name)`, which records the holder and the time it took the lock.
+- Status reads (`is_initialized`, `fetch_experiment_status`, `fetch_preview_buffer`,
+  `fetch_instrument_status`, the pump/stage/autofocus/trigger/pulse-generator status,
+  `fetch_processing_stats`, `fetch_camera_selection`/`geometry`, export/reanalysis/
+  calibration status and the others in `lib.rs`) go through `state.status_cache.read(key, ..)`:
+  they wait at most `STATUS_WAIT` (250 ms), then answer with the last good reply for that key.
+  With nothing cached they fail with `bridge busy: <command> has held the backend for N s`.
+- `poll_events_exact` returns an empty envelope while the bridge is busy; the events stay
+  queued in the bridge. Frame/preview/monitoring packet reads fail fast with the busy error.
+- Control commands and the WebSocket server keep the blocking lock: they must not run
+  against a half-finished stop. A button pressed during a long stop still waits for it,
+  but the window and its status keep updating.
+- Close (`desktop/src/closeGuard.ts`, `stopCaptureBounded`) logs "Stopping camera…",
+  waits `CLOSE_STOP_WAIT_MS` (10 s), then asks **Close now** or **Keep waiting** (the
+  default), again every 10 s. Close now closes the window; the backend shutdown on exit
+  waits for the stop (#850).
+- Tests: `bridge_lock::tests` (a mock that sleeps under `lock_for` does not stall a status
+  read), `bridge_lock_backend_tests` (the same through a real `AppState`),
+  `closeGuard.test.tsx` (bounded wait, keep waiting, close now).
 - **Recording/review:** `fetch_indexed_frame_packet(frame_index)` and
   `fetch_review_frame_packet(dataset,index)` accept canonical decimal-string
   indices. `fetch_background_packet` uses the same codec.

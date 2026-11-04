@@ -297,38 +297,38 @@ fn job_id_string(id: u64) -> String {
 
 /// Queue a registry sign-in. The password is handed straight to the backend
 /// worker and is not stored, logged or echoed by the shell.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_sign_in(state: State<AppState>, email: String, password: String) -> Result<String, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(job_id_string(guard.pin_mut().registry_sign_in(&email, &password)))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_sign_out(state: State<AppState>) -> Result<String, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(job_id_string(guard.pin_mut().registry_sign_out()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_refresh(state: State<AppState>) -> Result<String, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(job_id_string(guard.pin_mut().registry_refresh()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_download(state: State<AppState>, revision_id: String) -> Result<String, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(job_id_string(guard.pin_mut().registry_download(&revision_id)))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_cancel_all(state: State<AppState>) -> Result<bool, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().registry_cancel_all())
 }
 
 /// Write a cached revision's files read-only (#398 M2b).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_materialize(state: State<AppState>, revision_id: String) -> Result<String, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(job_id_string(guard.pin_mut().registry_materialize(&revision_id)))
@@ -336,7 +336,7 @@ pub fn registry_materialize(state: State<AppState>, revision_id: String) -> Resu
 
 /// "Mark validated" (#398 M2b): the backend checks that `evidence_file` was
 /// recorded with this revision applied on this instrument before queueing.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_record_validation(
     state: State<AppState>,
     revision_id: String,
@@ -350,7 +350,7 @@ pub fn registry_record_validation(
 
 // ---- #398 M3b authoring commands (drafts stay local until submitted) ----
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_new_draft_from_revision(
     state: State<AppState>,
     revision_id: String,
@@ -360,7 +360,7 @@ pub fn registry_new_draft_from_revision(
     Ok(guard.pin_mut().registry_new_draft_from_revision(&revision_id, use_current_config).into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_new_method_draft(
     state: State<AppState>,
     project_id: String,
@@ -371,13 +371,13 @@ pub fn registry_new_method_draft(
     Ok(guard.pin_mut().registry_new_method_draft(&project_id, &name, &release_notes).into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_set_draft_notes(state: State<AppState>, draft_id: String, notes: String) -> Result<RegistryCommand, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().registry_set_draft_notes(&draft_id, &notes).into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_draft_from_head(
     state: State<AppState>,
     draft_id: String,
@@ -387,20 +387,20 @@ pub fn registry_draft_from_head(
     Ok(guard.pin_mut().registry_draft_from_head(&draft_id, keep_draft_config).into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_submit_draft(state: State<AppState>, draft_id: String, as_branch: bool) -> Result<RegistryCommand, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().registry_submit_draft(&draft_id, as_branch).into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_delete_draft(state: State<AppState>, draft_id: String) -> Result<RegistryCommand, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().registry_delete_draft(&draft_id).into())
 }
 
 /// `target` is a contract `registry_central_states` value; reason required.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_transition(
     state: State<AppState>,
     revision_id: String,
@@ -411,14 +411,14 @@ pub fn registry_transition(
     Ok(guard.pin_mut().registry_transition(&revision_id, target, &reason).into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_fetch_history(state: State<AppState>, revision_id: String) -> Result<RegistryCommand, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().registry_fetch_history(&revision_id).into())
 }
 
 /// #398 M2c: what applying `revision_id` would change.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_plan_apply(state: State<AppState>, revision_id: String) -> Result<MethodApplyPlan, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     let p = guard.pin_mut().registry_plan_apply(&revision_id);
@@ -435,7 +435,7 @@ pub fn registry_plan_apply(state: State<AppState>, revision_id: String) -> Resul
 }
 
 /// #398 M2c: apply `revision_id`'s config.json exactly (backend applier).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn registry_apply_method(state: State<AppState>, revision_id: String) -> Result<MethodApplyResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     let r = guard.pin_mut().registry_apply_method(&revision_id);
@@ -443,13 +443,13 @@ pub fn registry_apply_method(state: State<AppState>, revision_id: String) -> Res
 }
 
 /// Registry worker snapshot; never waits on a registry request.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fetch_registry_snapshot(state: State<AppState>) -> Result<RegistrySnapshot, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().fetch_registry_snapshot().into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fetch_registry_job(state: State<AppState>, job_id: String) -> Result<RegistryJob, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().fetch_registry_job(parse_job_id(&job_id)?).into())

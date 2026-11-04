@@ -253,6 +253,10 @@ mechanism is exercised locally). Parser tests:
   `State<Mutex<UniquePtr<BackendBridge>>>`, but commands funnel through the one
   owner and are not safe to call concurrently. A `const _` assertion locks in
   that the `Mutex<UniquePtr<..>>` stays `Send + Sync`.
+  `mib-app-commands` wraps it in `bridge_lock::BridgeLock` (#845): still one mutex, but
+  long commands record their name with `lock_for`, and status reads in a `status_scope`
+  wait at most 250 ms and fall back to the last good reply (`StatusCache`). See
+  [[Desktop-Shell]] "Long commands and status reads".
 - **PIC / crate-type:** the C++ archives are built position-dependent, so they
   cannot link into a `cdylib`/`staticlib` (Tauri's default mobile crate-types) —
   the linker fails with `recompile with -fPIC`. A desktop Tauri app must use a

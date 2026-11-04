@@ -5,7 +5,7 @@ import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {bridge} from './bridge';
 import {invoke} from '@tauri-apps/api/core';
 import {confirm} from '@tauri-apps/plugin-dialog';
-import {useCloseGuard} from './closeGuard';
+import {useCloseGuard,stopCaptureBounded,CLOSE_STOP_WAIT_MS} from './closeGuard';
 const native=vi.hoisted(()=>({close:vi.fn(),onCloseRequested:vi.fn()}));
 vi.mock('@tauri-apps/api/window',()=>({getCurrentWindow:()=>native}));
 vi.mock('@tauri-apps/api/core',()=>({invoke:vi.fn()}));
@@ -49,4 +49,33 @@ it('early reload cannot bypass native active-run checks before shell readiness',
  ready=false;await act(async()=>root.render(<Harness/>));vi.mocked(bridge.isInitialized).mockResolvedValue(true);
  vi.mocked(bridge.fetchExperimentStatus).mockResolvedValue({valid:true,state:2} as never);
  await act(async()=>close());expect(native.close).not.toHaveBeenCalled();expect(report).toHaveBeenCalledWith(expect.stringContaining('finalization'));
+});
+
+it('close waits a bounded time for a stuck camera stop, then the operator keeps waiting or closes (#845)',async()=>{
+ vi.useFakeTimers();
+ try {
+  let finish:(v:{ok:boolean})=>void=()=>{};
+  vi.mocked(bridge.stopCapture).mockReturnValue(new Promise(resolve=>{finish=resolve;}) as never);
+  vi.mocked(confirm).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  const log:string[]=[];let done=false;
+  const run=stopCaptureBounded(text=>log.push(text)).then(()=>{done=true;});
+  expect(log).toEqual(['Stopping camera…']);
+  await vi.advanceTimersByTimeAsync(CLOSE_STOP_WAIT_MS-1);
+  expect(confirm).not.toHaveBeenCalled();expect(done).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(confirm).toHaveBeenCalledTimes(1);expect(vi.mocked(confirm).mock.calls[0][0]).toContain('10 s');
+  expect(done).toBe(false); // Keep waiting
+  await vi.advanceTimersByTimeAsync(CLOSE_STOP_WAIT_MS);
+  expect(confirm).toHaveBeenCalledTimes(2);expect(vi.mocked(confirm).mock.calls[1][0]).toContain('20 s');
+  await run;expect(done).toBe(true); // Close now, though the stop never answered
+  finish({ok:true});
+ } finally {vi.useRealTimers();}
+});
+it('a camera stop that answers in time closes without asking, and a failed stop keeps the window',async()=>{
+ vi.mocked(invoke).mockResolvedValue({capture_running:true,recording:false});
+ vi.mocked(bridge.stopCapture).mockResolvedValue({ok:true} as never);
+ await act(async()=>close());expect(confirm).not.toHaveBeenCalled();expect(native.close).toHaveBeenCalledTimes(1);
+ expect(report).toHaveBeenCalledWith('Stopping camera…');
+ native.close.mockClear();vi.mocked(bridge.stopCapture).mockResolvedValue({ok:false,message:'camera fault'} as never);
+ await act(async()=>close());expect(native.close).not.toHaveBeenCalled();expect(report).toHaveBeenCalledWith(expect.stringContaining('camera fault'));
 });
