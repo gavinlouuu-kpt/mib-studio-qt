@@ -4,13 +4,13 @@
 // rejection reasons under the image and a tooltip with the measured value and range, and a
 // "Show Overlay" checkbox per strip that draws the mask (tint + outline: blue target, green valid,
 // red invalid) over the image. The data and the pulls are useMonitoringCells.ts; the pixel logic is
-// cellStrips.ts. Reads only: nothing here sends a command.
+// cellStripsModel.ts. Reads only: nothing here sends a command.
 import { memo, useEffect, useRef, useState } from "react";
 import { cellKeyString, type MonitoringCell, type MonitoringCellsListing } from "../../monitoringCells";
 import {
   GRID_COLUMNS, THUMBNAIL_SIZE, cellTint, composeThumbnail, fitThumbnail, reasonsLine, reasonsTooltip,
   stripCount, type CellImageState, type CellPixels, type Rgb,
-} from "./cellStrips";
+} from "./cellStripsModel";
 import { useMonitoringCells } from "./useMonitoringCells";
 
 /** Draws the thumbnail's pixels into its canvas at the crop's own size; the CSS size scales it. */

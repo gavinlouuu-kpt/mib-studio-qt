@@ -17,7 +17,7 @@ import {
 } from "../../monitoringCells";
 import {
   CACHE_CELLS, CONCURRENT_FETCHES, CellImageCache, listedKeys, planFetches, type CellImageState, type CellPixels,
-} from "./cellStrips";
+} from "./cellStripsModel";
 
 export const CELLS_POLL_MS = 500;
 

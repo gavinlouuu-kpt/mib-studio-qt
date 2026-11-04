@@ -1,11 +1,11 @@
-// Live cell strips (#866 MON-052 .. MON-055): the pure parts (cellStrips.ts).
+// Live cell strips (#866 MON-052 .. MON-055): the pure parts (cellStripsModel.ts).
 import { expect, it } from "vitest";
 import type { MonitoringCell, MonitoringCellReason } from "../../monitoringCells";
 import {
   CACHE_CELLS, CellImageCache, GRID_COLUMNS, REASON_LABELS, STRIP_CELLS, THUMBNAIL_SIZE, TINT_INVALID, TINT_TARGET,
   TINT_VALID, cellTint, composeThumbnail, fitThumbnail, listedKeys, overlayRegions, planFetches, reasonTooltip,
   reasonsLine, reasonsTooltip, stripCount,
-} from "./cellStrips";
+} from "./cellStripsModel";
 
 const reason = (code: MonitoringCellReason["code"], value: number | null = null, min: number | null = null, max: number | null = null): MonitoringCellReason =>
   ({ code, value, min, max });
