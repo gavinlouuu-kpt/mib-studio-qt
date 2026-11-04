@@ -801,6 +801,46 @@ async fn calibration_records_over_the_websocket() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
+// Wafer Grid (CONNECT-054, ABI 45): one shared service per instrument, so switching it on or off and
+// pausing it need control (a viewer gets VIEWER_ONLY and nothing reaches the backend); every client may
+// read the pose document. The controller switches it on (the bundled registry loads) and off.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn dot_grid_over_the_websocket() {
+    let (server, addr, data) = start("dot_grid").await;
+    let mut controller = connect(addr).await;
+    let mut viewer = connect(addr).await;
+    let mut events = Vec::new();
+    call(&mut controller, 1, "init", json!({ "dataDir": "" }), &mut events).await.unwrap();
+    assert_eq!(server.controller(), Some(1));
+    let ok = |r: Result<Reply, String>| match r {
+        Ok(Reply::Json(v)) => v,
+        other => panic!("{other:?}"),
+    };
+    let idle = ok(call(&mut viewer, 2, "fetch_dot_grid_pose", Value::Null, &mut events).await);
+    assert_eq!((idle["enabled"].clone(), idle["paused"].clone(), idle["has_pose"].clone()),
+               (json!(false), json!(true), json!(false)), "a viewer reads: {idle}");
+    for (id, cmd, args) in [(3, "set_dot_grid_enabled", json!({ "enabled": true })),
+                            (4, "set_dot_grid_paused", json!({ "paused": false }))] {
+        let refused = call(&mut viewer, id, cmd, args, &mut events).await.unwrap_err();
+        assert!(refused.starts_with("VIEWER_ONLY"), "{cmd}: {refused}");
+    }
+    let still = ok(call(&mut controller, 5, "fetch_dot_grid_pose", json!({ "sinceSequence": 0 }), &mut events).await);
+    assert_eq!((still["enabled"].clone(), still["paused"].clone()), (json!(false), json!(true)), "nothing reached the backend: {still}");
+    let on = ok(call(&mut controller, 6, "set_dot_grid_enabled", json!({ "enabled": true }), &mut events).await);
+    assert_eq!(on["ok"], json!(true), "{on}");
+    let seen = ok(call(&mut viewer, 7, "fetch_dot_grid_pose", json!({ "sinceSequence": 0 }), &mut events).await);
+    assert_eq!((seen["enabled"].clone(), seen["designs"].clone()), (json!(true), json!(1)), "the viewer sees the shared state: {seen}");
+    let bad = call(&mut controller, 8, "set_dot_grid_enabled", json!({ "enable": true }), &mut events).await.unwrap_err();
+    assert!(bad.starts_with("INVALID_ARGUMENTS"), "{bad}");
+    let off = ok(call(&mut controller, 9, "set_dot_grid_enabled", json!({ "enabled": false }), &mut events).await);
+    assert_eq!(off["ok"], json!(true), "{off}");
+    controller.close(None).await.unwrap();
+    viewer.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 // The applied method's calibration declarations (#776, ABI 43): the controller applies a calibration
 // method (a profile), and every client's readiness report carries its purpose and reference; after a
 // method without declarations it reports measurement / none with declared false.

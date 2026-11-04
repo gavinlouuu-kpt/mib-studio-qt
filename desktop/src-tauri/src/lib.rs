@@ -584,6 +584,21 @@ fn fetch_camera_geometry(state: State<AppState>) -> Result<serde_json::Value, St
 }
 
 #[tauri::command]
+fn set_dot_grid_enabled(state: State<AppState>, enabled: bool) -> Result<cmds::CmdResult, String> {
+    cmds::set_dot_grid_enabled(&state, enabled)
+}
+
+#[tauri::command]
+fn set_dot_grid_paused(state: State<AppState>, paused: bool) -> Result<cmds::CmdResult, String> {
+    cmds::set_dot_grid_paused(&state, paused)
+}
+
+#[tauri::command]
+fn fetch_dot_grid_pose(state: State<AppState>, since_sequence: Option<u64>) -> Result<serde_json::Value, String> {
+    cmds::fetch_dot_grid_pose(&state, since_sequence.unwrap_or(0))
+}
+
+#[tauri::command]
 fn soft_trigger_camera(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::soft_trigger_camera(&state)
 }
@@ -922,6 +937,9 @@ pub fn run() {
             set_camera_overview,
             save_camera_roi,
             fetch_camera_geometry,
+            set_dot_grid_enabled,
+            set_dot_grid_paused,
+            fetch_dot_grid_pose,
             set_instrument_mode,
             set_service_mode,
             set_instrument_led,

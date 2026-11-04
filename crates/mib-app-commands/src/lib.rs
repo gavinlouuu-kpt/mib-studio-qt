@@ -1602,6 +1602,26 @@ pub fn fetch_camera_geometry(state: &AppState) -> Result<serde_json::Value, Stri
     serde_json::from_str(&guard.pin_mut().fetch_camera_geometry()).map_err(|e| e.to_string())
 }
 
+/// Wafer Grid (ABI 45, CONNECT-054): dot-grid localization on or off. `message` is the failure
+/// reason when switching on is refused.
+pub fn set_dot_grid_enabled(state: &AppState, enabled: bool) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().set_dot_grid_enabled(enabled).into())
+}
+
+/// Wafer Grid: the Overview resumes decoding while it is on screen and pauses it otherwise.
+pub fn set_dot_grid_paused(state: &AppState, paused: bool) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().set_dot_grid_paused(paused).into())
+}
+
+/// Wafer Grid state and the latest pose; `since_sequence` equal to the current sequence returns
+/// the state block only.
+pub fn fetch_dot_grid_pose(state: &AppState, since_sequence: u64) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_dot_grid_pose(since_sequence)).map_err(|e| e.to_string())
+}
+
 pub fn soft_trigger_camera(state: &AppState) -> Result<CmdResult, String> {
     let mut guard=state.bridge.lock().map_err(|e|e.to_string())?;
     let selected=guard.pin_mut().fetch_camera_selection();

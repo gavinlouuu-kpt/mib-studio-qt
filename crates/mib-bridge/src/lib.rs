@@ -1264,6 +1264,16 @@ pub mod ffi {
             -> BridgeCommandResult;
         /// Mode, sensor size, saved window, window steps and the last camera read-back (JSON).
         fn fetch_camera_geometry(self: Pin<&mut BackendBridge>) -> String;
+        /// Wafer Grid (ABI 45, CONNECT-054): switch dot-grid localization on or off. Switching on
+        /// loads the bundled design registry when none is configured; `message` carries the reason
+        /// when that fails ("Dot-grid localization is not available: <reason>" in the UI).
+        fn set_dot_grid_enabled(self: Pin<&mut BackendBridge>, enabled: bool) -> BridgeCommandResult;
+        /// Pause or resume decoding without changing `enabled`: the Overview resumes it while it is on
+        /// screen and pauses it otherwise (the bridge starts paused).
+        fn set_dot_grid_paused(self: Pin<&mut BackendBridge>, paused: bool) -> BridgeCommandResult;
+        /// Service state and the latest pose as JSON; `since_sequence` equal to the current
+        /// `sequence` returns the state block only (`unchanged`). See bridge-contract.json `dot_grid`.
+        fn fetch_dot_grid_pose(self: Pin<&mut BackendBridge>, since_sequence: u64) -> String;
         /// Where the science runs (ABI 21): `{"science": "host"|"pl", "host_processing": bool,
         /// "aravis": bool}`. On the PL the host pipeline's commands are refused.
         fn fetch_platform_info(self: Pin<&mut BackendBridge>) -> String;

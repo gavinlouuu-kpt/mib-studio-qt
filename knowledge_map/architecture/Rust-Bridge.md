@@ -520,6 +520,44 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 45: Wafer Grid on the Overview (CONNECT-054)
+
+Additive over ABI 44. Qt's dot-grid localization ([[../services/DotGridService]]) for the Tauri and
+WebSocket shells, three commands (contract: `dot_grid`):
+
+- `set_dot_grid_enabled(enabled) -> CommandResult` and `set_dot_grid_paused(paused) -> CommandResult`:
+  controller only (both in the server's `CONTROL_COMMANDS`: one shared service per instrument).
+  Enabling loads the registry compiled into `mib_backend` (`DotGridService::bundledRegistry()`, the
+  bytes of `resources/defaults/dot_grid/registry.json`, so no resource folder is needed; the Tauri
+  bundle's `resources/defaults/` copy is not read) and sets the detector hint from the pixel-to-micron
+  factor; a refusal puts the reason in `message`. `BackendFacade::initialize` starts the service
+  paused; the Overview resumes it while its stage is on screen.
+- `fetch_dot_grid_pose(since_sequence?) -> JSON`: a read for every client. The state block
+  (`available`, `enabled`, `paused`, `designs`, `sequence`, `has_pose`, `unchanged`), then for a pose
+  `valid`, `frame_index`, `image_width/height`, `dots`, `votes`, `decode_ms`, `reason`; when valid also
+  the wafer position of the image centre, `theta_deg`, `um_per_px`, `mirrored`, `chip`, `design_id/name`,
+  `agreement`, `residual_px` and `dots_px` (at most 1024 `[x, y]` pixel pairs, `dots_px_total`). A
+  `since_sequence` equal to `sequence` returns only the state block (`unchanged`), so a 4 Hz poll copies the
+  dot list only when it moved. An invalid pose has no position and no dots; switching on forgets the
+  earlier session's pose.
+- **Path:** `BackendFacade::setDotGridEnabled / setDotGridPaused / fetchDotGridPoseJson` ->
+  `AppBackend::setDotGridEnabled` / `DotGridService` -> cxx -> `mib-app-commands`
+  (`set_dot_grid_enabled`, `set_dot_grid_paused`, `fetch_dot_grid_pose`, dispatch names, Tauri
+  commands) -> `desktop/src/bridge.ts` (`setDotGridEnabled`, `setDotGridPaused`, `fetchDotGridPose`,
+  `DotGridPose`) -> `areas/connect/useWaferGrid.ts`.
+- **Profile apply:** `config.json`'s `dot_grid` section is still reported "Qt shell only" and not
+  applied; the Overview toggle is the way to switch decoding on (decision in the CONNECT-054 report).
+- **ABI touch points:** `bridge-contract.json` `abi_version` 45 and `dot_grid` (`max_dots` pinned by a
+  `static_assert` on `BackendFacade::kDotGridMaxDots`); `shim.cpp` `bridge_abi_version()`;
+  `contract.rs` `abi_version_is_stable`; generated `bridgeContract.ts`; the `eventAdapter.test.ts` and
+  `runQuickLook.test.ts` pins.
+- **Tests:** `contract.rs` `dot_grid_is_described` and `dot_grid_commands_decode_the_mock_camera_view`
+  (a rendered `wafer-sort-rt` view in `tests/fixtures/` through the mock camera: refused before init,
+  paused and off after init, enable loads one design, a valid pose at 40000 / 52000 um, an unchanged
+  poll, an invalid pose with its reason); `ws.rs` `dot_grid_over_the_websocket` (a viewer reads and is
+  refused the two controls); `dispatch.rs` (`every_command_is_dispatchable`, `abi_version`); C++
+  `backend.dot_grid_facade`; `waferGrid.test.ts`, `useWaferGrid.test.tsx`.
+
 ## ABI 44: the run quick look (#716 A7a)
 
 Additive over ABI 43. `run_quick_look {paths: 1..32, reference?: {path, run_id, start_generation?}}`

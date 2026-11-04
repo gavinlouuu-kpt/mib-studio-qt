@@ -258,6 +258,8 @@ static_assert(cal::kCalibrationDefaultMaxAgeHours == 24.0);
 static_assert(cal::kCalibrationRateWindowSeconds == 1.0);
 static_assert(cal::kCalibrationRateMinWindows == 3);
 static_assert(cal::kCalibrationStoreMaxVersions == 2048);
+// ABI 45 (CONNECT-054): Wafer Grid pose document (bridge-contract.json dot_grid).
+static_assert(backend::bridge::BackendFacade::kDotGridMaxDots == 1024);
 // ABI 44 (#716 A7a): the run quick look (bridge-contract.json run_quick_look; backend/review/RunStatistics.h).
 static_assert(backend::review::kRunQuickLookMaxPaths == 32);
 static_assert(backend::review::kRunQuickLookPathMaxBytes == 4096);
@@ -2291,6 +2293,31 @@ rust::String BackendBridge::fetch_camera_geometry() {
     }
 }
 
+// ABI 45 (CONNECT-054): Wafer Grid. enabled -> loads the bundled design registry when none is
+// configured (the failure text is the command message); paused -> the Overview's on-screen gate.
+BridgeCommandResult BackendBridge::set_dot_grid_enabled(bool enabled) {
+    try {
+        return toBridgeResult(impl_->facade.setDotGridEnabled(enabled));
+    } catch (const std::exception& e) { return errorResult(std::string("set_dot_grid_enabled: ") + e.what()); }
+    catch (...) { return errorResult("set_dot_grid_enabled: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::set_dot_grid_paused(bool paused) {
+    try {
+        return toBridgeResult(impl_->facade.setDotGridPaused(paused));
+    } catch (const std::exception& e) { return errorResult(std::string("set_dot_grid_paused: ") + e.what()); }
+    catch (...) { return errorResult("set_dot_grid_paused: unknown error"); }
+}
+
+rust::String BackendBridge::fetch_dot_grid_pose(std::uint64_t since_sequence) {
+    try {
+        return rust::String(impl_->facade.fetchDotGridPoseJson(since_sequence));
+    } catch (...) {
+        return rust::String("{\"available\":false,\"enabled\":false,\"paused\":true,\"designs\":0,"
+                            "\"sequence\":0,\"has_pose\":false,\"unchanged\":false}");
+    }
+}
+
 BridgeCommandResult BackendBridge::reset_hardware_camera() {
     try {
         backend::bridge::CameraCommand cmd;
@@ -2706,12 +2733,13 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // the command result and experiment_stop's expected start generation (#741, stop
 // outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
 // run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6); v42 calibration records
-// (#716 A4a); v43 the readiness report's method_calibration (#776). All additive over v1 except that removal (ADR
+// (#716 A4a); v43 the readiness report's method_calibration (#776); v44 run_quick_look (#716 A7a); v45 Wafer Grid
+// (CONNECT-054: set_dot_grid_enabled, set_dot_grid_paused, fetch_dot_grid_pose). All additive over v1 except that removal (ADR
 // 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 44; }
+std::uint32_t bridge_abi_version() { return 45; }
 
 } // namespace mib_bridge
 

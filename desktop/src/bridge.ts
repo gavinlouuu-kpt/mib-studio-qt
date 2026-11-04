@@ -733,6 +733,49 @@ export interface CameraGeometry {
   };
 }
 
+/**
+ * Wafer Grid state and the latest pose (ABI 45, CONNECT-054, `fetch_dot_grid_pose`). Only the first
+ * block when `unchanged` (the poll's `since_sequence` was current) or when there is no pose; an invalid
+ * pose has no position and no dots, only `reason`.
+ */
+export interface DotGridPose {
+  /** The service thread runs (false with MIB_DISABLED_SERVICES=dot_grid). */
+  available: boolean;
+  enabled: boolean;
+  /** Decoding is held (the Overview is not on screen). */
+  paused: boolean;
+  /** Registered designs the decoder tries. */
+  designs: number;
+  /** Bumped on every published pose. */
+  sequence: number;
+  has_pose: boolean;
+  unchanged: boolean;
+  valid?: boolean;
+  frame_index?: number;
+  image_width?: number;
+  image_height?: number;
+  /** Detected dots. */
+  dots?: number;
+  votes?: number;
+  decode_ms?: number;
+  /** Failure reason of an invalid pose; empty when valid. */
+  reason?: string;
+  centre_x_um?: number;
+  centre_y_um?: number;
+  theta_deg?: number;
+  um_per_px?: number;
+  mirrored?: boolean;
+  /** Chip (die) name; empty outside a chip. */
+  chip?: string;
+  design_id?: string;
+  design_name?: string;
+  agreement?: number;
+  residual_px?: number;
+  /** Detected dots in image pixels, at most `dot_grid.max_dots` (1024). */
+  dots_px?: [number, number][];
+  dots_px_total?: number;
+}
+
 async function invokeCommand(command: string, args?: Record<string, unknown>): Promise<CmdResult> {
   return decodeCommandResult(await invoke<unknown>(command,args));
 }
@@ -918,6 +961,12 @@ export const bridge = {
   setCameraOverview: (overview: boolean) => sourceMutation("set_camera_overview", {overview}),
   saveCameraRoi: (x: number, y: number, w: number, h: number) => invokeCommand("save_camera_roi", {x, y, w, h}),
   fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
+  // Wafer Grid (ABI 45, CONNECT-054): dot-grid localization of the live frame, Overview only. Enabling
+  // loads the bundled design registry (`message` is the reason when that fails); the Overview pauses
+  // decoding whenever it is not on screen; the pose poll sends the last `sequence` it copied.
+  setDotGridEnabled: (enabled: boolean) => invokeCommand("set_dot_grid_enabled", {enabled}),
+  setDotGridPaused: (paused: boolean) => invokeCommand("set_dot_grid_paused", {paused}),
+  fetchDotGridPose: (sinceSequence = 0) => invoke<DotGridPose>("fetch_dot_grid_pose", {sinceSequence}),
   fetchPlatformInfo: () => invoke<PlatformInfo>("fetch_platform_info"),
   fetchRunAccounting: (source: "review" | "last_run") => invoke<RunAccounting>("fetch_run_accounting", { source }),
   fetchInstrumentStatus: () => invoke<InstrumentStatus>("fetch_instrument_status"),

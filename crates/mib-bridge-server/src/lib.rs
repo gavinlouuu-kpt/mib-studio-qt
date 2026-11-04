@@ -168,6 +168,8 @@ struct SessionTable {
 /// Commands that change the instrument's state; viewers may not send them.
 const CONTROL_COMMANDS: &[&str] = &[
     "configure_mock", "start_capture", "stop_capture", "set_camera_overview", "save_camera_roi",
+    // Wafer Grid (ABI 45): one shared service per instrument; fetch_dot_grid_pose stays open to viewers.
+    "set_dot_grid_enabled", "set_dot_grid_paused",
     "select_hardware_camera", "select_mindvision_camera", "apply_camera_script", "soft_trigger_camera",
     "reset_hardware_camera", "start_recording", "stop_recording", "seek_latest", "seek_index", "load_recording",
     "close_review", "experiment_start", "experiment_stop", "experiment_cancel", "experiment_acknowledge_fault",

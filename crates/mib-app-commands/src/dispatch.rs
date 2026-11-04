@@ -167,6 +167,9 @@ pub const COMMANDS: &[&str] = &[
     "set_camera_overview",
     "save_camera_roi",
     "fetch_camera_geometry",
+    "set_dot_grid_enabled",
+    "set_dot_grid_paused",
+    "fetch_dot_grid_pose",
     "fetch_platform_info",
     "fetch_run_accounting",
     "set_instrument_mode",
@@ -1012,6 +1015,32 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::save_camera_roi(state, a.x, a.y, a.w, a.h).and_then(json)
         }
         "fetch_camera_geometry" => crate::fetch_camera_geometry(state).and_then(json),
+        "set_dot_grid_enabled" => {
+            #[derive(Deserialize)]
+            struct A {
+                enabled: bool,
+            }
+            let a: A = args(value)?;
+            crate::set_dot_grid_enabled(state, a.enabled).and_then(json)
+        }
+        "set_dot_grid_paused" => {
+            #[derive(Deserialize)]
+            struct A {
+                paused: bool,
+            }
+            let a: A = args(value)?;
+            crate::set_dot_grid_paused(state, a.paused).and_then(json)
+        }
+        "fetch_dot_grid_pose" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                #[serde(default)]
+                since_sequence: u64,
+            }
+            let a: A = args(value)?;
+            crate::fetch_dot_grid_pose(state, a.since_sequence).and_then(json)
+        }
         "fetch_platform_info" => crate::fetch_platform_info(state).and_then(json),
         "fetch_run_accounting" => {
             #[derive(Deserialize)]
@@ -1529,7 +1558,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,
