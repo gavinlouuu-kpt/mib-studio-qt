@@ -92,6 +92,17 @@ Windows CI after a `develop` push; check it locally with `-fsyntax-only
 -DMIB_HAS_EGRABBER=1` against the Linux eGrabber SDK headers
 (`/opt/euresys/egrabber-linux-*/include` on P5).
 
+## Verification on the bench camera
+
+PR CI does not compile this file (`MIB_HAS_EGRABBER=0` there). A change to it, to
+`GenTLHolder`, `CameraControlService`, `CaptureService`, the `AppBackend` camera
+paths or anything under `#if MIB_HAS_EGRABBER` is built with
+`scripts/win11_bench_build.sh <branch>` and tested on the win11-agent camera before
+the merge. A MIB Studio start drives the camera by itself (selects it, applies
+`overviewConfig.js`, starts acquisition) and leaves it changed; restore it with
+`scripts/win11_bench_camera.ps1`. See [[../build-and-run/Build]] and
+`docs/howto/win11-bench-build.md`.
+
 ## Gotchas
 
 - **One GenTL handle per process.** `start()` takes the shared handle from

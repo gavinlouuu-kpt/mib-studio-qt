@@ -6,7 +6,8 @@
 **Source:** `CMakeLists.txt`, `CMakePresets.json`, `conanfile.py`,
 `env/` (`apt-packages.txt`, `brew-packages.txt`, `toolchain.toml`,
 `requirements-*.txt`, `assets.json`), `conan/profiles/`,
-`scripts/doctor.{sh,ps1}`, `scripts/bootstrap.{sh,ps1}`
+`scripts/doctor.{sh,ps1}`, `scripts/bootstrap.{sh,ps1}`,
+`scripts/win11_bench_build.{sh,ps1}`, `scripts/win11_bench_camera.ps1`
 
 ## Start here (any host, 2026-09-21)
 
@@ -643,7 +644,11 @@ completed dependency cache. It never caches a failed dependency install.
 Release documentation (#573): `scripts/release_notes.py --version X.Y.Z --check`
 gates stable Windows releases before the build. GitHub releases use the curated
 Markdown file; beta builds generate uncurated notes from recent fragments after
-the last reachable stable tag. `publish-update.py --release-notes-file` includes a
+the last reachable stable tag. GitHub rejects a release body over 125000 characters
+(HTTP 422), so the generator keeps beta notes under 120000: it drops whole entries
+from the oldest end and puts one line first that counts the omitted entries and links
+`compare/<stable tag>...<sha>`. Curated stable notes are never trimmed; `--check` fails
+above 120000 characters, before the build. `publish-update.py --release-notes-file` includes a
 16 KiB plain-text summary in latest.json and catalog entries. Qt deployment and
 both installers copy release notes and the manual with images under resources;
 Linux builds also copy these beside the executable (there were no app install rules). Tauri bundles the same
@@ -665,3 +670,22 @@ The offscreen `experiment_fault_recovery_test` target /
 `frontend.experiment_fault_recovery` CTest checks Qt readiness and banner
 acknowledgement after failed backend runs, including ROI/background unlocking
 (#589). It uses a mock camera, isolated settings and no hardware discovery.
+
+## Bench build on the Windows camera PC (2026-11-04)
+
+`scripts/win11_bench_build.sh <branch>` (run from P5) builds any branch on the
+Windows bench PC `win11-agent` with the real Euresys eGrabber SDK and prints the
+path of the runnable `mib_studio_qt.exe`. It pushes the commit over ssh to a bare
+repo there (no GitHub credentials on that PC), then runs `win11_bench_build.ps1`
+detached: `conan install` (team Conan remote first, anonymous and read-only, so
+Qt/OpenCV arrive prebuilt and a fresh cache does not hit the `freetype` version
+conflict that conancenter alone produces), the `windows-ninja-ci` preset with
+`MIB_ENABLE_MINDVISION=OFF` (no MindVision SDK on that PC), a Release build of
+`mib_studio_qt`, and a camera-safe start of the exe. The reason is that PR CI never
+compiles `MIB_HAS_EGRABBER` code: **a PR that touches camera, capture or eGrabber
+code is built this way and tested on the bench camera before it merges**
+([[../camera/EGrabberCamera]], [[../services/CaptureService]],
+[[../services/CameraControlService]]). Setup, deviations from the CI configure,
+how to run the app in session 0, and how to restore the parked camera state:
+`docs/howto/win11-bench-build.md`; the first build and its numbers:
+[[task/2026-11-04-win11-bench-build]].

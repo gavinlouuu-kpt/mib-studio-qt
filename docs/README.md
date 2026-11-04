@@ -49,6 +49,9 @@ This folder hosts living documentation as we build functionality. Keep content c
 - Desktop (Tauri) classic view: area owners, seams and rules — see
   [howto/desktop-area-ownership.md](howto/desktop-area-ownership.md); the parity program —
   [exec-plans/active/2026-11-05-tauri-parity-program.md](exec-plans/active/2026-11-05-tauri-parity-program.md)
+- Build a branch with the real eGrabber SDK on the Windows camera PC (bench-test
+  camera/capture PRs before merge) — see
+  [howto/win11-bench-build.md](howto/win11-bench-build.md)
 - Known debt — see [exec-plans/tech-debt-tracker.md](exec-plans/tech-debt-tracker.md)
 - Agent map — see [../AGENTS.md](../AGENTS.md)
 
