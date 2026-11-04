@@ -315,3 +315,90 @@ void safely(async () => {
     await members();
   }
 });
+
+let showDemoDots = true;
+el("demo-toggle").onclick = () => {
+  showDemoDots = !showDemoDots;
+  el<HTMLImageElement>("demo-image").src = showDemoDots
+    ? "/demo/after.svg"
+    : "/demo/before.svg";
+  el("demo-toggle").textContent = showDemoDots
+    ? "Hide added dots"
+    : "Show added dots";
+  el("demo-toggle").setAttribute("aria-pressed", String(showDemoDots));
+  el<HTMLImageElement>("demo-image").alt = showDemoDots
+    ? "Actual generated dots and original device walls"
+    : "Original device walls without dot grid";
+};
+el("demo-load").onclick = () =>
+  void safely(async () => {
+    const r = await fetch("/demo/sorter-concept.dxf");
+    if (!r.ok) throw new Error("Sample CAD unavailable");
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File([await r.blob()], "sorter-concept.dxf", {
+        type: "application/octet-stream",
+      }),
+    );
+    el<HTMLInputElement>("file").files = transfer.files;
+    el<HTMLInputElement>("name").value = "Microfluidic sorter concept";
+    el<HTMLSelectElement>("units").value = "mm";
+    el("upload-card").scrollIntoView({ behavior: "smooth", block: "center" });
+    say(
+      "Sample loaded in millimetres. Click Upload & inspect to process the real CAD.",
+    );
+  });
+el("demo-tour").onclick = () => {
+  const tour = driver({
+    showProgress: true,
+    allowClose: true,
+    steps: [
+      {
+        element: "#demo-device",
+        popover: {
+          title: "Start with recognizable device CAD",
+          description:
+            "The ports, mixer, observation region and outlets belong to the source drawing. The orange box marks the region magnified alongside it.",
+        },
+      },
+      {
+        element: "#demo-detail",
+        popover: {
+          title: "See exactly what gets added",
+          description:
+            "Orange dots come from the actual generated DXF, not a decorative grid. Close the tour and toggle Hide added dots to compare against the unchanged device walls; restart here any time.",
+        },
+      },
+      {
+        element: "#demo-map",
+        popover: {
+          title: "Give MIB Studio a localization map",
+          description:
+            "The map package pairs the unique pattern identity with coordinates. Synthetic decoding passed; this does not claim a real camera or fabricated chip has been tested.",
+        },
+      },
+      {
+        element: "#demo-load",
+        popover: {
+          title: "Try the real workflow",
+          description:
+            "Close this tour, choose Use this sample CAD, then Upload & inspect. Check the millimetre-to-micrometre conversion, confirm, and generate your own review outputs.",
+        },
+      },
+    ],
+    onHighlightStarted: (element) => {
+      if (!element) {
+        tour.destroy();
+        say("Example unavailable; refresh and retry.");
+      }
+    },
+  });
+  tour.drive();
+};
+void safely(async () => {
+  const r = await fetch("/demo/sample.json");
+  if (!r.ok) throw new Error("Sample metadata unavailable");
+  const sample = await r.json();
+  el("demo-result").textContent =
+    `Verified example: ${Number(sample.dot_count).toLocaleString()} generated dots · 30 µm pitch · 12 µm diameter · codec ${sample.codec_contract}. These illustrations are cropped from its actual exported DXF.`;
+});

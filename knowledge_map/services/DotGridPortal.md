@@ -18,3 +18,8 @@ Canonical operating record: ENG-MIBQT tracker, MIBQT-28 (MIBQT-27 is fabrication
 
 Tailnet review adapter: `tools/dot_grid_portal/review/README.md`. Separate shared review
 identity and persistent local data; never a production Access bypass or production registry.
+
+Realistic demo: original 12 × 8 mm microfluidic concept, actual exported dot geometry,
+before/after toggle and sample-loading controls. Provenance and generation steps:
+`tools/dot_grid_portal/demo/README.md`. Review seed 11 generated 87,907 dots; no fabricated
+camera result or fabrication claim. Tailnet example has a separate four-step Driver.js tour.

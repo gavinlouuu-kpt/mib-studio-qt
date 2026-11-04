@@ -29,6 +29,62 @@
             register <span>→</span> Use in MIB Studio
           </div>
         </section>
+        <section class="card" id="demo">
+          <span class="badge">REAL CAD → GENERATED DOT GRID</span>
+          <h3>Explore a microfluidic chip design.</h3>
+          <p>
+            A 12 × 8 mm sorter concept: two inlets, a serpentine mixer, an
+            observation region and two outlets. Original illustrative
+            geometry—not a validated fluidic device or a customer design.
+          </p>
+          <div class="demo-grid">
+            <figure id="demo-device">
+              <img
+                src="/demo/device.svg"
+                alt="Annotated 12 by 8 millimetre microfluidic concept with a highlighted observation region"
+              />
+              <figcaption>
+                1 · Your original device geometry stays in the combined DXF.
+              </figcaption>
+            </figure>
+            <figure id="demo-detail">
+              <div class="row">
+                <strong>Observation region · magnified</strong
+                ><button id="demo-toggle" aria-pressed="true">
+                  Hide added dots
+                </button>
+              </div>
+              <img
+                id="demo-image"
+                src="/demo/after.svg"
+                alt="Actual generated dot pattern around the observation-region channel walls"
+              />
+              <figcaption>
+                2 · Orange dots are actual exported geometry. Teal lines are the
+                device. Toggle to compare the same region before and after.
+              </figcaption>
+            </figure>
+          </div>
+          <p id="demo-result">Loading verified sample details…</p>
+          <p id="demo-map">
+            3 · The map package records the pattern’s identity and coordinate
+            system so MIB Studio can localize against it. It is not a camera
+            measurement or a CAD-overlay demonstration.
+          </p>
+          <div class="row">
+            <button id="demo-load" class="primary">Use this sample CAD</button
+            ><button id="demo-tour">Explain this example</button
+            ><a href="/demo/sorter-concept.dxf" download
+              >Download original DXF (mm)</a
+            >
+          </div>
+          <p class="hint">
+            Use this sample fills the upload form; you still inspect, confirm
+            and generate through the real workflow. Review maps are not
+            production registrations. Sampled keep-outs are not manufacturing
+            clearance verification.
+          </p>
+        </section>
         <p id="message" role="status" aria-live="polite"></p>
         <div class="columns">
           <section class="card" id="upload-card">

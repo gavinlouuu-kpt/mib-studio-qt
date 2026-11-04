@@ -59,13 +59,11 @@ test("guided click-through gates actions and exposes all three exports", async (
   );
   await page.locator(".driver-popover-close-btn").click();
   await page.locator("#name").fill("Test drawing");
-  await page
-    .locator("#file")
-    .setInputFiles({
-      name: "device.dxf",
-      mimeType: "application/octet-stream",
-      buffer: Buffer.from("UI fixture"),
-    });
+  await page.locator("#file").setInputFiles({
+    name: "device.dxf",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from("UI fixture"),
+  });
   await page.locator("#units").selectOption("um");
   await page.getByRole("button", { name: "Upload & inspect" }).click();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
@@ -90,4 +88,46 @@ test("guided click-through gates actions and exposes all three exports", async (
     path: "test-results/portal-workflow.png",
     fullPage: true,
   });
+});
+
+test("realistic example compares exported geometry and loads source units", async ({
+  page,
+}) => {
+  await page.route("**/api/**", (route) =>
+    route.fulfill({
+      json: route.request().url().endsWith("/me")
+        ? { email: "review@example.test", role: "member" }
+        : [],
+    }),
+  );
+  await page.goto("http://127.0.0.1:4178");
+  await expect(page.locator("#demo-result")).toContainText("87,907");
+  await page.getByRole("button", { name: "Hide added dots" }).click();
+  await expect(page.locator("#demo-image")).toHaveAttribute(
+    "src",
+    "/demo/before.svg",
+  );
+  await page.getByRole("button", { name: "Show added dots" }).click();
+  await expect(page.locator("#demo-image")).toHaveAttribute(
+    "src",
+    "/demo/after.svg",
+  );
+  await page.getByRole("button", { name: "Explain this example" }).click();
+  for (const title of [
+    "Start with recognizable device CAD",
+    "See exactly what gets added",
+    "Give MIB Studio a localization map",
+    "Try the real workflow",
+  ]) {
+    await expect(page.locator(".driver-popover-title")).toHaveText(title);
+    await page.locator(".driver-popover-next-btn").click();
+  }
+  await page.getByRole("button", { name: "Use this sample CAD" }).click();
+  await expect(page.locator("#units")).toHaveValue("mm");
+  expect(
+    await page
+      .locator("#file")
+      .evaluate((e: HTMLInputElement) => e.files?.[0].name),
+  ).toBe("sorter-concept.dxf");
+  await expect(page.locator("#message")).toContainText("Sample loaded");
 });
