@@ -16,3 +16,15 @@ ring refilled with Experiment frames. Freeing the old buffers took 524 ms (the s
 is exclusive, and the caller is the capture thread on its first frame, so the camera's input
 buffers would overrun), so the lock is held for the swap only (10 ms) and a release of 16 MiB or
 more is freed on its own thread. Test: `backend.frame_store_reserve`.
+
+**#840, the app hung on stop while no frames arrived.** Cause as suspected in the issue:
+`EGrabberCamera::grabFrame` holds `stateMutex_` across `ScopedBuffer(*grabber_)`, whose eGrabber
+default timeout is `GENTL_INFINITE`; `stop()` takes the same mutex first, so with the camera
+delivering nothing (the bench camera's cycle trigger `DEL1_1` was undriven) it never returned
+and the Overview to Experiment tab switch froze the app for 4+ minutes. Now the wait is bounded
+(`kPopTimeoutMs` = 50 ms, `GC_ERR_TIMEOUT` is "no frame yet"), and `stop()` sets `stopRequested_`
+and calls `cancelPop` (under `triggerMutex_`, not `stateMutex_`) before it waits for the mutex.
+The `catch` blocks of `start()` called `stop()` with `stateMutex_` held (a self-deadlock); they
+release the half-started grabber through the teardown `stop()` shares. The code is under
+`#if MIB_HAS_EGRABBER`: syntax-checked against the SDK headers on Linux, not run. **Needs the
+win11-agent bench test** (camera with no trigger: switch Overview to Experiment, stop, restart).

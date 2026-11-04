@@ -116,6 +116,26 @@ Windows CI after a `develop` push; check it locally with `-fsyntax-only
   or a part size smaller than the strided geometry consumers will trust
   (`(height-1)*pitch + width` bytes) — on unplug/partial delivery the copy
   would otherwise segfault or a garbage size would `bad_alloc`.
+- **Stop with no frames arriving (#840):** `grabFrame` holds `stateMutex_` while it waits
+  for a buffer, and `stop()` needs the same mutex. The wait used eGrabber's default timeout
+  (`GENTL_INFINITE`), so a camera delivering nothing (an external cycle trigger nothing drives,
+  seen on the bench with `CycleTriggerSource DEL1_1`) kept the mutex forever and the stop,
+  and the tab switch that called it on the UI thread, never returned. Now the wait is bounded
+  by `kPopTimeoutMs` (50 ms; `GC_ERR_TIMEOUT` means "no frame yet" and `grabFrame` returns
+  false, which `CaptureService` already handles by looping), and `stop()` first sets
+  `stopRequested_` and calls `interruptPendingPop()` (`cancelPop` under `triggerMutex_`, never
+  `stateMutex_`) before it waits for the mutex, so a wait in progress ends at once; the flag
+  keeps a `grabFrame` that has not reached its wait from starting one (a `cancelPop` in that
+  gap is lost). `start()` clears the flag. Lock order is `stateMutex_` before `triggerMutex_`.
+  A side effect: with no frames the capture loop now gets back to its 5 s device health check,
+  which the endless wait used to starve.
+- **`start()` failure cleanup (#840):** the `catch` blocks of `start()` used to call `stop()`
+  with `stateMutex_` held (a self-deadlock; `std::mutex` is not recursive, and `stop()` returns
+  early when `running_` is false anyway). They call `releaseGrabberLocked()` now, the teardown
+  `stop()` shares (AcquisitionStop, stream stop, `reallocBuffers(0)`, grabber and producer
+  handle released). This code is `#if MIB_HAS_EGRABBER` and not compiled on Linux CI; syntax
+  check it with `-fsyntax-only -DMIB_HAS_EGRABBER=1 -I<egrabber include>` and bench-test it on
+  the Windows rig (camera with no trigger: switch tabs, the app must not hang).
 - **Trigger-thread lifetime protocol:** `setTriggerOutput` runs on the
   [[../services/TriggerService]] thread and takes `triggerMutex_` (never
   `stateMutex_`, which `stop()` holds across ~360 ms of teardown sleeps).
