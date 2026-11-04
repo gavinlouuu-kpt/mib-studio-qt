@@ -482,6 +482,29 @@ passes a generation, so it is unchanged; the workspace queue and Plan switch on
 `feat/egrabber-workspace` after the next develop sync. Guards:
 `eventAdapter.test.ts`, `eventTransport.test.ts`.
 
+**Qt-parity hardware pieces (ABI 45, #868).** Backend side in [[Rust-Bridge]] (ABI 45). Three
+pieces the hardware area mounts; none is placed by its author.
+- `components/AutofocusStatusLine.tsx` (`status: AutofocusStatus | null`): the "Autofocus status:
+  <message>" line from `status_message` (HW-033). Nothing until the service has spoken (or from a
+  pre-45 backend); a failure message is `role="alert"`, the rest `role="status"`. It goes under the
+  autofocus buttons in `HardwareControls`.
+- `areas/hardware/BootServiceToggles.tsx` (HW-038, Qt's Settings > Boot Service Toggles): the eight
+  Qt services as check boxes, Save, "Saved. Restart the application for changes to take effect."
+  It reads and writes the preferences document (`getPreferences` / `setPreferences`) as
+  read-modify-write (it reads again at save time, so other keys survive) under
+  `bootDisabledServices`, an array of tokens in Qt's order. Nothing runs live: at the next launch the
+  Tauri `init` command (`apply_boot_services` in `desktop/src-tauri/src/lib.rs`, once per process,
+  before `cmds::init`) turns the array into `MIB_DISABLED_SERVICES` through
+  `mib_app_commands::boot_services` (pure and tested: tokens normalized as Qt does, unknown ones
+  ignored and logged, a non-empty `MIB_DISABLED_SERVICES` already in the environment wins, as in
+  Qt's `applyBootDisabledServicesFromSettings`). The line saying which source applied goes to
+  `desktop-shell.log`. On Windows the variable is also set with the C runtime's `_putenv_s`: the
+  backend's `std::getenv` does not see a plain `SetEnvironmentVariable`. The WebSocket server does not
+  apply it.
+- `bridge.listSerialPorts()` / `bridge.reservePumpPorts(ports)`: the serial port list for the pump
+  and generator pickers (HW-004/026/049) and the remembered pump ports reserved before startup
+  discovery (HW-023). `AutofocusStatus.status_message?` / `status_sequence?`.
+
 **Run quick look (ABI 44, #716 A7a).** `runQuickLook.ts` types and checks the
 reply of [[../services/RunQuickLook]]; `bridge.runQuickLook(paths, reference?)`
 (`run_quick_look`) and `reviewBridge.runStatistics` share it. Per run:
