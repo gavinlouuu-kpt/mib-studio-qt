@@ -2578,7 +2578,32 @@ namespace backend
         SPDLOG_INFO("MindVision camera selected: {} (index={})", label, cameraIndex);
     }
 
-    bool AppBackend::applyCameraScriptFromFile(const std::string &path, std::string *errorOut)
+    void AppBackend::setAcquisitionProfile(const app::AcquisitionProfile& profile)
+    {
+        std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
+        acquisitionProfile_ = profile;
+    }
+
+    app::AcquisitionProfile AppBackend::acquisitionProfile() const
+    {
+        std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
+        return acquisitionProfile_;
+    }
+
+    app::CameraWindowApplyReport AppBackend::lastCameraWindowApply() const
+    {
+        std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
+        return lastCameraWindowApply_;
+    }
+
+    std::optional<AppBackend::CameraScriptRole> AppBackend::lastCameraScriptRole() const
+    {
+        std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
+        return lastCameraScriptRole_;
+    }
+
+    bool AppBackend::applyCameraScriptFromFile(const std::string &path, std::string *errorOut,
+                                               CameraScriptRole role)
     {
         if (selectedIfIndex_ < 0 || selectedDevIndex_ < 0)
         {
@@ -2606,11 +2631,20 @@ namespace backend
             captureService_->stop();
         }
         SPDLOG_INFO("Applying camera script to {} from {}", selectedLabel_, path);
-        const bool ok =
-            cameraControlService_->applyScriptToDevice(selectedIfIndex_, selectedDevIndex_, path, errorOut);
+        const auto window = role == CameraScriptRole::Experiment ? acquisitionProfile().window : std::nullopt;
+        app::CameraWindowApplyReport report;
+        const bool ok = cameraControlService_->applyScriptToDevice(selectedIfIndex_, selectedDevIndex_, path, errorOut,
+                                                                   window ? &*window : nullptr, &report);
         if (ok)
         {
             lastCameraScriptPath_ = path;
+            std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
+            lastCameraScriptRole_ = role;
+            if (role == CameraScriptRole::Experiment)
+            {
+                report.sequence = lastCameraWindowApply_.sequence + 1;
+                lastCameraWindowApply_ = report;
+            }
         }
         return ok;
     }

@@ -135,6 +135,13 @@ bool isHighRiskPath(const QString& path) {
         QStringLiteral("image_processing.multi_image.count")
     };
     if (exactHighRisk.contains(path)) return true;
+    // #833: the camera window decides the size of every saved frame (and the
+    // buffer and save rate it needs); the processing ROI must fit inside it;
+    // an explicit experiment buffer size overrides the computed one.
+    if (path == QStringLiteral("camera.window") || path.startsWith(QStringLiteral("camera.window.")) ||
+        path == QStringLiteral("roi") || path.startsWith(QStringLiteral("roi.")) ||
+        path == QStringLiteral("experiment_buffer_max_mb"))
+        return true;
     return path.startsWith(QStringLiteral("image_processing.area_threshold_")) ||
            path.startsWith(QStringLiteral("image_processing.deformability_threshold_")) ||
            path.startsWith(QStringLiteral("image_processing.ring_ratio_")) ||
@@ -843,6 +850,53 @@ QString ProfileManager::diffStatusToString(DiffStatus status) {
     default:
         return QStringLiteral("Changed");
     }
+}
+
+std::optional<backend::app::ProfileCameraWindow> ProfileManager::cameraWindowForSave(
+    const std::optional<backend::app::ProfileCameraWindow>& applied, const QString& scriptText,
+    const QString& connectedVendor, const QString& connectedModel, const QJsonObject& document) {
+    backend::app::ProfileCameraWindow out;
+    const QJsonObject existing =
+        document.value(QStringLiteral("camera")).toObject().value(QStringLiteral("window")).toObject();
+    const backend::app::ProfileCameraWindow fromDocument{
+        {existing.value(QStringLiteral("width")).toInt(0), existing.value(QStringLiteral("height")).toInt(0),
+         existing.value(QStringLiteral("offset_x")).toInt(0), existing.value(QStringLiteral("offset_y")).toInt(0)},
+        existing.value(QStringLiteral("camera_vendor")).toString().toStdString(),
+        existing.value(QStringLiteral("camera_model")).toString().toStdString()};
+    if (fromDocument.window.valid()) {
+        out = fromDocument; // what the operator is saving (an edit in the editor included)
+    } else if (applied && applied->window.valid()) {
+        out = *applied;
+    } else if (const auto script = backend::app::parseScriptCameraWindow(scriptText.toStdString());
+               script && script->valid()) {
+        out.window = *script;
+    } else {
+        return std::nullopt;
+    }
+    if (!connectedModel.trimmed().isEmpty()) {
+        out.cameraVendor = connectedVendor.trimmed().toStdString();
+        out.cameraModel = connectedModel.trimmed().toStdString();
+    } else if (!out.namesCamera()) {
+        out.cameraVendor = fromDocument.cameraVendor;
+        out.cameraModel = fromDocument.cameraModel;
+    }
+    return out;
+}
+
+QJsonObject ProfileManager::withCameraWindow(QJsonObject document, const backend::app::ProfileCameraWindow& window) {
+    QJsonObject camera = document.value(QStringLiteral("camera")).toObject();
+    QJsonObject section;
+    section.insert(QStringLiteral("width"), window.window.width);
+    section.insert(QStringLiteral("height"), window.window.height);
+    section.insert(QStringLiteral("offset_x"), window.window.offsetX);
+    section.insert(QStringLiteral("offset_y"), window.window.offsetY);
+    if (!window.cameraVendor.empty())
+        section.insert(QStringLiteral("camera_vendor"), QString::fromStdString(window.cameraVendor));
+    if (!window.cameraModel.empty())
+        section.insert(QStringLiteral("camera_model"), QString::fromStdString(window.cameraModel));
+    camera.insert(QStringLiteral("window"), section);
+    document.insert(QStringLiteral("camera"), camera);
+    return document;
 }
 
 QString ProfileManager::riskForPath(const QString& path) {

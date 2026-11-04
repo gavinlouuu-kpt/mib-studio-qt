@@ -51,6 +51,7 @@ private slots:
     void onStartExperiment();
     void onStopExperiment();
     void onUpdateStats();
+    void refreshRecordingCapacity(); // #833: capacity panel + run-bar summary
     void onTabChanged(int index);
     void onNoCamerasFound();
     void onCameraStateChanged(const frontend::CameraActionState& state);
@@ -128,6 +129,7 @@ private:
     QLabel* processingCoreLabel_ = nullptr;
     QLabel* deliveryModeLabel_ = nullptr;
     QTimer* statsTimer_ = nullptr;
+    QTimer* capacityTimer_ = nullptr; // #833, 1 s while idle
     PlaybackPanel* playbackPanel_ = nullptr;
     QTabWidget* experimentTabs_ = nullptr;
     frontend::ConnectTab* connectTab_ = nullptr;
@@ -163,6 +165,7 @@ private:
     QString pendingFatalSaveMessage_;
     QString compactStatus_;
     QLabel* roiLabel_ = nullptr;
+    QLabel* capacityLabel_ = nullptr; // #833
     QPushButton* startCameraBtn_ = nullptr;
     QPushButton* stopCameraBtn_ = nullptr;
     // Issue #359 sidebar preference/state (never a hard minimum size).

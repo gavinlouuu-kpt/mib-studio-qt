@@ -22,6 +22,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <chrono>
+#include <cstdio>
 #include <functional>
 #include <thread>
 
@@ -35,6 +36,10 @@ struct MainWindowFaultTestAccess {
     static bool rendered(MainWindow& window, uint64_t revision) {
         return window.presentedFault_.faultRevision == revision;
     }
+    // The window has handled the terminal status (which presents the deferred
+    // Save Error dialog); until then a queued status event could open that
+    // dialog inside the next modal loop.
+    static bool terminalHandled(MainWindow& window) { return !window.experimentActive_; }
     static void explain(MainWindow& window,
                         const backend::app::ExperimentReadinessSnapshot& readiness) {
         window.explainReadiness(readiness);
@@ -101,7 +106,10 @@ int main(int argc, char** argv) {
     processing.setProcessingConfig(config);
     processing.setRealtimeRoi({0, 0, 96, 96});
     processing.setInvalidFrameSamplingRate(1);
-    processing.setFlushInterval(1000000);
+    // No automatic count flush while the test drives the flushes. #833: an
+    // interval whose minimum hold (2 x the interval, plus the write queue) fits
+    // in RAM on a CI runner; a million frames would fail storage.buffer.
+    processing.setFlushInterval(20000);
     QTimer dialogCloser;
     dialogCloser.setInterval(10);
     QObject::connect(&dialogCloser, &QTimer::timeout, &window, [] {
@@ -111,8 +119,13 @@ int main(int argc, char** argv) {
     dialogCloser.start();
     for (int run = 0; run < 3; ++run) {
         const auto output = (dir / ("failed_" + std::to_string(run) + ".h5")).string();
-        MIB_REQUIRE(waitFor([&] { return coordinator.evaluateReadiness(output).ready; }),
-                    "ready to start");
+        if (!waitFor([&] { return coordinator.evaluateReadiness(output).ready; })) {
+            for (const auto& g : coordinator.evaluateReadiness(output).gates)
+                if (g.blocksStart())
+                    std::fprintf(stderr, "blocking gate: %s: %s (%s)\n", g.id.c_str(), g.reason.c_str(),
+                                 g.detail.c_str());
+            MIB_REQUIRE(false, "ready to start");
+        }
         backend::app::ExperimentStartRequest request;
         request.outputPath = output;
         request.readinessGeneration = coordinator.evaluateReadiness(output).generation;
@@ -130,7 +143,8 @@ int main(int argc, char** argv) {
         MIB_REQUIRE(waitFor([&] {
                         const auto status = coordinator.status();
                         return status.terminal &&
-                               MainWindowFaultTestAccess::rendered(window, status.faultRevision);
+                               MainWindowFaultTestAccess::rendered(window, status.faultRevision) &&
+                               MainWindowFaultTestAccess::terminalHandled(window);
                     }),
                     "failed finalization rendered through fatal callback");
         MIB_REQUIRE(mib::test::restoreHdf5ImageAppends(output), "restore image datasets");

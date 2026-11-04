@@ -11,6 +11,8 @@
 
 #include <optional>
 
+#include "backend/app/CameraWindowProfile.h"
+
 namespace frontend {
 
 class ProfileManager final {
@@ -138,6 +140,19 @@ public:
 
     static QString diffStatusToString(DiffStatus status);
     static QString riskForPath(const QString& path);
+
+    // #833: the camera window a profile save records in camera.window: the
+    // document's own camera.window (what the editor saves, edits included);
+    // else the window applied from the active config (what the camera runs
+    // after the Experiment script); else the camera script's
+    // Width/Height/OffsetX/OffsetY. The camera it was made for is the connected
+    // camera when known, else the one the document already names. nullopt when
+    // no source has a window.
+    static std::optional<backend::app::ProfileCameraWindow> cameraWindowForSave(
+        const std::optional<backend::app::ProfileCameraWindow>& applied, const QString& scriptText,
+        const QString& connectedVendor, const QString& connectedModel, const QJsonObject& document);
+    // The document with camera.window set to `window` (other camera keys kept).
+    static QJsonObject withCameraWindow(QJsonObject document, const backend::app::ProfileCameraWindow& window);
     static QString sourceForPath(const QString& path, const QString& defaultSource = QStringLiteral("Config"));
 
 private:

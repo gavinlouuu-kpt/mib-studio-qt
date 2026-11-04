@@ -437,10 +437,24 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
 - **Experiment accumulation** — the extracted, bounded
   `ExperimentFrameBuffer` (`experimentBuffer_`, issue #370 —
   [[../diagnostics/MemoryBudget]]) populated while `experimentActive_` is
-  true, bounded by **frames** (`maxBufferedFrames_`, derived from the flush
-  interval) **and bytes** (`setMaxBufferedBytes`, default 512 MiB, config
-  key `experiment_buffer_max_mb`; 0 = count-only). Every eviction is returned
-  to `appendExperimentFrame` and accounted as `persistenceCancelledByPolicy`.
+  true, bounded by **frames** (`maxBufferedFrames_`) **and bytes**
+  (`maxBufferedBytes_`). #833: both caps come from one plan,
+  `processing::planExperimentBuffer` (`ExperimentBufferSizing.h`, pure, every
+  constant in `ExperimentBufferSizing`): bytes per saved frame = camera window
+  W x H x images; target 2 s at the requested rate, never below 2 x the flush
+  interval; the save-path peak (buffer + 4 write-queue batches) at most 75% of
+  the available RAM; frames x bytes per frame = bytes, so neither cap binds by
+  surprise. The [[../architecture/ExperimentCoordinator]] computes the plan in
+  every readiness evaluation and applies it at Start
+  (`applyExperimentBufferPlan`). `setExperimentBufferOverrideBytes` holds
+  config `experiment_buffer_max_mb` (absent/0 = automatic), which replaces the
+  target. Until a plan is applied (headless users, no window known) the caps
+  are the pre-#833 ones: `unknownRateFrameCap(flushInterval)` frames and
+  512 MiB (`setMaxBufferedBytes`, 0 = count-only at this level). Every eviction
+  is returned to `appendExperimentFrame` and accounted as
+  `persistenceCancelledByPolicy`; the backlog warning names the cap that bound
+  (`frame cap`, `byte cap`, or both; `AppendResult::frameCapReached` /
+  `byteCapReached`).
   `needsFlush()` (issue #407) returns true when `counts.total() >= flushInterval`
   **or** `bytes >= maxBytes / 2` (50 % watermark), so the periodic flush fires even
   when the byte budget saturates before the count threshold is reached.

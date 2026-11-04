@@ -67,10 +67,14 @@ ExperimentFrameBuffer::AppendResult ExperimentFrameBuffer::append(ProcessedFrame
         std::scoped_lock lk(mutex_);
         // A tightened policy (setPolicy) applies on the next admission so its
         // evictions are reported to the caller like any other.
+        r.frameCapReached = valid_.size() + invalid_.size() > policy_.maxFrames;
+        r.byteCapReached = policy_.maxBytes > 0 && bytes_ > policy_.maxBytes;
         trimLocked(r.droppedValid, r.droppedInvalid);
         const size_t currentTotal = valid_.size() + invalid_.size();
         const bool countFull = currentTotal >= policy_.maxFrames;
         const bool bytesFull = policy_.maxBytes > 0 && bytes_ + frameBytes > policy_.maxBytes;
+        r.frameCapReached = r.frameCapReached || countFull;
+        r.byteCapReached = r.byteCapReached || bytesFull;
         bool refuse = false;
         if (countFull || bytesFull) {
             // Make room by evicting sampled invalid frames first (oldest

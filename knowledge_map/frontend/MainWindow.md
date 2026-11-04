@@ -133,6 +133,22 @@ capture generation for an illuminated profile, using a fake camera factory.
   long strings, 50 sidebar cycles, rapid toggles, oversized legacy width,
   removed-monitor restore).
 
+## Recording capacity and the camera window (#833)
+
+`refreshRecordingCapacity()` (1 s `capacityTimer_`, skipped while a run is
+active or the coordinator is busy) shows `ExperimentCoordinator::
+recordingCapacity()` in the Overview tab's capacity panel and as a one-line
+summary (`capacityLabel_`, bounded width, tooltip = numbers and gates) beside
+**Start Experiment**. On the Overview tab it passes the rectangle as the
+planned window (the camera shows the full sensor there). A blocking capacity gate (`camera.window`, `camera.rate`,
+`storage.buffer`, `storage.throughput`) reaches the operator through the
+existing `explainReadiness` dialog at Start. `onTabChanged` applies the
+Overview script with `CameraScriptRole::Overview` and the Experiment script
+with `Experiment` (the profile window follows). An Overview window edit is
+written back into the active config's `camera.window` (when present);
+`AppConfigWatcher::acquisitionProfileLoaded` redraws the Overview rectangle
+(`reloadCameraWindow`, no `roiChanged`).
+
 ## Run state, alerts and metrics (issue #363)
 
 The status bar used to be one string that every path overwrote (a 500 ms

@@ -74,6 +74,24 @@ timestamp: microseconds since host boot. `timestampDescriptor()` reports
 `unknown/unsupported` on other platforms where the mapping is unverified. It
 marks transport receipt, not exposure.
 
+## Camera window and acquisition report (#833)
+
+`start()` reads, after the defensive `AcquisitionStop`, what the recording
+capacity gates need and keeps it for `acquisitionReport()`: the remote
+device's `DeviceVendorName`/`DeviceModelName` (falls back to the device
+module), `Width`/`Height`/`OffsetX`/`OffsetY`, the driven rate (device module
+`CameraControlMethod` RC/RG/EXPOSE: 1e6 / `CycleMinimumPeriod` µs; NC: the
+camera's `AcquisitionFrameRate`) and the camera's `AcquisitionFrameRateMax`
+for the window (float, else integer). Every feature is optional; a missing
+one stays unknown. On the bench camera (EoSens 2.0MCX12 on a Coaxlink Quad
+CXP-12) the remote device reports vendor `SVS-Vistek GmbH`, model `MC2066`.
+The camera does not apply the profile's window itself: that happens after
+the Experiment script in [[../services/CameraControlService]], so the
+full-sensor Overview script is never cropped. The SDK path compiles only on
+Windows CI after a `develop` push; check it locally with `-fsyntax-only
+-DMIB_HAS_EGRABBER=1` against the Linux eGrabber SDK headers
+(`/opt/euresys/egrabber-linux-*/include` on P5).
+
 ## Gotchas
 
 - **One GenTL handle per process.** `start()` takes the shared handle from

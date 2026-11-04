@@ -301,10 +301,64 @@ namespace backend::services
         return results;
     }
 
+    namespace
+    {
+        // The remote device's window (GenICam ImageFormatControl).
+        bool readRemoteWindow(EGrabber<CallbackOnDemand> &g, ::camera::common::CameraWindow &out)
+        {
+            try
+            {
+                out.width = static_cast<int>(g.getInteger<RemoteModule>("Width"));
+                out.height = static_cast<int>(g.getInteger<RemoteModule>("Height"));
+                out.offsetX = static_cast<int>(g.getInteger<RemoteModule>("OffsetX"));
+                out.offsetY = static_cast<int>(g.getInteger<RemoteModule>("OffsetY"));
+                return true;
+            }
+            catch (const std::exception &ex)
+            {
+                SPDLOG_WARN("Camera window read-back failed: {}", ex.what());
+                return false;
+            }
+        }
+
+        // Offsets first to 0 so a wider/taller window fits, then the size, then
+        // the offsets (the order the GenICam bounds require).
+        void writeRemoteWindow(EGrabber<CallbackOnDemand> &g, const ::camera::common::CameraWindow &w)
+        {
+            g.setInteger<RemoteModule>("OffsetX", 0);
+            g.setInteger<RemoteModule>("OffsetY", 0);
+            g.setInteger<RemoteModule>("Width", w.width);
+            g.setInteger<RemoteModule>("Height", w.height);
+            g.setInteger<RemoteModule>("OffsetX", w.offsetX);
+            g.setInteger<RemoteModule>("OffsetY", w.offsetY);
+        }
+
+        std::string remoteString(EGrabber<CallbackOnDemand> &g, const char *feature)
+        {
+            try
+            {
+                return g.getString<RemoteModule>(feature);
+            }
+            catch (const std::exception &)
+            {
+            }
+            try
+            {
+                return g.getString<DeviceModule>(feature);
+            }
+            catch (const std::exception &)
+            {
+            }
+            return {};
+        }
+    } // namespace
+
     bool CameraControlService::applyScriptToDevice(int interfaceIndex,
                                                    int deviceIndex,
                                                    const std::string &scriptPath,
-                                                   std::string *errorOut)
+                                                   std::string *errorOut,
+                                                   const backend::app::ProfileCameraWindow *window,
+                                                   backend::app::CameraWindowApplyReport *report)
     {
         try
         {
@@ -324,6 +378,61 @@ namespace backend::services
                 SPDLOG_WARN("AcquisitionStop after script failed: {}", ex.what());
             }
             SPDLOG_INFO("Script applied successfully");
+
+            if (report)
+            {
+                report->connectedVendor = remoteString(g, "DeviceVendorName");
+                report->connectedModel = remoteString(g, "DeviceModelName");
+                report->scriptWindowKnown = readRemoteWindow(g, report->scriptWindow);
+            }
+            if (window && report)
+            {
+                report->requested = true;
+                report->profile = *window;
+                report->refusal = backend::app::cameraModelMismatch(*window, report->connectedVendor,
+                                                                    report->connectedModel);
+                if (!report->refusal.empty())
+                {
+                    SPDLOG_WARN("Profile camera window not applied: {}", report->refusal);
+                }
+                else
+                {
+                    try
+                    {
+                        writeRemoteWindow(g, window->window);
+                        report->applied = true;
+                    }
+                    catch (const std::exception &ex)
+                    {
+                        report->error = ex.what();
+                        SPDLOG_ERROR("The camera rejected the profile's camera window {}: {}",
+                                     backend::app::describeWindow(window->window), ex.what());
+                        if (report->scriptWindowKnown)
+                        {
+                            try
+                            {
+                                writeRemoteWindow(g, report->scriptWindow);
+                            }
+                            catch (const std::exception &restore)
+                            {
+                                SPDLOG_ERROR("Restoring the script's camera window failed: {}", restore.what());
+                            }
+                        }
+                    }
+                }
+                report->resultKnown = readRemoteWindow(g, report->result);
+                if (report->applied && report->scriptWindowKnown && report->scriptWindow != window->window)
+                {
+                    SPDLOG_WARN("The camera script set the window {}; the profile's camera window {} is applied "
+                                "instead (the profile wins)",
+                                backend::app::describeWindow(report->scriptWindow),
+                                backend::app::describeWindow(window->window));
+                }
+                else if (report->applied)
+                {
+                    SPDLOG_INFO("Profile camera window applied: {}", backend::app::describeWindow(window->window));
+                }
+            }
             return true;
         }
         catch (const std::exception &ex)
@@ -389,11 +498,15 @@ namespace backend::services
     bool CameraControlService::applyScriptToDevice(int interfaceIndex,
                                                    int deviceIndex,
                                                    const std::string &scriptPath,
-                                                   std::string *errorOut)
+                                                   std::string *errorOut,
+                                                   const backend::app::ProfileCameraWindow *window,
+                                                   backend::app::CameraWindowApplyReport *report)
     {
         (void)interfaceIndex;
         (void)deviceIndex;
         (void)scriptPath;
+        (void)window;
+        (void)report;
         return reportUnsupported("applyScriptToDevice", errorOut, "EGrabber SDK is unavailable on this platform");
     }
 

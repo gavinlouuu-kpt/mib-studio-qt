@@ -33,8 +33,16 @@
   goes through the shared `applyConfigToHandle` (`MindVisionApply.cpp`), so
   this path now applies the full field set — strobe and acquisition-trigger
   extras included (the historical 7-field drift is closed).
-- `applyScriptToDevice(ifIdx, devIdx, scriptPath, errorOut)` — push a
-  GenICam JS file to a specific device.
+- `applyScriptToDevice(ifIdx, devIdx, scriptPath, errorOut, window, report)`
+  — push a GenICam JS file to a specific device, then `AcquisitionStop`. With
+  a profile camera window (#833, `app/CameraWindowProfile.h`) the same
+  short-lived handle then reads the window the script set, refuses a window
+  made for another camera model (`cameraModelMismatch`), writes the window
+  (offsets to 0, size, offsets), reads it back, and on an SDK error restores
+  the script's window. `report` (`CameraWindowApplyReport`) carries all of it
+  for the `camera.window` readiness gate; the return value is the script's.
+  [[../architecture/AppBackend]] passes the window only for the Experiment
+  script.
 - `deviceReset(ifIdx, devIdx, errorOut)` — issue SFNC `DeviceReset`;
   best-effort stops acquisition first.
 

@@ -40,9 +40,17 @@ and the app would have used the simulated camera — select the mock camera
 explicitly or connect the hardware), `processing.core` (activate the pinned
 core), `storage.output` (choose a writable destination with free space),
 `storage.roundtrip` (a test write to the destination failed — check
-permissions and antivirus), `storage.buffer` (one full image series does not fit
-the recording memory budget — reduce the frame size or series length, or raise
-the budget),
+permissions and antivirus), `storage.buffer` (the recording buffer this camera
+window needs does not fit in memory, or one full image series does not fit an
+`experiment_buffer_max_mb` set in the profile — use a smaller window or a
+smaller `buffer_threshold`, free memory, or remove the fixed size),
+`camera.rate` (the requested frame rate is above what the camera allows for
+this window — use a smaller window or a lower rate), `storage.throughput` (the
+destination writes slower than even a run with no cells saves — record to a
+faster drive such as an NVMe SSD, or use a smaller window or a lower rate),
+`camera.window` (the profile's camera window is not the one in the camera:
+apply the camera script and restart Live View; or it was made for another
+camera model: load a profile made for this camera),
 `lifecycle.fault` (the previous run's data could not be saved completely —
 acknowledge it in the dialog). *"The configuration changed while the
 experiment was being prepared"* means something (ROI, background,

@@ -19,7 +19,13 @@
 //    wins over bg_subtract_threshold, and a multi-image count below 1 is
 //    clamped to 1, as the Qt AppConfigWatcher does;
 //  - buffer_threshold, experiment_buffer_max_mb, pixel_to_micron_factor and
-//    the autofocus keys must be in range;
+//    the autofocus keys must be in range; experiment_buffer_max_mb is an
+//    explicit override of the computed experiment buffer (#833), 0 or absent =
+//    automatic;
+//  - camera.window (the camera window, #833, app/CameraWindowProfile.h) and
+//    target_fps must be well formed; they are applied to AppBackend's
+//    acquisition profile (the window reaches the camera with the next
+//    Experiment script);
 //  - realtime_processing (enabled, drop_frames, batch settings, mode) must be
 //    in range, and the queue must hold at least one batch;
 //  - camera.frame_delivery_mode must be everyFrame or latestFrame (missing
@@ -27,6 +33,8 @@
 //  - a stage block applies only while the Z stage is disconnected;
 //  - a non-empty roi (checkRoi) must fit the latest captured frame; with no
 //    frame yet, the selected camera's capture window (or sensor) when known;
+//    with a camera.window whose size differs from the latest frame, it must
+//    fit that window and is pending until a frame of that size arrives;
 //    with neither, it is applied on the first captured frame (pending: the
 //    rest of the document still applies, and Start waits for the ROI);
 //  - display_fps is validated (1..240) but is a display setting.
@@ -36,6 +44,7 @@
 // Config unsynchronised.
 #pragma once
 
+#include "backend/app/CameraWindowProfile.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/services/AutofocusService.h"
@@ -69,7 +78,8 @@ std::string configApplyBlocker(AppBackend& backend);
 struct StagedConfig {
     services::ProcessingConfig processing;
     int flushInterval{1};
-    double experimentBufferMb{0};
+    double experimentBufferMb{0}; // explicit override (#833); 0 = automatic
+    AcquisitionProfile acquisition; // camera.window, target_fps (#833)
     double pixelToMicron{1};
     bool realtimeEnabled{false};
     bool dropFrames{false};

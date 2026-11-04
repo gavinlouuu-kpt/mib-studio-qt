@@ -158,6 +158,19 @@ J apply(AppBackend& backend, const J& snapshot) {
     if (!provenance.contains("camera") || !provenance.at("camera").is_object())
         provenance["camera"] = J::object();
     provenance["camera"]["frame_delivery_mode"] = camera::common::toString(staged.capture.deliveryMode);
+    // #833: the camera window and target rate the profile applied (or none).
+    if (staged.acquisition.window) {
+        const auto& w = *staged.acquisition.window;
+        provenance["camera"]["window"] = {{"width", w.window.width},       {"height", w.window.height},
+                                          {"offset_x", w.window.offsetX},  {"offset_y", w.window.offsetY},
+                                          {"camera_vendor", w.cameraVendor}, {"camera_model", w.cameraModel}};
+    } else {
+        provenance["camera"].erase("window");
+    }
+    if (staged.acquisition.targetFps > 0)
+        provenance["target_fps"] = staged.acquisition.targetFps;
+    else
+        provenance.erase("target_fps");
     for (const auto* key :
          {"autofocus_focus_setpoint", "autofocus_focus_range", "autofocus_voltage_step",
           "autofocus_fine_voltage_step", "autofocus_min_voltage", "autofocus_max_voltage",

@@ -20,6 +20,7 @@
 #include <cmath>
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/processing/EModulusLut.h"
+#include "backend/processing/ExperimentBufferSizing.h"
 #include "backend/processing/ExperimentFrameBuffer.h"
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/processing/ProcessingTypes.h"
@@ -103,7 +104,9 @@ public:
         uint64_t maxQueuedBytes{kDefaultBatchQueueMaxBytes};
     };
     static constexpr uint64_t kDefaultBatchQueueMaxBytes = 256ULL * 1024 * 1024;
-    static constexpr uint64_t kDefaultExperimentBufferMaxBytes = 512ULL * 1024 * 1024;
+    // Byte cap until a plan is applied (no camera window known yet, or a
+    // headless service user); the coordinator replaces it at Start (#833).
+    static constexpr uint64_t kDefaultExperimentBufferMaxBytes = backend::processing::ExperimentBufferSizing::kFallbackBytes;
 
     ProcessingService();
     ~ProcessingService();
@@ -382,6 +385,15 @@ public:
     // invalid first) and accounted as persistenceCancelledByPolicy. 0 = none.
     void setMaxBufferedBytes(uint64_t bytes);
     uint64_t getMaxBufferedBytes() const;
+    // #833: the explicit experiment buffer size from config.json
+    // (experiment_buffer_max_mb); 0 = automatic. The coordinator sizes the
+    // buffer from the camera window and rate (processing/
+    // ExperimentBufferSizing.h) and applies the plan at every Start.
+    void setExperimentBufferOverrideBytes(uint64_t bytes);
+    uint64_t experimentBufferOverrideBytes() const;
+    // #833: sets the frame cap and the byte cap of a plan together (they
+    // agree, so neither binds first) and logs the plan.
+    void applyExperimentBufferPlan(const backend::processing::ExperimentBufferPlan& plan);
 
     // ---- Memory ownership report (issue #370) -------------------------------
     // Current/peak bytes + counts per owner inside this service. Shared
@@ -858,7 +870,8 @@ private:
                                uint64_t hostTimestampUs, uint64_t storeGeneration, uint64_t captureSession,
                                const MonitoringEntry& entry, const Roi& entryRoi);
     bool appendExperimentFrame(ProcessedFrame&& frame, bool isValid);
-    void logDroppedExperimentFrames(const DroppedFrameCounts& dropped, size_t bufferedTotal, size_t maxBufferedFrames);
+    void logDroppedExperimentFrames(const DroppedFrameCounts& dropped, size_t bufferedTotal, size_t maxBufferedFrames,
+                                    uint64_t bufferedBytes, bool frameCapReached, bool byteCapReached);
     FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi,
                                       const ProcessingConfig& config, const cv::Mat& originalImage,
                                       const cv::Mat& background = cv::Mat(),
@@ -979,6 +992,7 @@ private:
     // frames AND bytes, every eviction reported).
     ExperimentFrameBuffer experimentBuffer_;
     std::atomic<uint64_t> maxBufferedBytes_{kDefaultExperimentBufferMaxBytes};
+    std::atomic<uint64_t> experimentBufferOverrideBytes_{0}; // #833; 0 = automatic
 
     // Experiment flush write queue (decouples HDF5 writes from frame
     // accumulation). Created lazily on the first flush, drained by finishFlush.

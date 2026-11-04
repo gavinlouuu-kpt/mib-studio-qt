@@ -12,6 +12,15 @@
   linePitch, timestamp, data }`.
 - `CameraConfig` — `{ bufferPartCount = 1, numBuffers = 20, deliveryMode }`.
 - `CameraStats` — `{ frameRate, dataRateMBps }`.
+- `CameraWindow` (#833) — `{ width, height, offsetX, offsetY }` in sensor
+  pixels: the camera acquisition window (cROI), which decides every frame's
+  size. Not the processing ROI.
+- `CameraAcquisitionReport` (#833) — what a running camera reports, read at
+  `start()`: connected `vendor`/`model`, the `window` in effect
+  (`windowKnown`), `requestedFps` (+ `requestedFpsSource`, the rate the camera
+  is driven at) and `maxFps` (its maximum for that window). Unknown stays
+  empty/0. Returned by `virtual bool acquisitionReport(out) const` (default
+  false); [[EGrabberCamera]] implements it, other backends report none.
 - `FrameDeliveryMode` — `EveryFrame` (ordered, never intentionally skips)
   vs `LatestFrame` (drains stale completed SDK buffers before the copy,
   returns the freshest frame, counts every deliberate discard). Serialized

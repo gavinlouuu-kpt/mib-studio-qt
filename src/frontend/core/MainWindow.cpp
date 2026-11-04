@@ -67,6 +67,7 @@
 #include "frontend/tabs/HdfReviewTab.h"
 #include "frontend/tabs/ExperimentMonitoringTab.h"
 #include "frontend/system/AppConfigWatcher.h"
+#include "frontend/widgets/RecordingCapacityPanel.h"
 #include "frontend/dialogs/MonitoringSettingsDialog.h"
 #include "frontend/tabs/OverviewTab.h"
 #include "frontend/tabs/ConfigTabs.h"
@@ -509,6 +510,13 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
     statsTimer_->setInterval(500);
     connect(statsTimer_, &QTimer::timeout, this, &MainWindow::onUpdateStats);
 
+    // #833: the recording capacity follows the camera window and rate; a cheap
+    // backend view (no disk write, no readiness generation change).
+    capacityTimer_ = new QTimer(this);
+    capacityTimer_->setInterval(1000);
+    connect(capacityTimer_, &QTimer::timeout, this, &MainWindow::refreshRecordingCapacity);
+    capacityTimer_->start();
+
     // Setup sidebar and main layout
     setupSidebar();
 
@@ -663,6 +671,19 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
                         config->syncMindVisionRoi(x, y, w, h);
                 });
     }
+    // #833: an eGrabber window edit also updates the active profile's
+    // camera.window (when it has one), so the window the profile applies after
+    // the Experiment script follows the operator; a reloaded profile window is
+    // shown on the Overview rectangle.
+    if (auto* configWatcher = previewPage->getConfigWatcher()) {
+        connect(overviewTab_, &frontend::OverviewTab::roiChanged, configWatcher,
+                [this, configWatcher](int x, int y, int w, int h) {
+                    if (!backend_.isMindVisionCameraSelected())
+                        configWatcher->writeBackCameraWindow(camera::common::CameraWindow{w, h, x, y});
+                });
+        connect(configWatcher, &frontend::AppConfigWatcher::acquisitionProfileLoaded, overviewTab_,
+                &frontend::OverviewTab::reloadCameraWindow);
+    }
     // Initialize displays and processing ROI with current values
     {
         int ox = static_cast<int>(overviewTab_->roiPosition().x());
@@ -726,6 +747,9 @@ MainWindow::~MainWindow() {
     // widget tree is partially destroyed, that's a use-after-free.
     if (statsTimer_) {
         statsTimer_->stop();
+    }
+    if (capacityTimer_) {
+        capacityTimer_->stop();
     }
     delete ui;
 }
@@ -1011,6 +1035,17 @@ void MainWindow::setupCornerWidgets() {
     roiLabel_ = new QLabel(tr("ROI: --"), experimentControlsWidget);
     roiLabel_->setStyleSheet("font-weight: bold; padding: 0 8px;");
     experimentControlsLayout->addWidget(roiLabel_);
+
+    // #833: the buffer sized for the camera window and the capacity gates'
+    // status next to Start; the tooltip lists the numbers and the gates.
+    capacityLabel_ = new QLabel(tr("Buffer: --"), experimentControlsWidget);
+    capacityLabel_->setObjectName(QStringLiteral("recordingCapacityLabel"));
+    capacityLabel_->setStyleSheet("padding: 0 8px;");
+    // Bounded so the tab-bar corner never grows with the text; the tooltip
+    // carries the numbers and every gate.
+    capacityLabel_->setMaximumWidth(
+        capacityLabel_->fontMetrics().horizontalAdvance(QStringLiteral("Buffer 999.9 GiB, 99.99 s: Blocked (4)")) + 16);
+    experimentControlsLayout->addWidget(capacityLabel_);
 
     // Create push buttons and connect them to actions
     startExperimentBtn_ = new QPushButton(startExperimentAct_->text(), experimentControlsWidget);
@@ -1310,6 +1345,27 @@ void MainWindow::refreshDiagnostics(const frontend::StatisticsData& data)
         }
     }
     diagnosticsText_->setPlainText(lines.join(QLatin1Char('\n')));
+}
+
+void MainWindow::refreshRecordingCapacity()
+{
+    // Frozen while a run holds its plan; the view describes the next Start.
+    if (experimentActive_) return;
+    // On the Overview tab the camera shows the full sensor: describe the
+    // window being placed (the rectangle), not the overview frames.
+    std::optional<camera::common::CameraWindow> planned;
+    if (overviewTab_ && ui->tabs && ui->tabs->currentIndex() == 1)
+        planned = camera::common::CameraWindow{overviewTab_->roiWidth(), overviewTab_->roiHeight(),
+                                               static_cast<int>(overviewTab_->roiPosition().x()),
+                                               static_cast<int>(overviewTab_->roiPosition().y())};
+    const auto view = backend_.experiment().recordingCapacity({}, planned);
+    if (view.busy) return; // keep the last view
+    if (overviewTab_ && overviewTab_->capacityPanel()) overviewTab_->capacityPanel()->setView(view);
+    if (capacityLabel_) {
+        const auto text = frontend::describeRecordingCapacity(view);
+        capacityLabel_->setText(text.shortSummary);
+        capacityLabel_->setToolTip(QStringList(text.facts + text.gates).join(QLatin1Char('\n')));
+    }
 }
 
 namespace {
@@ -2098,7 +2154,11 @@ void MainWindow::onTabChanged(int index)
     // Apply the script
     SPDLOG_INFO("MainWindow::onTabChanged: Auto-applying camera script from {}", scriptPath.toStdString());
     std::string backendErr;
-    if (!backend_.applyCameraScriptFromFile(scriptPath.toStdString(), &backendErr)) {
+    // #833: the Overview script shows the full sensor; only the Experiment
+    // script is followed by the profile's camera window.
+    const auto role = index == 1 ? backend::AppBackend::CameraScriptRole::Overview
+                                 : backend::AppBackend::CameraScriptRole::Experiment;
+    if (!backend_.applyCameraScriptFromFile(scriptPath.toStdString(), &backendErr, role)) {
         SPDLOG_ERROR("MainWindow::onTabChanged: Failed to apply script: {}", backendErr);
         return;
     }

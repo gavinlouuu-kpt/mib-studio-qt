@@ -1,7 +1,9 @@
 // End-to-end (issue #828): the real MainWindow runs an experiment on the mock
 // camera under the rig's load: 5000 fps of 1216x208 frames (the public 512x96
 // real-cell stream, centred on a flat background-coloured border), every
-// detected cell accepted and the default 512 MB experiment buffer. Each HDF5
+// detected cell accepted and the rig's 512 MB experiment buffer (#833: set as
+// the experiment_buffer_max_mb override; the computed default holds 2 s at
+// 5000 fps, so it would take a minute to overflow). Each HDF5
 // append is delayed 1.5 s by default, the latency the rig's D: HDD showed for
 // a ~530-frame batch (1.7-2.0 s), so the overflow does not depend on the CI
 // disk. With _SLOW_MS=0 and _DIR on that HDD the overflow is fully natural
@@ -11,8 +13,8 @@
 // box, shown only after the run is terminal (file closed).
 //
 // Knobs (all optional): MIB_FATAL_SAVE_E2E_FPS (5000), _WIDTH/_HEIGHT
-// (1216x208), _FRAMES (frames padded, 400), _BUFFER_MB (experiment buffer;
-// default: the app's), _SLOW_MS (sleep per HDF5 append, 1500), _DIR (where the
+// (1216x208), _FRAMES (frames padded, 400), _BUFFER_MB (experiment buffer
+// override, 512; 0 = the computed size), _SLOW_MS (sleep per HDF5 append, 1500), _DIR (where the
 // .h5 goes; default the temp dir).
 // Requires the real frames (python scripts/provision-assets.py --asset
 // 512x96stream-mock-frames --count 1000); without them the test is skipped (77).
@@ -163,7 +165,7 @@ int main(int argc, char* argv[]) {
     const int width = static_cast<int>(envNumber("MIB_FATAL_SAVE_E2E_WIDTH", 1216));
     const int height = static_cast<int>(envNumber("MIB_FATAL_SAVE_E2E_HEIGHT", 208));
     const auto frameCount = static_cast<std::size_t>(envNumber("MIB_FATAL_SAVE_E2E_FRAMES", 400));
-    const double bufferMb = envNumber("MIB_FATAL_SAVE_E2E_BUFFER_MB", 0.0);
+    const double bufferMb = envNumber("MIB_FATAL_SAVE_E2E_BUFFER_MB", 512.0);
     const int slowMs = static_cast<int>(envNumber("MIB_FATAL_SAVE_E2E_SLOW_MS", 1500));
 
     mib::test::Watchdog wd(240);
@@ -303,7 +305,7 @@ int main(int argc, char* argv[]) {
         processing.setRealtimeRoi(
             backend::services::ProcessingService::Roi{0, 0, background.cols, background.rows});
         if (bufferMb > 0)
-            processing.setMaxBufferedBytes(static_cast<uint64_t>(bufferMb * 1024 * 1024));
+            processing.setExperimentBufferOverrideBytes(static_cast<uint64_t>(bufferMb * 1024 * 1024));
         spin(1000);
 
         // ---- start the experiment (the watcher answers the save dialog) -----------

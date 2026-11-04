@@ -115,8 +115,10 @@ StagedConfig stageConfigDocument(AppBackend& backend, const std::string& bytes) 
 
     s.flushInterval =
         integer(root, "buffer_threshold", static_cast<int>(processing.getFlushInterval()), 1, 10000000);
-    s.experimentBufferMb = number(root, "experiment_buffer_max_mb",
-                                  processing.getMaxBufferedBytes() / (1024.0 * 1024.0), 0, 1048576);
+    // #833: an explicit override of the computed buffer; absent = automatic (0), so a
+    // profile never inherits the previous profile's override.
+    s.experimentBufferMb = number(root, "experiment_buffer_max_mb", 0, 0, 1048576);
+    s.acquisition = parseAcquisitionProfile(bytes); // camera.window, target_fps (#833); throws when malformed
     s.pixelToMicron = number(root, "pixel_to_micron_factor", processing.getPixelToMicronFactor(), 1e-12, 1e12);
 
     s.realtimeEnabled = processing.isRealtimeEnabled();
@@ -206,6 +208,17 @@ StagedConfig stageConfigDocument(AppBackend& backend, const std::string& bytes) 
                 window = {static_cast<uint64_t>(g.roiWidth), static_cast<uint64_t>(g.roiHeight)};
             else if (g.sensorWidth > 0 && g.sensorHeight > 0)
                 window = {static_cast<uint64_t>(g.sensorWidth), static_cast<uint64_t>(g.sensorHeight)};
+            // #833: the document's own camera window is the bound the ROI must fit;
+            // until frames of that size arrive the ROI is pending.
+            bool windowPending = false;
+            if (s.acquisition.window) {
+                const FrameSize own{static_cast<uint64_t>(s.acquisition.window->window.width),
+                                    static_cast<uint64_t>(s.acquisition.window->window.height)};
+                windowPending = !frame.known() || frame.width != own.width || frame.height != own.height;
+                frame = {};
+                window = own;
+            }
+            if (windowPending && checkRoi(s.roi, frame, window) == RoiCheck::Fits) s.roiPending = true;
             switch (checkRoi(s.roi, frame, window)) {
             case RoiCheck::Fits:
                 break;
@@ -234,7 +247,8 @@ void commitStagedConfig(AppBackend& backend, const StagedConfig& s) {
     auto& processing = backend.processing();
     processing.setProcessingConfig(s.processing);
     processing.setFlushInterval(static_cast<size_t>(s.flushInterval));
-    processing.setMaxBufferedBytes(static_cast<uint64_t>(s.experimentBufferMb * 1024.0 * 1024.0));
+    processing.setExperimentBufferOverrideBytes(static_cast<uint64_t>(s.experimentBufferMb * 1024.0 * 1024.0));
+    backend.setAcquisitionProfile(s.acquisition);
     processing.setRealtimeDropFrames(s.dropFrames);
     processing.setRealtimeBatchSettings(s.batch);
     processing.setRealtimeProcessingMode(s.mode);
@@ -275,6 +289,8 @@ ConfigApplyReport applyConfigDocument(AppBackend& backend, const std::string& te
             report.applied.emplace_back("roi");
     }
     report.applied.emplace_back("camera.frame_delivery_mode"); // missing = everyFrame, always applied
+    if (staged.acquisition.window) report.applied.emplace_back("camera.window");
+    if (root.contains("target_fps")) report.applied.emplace_back("target_fps");
     for (const auto& item : root.items()) {
         const auto& key = item.key();
         if (key.rfind("autofocus_", 0) == 0 || key == "ring_ratio_stale_ms" || key == "require_new_sample_per_step" ||

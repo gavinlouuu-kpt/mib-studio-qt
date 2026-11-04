@@ -65,6 +65,9 @@ void setCameraReadyCallback(CameraReadyCallback); // (ICamera*, generation): ptr
 bool start();  void stop();  bool isRunning();   // compatibility API
 CaptureStartOutcome requestStart();             // Accepted | AlreadyActive | RejectedStopping | RejectedNoFactory
 CaptureLifecycleSnapshot lifecycleSnapshot();   // authoritative state/generation/cameraReady/lastFailure
+bool acquisitionReport(CameraAcquisitionReport&, uint64_t* generation); // #833: what the running
+                                 // session's camera reported at start (window, driven/max fps,
+                                 // model); false when none or no session
 CaptureLifecycleState waitForState({...}, timeout);
 bool softTriggerActiveCamera();  // one software ACQUISITION trigger on the
                                  // live camera (not the sort pulse)

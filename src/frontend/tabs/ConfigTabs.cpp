@@ -64,6 +64,7 @@
 #include "backend/services/SerialBus.h"
 #include "backend/processing/ProcessingService.h"
 #include "frontend/system/ProfileManager.h"
+#include "frontend/utils/EgrabberConfigParser.h"
 #include "frontend/models/JsonTableModel.h"
 #include "frontend/utils/JsonFlatten.h"
 
@@ -2373,8 +2374,28 @@ void ConfigTabs::onSaveProfile() {
     QJsonParseError perr;
     const QJsonDocument doc = QJsonDocument::fromJson(jsonEdit_ ? jsonEdit_->toPlainText().toUtf8() : QByteArray(), &perr);
     QString jsonToWrite;
+    // #833: the profile records the camera window it runs (camera.window) and
+    // the camera it was made for; the saved script gets the same values below.
+    std::optional<backend::app::ProfileCameraWindow> savedWindow;
     if (perr.error == QJsonParseError::NoError) {
-        jsonToWrite = QString::fromUtf8(doc.toJson(QJsonDocument::Indented));
+        QJsonObject root = doc.object();
+        if (!backend_.isMindVisionCameraSelected()) {
+            QString vendor, model;
+            const auto apply = backend_.lastCameraWindowApply();
+            ::camera::common::CameraAcquisitionReport report;
+            if (backend_.capture().acquisitionReport(report) && !report.model.empty()) {
+                vendor = QString::fromStdString(report.vendor);
+                model = QString::fromStdString(report.model);
+            } else if (!apply.connectedModel.empty()) {
+                vendor = QString::fromStdString(apply.connectedVendor);
+                model = QString::fromStdString(apply.connectedModel);
+            }
+            savedWindow = ProfileManager::cameraWindowForSave(backend_.acquisitionProfile().window,
+                                                              jsEdit_ ? jsEdit_->toPlainText() : QString(),
+                                                              vendor, model, root);
+            if (savedWindow) root = ProfileManager::withCameraWindow(root, *savedWindow);
+        }
+        jsonToWrite = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Indented));
     } else {
         const auto ret = QMessageBox::question(this, tr("Invalid JSON"),
                                                tr("JSON in editor is invalid.\nError: %1\n\nForce-save raw text to profile anyway?")
@@ -2411,6 +2432,13 @@ void ConfigTabs::onSaveProfile() {
             if (!writeTextFile(jsPath, jsText, &err)) {
                 if (!nonInteractive_) QMessageBox::warning(this, tr("Save Profile"), tr("Failed to write egrabberConfig.js: %1").arg(err));
                 return;
+            }
+            // #833: the script's Width/Height/Offset lines agree with camera.window.
+            if (savedWindow && backend::app::parseScriptCameraWindow(jsText.toStdString())) {
+                QString syncErr;
+                if (!EgrabberConfigParser::updateRoiSize(jsPath, savedWindow->window.width, savedWindow->window.height, &syncErr) ||
+                    !EgrabberConfigParser::updateRoiOffsets(jsPath, savedWindow->window.offsetX, savedWindow->window.offsetY, &syncErr))
+                    SPDLOG_WARN("Profiles: camera script window not synced to camera.window: {}", syncErr.toStdString());
             }
         }
     }

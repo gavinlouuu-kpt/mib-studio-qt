@@ -482,6 +482,21 @@ mib_add_backend_test_executable(readiness_probe_cache_test backend/readiness_pro
 add_test(NAME backend.readiness_probe_cache COMMAND $<TARGET_FILE:mib_backend_tests> readiness_probe_cache_test)
 set_tests_properties(backend.readiness_probe_cache PROPERTIES LABELS "backend;recording;hdf5;safety" TIMEOUT 60)
 
+# #833: camera window in the profile, buffer sized from it, Start blocked outside the supported range.
+mib_add_backend_test_executable(experiment_buffer_sizing_test processing/experiment_buffer_sizing_test.cpp)
+add_test(NAME processing.experiment_buffer_sizing COMMAND $<TARGET_FILE:mib_backend_tests> experiment_buffer_sizing_test)
+set_tests_properties(processing.experiment_buffer_sizing PROPERTIES LABELS "processing;backend;safety;memory" TIMEOUT 30)
+mib_add_backend_test_executable(recording_capacity_gate_test backend/recording_capacity_gate_test.cpp)
+add_test(NAME backend.recording_capacity_gate COMMAND $<TARGET_FILE:mib_backend_tests> recording_capacity_gate_test)
+set_tests_properties(backend.recording_capacity_gate PROPERTIES LABELS "backend;recording;safety" TIMEOUT 30)
+mib_add_backend_test_executable(camera_window_profile_test backend/camera_window_profile_test.cpp)
+add_test(NAME backend.camera_window_profile COMMAND $<TARGET_FILE:mib_backend_tests> camera_window_profile_test)
+set_tests_properties(backend.camera_window_profile PROPERTIES LABELS "backend;camera;profiles" TIMEOUT 30)
+mib_add_backend_test_executable(recording_capacity_readiness_test backend/recording_capacity_readiness_test.cpp)
+mib_backend_test_link(recording_capacity_readiness_test PRIVATE Threads::Threads)
+add_test(NAME backend.recording_capacity_readiness COMMAND $<TARGET_FILE:mib_backend_tests> recording_capacity_readiness_test)
+set_tests_properties(backend.recording_capacity_readiness PROPERTIES LABELS "backend;recording;hdf5;safety" TIMEOUT 180)
+
 mib_add_backend_test_executable(camera_script_apply_test backend/camera_script_apply_test.cpp)
 add_test(NAME backend.camera_script_apply COMMAND $<TARGET_FILE:mib_backend_tests> camera_script_apply_test)
 set_tests_properties(backend.camera_script_apply PROPERTIES LABELS "backend;camera" TIMEOUT 30)
