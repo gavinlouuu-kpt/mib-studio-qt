@@ -7,6 +7,8 @@ import { metricNumber } from "../../../metricFormat";
 import { niceTicks, toPx, type Range, type Viewport } from "../../../review/charts/chartMath";
 import { CURVE_COLOURS, LEGEND_W, MARKER, decimalsFor, scatterViewport } from "../../../review/charts/drawScatter";
 import type { ScatterData } from "../monitoringChartModel";
+import type { ScatterDensityModel } from "../density/densityModel";
+import { drawDensityContours, drawDensityPoints, LEGEND_DENSITY_COLOUR } from "../density/drawDensity";
 import type { AxisRanges } from "./useChartView";
 
 export { scatterViewport };
@@ -32,6 +34,10 @@ export interface MonitoringScatterModel {
   /** A later gate overlay: drawn over the points, under the legend, clipped to the plot, with the live
    *  axis transform in `vp` (use toPx / toData from review/charts/chartMath). */
   overlay?: (g: CanvasRenderingContext2D, vp: Viewport) => void;
+  /** The density (KDE) layer (PR E2): the points take their density level's ramp colour (the target group as
+   *  squares) and the core and reference contours are drawn over them, under the selection marker and the overlay.
+   *  Absent = the plain chart, drawn exactly as before. */
+  density?: ScatterDensityModel;
 }
 
 export interface ScatterDrawOptions {
@@ -72,20 +78,25 @@ export function drawMonitoringScatter(g: CanvasRenderingContext2D, w: number, h:
   const data = m.data;
   const r = MARKER / 2;
   if (data) {
-    // Valid cells first, target-group cells on top (Qt's series order).
-    for (const group of [0, 1]) {
-      g.fillStyle = group ? TARGET_COLOUR : VALID_COLOUR;
-      g.beginPath();
-      for (let i = 0; i < data.xs.length; i++) {
-        if (data.target[i] !== group) continue;
-        const x = data.xs[i], y = data.ys[i];
-        if (x < vp.x0 || x > vp.x1 || y < vp.y0 || y > vp.y1) continue;
-        const [px, py] = toPx(vp, x, y);
-        g.moveTo(px + r, py);
-        g.arc(px, py, r, 0, Math.PI * 2);
+    // Valid cells first, target-group cells on top (Qt's series order). With the density layer on, one path per
+    // level instead (drawDensity.ts).
+    if (m.density) drawDensityPoints(g, vp, data, m.density.levels);
+    else {
+      for (const group of [0, 1]) {
+        g.fillStyle = group ? TARGET_COLOUR : VALID_COLOUR;
+        g.beginPath();
+        for (let i = 0; i < data.xs.length; i++) {
+          if (data.target[i] !== group) continue;
+          const x = data.xs[i], y = data.ys[i];
+          if (x < vp.x0 || x > vp.x1 || y < vp.y0 || y > vp.y1) continue;
+          const [px, py] = toPx(vp, x, y);
+          g.moveTo(px + r, py);
+          g.arc(px, py, r, 0, Math.PI * 2);
+        }
+        g.fill();
       }
-      g.fill();
     }
+    if (m.density) drawDensityContours(g, vp, m.density.contours, m.density.reference);
     if (opts.selection && m.selected >= 0 && m.selected < data.xs.length) {
       const [px, py] = toPx(vp, data.xs[m.selected], data.ys[m.selected]);
       g.beginPath();
@@ -100,7 +111,7 @@ export function drawMonitoringScatter(g: CanvasRenderingContext2D, w: number, h:
   m.overlay?.(g, vp);
   g.restore();
 
-  drawLegend(g, h, vp, m.curves);
+  drawLegend(g, h, vp, m.curves, !!m.density);
   if (!data || data.xs.length === 0) {
     g.fillStyle = "#888";
     g.textAlign = "center";
@@ -157,15 +168,16 @@ function drawAxes(g: CanvasRenderingContext2D, h: number, vp: Viewport, ranges: 
 }
 
 /** The legend on the right (Qt: legend aligned right): the two series, then one entry per curve. */
-function drawLegend(g: CanvasRenderingContext2D, h: number, vp: Viewport, curves: readonly ReferenceCurve[]) {
+function drawLegend(g: CanvasRenderingContext2D, h: number, vp: Viewport, curves: readonly ReferenceCurve[], density: boolean) {
   const lx = vp.left + vp.width + 14;
   let ly = vp.top + 6;
   g.font = "11px system-ui, sans-serif";
   g.textAlign = "left";
   g.textBaseline = "middle";
-  const entries: { name: string; color: string; line: boolean }[] = [
-    { name: "Valid Frames", color: VALID_COLOUR, line: false },
-    { name: "Target Group", color: TARGET_COLOUR, line: false },
+  // With the density colours on, the two series keep their identity through the marker shape (circle, square), not their colour.
+  const entries: { name: string; color: string; line: boolean; square?: boolean }[] = [
+    { name: "Valid Frames", color: density ? LEGEND_DENSITY_COLOUR : VALID_COLOUR, line: false },
+    { name: "Target Group", color: density ? LEGEND_DENSITY_COLOUR : TARGET_COLOUR, line: false, square: density },
     ...curves.map((c, k) => ({ name: curveLabel(c.modulus), color: CURVE_COLOURS[k % CURVE_COLOURS.length], line: true })),
   ];
   for (const e of entries) {
@@ -180,7 +192,8 @@ function drawLegend(g: CanvasRenderingContext2D, h: number, vp: Viewport, curves
     } else {
       g.fillStyle = e.color;
       g.beginPath();
-      g.arc(lx + 8, ly, 3.5, 0, Math.PI * 2);
+      if (e.square) g.rect(lx + 4.5, ly - 3.5, 7, 7);
+      else g.arc(lx + 8, ly, 3.5, 0, Math.PI * 2);
       g.fill();
     }
     g.fillStyle = "#333";

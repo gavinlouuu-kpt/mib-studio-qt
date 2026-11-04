@@ -1,0 +1,68 @@
+/* Scatter density (KDE) toggle, level key and the dialog's reference contour row (monitoring area, epic #866 PR E2). Part of the App.css cascade. */
+.mon-density {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin: 0 0 4px;
+}
+
+.mon-density-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+/* Eight swatches, sparsest to densest: the ramp the points take (densityModel.ts LEVEL_COLOURS). */
+.mon-density-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mon-density-key span:first-child {
+  margin-right: 4px;
+}
+
+.mon-density-key span:last-child {
+  margin-left: 4px;
+}
+
+.mon-density-key i {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 1px;
+}
+
+.mon-density-notice {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 12px;
+  color: #a33;
+}
+
+/* The dialog's reference contour row: the label, the three buttons, the loaded reference's name. */
+.mon-density-reference {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 6px;
+}
+
+.mon-density-reference-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.mon-density-reference-label {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}

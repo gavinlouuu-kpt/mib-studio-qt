@@ -1,10 +1,14 @@
 // Monitoring Settings dialog (epic #866, MON-082, MON-087..091): Settings > Monitoring Settings... Qt's
 // modal MonitoringSettingsDialog with OK / Cancel / Apply over the fixed chart axes and the histogram
 // bin width. The fields come from MONITORING_SETTINGS_GROUPS (monitoringSettings.ts): the Density (KDE)
-// fields of MON-083..086 are one more group there, and this component renders whatever groups it is
-// given. The values are this client's view preference; nothing is sent to the backend.
+// fields of MON-083..085 are the first group there (PR E2), and this component renders whatever groups it is
+// given. The values are this client's view preference; the density ones reach the backend through the
+// settings push of density/useMonitoringDensity.ts, not from here. The reference contour buttons of MON-086
+// (Pin current, From file…, Clear) sit under the density group's fields and act at once.
 import { useEffect, useRef, useState } from "react";
 import { useStudio } from "../../studio/StudioContext";
+import { DensityReferenceControls } from "./density/DensityReferenceControls";
+import type { DensityReferenceControlsModel } from "./density/useMonitoringDensity";
 import {
   applyMonitoringSettings, MONITORING_SETTINGS_GROUPS, parseSettingText, settingText,
   type MonitoringSettingKey, type MonitoringSettings, type MonitoringSettingsValues, type SettingsGroup, type SettingPair,
@@ -16,6 +20,8 @@ export interface MonitoringSettingsDialogViewProps {
   /** Apply the values (Apply and OK); returns the ranges that were not applied. */
   onApply: (values: MonitoringSettingsValues) => SettingPair["id"][];
   onClose: () => void;
+  /** The reference contour row of the density group (PR E2); absent, the group is its fields only. */
+  reference?: DensityReferenceControlsModel;
 }
 
 type Draft = Partial<Record<MonitoringSettingKey, string>>;
@@ -23,7 +29,7 @@ type Draft = Partial<Record<MonitoringSettingKey, string>>;
 const draftOf = (settings: MonitoringSettings, groups: readonly SettingsGroup[]): Draft =>
   Object.fromEntries(groups.flatMap((g) => g.fields).map((f) => [f.key, settingText(f, settings[f.key])]));
 
-export function MonitoringSettingsDialogView({ settings, groups = MONITORING_SETTINGS_GROUPS, onApply, onClose }: MonitoringSettingsDialogViewProps) {
+export function MonitoringSettingsDialogView({ settings, groups = MONITORING_SETTINGS_GROUPS, onApply, onClose, reference }: MonitoringSettingsDialogViewProps) {
   const [draft, setDraft] = useState<Draft>(() => draftOf(settings, groups));
   const [ignored, setIgnored] = useState<SettingPair["id"][]>([]);
   const first = useRef<HTMLInputElement>(null);
@@ -92,6 +98,7 @@ export function MonitoringSettingsDialogView({ settings, groups = MONITORING_SET
                 {f.suffix && <span className="mon-settings-suffix">{f.suffix}</span>}
               </label>
             ))}
+            {group.id === "density" && reference && <DensityReferenceControls controls={reference} />}
           </fieldset>
         ))}
         {ignored.length > 0 && (
@@ -113,11 +120,12 @@ export function MonitoringSettingsDialogView({ settings, groups = MONITORING_SET
  *  It is remounted on every open, so the fields start from the current settings (Qt builds a new dialog
  *  each time). */
 export function MonitoringSettingsDialog() {
-  const { showMonitoringSettings, setShowMonitoringSettings, monSettings, setMonSettings } = useStudio();
+  const { showMonitoringSettings, setShowMonitoringSettings, monSettings, setMonSettings, kdeReferenceControls } = useStudio();
   if (!showMonitoringSettings) return null;
   return (
     <MonitoringSettingsDialogView
       settings={monSettings}
+      reference={kdeReferenceControls}
       onApply={(values) => {
         const { settings, ignored } = applyMonitoringSettings(monSettings, values);
         setMonSettings(settings);

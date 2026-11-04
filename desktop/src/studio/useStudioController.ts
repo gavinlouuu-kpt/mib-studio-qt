@@ -12,6 +12,7 @@ import {
 import { useCellView } from "../areas/monitoring/clickView/useCellView";
 import { useEmodulusTable, useSelectionReset } from "../areas/monitoring/useMonitoringView";
 import { useTunePanel } from "../areas/monitoring/useTune";
+import { useMonitoringDensity } from "../areas/monitoring/density/useMonitoringDensity";
 import { useLiveFrames, useLivePreview, usePreviewBufferModel, usePreviewState } from "../areas/preview/usePreview";
 import { useReviewAccounting, useReviewJobs, useReviewSource, useReviewState } from "../areas/review/useReview";
 import {
@@ -82,6 +83,7 @@ export function useStudioController() {
   // monitoring: the selected cell's pin and image live exactly as long as the selection, not as long as the Monitoring sub-tab is shown
   // (Qt keeps its copy of the frame until the pane's ✕ or Clear Buffer). Pin and unpin are control commands: a viewer does not pin (#866 PR E1).
   const cellView = useCellView({ selection: composed.monSelection, ready: composed.ready, canPin: !viewerOnly, log: composed.append });
+  const density = useMonitoringDensity(composed); // monitoring: the scatter's density (KDE) layer and reference contour (#866 PR E2)
   // Render-time values (no hooks).
   const startExperiment = experimentModel(composed); // monitoring
   const connectView = connectModel(composed); // connect: Start Camera gate, preflight, quality gates
@@ -92,6 +94,7 @@ export function useStudioController() {
   return {
     ...composed, ...closeGuard, ...tunePanel, ...startExperiment, ...connectView, ...workflow, ...telemetry, ...serviceMode, ...landing,
     cellView,
+    ...density,
   };
 }
 

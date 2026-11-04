@@ -7,6 +7,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { MonitoringSnapshot } from "../../../bridge";
 import { metricNumber } from "../../../metricFormat";
 import { invoke } from "../../../transport";
+import { densityLevels, type MonitoringDensityLayer, type ScatterDensityModel } from "../density/densityModel";
+import { DensityToggle } from "../density/DensityToggle";
 import { extentHistogram, MONITORING_WINDOW, monitoringChartData, type ScatterData } from "../monitoringChartModel";
 import { DEFAULT_MONITORING_SETTINGS, type MonitoringSettings } from "../monitoringSettings";
 import type { ReferenceCurve } from "./drawMonitoringScatter";
@@ -21,6 +23,8 @@ export interface MonitoringChartsViewProps extends Pick<MonitoringScatterProps, 
   histogramPane?: (scatter: ScatterData) => ReactNode;
   /** PR E1: under the scatter, from the plotted points (the gate's live count). */
   scatterFooter?: (scatter: ScatterData) => ReactNode;
+  /** The density (KDE) toggle and layer (PR E2); absent = the plain chart, no toggle. */
+  density?: MonitoringDensityLayer | null;
 }
 
 interface Reference {
@@ -38,9 +42,17 @@ function parseReference(text: string): Reference {
 }
 
 export function MonitoringChartsView(props: MonitoringChartsViewProps) {
-  const { snapshot, selectedKey, onSelectPoint, overlay, emodulusAt, histogramPane, scatterFooter } = props;
+  const { snapshot, selectedKey, onSelectPoint, overlay, emodulusAt, histogramPane, scatterFooter, density } = props;
   const settings = props.settings ?? DEFAULT_MONITORING_SETTINGS;
   const data = useMemo(() => monitoringChartData(snapshot?.valid ? snapshot.rows : []), [snapshot]);
+  // The density layer: a level per plotted point, only while the toggle is on (off: no model, the plain chart).
+  const densityOn = !!density?.on, densityByRow = density?.byRow ?? null;
+  const levels = useMemo(() => (densityOn ? densityLevels(data.scatter.rows, densityByRow) : null), [densityOn, data.scatter, densityByRow]);
+  const coreLoops = density?.contours, referenceLoops = density?.reference;
+  const scatterDensity = useMemo<ScatterDensityModel | undefined>(
+    () => (levels && coreLoops && referenceLoops ? { levels, contours: coreLoops, reference: referenceLoops } : undefined),
+    [levels, coreLoops, referenceLoops],
+  );
   const modulus = useMemo(() => extentHistogram(data.moduli), [data.moduli]);
   const [reference, setReference] = useState<Reference | null>(null);
   const [referenceError, setReferenceError] = useState("");
@@ -64,6 +76,7 @@ export function MonitoringChartsView(props: MonitoringChartsViewProps) {
     <>
       <div className="config-group mon-chart-group mon-scatter-group">
         <h5>Deformability vs area (µm²)</h5>
+        {density && <DensityToggle on={density.on} toggle={density.toggle} />}
         <MonitoringScatter
           data={data.scatter}
           curves={curves}
@@ -72,6 +85,7 @@ export function MonitoringChartsView(props: MonitoringChartsViewProps) {
           onSelectPoint={onSelectPoint}
           overlay={overlay}
           emodulusAt={emodulusAt}
+          density={scatterDensity}
         />
         {scatterFooter?.(data.scatter)}
         {!snapshot?.valid || !data.scatter.xs.length ? <p>No calibrated finite valid-object samples available.</p> : null}

@@ -4,9 +4,10 @@
 // ExperimentMonitoringTab::setScatterXRange and friends). Pure: no React, no DOM.
 //
 // The values are a view preference of this client (a viewer in a browser has its own), kept in memory:
-// Qt does not persist them across restarts either. The Density (KDE) fields (MON-083..086) join the
-// same shape later: add their keys to MonitoringSettingsValues and a group to MONITORING_SETTINGS_GROUPS
-// and the dialog renders them (MonitoringSettingsDialog.tsx maps over the groups).
+// Qt does not persist the axes across restarts either. The Density (KDE) fields (MON-083..085, PR E2)
+// are the exception, as in Qt (`Monitoring/Kde*` in QSettings): areas/monitoring/density/densityPrefs.ts
+// stores and restores them with the toggle and the reference path, and useMonitoringState() starts
+// from the stored values. They are the first group of the dialog, as in Qt's form.
 
 export interface MonitoringSettingsValues {
   /** Scatter X axis: area in µm². */
@@ -21,6 +22,11 @@ export interface MonitoringSettingsValues {
   /** Histogram Y axis: frequency, 0..max. */
   histogramYMax: number;
   histogramBinWidth: number;
+  /** Density (KDE), MON-083..085: the factor on the per-axis Silverman bandwidth, the recompute interval
+   *  (ms) and the share of the population the core contour encloses (%; the backend takes the fraction). */
+  kdeBandwidthFactor: number;
+  kdeIntervalMs: number;
+  kdeCorePercent: number;
 }
 
 export type MonitoringSettingKey = keyof MonitoringSettingsValues;
@@ -42,6 +48,10 @@ export const MONITORING_SETTING_DEFAULTS: Readonly<MonitoringSettingsValues> = {
   histogramXMax: 25,
   histogramYMax: 100,
   histogramBinWidth: 0.5,
+  // ExperimentMonitoringTab.h kKdeBandwidthFactorDefault, kKdeIntervalMsDefault, kKdeCoreFractionDefault (0.9).
+  kdeBandwidthFactor: 1,
+  kdeIntervalMs: 2000,
+  kdeCorePercent: 90,
 };
 
 export const DEFAULT_MONITORING_SETTINGS: Readonly<MonitoringSettings> = {
@@ -81,6 +91,27 @@ export interface SettingsGroup {
 }
 
 export const MONITORING_SETTINGS_GROUPS: readonly SettingsGroup[] = [
+  {
+    // MonitoringSettingsDialog.ui: the form above the axis groups. The reference contour buttons (Pin current,
+    // From file..., Clear) are added under these fields by the dialog (density/DensityReferenceControls.tsx).
+    id: "density",
+    title: "Density (KDE)",
+    fields: [
+      {
+        key: "kdeBandwidthFactor", label: "KDE bandwidth factor", min: 0.2, max: 5, decimals: 2, step: 0.1, tour: "monitoring-settings-kde-bandwidth",
+        title: "Multiplies the automatic per-axis (Silverman) bandwidth of the scatter density colouring: above 1 = smoother, below 1 = more detail",
+      },
+      {
+        key: "kdeIntervalMs", label: "KDE update interval", min: 500, max: 60000, decimals: 0, step: 500, suffix: "ms", tour: "monitoring-settings-kde-interval",
+        title: "How often the scatter density (KDE) is recomputed while the Density (KDE) toggle is on",
+      },
+      {
+        key: "kdeCorePercent", label: "Core contour", min: 5, max: 100, decimals: 0, step: 5, suffix: "%", tour: "monitoring-settings-kde-core",
+        title: "Share of the population enclosed by the solid contour drawn on the scatter while Density (KDE) is on",
+      },
+    ],
+    pairs: [],
+  },
   {
     id: "scatter",
     title: "Scatter plot axis (Area vs Deformability)",
@@ -165,6 +196,10 @@ export function applyMonitoringSettings(current: MonitoringSettings, values: Mon
     histogramReset = true;
   }
   if (v.histogramBinWidth > 0) next.histogramBinWidth = v.histogramBinWidth;
+  // The density fields always apply (Qt's setKdeBandwidthFactor / IntervalMs / CoreFraction clamp, never refuse) and do not reset a zoom.
+  next.kdeBandwidthFactor = v.kdeBandwidthFactor;
+  next.kdeIntervalMs = v.kdeIntervalMs;
+  next.kdeCorePercent = v.kdeCorePercent;
   // One bump per chart per Apply however many of its settings were set.
   if (scatterReset) next.scatterEpoch = current.scatterEpoch + 1;
   if (histogramReset) next.histogramEpoch = current.histogramEpoch + 1;

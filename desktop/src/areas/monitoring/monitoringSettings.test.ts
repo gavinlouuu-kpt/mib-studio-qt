@@ -15,10 +15,13 @@ describe("Monitoring Settings fields (MON-087..091)", () => {
       scatterYMin: [0, 10, 3, 1], scatterYMax: [0, 10, 3, 1],
       histogramXMin: [0, 100, 2, 1], histogramXMax: [0, 100, 2, 1],
       histogramYMax: [1, 1_000_000, 0, 1], histogramBinWidth: [0.01, 10, 2, 0.1],
+      // Density (KDE), MON-083..085: bandwidth factor 0.2-5.0 step 0.1 (2 decimals), interval 500-60000 ms step 500, core 5-100 % step 5.
+      kdeBandwidthFactor: [0.2, 5, 2, 0.1], kdeIntervalMs: [500, 60000, 0, 500], kdeCorePercent: [5, 100, 0, 5],
     });
     expect(MONITORING_SETTING_DEFAULTS).toEqual({
       scatterXMin: 0, scatterXMax: 1000, scatterYMin: 0, scatterYMax: 1,
       histogramXMin: 15, histogramXMax: 25, histogramYMax: 100, histogramBinWidth: 0.5,
+      kdeBandwidthFactor: 1, kdeIntervalMs: 2000, kdeCorePercent: 90,
     });
   });
 

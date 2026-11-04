@@ -809,7 +809,7 @@ reads the settings from the studio state when mounted in the classic view):
   `hover` returning true or `{cursor, tooltip}`, `onLeave`, `version`) is the target-group gate. Both
   are used by "Monitoring click to view, gate overlay and E table" below; the view takes two
   render slots for them, `histogramPane(scatter)` (top of the histogram's card) and
-  `scatterFooter(scatter)` (under the scatter).
+  `scatterFooter(scatter)` (under the scatter). `density` (PR E2) is the KDE layer.
 - *Ring histogram* (`MonitoringHistogram`): valid cells with ring ratio > 0, bins =
   round((X max - X min) / bin width), out-of-range values in the end bins, fixed Y 0..max,
   same zoom/pan/reset. Still labelled ring ratio, not ring width. The Young's-modulus
@@ -817,13 +817,54 @@ reads the settings from the studio state when mounted in the classic view):
 - *Monitoring Settings dialog* (`MonitoringSettingsDialog`; Settings > Monitoring Settings...
   opens it, mounted in `ShellDialogs`): modal, OK / Cancel / Apply, fields from
   `MONITORING_SETTINGS_GROUPS` in `monitoringSettings.ts` (scatter X 0-100000 µm² and Y
-  0-10, histogram X 0-100, Y max 1-1,000,000, bin width 0.01-10; Qt defaults and decimals);
+  0-10, histogram X 0-100, Y max 1-1,000,000, bin width 0.01-10; Qt defaults and decimals; KDE bandwidth factor 0.2-5 step 0.1, update interval 500-60000 ms step 500, core contour 5-100 % step 5);
   a range whose minimum is not below its maximum is not applied. In-memory view preference
-  (`monSettings` in `useMonitoringState`), not persisted, like Qt. The histogram X range
+  (`monSettings` in `useMonitoringState`), not persisted, like Qt (the three KDE numbers are the exception, as in Qt). The histogram X range
   follows the runtime config's `image_processing.ring_ratio_min/max`
   (`useMonitoringConfigRange`, from `liveDraft.baseline`): when the sub-tab is shown and
-  whenever the config's range changes. The Density (KDE) fields (MON-083..086) are one more
-  group in that list.
+  whenever the config's range changes. The Density (KDE) fields are the first group in that
+  list (see the next bullet).
+- *Density (KDE) colouring, core contour and reference (PR E2, MON-058..063, 083..086;
+  ABI 46).* `areas/monitoring/density/`. The backend's `MonitoringDensityService`
+  ([[services/MonitoringDensityService]]) computes the estimate on its own lowest-priority
+  worker; the shell pushes settings and polls. `useMonitoringDensity` (called after
+  `useTunePanel` in `useStudioController`; its state is the `PR E2: density (KDE)` block of
+  `useMonitoringState`) sends `monitoring_density_set_settings` whenever one input changes:
+  enabled = toggle on AND the Monitoring sub-tab shown (false when hidden, as Qt), interval,
+  bandwidth factor, core fraction (the dialog's percent / 100) and the scatter's fixed axes
+  as x0..y1. While enabled it polls `fetch_monitoring_density(since_generation)` every
+  500 ms, one request at a time; a reply of `unchanged` sets no state, so nothing re-renders
+  or redraws. A refused or failing command or poll shows one notice beside the toggle (and
+  one log line), not one per poll. The settings are one set per instrument and a control
+  command, so a viewer (browser client without control) sends and polls nothing, its toggle
+  sits in a `ViewerGate` and the chart is the plain one. The "Density (KDE)" checkbox
+  (`DensityToggle`, `data-tour="monitoring-density-toggle"`) sits under the scatter's
+  heading; its tooltip is Qt's text (point count, bandwidth x × y, compute ms, "refreshed
+  every max(interval, service spacing)", core cells and loops, reference label).
+  Colouring: `densityLevel` is Qt's `kdeLevelForDensity` (8 levels, truncated), the ramp is
+  `levelColor` over `REVIEW_DENSITY.ramp_rgb` (= `densityRampColor`, checked stop by stop in
+  `densityModel.test.ts`), a row the estimate does not name (`densityByRow` over
+  `monitoringRowKey`) is newer than it and takes the sparsest level. `drawMonitoringScatter`
+  gets one optional `density` model: valid cells as circles and the target group as
+  squares, one path per level and shape (no per-point element, no per-poll work beyond what is
+  drawn), then the core contour (solid, #2a78d6, 2 px) and the reference (dashed, #eb6834)
+  over the points, under the selection marker and the overlay. Without the model the canvas
+  calls are byte-identical to before (`drawDensity.test.ts` pins a digest taken at the base
+  commit). Reference: Pin current keeps the live loops (`pinned HH:mm:ss`, forgets the file
+  path), From file… (`transport/dialogs.open`, then `fetch_kde_reference_from_file`; the
+  error dialog is Qt's "No reference contour loaded from <path>" + reason) and Clear are
+  the buttons under the dialog's density fields (`DensityReferenceControls`; not in a
+  `ViewerGate`: they send no control command). The read is refused while an experiment runs,
+  a review job runs or a raw recording writes HDF5: From file… is disabled while a run is
+  active, and the start-up reload of the remembered path (`restoreOutcome`) keeps the path
+  on such a refusal and retries when the run ends, but drops it with one log line when the
+  file is gone or has no contour (Qt drops it on any failure). Preferences (on/off,
+  factor, interval, core fraction, reference path) are one versioned record
+  (`densityPrefs.ts`, key `yofo.monitoring.kde`) in `persistedState.ts` with
+  `store: "local"` (the per-tab sessionStorage would lose them when the app closes);
+  Qt's guard is kept (an obsolete version gives the defaults, the path outside the guard;
+  numbers clamp). Clear Buffer (`onMonitoringCleared`) drops the densities and contours
+  (a reply in flight is not drawn), asks the service to wake and keeps the reference.
 
 ## Software replacement follow-up (2026-09-23)
 

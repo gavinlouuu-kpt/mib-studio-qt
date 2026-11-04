@@ -45,13 +45,16 @@ describe("Monitoring Settings dialog fields (MON-082, MON-087..091)", () => {
     expect(host.querySelector(".modal-backdrop")).not.toBeNull();
     const labels = Array.from(host.querySelectorAll(".mon-settings-label")).map((l) => l.textContent);
     expect(labels).toEqual([
+      // Qt's form: the density fields first (MON-083..085), then the axis groups.
+      "KDE bandwidth factor", "KDE update interval", "Core contour",
       "X (Area) min", "X (Area) max", "Y (Deformability) min", "Y (Deformability) max",
       "X (Ring ratio) min", "X (Ring ratio) max", "Y (Frequency) max", "Bin width",
     ]);
     const legends = Array.from(host.querySelectorAll("legend")).map((l) => l.textContent);
-    expect(legends).toEqual(["Scatter plot axis (Area vs Deformability)", "Histogram axis (Ring-ratio distribution)"]);
+    expect(legends).toEqual(["Density (KDE)", "Scatter plot axis (Area vs Deformability)", "Histogram axis (Ring-ratio distribution)"]);
     const spec = Array.from(host.querySelectorAll<HTMLInputElement>("input")).map((i) => [i.value, i.min, i.max, i.step]);
     expect(spec).toEqual([
+      ["1.00", "0.2", "5", "0.1"], ["2000", "500", "60000", "500"], ["90", "5", "100", "5"],
       ["0.00", "0", "100000", "1"], ["1000.00", "0", "100000", "1"],
       ["0.000", "0", "10", "1"], ["1.000", "0", "10", "1"],
       ["15.00", "0", "100", "1"], ["25.00", "0", "100", "1"],
@@ -59,7 +62,7 @@ describe("Monitoring Settings dialog fields (MON-082, MON-087..091)", () => {
       // step 0.5, 0.6 like Qt; the range is enforced on Apply.
       ["100", "1", "1000000", "1"], ["0.50", "", "10", "0.1"],
     ]);
-    expect(document.activeElement).toBe(input("monitoring-settings-scatter-x-min"));
+    expect(document.activeElement).toBe(input("monitoring-settings-kde-bandwidth"));
   });
 
   it("starts from the current settings", async () => {
@@ -152,13 +155,13 @@ describe("groups (room for the Density (KDE) section)", () => {
     const extra: SettingsGroup = {
       id: "density",
       title: "Density (KDE)",
-      fields: [{ ...MONITORING_SETTINGS_GROUPS[1].fields[3], label: "Bandwidth", tour: "monitoring-settings-kde-bandwidth", suffix: "×" }],
+      fields: [{ ...MONITORING_SETTINGS_GROUPS[2].fields[3], label: "Bandwidth", tour: "monitoring-settings-kde-bandwidth", suffix: "×" }],
       pairs: [],
     };
     await act(async () => root.render(view({ groups: [extra, ...MONITORING_SETTINGS_GROUPS] }).element));
     const legends = Array.from(host.querySelectorAll("legend")).map((l) => l.textContent);
     expect(legends[0]).toBe("Density (KDE)");
-    expect(host.querySelector('[data-tour="monitoring-settings-density"]')).not.toBeNull();
+    expect(host.querySelectorAll('[data-tour="monitoring-settings-density"]')).toHaveLength(2); // the extra group and the real one
     expect(host.querySelector(".mon-settings-suffix")!.textContent).toBe("×");
     expect(document.activeElement).toBe(input("monitoring-settings-kde-bandwidth"));
   });

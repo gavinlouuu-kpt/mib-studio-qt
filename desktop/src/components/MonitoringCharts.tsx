@@ -11,5 +11,11 @@ export type { ScatterOverlay } from "../areas/monitoring/charts/MonitoringScatte
 
 export function MonitoringCharts(props: MonitoringChartsViewProps) {
   const studio = useContext(StudioContext);
-  return <MonitoringChartsView {...props} settings={props.settings ?? studio?.monSettings ?? DEFAULT_MONITORING_SETTINGS} />;
+  return (
+    <MonitoringChartsView
+      {...props}
+      settings={props.settings ?? studio?.monSettings ?? DEFAULT_MONITORING_SETTINGS}
+      density={props.density ?? studio?.kdeLayer}
+    />
+  );
 }

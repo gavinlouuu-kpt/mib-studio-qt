@@ -13,6 +13,8 @@ import { isRemote } from "../../transport";
 import { confirm, message, save } from "../../transport/dialogs";
 import { initialTuneState, tuneReducer, type TuneFieldId } from "./tuneDraft";
 import { EMODULUS_TABLE_UNKNOWN, type EmodulusTableState } from "./emodulusLut";
+import type { DensityEstimate, DensityReference } from "./density/densityModel";
+import { loadDensityPrefs, settingsWithDensityPrefs } from "./density/densityPrefs";
 import type { ConfigState, CoresModel } from "../config/useConfig";
 import type { ConnectState } from "../connect/useConnect";
 import type { HardwareState } from "../hardware/useHardware";
@@ -53,7 +55,8 @@ export function useMonitoringState() {
   const [monSnapshot, setMonSnapshot] = useState<MonitoringSnapshot | null>(null);
   // Monitoring Settings (MON-082): the fixed chart axes and the histogram bin width. A view preference
   // kept in memory, like Qt's; the dialog is areas/monitoring/MonitoringSettingsDialog.tsx.
-  const [monSettings, setMonSettings] = useState<MonitoringSettings>(DEFAULT_MONITORING_SETTINGS);
+  // The density (KDE) numbers start from the stored preferences (PR E2, MON-063); the axes and bin width are Qt's defaults.
+  const [monSettings, setMonSettings] = useState<MonitoringSettings>(() => settingsWithDensityPrefs(DEFAULT_MONITORING_SETTINGS, loadDensityPrefs()));
   const [showMonitoringSettings, setShowMonitoringSettings] = useState(false);
   const experimentPending = useRef(false);
   const [experimentRequestBusy, setExperimentRequestBusy] = useState(false);
@@ -108,6 +111,16 @@ export function useMonitoringState() {
   // The valid strip's Show Overlay (CellStrips.tsx): the selected cell's pane follows it, as in Qt.
   const [validOverlay, setValidOverlay] = useState(false);
   const [emodulusTable, setEmodulusTable] = useState<EmodulusTableState>(EMODULUS_TABLE_UNKNOWN);
+  // PR E2: density (KDE). The state of the scatter's density colouring (MON-058..063); the effects and callbacks are
+  // useMonitoringDensity() in areas/monitoring/density/. The bandwidth factor, interval and core percent are in `monSettings`.
+  const [kdeEnabled, setKdeEnabled] = useState(() => loadDensityPrefs().enabled);
+  // The experiment file the reference contour comes from ("" = none, or a pinned one); restored at start-up.
+  const [kdeReferencePath, setKdeReferencePath] = useState(() => loadDensityPrefs().referencePath);
+  const [kdeReference, setKdeReference] = useState<DensityReference | null>(null);
+  // The last estimate the backend published (null: none, KDE off or Monitoring hidden).
+  const [kdeEstimate, setKdeEstimate] = useState<DensityEstimate | null>(null);
+  // A refused or failing density command or poll, said once.
+  const [kdeNotice, setKdeNotice] = useState("");
   return {
     tune, dispatchTune, tuneDraft, setTuneField,
     expTab, setExpTab, expStatus, setExpStatus, monSnapshot, setMonSnapshot, monSettings, setMonSettings,
@@ -120,6 +133,7 @@ export function useMonitoringState() {
     snapshotHealth, setSnapshotHealth, triggerHealth, setTriggerHealth, accountingError, setAccountingError,
     backgroundRevision, setBackgroundRevision, onMonitoringCleared, notifyMonitoringCleared,
     monSelection, setMonSelection, cellWindowOpen, setCellWindowOpen, validOverlay, setValidOverlay, emodulusTable, setEmodulusTable,
+    kdeEnabled, setKdeEnabled, kdeReferencePath, setKdeReferencePath, kdeReference, setKdeReference, kdeEstimate, setKdeEstimate, kdeNotice, setKdeNotice,
   };
 }
 export type MonitoringState = ReturnType<typeof useMonitoringState>;

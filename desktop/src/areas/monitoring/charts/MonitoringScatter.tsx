@@ -10,12 +10,15 @@
 //    on its handles (interceptor) and a hover, and repaints when `version` changes.
 //  - the E readout in the tooltip: `emodulusAt(area, deformability)`; absent (or with no value there), the
 //    tooltip says area and deformability only.
+//  - the density (KDE) layer (PR E2): `density` carries a level per point and the contours; absent, the
+//    chart is the plain one.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MonitoringRow } from "../../../bridge";
 import { toData, type Viewport } from "../../../review/charts/chartMath";
 import { MARKER } from "../../../review/charts/drawScatter";
 import { doubleClickResets } from "../../../review/charts/scatterGestures";
 import { insidePlot, nearestPoint } from "../../../review/charts/scatterHitTest";
+import type { ScatterDensityModel } from "../density/densityModel";
 import { monitoringRowKey, plotTooltip, pointTooltip, type ScatterData } from "../monitoringChartModel";
 import type { MonitoringSettings } from "../monitoringSettings";
 import { drawMonitoringScatter, scatterViewport, type ReferenceCurve } from "./drawMonitoringScatter";
@@ -52,12 +55,14 @@ export interface MonitoringScatterProps {
   onSelectPoint?: (row: MonitoringRow) => void;
   overlay?: ScatterOverlay;
   emodulusAt?: (area: number, deformability: number) => number | null | undefined;
+  /** The density (KDE) layer: memoise it, the plot is redrawn when it changes. */
+  density?: ScatterDensityModel;
 }
 
 const MIN_SIZE = { w: 420, h: 260 };
 
 export function MonitoringScatter(props: MonitoringScatterProps) {
-  const { data, curves, settings, selectedKey, onSelectPoint, overlay, emodulusAt } = props;
+  const { data, curves, settings, selectedKey, onSelectPoint, overlay, emodulusAt, density } = props;
   const { scatterXMin, scatterXMax, scatterYMin, scatterYMax, scatterEpoch } = settings;
   const defaults = useMemo(
     () => ({ x: { min: scatterXMin, max: scatterXMax }, y: { min: scatterYMin, max: scatterYMax } }),
@@ -123,9 +128,9 @@ export function MonitoringScatter(props: MonitoringScatterProps) {
   const overlayDraw = overlay?.draw, overlayVersion = overlay?.version;
   useEffect(() => {
     paintCanvas(canvasRef.current, size, (g) =>
-      drawMonitoringScatter(g, size.w, size.h, { data, curves, ranges, selected, overlay: overlayDraw }, { selection: true }),
+      drawMonitoringScatter(g, size.w, size.h, { data, curves, ranges, selected, overlay: overlayDraw, density }, { selection: true }),
     );
-  }, [size, ranges, data, curves, selected, overlayDraw, overlayVersion]);
+  }, [size, ranges, data, curves, selected, overlayDraw, overlayVersion, density]);
 
   // What the pointer is over, worked out at render from the latest data and view. Something of the overlay (a
   // gate handle) wins over a cell and over the empty plot.
