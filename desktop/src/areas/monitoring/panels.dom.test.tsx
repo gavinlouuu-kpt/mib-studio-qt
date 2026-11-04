@@ -14,6 +14,9 @@ vi.mock("../../transport/dialogs", () => dialogs);
 vi.mock("../hardware/TriggerTestControls", () => ({ TriggerTestControls: () => null }));
 vi.mock("../preview/PreviewPanel", () => ({ PreviewPanel: () => <div data-testid="preview" /> }));
 vi.mock("../../components/MonitoringCharts", () => ({ MonitoringCharts: () => <div data-testid="charts" /> }));
+// The tune panel (PR A) and the cell strips (PR C) have their own tests; here the panel is under test, not them.
+vi.mock("./TunePanel", () => ({ TunePanel: () => null }));
+vi.mock("./CellStrips", () => ({ CellStrips: () => null }));
 vi.mock("../../components/ResultMetricCells", () => ({ ResultMetricCells: () => null }));
 vi.mock("../../components/RunRateControl", () => ({ RunRateControl: () => null }));
 vi.mock("../../components/RunWindowNotice", () => ({ RunWindowNotice: () => null }));
