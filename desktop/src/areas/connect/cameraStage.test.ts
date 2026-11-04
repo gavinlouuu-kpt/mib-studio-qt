@@ -200,9 +200,9 @@ describe("never while something else owns the camera", () => {
 
 describe("Overview auto-start for the other cameras (#863 CONNECT-042)", () => {
   const sel = (over: Partial<Pick<CameraSelection, "configured" | "running">> = {}) => ({ configured: true, running: false, ...over });
-  it("starts a stopped, configured camera, never an illuminated or unreadable MindVision profile, never on the PZ7035", () => {
+  it("starts a stopped, configured camera, never a MindVision camera (Qt returns first), never on the PZ7035", () => {
     expect(overviewAutoStart(null, sel(), false)).toBe(true);
-    expect(overviewAutoStart(geometry({ camera: "mindvision", illuminated_live: false, profile_error: "" }), sel(), false)).toBe(true);
+    expect(overviewAutoStart(geometry({ camera: "mindvision", illuminated_live: false, profile_error: "" }), sel(), false)).toBe(false);
     expect(overviewAutoStart(geometry({ camera: "mindvision", illuminated_live: true }), sel(), false)).toBe(false);
     expect(overviewAutoStart(geometry({ camera: "mindvision", profile_error: "Cannot read MindVision experiment profile" }), sel(), false)).toBe(false);
     expect(overviewAutoStart(null, sel({ running: true }), false)).toBe(false);

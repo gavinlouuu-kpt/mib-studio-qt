@@ -82,14 +82,13 @@ export async function resolveOverviewScript(
 
 // ---- decisions ----------------------------------------------------------------------------------
 
-/** Qt MainWindow::onTabChanged: a connection navigates to Overview and starts a stopped, configured
- *  camera, except a MindVision profile that is illuminated (or cannot be read): navigation must never
- *  energize the rig. The PZ7035 starts through its own Align switch. (Qt's MindVision branch returns
- *  before that code for the Overview, so Qt in practice starts no MindVision camera on a tab change; the
- *  documented intent is followed here and an illuminated or unreadable profile never starts.) */
+/** Qt MainWindow::onTabChanged: entering Overview starts a stopped, configured camera. Not a MindVision
+ *  camera: Qt's MindVision branch switches the preset and returns before the auto-start (a MindVision
+ *  stage change restarts only a camera that was running), so navigation never energizes an illuminated
+ *  rig. Not the PZ7035 either: it starts through its own Align switch. */
 export function overviewAutoStart(geometry: CameraGeometry | null, selection: Pick<CameraSelection, "configured" | "running">, instrumentModes: boolean): boolean {
   if (instrumentModes || !selection.configured || selection.running) return false;
-  if (geometry?.camera === "mindvision" && (geometry.illuminated_live || !!geometry.profile_error)) return false;
+  if (geometry?.camera === "mindvision") return false;
   return true;
 }
 

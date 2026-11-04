@@ -154,11 +154,13 @@ describe("the other cameras", () => {
     expect(bridgeMock.startCapture).toHaveBeenCalledTimes(1);
   });
 
-  it("never auto-start an illuminated MindVision profile", async () => {
-    current = geometry({ camera: "mindvision", overview: true, illuminated_live: true });
-    sel = selection({ mode: 3 });
-    await render({ tab: "overview" });
-    expect(bridgeMock.startCapture).not.toHaveBeenCalled();
+  it("never auto-start a MindVision camera, illuminated or not (Qt returns first)", async () => {
+    for (const illuminated of [true, false]) {
+      current = geometry({ camera: "mindvision", overview: true, illuminated_live: illuminated });
+      sel = selection({ mode: 3 });
+      await render({ tab: "overview" });
+      expect(bridgeMock.startCapture).not.toHaveBeenCalled();
+    }
   });
 
   it("start the mock camera on Overview and say so when it fails", async () => {

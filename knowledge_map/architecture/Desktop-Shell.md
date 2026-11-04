@@ -336,7 +336,7 @@ browser that only watches (viewer-only); a running camera is
 stopped, the stage's script applied with its role (`apply_camera_script_with_role`: Overview as
 is, Experiment followed by the profile's `camera.window`), the camera restarted; Overview also starts a
 stopped, configured camera ("Failed to start camera. Please check camera connection and try again." when
-it fails; MindVision illuminated profiles never auto-start). Script paths (`ScriptSources`, filled each
+it fails; never a MindVision camera, as in Qt, whose MindVision branch returns first). Script paths (`ScriptSources`, filled each
 render by `syncScriptSources` from the config area's state): Experiment = Config > Camera script selection,
 else the EGrabber script editor's file, else the active profile folder's `egrabberConfig.js` if it exists
 ("No Experiment camera script: the camera keeps its current window" otherwise); Overview = the profile
