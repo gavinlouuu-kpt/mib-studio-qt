@@ -145,6 +145,10 @@ receipt/publish timing is host-side latency, never exposure time. Consumers:
 
 ## Gotchas
 
+- Capture changes that reach the EGrabber path are bench-tested before they merge:
+  PR CI compiles `MIB_HAS_EGRABBER=0`. Build with `scripts/win11_bench_build.sh
+  <branch>` and see [[../camera/EGrabberCamera]] (Verification on the bench camera).
+
 - Always refresh EGrabber `StreamModule` stat counters before calling
   `stop()` — see [[../conventions/Code-Conventions]] and
   `docs/howto/safe-start-stop-egrabber.md`.

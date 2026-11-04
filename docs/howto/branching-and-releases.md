@@ -21,6 +21,15 @@ feature/fix branch ──PR──▶ develop ──PR──▶ main ──dispat
 - Nothing on a feature branch releases anywhere. A manual beta can be built
   from any ref via `build-windows.yml` dispatch (`mode=beta`) when a
   hardware-in-the-loop build of unmerged work is needed.
+- **Camera, capture and eGrabber changes are bench-tested before they merge.**
+  A PR that touches camera, capture or eGrabber code (`src/backend/camera*`,
+  `CaptureService`, `CameraControlService`, `EGrabberCamera`, the `AppBackend`
+  camera paths, or anything under `#if MIB_HAS_EGRABBER`) is built with
+  `scripts/win11_bench_build.sh <branch>` and tested on the win11-agent camera
+  before it is merged; the PR description says which commit was tested and what
+  happened. PR CI does not compile the eGrabber code, and the Windows beta is for
+  handing tested builds to the rig, not for first testing. See
+  [`win11-bench-build.md`](win11-bench-build.md).
 
 ### Dev lane (`develop` → beta channel)
 
@@ -91,6 +100,9 @@ merges queue rather than race on the R2 publish.
 ## Rules of thumb
 
 - Don't push directly to `main` or `develop` — always via PR.
+- Don't merge camera, capture or eGrabber changes that have not been built with
+  `scripts/win11_bench_build.sh` and run on the bench camera (see
+  [Feature lane](#feature-lane)).
 - A stable release is only ever cut from `main` (the workflow refuses
   `mode=release` off any other ref).
 - Merging to `develop` means "ship to beta users" **when app code changed**;
@@ -111,4 +123,6 @@ Before the release PR to main is approved:
 - Verify notes in Help and the Software Updates list. Stable Windows builds
   gate on curated notes before building and use them for the GitHub Release
   body and update manifest. Betas use recent vault fragments since the last
-  reachable stable tag, explicitly labelled uncurated.
+  reachable stable tag, explicitly labelled uncurated; once those outgrow GitHub's
+  125000-character release-body limit, the oldest entries are dropped and a
+  compare link replaces them (`release_notes.py`, limit 120000).

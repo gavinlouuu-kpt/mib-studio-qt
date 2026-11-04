@@ -65,7 +65,9 @@ jobs:
             "scripts/release/verify-update-manifest.ps1",
             "scripts/provision-mindvision-sdk.ps1",
             "scripts/doctor.ps1",
-            "scripts/bootstrap.ps1"
+            "scripts/bootstrap.ps1",
+            "scripts/win11_bench_build.ps1",
+            "scripts/win11_bench_camera.ps1"
           )
           foreach ($script in $scripts) {
             if (Test-Path $script) {
