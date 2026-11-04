@@ -21,7 +21,8 @@ export function useCameraDocument(context:CameraScriptContext,kind:CameraDocumen
   const timer=window.setTimeout(()=>{bridge.checkPzCameraDocument(text).then(r=>{if(live)setCheck(r);}).catch(e=>{if(live)setCheck({ok:false,error:String(e)});});},250);
   return ()=>{live=false;window.clearTimeout(timer);};
  },[kind,doc,text]);
- const run=async(action:"browse"|"reload"|"save"|"apply"|"clear"|"saveAs"|"default"|"trigger")=>{
+ // `draft` (save only): the text to write instead of the editor's, for the XGC + R5D preset (HW-057, hardware area); resolves true when the file was read or saved.
+ const run=async(action:"browse"|"reload"|"save"|"apply"|"clear"|"saveAs"|"default"|"trigger",draft?:string)=>{
   if(pending.current)return;
   if(["browse","reload","clear","default"].includes(action)&&dirty&&!await confirm("Discard unsaved camera document edits?"))return;
   pending.current=true;setBusy(true);setMessage("");
@@ -70,8 +71,8 @@ export function useCameraDocument(context:CameraScriptContext,kind:CameraDocumen
    }
    const path=action==="browse"?await open({multiple:false,...(kind==="pz7035"?{defaultPath:"camera/camera.json"}:{}),filters:[{name:kind==="js"?"EGrabber script":kind==="pz7035"?"PZ7035 camera document":"MindVision configuration",extensions:[kind==="pz7035"?"json":kind]}]}):doc?.path;
    if(typeof path!=="string")return;
-   const loaded=await invoke<Document>("camera_document",{action:action==="save"?"save":"read",path,kind,baseline:doc?.revision??"",text:action==="save"?text:""});
-   setDoc(loaded);setText(loaded.text);setDirty(false);setMessage(action==="save"?"Saved to disk; not applied to camera.":"Loaded from disk; not applied to camera.");
+   const loaded=await invoke<Document>("camera_document",{action:action==="save"?"save":"read",path,kind,baseline:doc?.revision??"",text:action==="save"?(draft??text):""});
+   setDoc(loaded);setText(loaded.text);setDirty(false);setMessage(action==="save"?"Saved to disk; not applied to camera.":"Loaded from disk; not applied to camera.");return true;
   }catch(e){setMessage(String(e));current.current.append(`Camera document: ${e}`);}finally{pending.current=false;setBusy(false);}
  };
  return {doc,text,dirty,busy,message,kind,check,run,applyNote:kind==="pz7035"?applyNotice(pz?.status,pz?.ringFrames??0):"",triggerAllowed:serviceArmed&&context.ready&&context.running&&!context.experimentActive&&context.selection?.mode===CAMERA_SELECTION_MODES.MindVision,edit:(value:string)=>{setText(value);setDirty(true);},applyBlocked:busy||!doc?.path||dirty||!context.ready||context.experimentActive||(kind==="pz7035"?check?.ok!==true:context.running)};
