@@ -38,7 +38,7 @@ param(
 $ErrorActionPreference = 'Continue'
 $modules = 'remote', 'dev', 'if', 'ds'
 # Lines that change by themselves (counters, temperature) are not state.
-$ignore = '^Reading|EventCount|ErrorCount|Statistics|LostTrigger|CycleLost|TriggerCount|InternalTime|Temperature'
+$ignore = '^Reading|EventCount|ErrorCount|Statistics|LostTrigger|CycleLost|TriggerCount|InternalTime|Temperature|^Ignoring error'
 
 if (-not (Test-Path -LiteralPath $Gentl)) { throw "gentl.exe not found at $Gentl (eGrabber SDK not installed?)" }
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
@@ -65,7 +65,10 @@ function Compare-ToBaseline([string]$Prefix) {
     $script:Unreadable = @()
     foreach ($m in $modules) {
         $nowText = Get-Content (Join-Path $WorkDir "${Prefix}_$m.txt") -Raw
-        if ($nowText -match 'GC_ERR_\w+') {
+        # Every remote dump ends with "Ignoring error GC_ERR_ABORT" from the CLI's
+        # cleanup (the baseline too); only an error that stopped the read counts.
+        $failed = @(($nowText -split "`r?`n") | Where-Object { $_ -match 'GC_ERR_\w+' -and $_ -notmatch '^Ignoring error' })
+        if ($failed.Count -gt 0 -and ($failed[0] -match 'GC_ERR_\w+')) {
             # e.g. GC_ERR_CUSTOM_IOCTL_DS_OPEN_FAILED: another program holds the data stream.
             $script:Unreadable += $m
             Write-Output "SKIP $m : could not be read ($($Matches[0])); is a MIB Studio or eGrabber program using the camera?"
