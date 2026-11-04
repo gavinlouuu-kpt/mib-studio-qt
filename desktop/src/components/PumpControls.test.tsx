@@ -109,7 +109,7 @@ describe('Stop always works (#855, D3)', () => {
     await click(button('Stop pump'));
     expect(bridge.pumpStop).toHaveBeenCalledWith(0);
     expect(bridge.pumpStopPurge).toHaveBeenCalledWith(0);        // the dLSP full-speed purge has its own register
-    slow.resolve(ok());
+    await act(async () => slow.resolve(ok()));
   });
   it('is not held back by a rate change that has not been answered', async () => {
     const slow = deferred<CmdResult>();
@@ -119,7 +119,7 @@ describe('Stop always works (#855, D3)', () => {
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
     await click(button('Stop pump'));
     expect(bridge.pumpStop).toHaveBeenCalledWith(0);
-    slow.resolve(ok());
+    await act(async () => slow.resolve(ok()));
   });
   it('is not held back by a status poll that has not been answered', async () => {
     await render();
@@ -130,7 +130,7 @@ describe('Stop always works (#855, D3)', () => {
     expect(button('Run configured pump').disabled).toBe(false);   // polling is not a busy command
     await click(button('Stop pump'));
     expect(bridge.pumpStop).toHaveBeenCalledWith(0);
-    slow.resolve(ok());
+    await act(async () => slow.resolve(ok()));
   });
   it('reports a failed stop on the pump and still tries to clear the purge', async () => {
     vi.mocked(bridge.pumpStop).mockResolvedValue({...ok(), ok: false, message: 'Pump stop failed: timeout'});
