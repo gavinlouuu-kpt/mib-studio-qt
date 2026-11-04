@@ -4,6 +4,7 @@ test("guided click-through gates actions and exposes only device and dot exports
 }) => {
   let state = "empty";
   let feedback = false;
+  let manual: number[][] = [];
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -41,6 +42,8 @@ test("guided click-through gates actions and exposes only device and dot exports
                   dot_radius_um: 6,
                 }
               : undefined,
+          placement_contract: 1,
+          manual_chip_rectangles: manual,
           extent_um: [6000, 6000],
           entity_count: 2,
           no_dot_regions: 1,
@@ -83,6 +86,28 @@ test("guided click-through gates actions and exposes only device and dot exports
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.locator("#review")).toBeVisible();
   await expect(page.locator("#generate")).toBeDisabled();
+  await page
+    .getByText("Boundary missing? Define a rectangular chip", { exact: true })
+    .click();
+  for (const [id, v] of [
+    ["chip-x0", "-1000"],
+    ["chip-y0", "-1000"],
+    ["chip-x1", "7000"],
+    ["chip-y1", "7000"],
+  ])
+    await page.locator(`#${id}`).fill(v);
+  await page.locator("#add-manual-chip").click();
+  await expect(page.locator("#preview")).toHaveAttribute(
+    "viewBox",
+    "-1000 -1000 8000 8000",
+  );
+  await page.locator("#region-tour").click();
+  for (let n = 0; n < 3; n++)
+    await page.locator(".driver-popover-next-btn").click();
+  await expect(page.locator(".driver-popover-title")).toHaveText(
+    "Feedback checkpoint",
+  );
+  await page.locator(".driver-popover-close-btn").click();
   await page.locator("#confirmed").check();
   await page.locator("#generate").click();
   await expect(page.locator("#downloads")).toBeVisible();
@@ -160,6 +185,7 @@ test("unlabelled CAD requires explicit area selection and resets confirmation", 
 }) => {
   let selected: unknown;
   const inspection = {
+    placement_contract: 1,
     extent_um: [6000, 6000],
     entity_count: 2,
     source_units: "um",
@@ -169,6 +195,16 @@ test("unlabelled CAD requires explicit area selection and resets confirmation", 
     no_dot_regions: 0,
     generation_supported: true,
     region_candidates: [
+      {
+        id: 1,
+        kind: "polygon",
+        points: [
+          [0, 0],
+          [6000, 0],
+          [6000, 6000],
+          [0, 6000],
+        ],
+      },
       {
         id: 0,
         kind: "polygon",
@@ -212,21 +248,24 @@ test("unlabelled CAD requires explicit area selection and resets confirmation", 
   await page.locator("#confirmed").check();
   await expect(page.locator("#generate")).toBeDisabled();
   await page
-    .getByRole("button", { name: "Guide me through no-dot areas" })
+    .getByRole("button", { name: "Guide me through chip placement" })
     .click();
   await page.locator(".driver-popover-next-btn").click();
   await page.locator(".driver-popover-next-btn").click();
   await expect(page.locator(".driver-popover-title")).toHaveText(
-    "Choose no-dot interiors",
+    "Separate chip edges from fluid",
   );
   await page.locator(".driver-popover-close-btn").click();
+  await page.locator("#region-choice").selectOption("1");
+  await page.locator("#toggle-region").click();
+  await page.locator("#region-role").selectOption("fluid");
   await page.locator('[data-region="0"]').click();
   await expect(page.locator("#confirmed")).not.toBeChecked();
   await expect(page.locator("#generate")).toBeDisabled();
   await page.locator("#confirmed").check();
   await expect(page.locator("#generate")).toBeEnabled();
   await page
-    .getByRole("button", { name: "Guide me through no-dot areas" })
+    .getByRole("button", { name: "Guide me through chip placement" })
     .click();
   for (let n = 0; n < 3; n++)
     await page.locator(".driver-popover-next-btn").click();

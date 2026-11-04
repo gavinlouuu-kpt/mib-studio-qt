@@ -14,14 +14,25 @@ type Candidate = {
   points?: number[][];
   center?: number[];
   radius?: number;
+  holes?: number[][][];
+  layers?: string[];
 };
 type Inspection = {
+  placement_contract?: number;
+  open_paths?: number[][][];
+  matching_groups?: number[][];
+  chip_regions?: number[];
+  manual_chip_rectangles?: number[][];
+  cut_clearance_um?: number;
   generated_preview?: {
     dot_count: number;
     overview_png: string;
     detail_bounds: number[];
     detail_points: number[][];
     dot_radius_um: number;
+    bounds?: number[];
+    chip_dot_counts?: number[];
+    chip_details?: { detail_bounds: number[]; detail_points: number[][] }[];
   };
   region_candidates?: Candidate[];
   selected_regions?: number[];
@@ -63,17 +74,22 @@ let selected: string | null = null;
 let uploaded = false;
 let ready = false;
 let selectedRegions = new Set<number>();
+let selectedChips = new Set<number>();
+let manualChips: number[][] = [];
 let activeInspection: Inspection | null = null;
 let canConfirm = false;
 function updateSelection() {
   el("selection-count").textContent =
-    `${selectedRegions.size} additional no-dot areas selected`;
+    `${selectedChips.size + manualChips.length} chip boundaries · ${selectedRegions.size} fluid/exclusion faces selected`;
   const hasAreas =
     (activeInspection?.no_dot_regions ??
       activeInspection?.no_dot_paths?.length ??
       0) > 0 || selectedRegions.size > 0;
   el<HTMLButtonElement>("generate").disabled =
-    !canConfirm || !hasAreas || !el<HTMLInputElement>("confirmed").checked;
+    !canConfirm ||
+    !hasAreas ||
+    !(selectedChips.size + manualChips.length) ||
+    !el<HTMLInputElement>("confirmed").checked;
 }
 
 async function list() {
@@ -97,6 +113,8 @@ async function open(id: string) {
   canConfirm = false;
   activeInspection = null;
   selectedRegions.clear();
+  selectedChips.clear();
+  manualChips = [];
   uploaded = false;
   ready = false;
   el("review").hidden = true;
@@ -125,19 +143,58 @@ async function open(id: string) {
     const i = d.inspection;
     activeInspection = i;
     selectedRegions = new Set(i.selected_regions ?? []);
+    selectedChips = new Set(i.chip_regions ?? []);
+    manualChips = [...(i.manual_chip_rectangles ?? [])];
+    el<HTMLInputElement>("cut-clearance").value = String(
+      i.cut_clearance_um ?? 200,
+    );
     canConfirm =
-      d.status === "awaiting_confirmation" && i.generation_supported !== false;
-    el("region-controls").hidden = !i.region_candidates?.length;
+      d.status === "awaiting_confirmation" &&
+      i.generation_supported !== false &&
+      i.placement_contract === 1;
+    el("region-controls").hidden = false;
+    for (const key of [
+      "region-role",
+      "toggle-region",
+      "match-regions",
+      "clear-regions",
+      "add-manual-chip",
+      "cut-clearance",
+      "chip-x0",
+      "chip-y0",
+      "chip-x1",
+      "chip-y1",
+    ])
+      el<HTMLInputElement>(key).disabled = d.status !== "awaiting_confirmation";
+    el("reinspect").hidden = d.status !== "awaiting_confirmation";
+    for (const key of [
+      "region-role",
+      "region-choice",
+      "toggle-region",
+      "match-regions",
+      "focus-region",
+    ])
+      if (!i.region_candidates?.length)
+        el<HTMLInputElement>(key).disabled = true;
     updateSelection();
     el("summary").textContent =
-      `${d.name} · ${i.extent_um.map((v: number) => v.toFixed(1)).join(" × ")} µm · ${i.entity_count} entities · source ${i.source_units}${i.converter ? " · DWG converted" : ""}`;
+      `${d.name} · CAD extent ${i.extent_um.map((v: number) => v.toFixed(1)).join(" × ")} µm · ${i.entity_count} entities · source ${i.source_units}${i.converter ? " · DWG converted" : ""}`;
     el("dot-detail").hidden = !i.generated_preview;
+    el("dot-chip").hidden = !i.generated_preview;
     el("dot-summary").textContent = i.generated_preview
-      ? `${i.generated_preview.dot_count.toLocaleString()} generated dots. Overview shows dot occupancy; use Magnify actual dots for exact circles in a 1 mm detail.`
+      ? `${i.generated_preview.dot_count.toLocaleString()} generated dots${i.generated_preview.chip_dot_counts?.length ? ` across ${i.generated_preview.chip_dot_counts.length} chips (minimum ${Math.min(...i.generated_preview.chip_dot_counts).toLocaleString()} per chip)` : ""}. Overview shows dot occupancy; use Magnify actual dots for exact circles in a 1 mm detail.`
       : "";
     const svg = el("preview");
     svg.replaceChildren();
-    svg.setAttribute("viewBox", `0 0 ${i.extent_um[0]} ${i.extent_um[1]}`);
+    const fitBox = () => {
+      const x0 = Math.min(0, ...manualChips.map((r) => r[0])),
+        y0 = Math.min(0, ...manualChips.map((r) => r[1]));
+      const x1 = Math.max(i.extent_um[0], ...manualChips.map((r) => r[2])),
+        y1 = Math.max(i.extent_um[1], ...manualChips.map((r) => r[3]));
+      return [x0, i.extent_um[1] - y1, x1 - x0, y1 - y0];
+    };
+    const fitDrawing = () => svg.setAttribute("viewBox", fitBox().join(" "));
+    fitDrawing();
     for (const points of [...(i.no_dot_paths ?? []), ...i.paths]) {
       const p = document.createElementNS(
         "http://www.w3.org/2000/svg",
@@ -170,47 +227,76 @@ async function open(id: string) {
         "href",
         `data:image/png;base64,${generated.overview_png}`,
       );
-      overview.setAttribute("width", String(i.extent_um[0]));
-      overview.setAttribute("height", String(i.extent_um[1]));
+      const [gx0, gy0, gx1, gy1] = generated.bounds ?? [0, 0, ...i.extent_um];
+      overview.setAttribute("x", String(gx0));
+      overview.setAttribute("y", String(i.extent_um[1] - gy1));
+      overview.setAttribute("width", String(gx1 - gx0));
+      overview.setAttribute("height", String(gy1 - gy0));
       overview.style.pointerEvents = "none";
       svg.prepend(overview);
       detail = document.createElementNS("http://www.w3.org/2000/svg", "g");
       detail.setAttribute("data-dot-detail", "true");
       detail.style.pointerEvents = "none";
       detail.style.display = "none";
-      for (const [x, y] of generated.detail_points) {
-        const dot = document.createElementNS(
-          "http://www.w3.org/2000/svg",
-          "circle",
-        );
-        dot.setAttribute("cx", String(x));
-        dot.setAttribute("cy", String(i.extent_um[1] - y));
-        dot.setAttribute("r", String(generated.dot_radius_um));
-        dot.setAttribute("fill", "#145ab4");
-        detail.append(dot);
-      }
+      const drawDetail = (ps: number[][]) => {
+        detail!.replaceChildren();
+        for (const [x, y] of ps) {
+          const dot = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "circle",
+          );
+          dot.setAttribute("cx", String(x));
+          dot.setAttribute("cy", String(i.extent_um[1] - y));
+          dot.setAttribute("r", String(generated.dot_radius_um));
+          dot.setAttribute("fill", "#145ab4");
+          detail!.append(dot);
+        }
+      };
+      drawDetail(generated.detail_points);
+      const chipChoice = el<HTMLSelectElement>("dot-chip");
+      chipChoice.replaceChildren();
+      (generated.chip_details ?? [generated]).forEach((_, n) => {
+        const option = document.createElement("option");
+        option.value = String(n);
+        option.textContent = `Chip ${n + 1}`;
+        chipChoice.append(option);
+      });
       svg.append(detail);
       el("dot-detail").onclick = () => {
-        const [x0, y0, x1, y1] = generated.detail_bounds;
+        const view =
+          generated.chip_details?.[Number(chipChoice.value)] ?? generated;
+        drawDetail(view.detail_points);
+        const [x0, y0, x1, y1] = view.detail_bounds;
         svg.setAttribute(
           "viewBox",
           `${x0} ${i.extent_um[1] - y1} ${x1 - x0} ${y1 - y0}`,
         );
+        svg.style.maxWidth = "600px";
+        svg.style.height = "auto";
+        svg.style.aspectRatio = "1 / 1";
         overview!.style.display = "none";
         detail!.style.display = "";
       };
     }
     el("reset-view").onclick = () => {
-      svg.setAttribute("viewBox", `0 0 ${i.extent_um[0]} ${i.extent_um[1]}`);
+      fitDrawing();
       if (overview) overview.style.display = "";
       if (detail) detail.style.display = "none";
+      svg.style.maxWidth = "";
+      svg.style.height = "";
+      svg.style.aspectRatio = "";
     };
     svg.onwheel = (event) => {
       event.preventDefault();
+      if (overview) overview.style.display = "";
+      if (detail) detail.style.display = "none";
+      svg.style.maxWidth = "";
+      svg.style.height = "";
+      svg.style.aspectRatio = "";
       const box = svg.getAttribute("viewBox")!.split(" ").map(Number);
       const rect = svg.getBoundingClientRect();
       const width = Math.min(
-        i.extent_um[0] * 2,
+        fitBox()[2] * 2,
         Math.max(50, box[2] * (event.deltaY < 0 ? 0.7 : 1.4)),
       );
       const height = (width * box[3]) / box[2];
@@ -230,18 +316,61 @@ async function open(id: string) {
               return a + p[0] * q[1] - q[0] * p[1];
             }, 0) / 2,
           );
+    for (const ps of i.open_paths ?? []) {
+      const line = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "polyline",
+      );
+      line.setAttribute(
+        "points",
+        ps.map(([x, y]) => `${x},${i.extent_um[1] - y}`).join(" "),
+      );
+      line.setAttribute("stroke", "#d32222");
+      line.setAttribute("stroke-width", "4");
+      line.setAttribute("vector-effect", "non-scaling-stroke");
+      line.style.pointerEvents = "none";
+      svg.append(line);
+    }
     const shapes = new Map<number, SVGElement>();
+    const paint = (id: number) => {
+      const shape = shapes.get(id);
+      const r = i.region_candidates?.find((c) => c.id === id);
+      if (r?.kind === "polygon") {
+        const rings = selectedChips.has(id)
+          ? [r.points!]
+          : [r.points!, ...(r.holes ?? [])];
+        shape?.setAttribute(
+          "d",
+          rings
+            .map(
+              (ps) =>
+                ps
+                  .map(
+                    ([x, y], n) => `${n ? "L" : "M"}${x},${i.extent_um[1] - y}`,
+                  )
+                  .join(" ") + " Z",
+            )
+            .join(" "),
+        );
+      }
+      shape?.setAttribute(
+        "fill",
+        selectedRegions.has(id) ? "#ef985a80" : "transparent",
+      );
+      shape?.setAttribute(
+        "stroke",
+        selectedChips.has(id) ? "#176bd6" : "#64748b",
+      );
+      shape?.setAttribute("stroke-width", selectedChips.has(id) ? "3" : "0.5");
+    };
     const toggle = (id: number) => {
       if (d.status !== "awaiting_confirmation") return;
-      selectedRegions.has(id)
-        ? selectedRegions.delete(id)
-        : selectedRegions.add(id);
-      shapes
-        .get(id)
-        ?.setAttribute(
-          "fill",
-          selectedRegions.has(id) ? "#44aa8880" : "transparent",
-        );
+      if (!i.region_candidates?.some((r) => r.id === id)) return;
+      const chips = value("region-role") === "chip";
+      const selection = chips ? selectedChips : selectedRegions;
+      selection.has(id) ? selection.delete(id) : selection.add(id);
+      (chips ? selectedRegions : selectedChips).delete(id);
+      paint(id);
       el<HTMLInputElement>("confirmed").checked = false;
       updateSelection();
     };
@@ -252,20 +381,26 @@ async function open(id: string) {
     )) {
       const shape = document.createElementNS(
         "http://www.w3.org/2000/svg",
-        r.kind === "circle" ? "circle" : "polygon",
+        r.kind === "circle" ? "circle" : "path",
       );
       if (r.kind === "circle") {
         shape.setAttribute("cx", String(r.center![0]));
         shape.setAttribute("cy", String(i.extent_um[1] - r.center![1]));
         shape.setAttribute("r", String(r.radius));
-      } else
+      } else {
+        const ring = (ps: number[][]) =>
+          ps
+            .map(([x, y], n) => `${n ? "L" : "M"}${x},${i.extent_um[1] - y}`)
+            .join(" ") + " Z";
         shape.setAttribute(
-          "points",
-          r.points!.map(([x, y]) => `${x},${i.extent_um[1] - y}`).join(" "),
+          "d",
+          [r.points!, ...(r.holes ?? [])].map(ring).join(" "),
         );
+        shape.setAttribute("fill-rule", "evenodd");
+      }
       shape.setAttribute(
         "fill",
-        selectedRegions.has(r.id) ? "#44aa8880" : "transparent",
+        selectedRegions.has(r.id) ? "#ef985a80" : "transparent",
       );
       shape.setAttribute("stroke", "#64748b");
       shape.setAttribute("stroke-width", "0.5");
@@ -275,24 +410,124 @@ async function open(id: string) {
         "http://www.w3.org/2000/svg",
         "title",
       );
-      title.textContent = `Area ${r.id + 1}: click to toggle no-dot exclusion`;
+      title.textContent = `Area ${r.id + 1}: assign using the selected role`;
       shape.append(title);
       shape.onclick = () => toggle(r.id);
       shapes.set(r.id, shape);
+      paint(r.id);
       svg.append(shape);
       const option = document.createElement("option");
       option.value = String(r.id);
-      option.textContent = `Area ${r.id + 1} · ${area(r).toFixed(0)} µm²`;
+      option.textContent = `Area ${r.id + 1} · ${area(r).toFixed(0)} µm² · ${r.layers?.length ? "layer " + r.layers.join(", ") : "assembled face"}${r.holes?.length ? " · holes preserved" : ""}`;
       select.append(option);
     }
     el("toggle-region").onclick = () => toggle(Number(select.value));
-    el("select-polygons").onclick = () => {
-      for (const r of i.region_candidates ?? [])
-        if (r.kind === "polygon" && !selectedRegions.has(r.id)) toggle(r.id);
+    el("match-regions").onclick = () => {
+      const id = Number(select.value);
+      const ids = i.matching_groups?.find((group) => group.includes(id)) ?? [
+        id,
+      ];
+      const selection =
+        value("region-role") === "chip" ? selectedChips : selectedRegions;
+      for (const n of ids) if (!selection.has(n)) toggle(n);
+      say(
+        `${ids.length} translated copies assigned. Geometry matches within 0.01 µm; verify the role and coverage on every chip.`,
+      );
+    };
+    el("focus-region").onclick = () => {
+      if (overview) overview.style.display = "";
+      if (detail) detail.style.display = "none";
+      svg.style.maxWidth = "";
+      svg.style.height = "";
+      svg.style.aspectRatio = "";
+      const r = i.region_candidates?.find((c) => c.id === Number(select.value));
+      if (!r) return;
+      const ps =
+        r.kind === "circle"
+          ? [
+              [r.center![0] - r.radius!, r.center![1] - r.radius!],
+              [r.center![0] + r.radius!, r.center![1] + r.radius!],
+            ]
+          : r.points!;
+      const xs = ps.map((p) => p[0]),
+        ys = ps.map((p) => p[1]);
+      const x0 = Math.min(...xs),
+        x1 = Math.max(...xs),
+        y0 = Math.min(...ys),
+        y1 = Math.max(...ys);
+      svg.setAttribute(
+        "viewBox",
+        `${x0 - 200} ${i.extent_um[1] - y1 - 200} ${x1 - x0 + 400} ${y1 - y0 + 400}`,
+      );
     };
     el("clear-regions").onclick = () => {
-      for (const id of [...selectedRegions]) toggle(id);
+      if (d.status !== "awaiting_confirmation") return;
+      selectedRegions.clear();
+      selectedChips.clear();
+      manualChips = [];
+      fitDrawing();
+      for (const id of shapes.keys()) paint(id);
+      svg.querySelectorAll("[data-manual-chip]").forEach((e) => e.remove());
+      el<HTMLInputElement>("confirmed").checked = false;
+      updateSelection();
     };
+    const drawManual = (r: number[]) => {
+      const rect = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "rect",
+      );
+      rect.setAttribute("x", String(r[0]));
+      rect.setAttribute("y", String(i.extent_um[1] - r[3]));
+      rect.setAttribute("width", String(r[2] - r[0]));
+      rect.setAttribute("height", String(r[3] - r[1]));
+      rect.setAttribute("fill", "none");
+      rect.setAttribute("stroke", "#176bd6");
+      rect.setAttribute("stroke-width", "3");
+      rect.setAttribute("vector-effect", "non-scaling-stroke");
+      rect.setAttribute("data-manual-chip", "true");
+      rect.style.pointerEvents = "none";
+      svg.append(rect);
+    };
+    manualChips.forEach(drawManual);
+    el("add-manual-chip").onclick = () => {
+      if (d.status !== "awaiting_confirmation") return;
+      const r = ["chip-x0", "chip-y0", "chip-x1", "chip-y1"].map((k) =>
+        Number(value(k)),
+      );
+      if (
+        !r.every(Number.isFinite) ||
+        !(
+          -150000 <= r[0] &&
+          r[0] < r[2] &&
+          r[2] <= 150000 &&
+          -150000 <= r[1] &&
+          r[1] < r[3] &&
+          r[3] <= 150000
+        ) ||
+        selectedChips.size + manualChips.length >= 100
+      ) {
+        say(
+          "Enter a valid rectangle in micrometres, within the supported coordinate range. It may extend beyond the CAD geometry.",
+          true,
+        );
+        return;
+      }
+      manualChips.push(r);
+      drawManual(r);
+      fitDrawing();
+      el<HTMLInputElement>("confirmed").checked = false;
+      updateSelection();
+    };
+    el("cut-clearance").oninput = () => {
+      el<HTMLInputElement>("confirmed").checked = false;
+      updateSelection();
+    };
+    el("reinspect").onclick = () =>
+      void safely(async () => {
+        await post(`/designs/${id}/retry`, {});
+        await list();
+        await open(id);
+      });
     const warnings = document.createElement("ul");
     for (const message of i.warnings) {
       const item = document.createElement("li");
@@ -319,6 +554,10 @@ async function open(id: string) {
     }
     say(
       "Your device and proprietary dots are ready to download. Review the geometry before fabrication.",
+    );
+  } else if (d.status === "needs_review") {
+    say(
+      "This older output lacks post-cut boundary checks. Upload the original CAD to create a reviewed revision.",
     );
   } else
     say(
@@ -370,6 +609,9 @@ el("generate").onclick = () =>
       await post(`/designs/${selected}/confirm`, {
         confirmed: el<HTMLInputElement>("confirmed").checked,
         selected_regions: [...selectedRegions],
+        chip_regions: [...selectedChips],
+        manual_chip_rectangles: manualChips,
+        cut_clearance_um: Number(value("cut-clearance")),
       });
       await list();
       await open(selected);
@@ -417,8 +659,8 @@ el("feedback-form").onsubmit = (e) => {
   });
 };
 el("region-tour").onclick = () => {
-  if (!activeInspection?.region_candidates?.length || el("review").hidden) {
-    say("Open an imported drawing with closed areas first.");
+  if (!activeInspection || el("review").hidden) {
+    say("Open an imported drawing first.");
     return;
   }
   const tour = driver({
@@ -437,12 +679,18 @@ el("region-tour").onclick = () => {
       {
         element: "#region-controls",
         popover: {
-          title: "Choose no-dot interiors",
+          title: "Separate chip edges from fluid",
           description:
-            "Close the tour to select channel, chamber and port areas on the drawing, or use the area selector. Shade every required interior, then restart this guide.",
+            "Close the tour. Assign the final cut outline in blue, then fluid faces in orange. Holes in fluid faces remain solid islands. If the boundary is absent, define a rectangle by its dimensions. Restart the guide to continue.",
           onNextClick: () => {
-            if (!selectedRegions.size) {
-              say("Select a no-dot interior before continuing.");
+            if (
+              (!selectedRegions.size &&
+                !(activeInspection?.no_dot_regions ?? 0)) ||
+              !(selectedChips.size + manualChips.length)
+            ) {
+              say(
+                "Choose a chip boundary and its fluid exclusions before continuing.",
+              );
               return;
             }
             tour.moveNext();
@@ -454,7 +702,7 @@ el("region-tour").onclick = () => {
         popover: {
           title: "Verify complete coverage",
           description:
-            "Check physical units and all shaded interiors. Open fragments need review. Changing a selection clears confirmation. Wafer-sized drawings generate in batches after confirmation. Exclude all closed polygons is conservative: it may remove entire chip interiors, not only fluid channels.",
+            "Check physical units and all shaded interiors. Open fragments need review. Changing a selection clears confirmation. Dots must remain inside every selected cut boundary and outside all orange fluid faces. Confirm the cutting clearance. Every chip must retain dots; this does not prove optical decoding.",
         },
       },
       {

@@ -25,7 +25,16 @@ const req = (path: string, method = "GET", data?: unknown) =>
       Origin: "https://portal.test",
       "Content-Type": "application/json",
     },
-    body: data ? JSON.stringify(data) : undefined,
+    body: data
+      ? JSON.stringify(
+          path.endsWith("/confirm")
+            ? {
+                manual_chip_rectangles: [[0, 0, 6000, 6000]],
+                ...(data as object),
+              }
+            : data,
+        )
+      : undefined,
   });
 beforeEach(() => {
   env = {
@@ -102,7 +111,14 @@ describe("authorization and registration boundaries", () => {
         .bind(id)
         .run();
     await env.DB.prepare("UPDATE designs SET inspection=?")
-      .bind(JSON.stringify({ no_dot_contract: 1, no_dot_regions: 1 }))
+      .bind(
+        JSON.stringify({
+          no_dot_contract: 1,
+          placement_contract: 1,
+          extent_um: [6000, 6000],
+          no_dot_regions: 1,
+        }),
+      )
       .run();
     expect((await owned(env, "dg-aaaa", admin)).seed).toBe(8);
     expect((await owned(env, "dg-bbbb", admin)).seed).toBe(9);
@@ -134,7 +150,14 @@ describe("authorization and registration boundaries", () => {
       "INSERT INTO designs(id,tenant_id,name,extension,units,status) VALUES('dg-aaaa','a','Test','dxf','um','awaiting_confirmation')",
     ).run();
     await env.DB.prepare("UPDATE designs SET inspection=?")
-      .bind(JSON.stringify({ no_dot_contract: 1, no_dot_regions: 1 }))
+      .bind(
+        JSON.stringify({
+          no_dot_contract: 1,
+          placement_contract: 1,
+          extent_um: [6000, 6000],
+          no_dot_regions: 1,
+        }),
+      )
       .run();
     env.JOBS.send = async () => {
       throw new Error("offline");
@@ -214,7 +237,10 @@ it("never exposes proprietary maps or seeds and blocks unverified legacy exports
   await env.DB.prepare(
     "INSERT INTO designs(id,tenant_id,name,extension,units,status,inspection,registry_entry) VALUES('dg-cccc','a','Device','dxf','um','ready',?,?)",
   )
-    .bind(JSON.stringify({ no_dot_contract: 1 }), JSON.stringify({ seed: 123 }))
+    .bind(
+      JSON.stringify({ no_dot_contract: 1, placement_contract: 1 }),
+      JSON.stringify({ seed: 123 }),
+    )
     .run();
   const detail = await (await api(req("/designs/dg-cccc"), env, admin)).json();
   expect(detail).not.toHaveProperty("seed");
@@ -246,6 +272,8 @@ it("never exposes proprietary maps or seeds and blocks unverified legacy exports
 it("validates no-dot selections and capacity server-side", async () => {
   const i = {
     no_dot_contract: 1,
+    placement_contract: 1,
+    extent_um: [6000, 6000],
     no_dot_regions: 0,
     region_candidates: [{ id: 0 }],
     generation_supported: true,
@@ -300,6 +328,8 @@ it("validates no-dot selections and capacity server-side", async () => {
 it("keeps large geometry in private storage and persists only validated choices in SQL", async () => {
   const geometry = {
     no_dot_contract: 1,
+    placement_contract: 1,
+    extent_um: [6000, 6000],
     no_dot_regions: 0,
     generation_supported: true,
     region_candidates: [
@@ -341,7 +371,11 @@ it("keeps large geometry in private storage and persists only validated choices 
   expect(stored).toEqual({
     geometry_object: true,
     no_dot_contract: 1,
+    placement_contract: 1,
     selected_regions: [0],
+    chip_regions: [],
+    manual_chip_rectangles: [[0, 0, 6000, 6000]],
+    cut_clearance_um: 200,
   });
   expect(requested).toEqual([
     "a/dg-dddd/inspection.json",
@@ -361,4 +395,46 @@ it("exposes actionable import diagnostics without leaking worker internals", asy
   expect(response.error).toContain("original drawing is retained");
   expect(JSON.stringify(response)).not.toContain("/private");
   expect(JSON.stringify(response)).not.toContain("seed");
+});
+
+it("requires a post-cut boundary and rejects role conflicts or invalid manual geometry", async () => {
+  const i = {
+    no_dot_contract: 1,
+    placement_contract: 1,
+    extent_um: [6000, 6000],
+    no_dot_regions: 1,
+    generation_supported: true,
+    region_candidates: [{ id: 0 }],
+  };
+  await env.DB.prepare(
+    "INSERT INTO designs(id,tenant_id,name,extension,units,status,inspection) VALUES('dg-eeee','a','Cut review','dxf','um','awaiting_confirmation',?)",
+  )
+    .bind(JSON.stringify(i))
+    .run();
+  for (const extra of [
+    { manual_chip_rectangles: [] },
+    { manual_chip_rectangles: [], chip_regions: [0], selected_regions: [0] },
+    { chip_regions: [2] },
+    { manual_chip_rectangles: [[-150001, 0, 6000, 6000]] },
+    { manual_chip_rectangles: [[0, 0, 0, 6000]] },
+    { cut_clearance_um: -1 },
+  ]) {
+    await expect(
+      api(
+        req("/designs/dg-eeee/confirm", "POST", { confirmed: true, ...extra }),
+        env,
+        admin,
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+  }
+  await env.DB.prepare("UPDATE designs SET inspection=? WHERE id='dg-eeee'")
+    .bind(JSON.stringify({ ...i, placement_contract: undefined }))
+    .run();
+  await expect(
+    api(
+      req("/designs/dg-eeee/confirm", "POST", { confirmed: true }),
+      env,
+      admin,
+    ),
+  ).rejects.toMatchObject({ status: 409 });
 });

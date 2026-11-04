@@ -49,7 +49,7 @@ async def process(phase: str, req: Request):
     size = 0
     async for chunk in req.stream():
         size += len(chunk)
-        if size > 8 * 1024 * 1024:
+        if size > 16 * 1024 * 1024:
             raise HTTPException(413, "Metadata too large")
         chunks.append(chunk)
     try:

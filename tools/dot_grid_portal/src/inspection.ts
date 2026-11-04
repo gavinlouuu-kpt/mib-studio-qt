@@ -21,6 +21,9 @@ export async function loadInspection(env: Env, d: Design): Promise<any> {
   return {
     ...geometry,
     selected_regions: saved.selected_regions ?? [],
+    chip_regions: saved.chip_regions ?? [],
+    manual_chip_rectangles: saved.manual_chip_rectangles ?? [],
+    cut_clearance_um: saved.cut_clearance_um ?? 200,
     generated_preview: preview,
   };
 }
@@ -28,7 +31,14 @@ export function inspectionRecord(previous: string | null, inspection: any) {
   const saved = JSON.parse(previous || "null");
   return JSON.stringify(
     saved?.geometry_object
-      ? { ...saved, selected_regions: inspection.selected_regions ?? [] }
+      ? {
+          ...saved,
+          selected_regions: inspection.selected_regions ?? [],
+          chip_regions: inspection.chip_regions ?? [],
+          manual_chip_rectangles: inspection.manual_chip_rectangles ?? [],
+          cut_clearance_um: inspection.cut_clearance_um ?? 200,
+          placement_contract: inspection.placement_contract,
+        }
       : inspection,
   );
 }

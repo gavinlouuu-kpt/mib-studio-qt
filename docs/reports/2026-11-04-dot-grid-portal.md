@@ -182,3 +182,49 @@ and old container were retained. Live Driver.js review, 1,008-polygon selection,
 capacity enablement and coverage-reset gate passed without saving any selections
 or submitting a mask. Actual-dot rendering is covered by UI fixtures; no customer
 wafer generation was submitted while the exclusion preference remains unanswered.
+
+## Redesign: individual chips after cutting
+
+The whole-chip exclusion workflow was unsuitable for post-cut microscopy. The new
+contract separates chip inclusion from fluid exclusion, preserves solid islands in
+fluid faces, and rejects missing/overlapping/empty chip boundaries. It has no drawing-
+bounds or inferred-wafer fallback. Review controls distinguish roles, allow missing
+rectangular boundaries, and assign only geometry-verified translated copies.
+
+Actual-wafer proposal: smaller rectangles as conservative placement envelopes,
+20 matched fluid-network faces with holes, and all 20 short open fragments covered
+by the selected fluid regions. Local generation: 2,689,252 dots, 133,927–135,093 per
+chip, 106.65 s wall time, 364 MiB peak RSS. Independent checks of every DXF/GDS
+coordinate and analytic cut-clearance / point-in-polygon plus direct fluid-edge
+distances found zero violations. This is a review draft, not physical saw-line or
+microscope qualification. Source DWG remains unchanged.
+
+Live review delivery: `Wafer_soRT — post-cut review draft`
+(`dg-6f71ac43-66f4-403f-960d-b55ec6876334`) was uploaded from the original DWG,
+inspected, assigned 20 verified translated chip boundaries and 20 fluid faces via
+real UI controls, and generated through the normal queue. The live run has
+2,689,289 dots (133,926–135,105 per chip). Both customer downloads were streamed
+back over HTTPS, hashed against the worker manifest, and independently checked:
+zero coordinate mismatches, zero dots outside chip envelopes, zero cut/fluid
+clearance violations, and all 9,171 normalized source entities unchanged. The
+private map endpoint returned 404. No physical fabrication or camera test occurred.
+
+The real Driver.js review reached its feedback checkpoint before generation and
+again on the completed design. All 20 detail choices were present; first/last
+chip views contained 908/900 exact dot circles. The magnified frame is square and
+Fit drawing resets to the occupancy overview; there were no browser page errors.
+Legacy outputs remain stored, but lack the new placement contract and are not
+served as cut-chip-ready downloads. Production Cloudflare rollout remains separate.
+
+Regression coverage: 24 Python checks including actual DWG preservation and
+post-cut/hole semantics, 14 API/runtime/job checks, and 3 Playwright flows. The
+full-wafer worker was also exercised offline at 4 GiB / 2 CPUs with normal limits.
+Private verification artifacts and scripts remain under
+`/mnt/hdd/developer-data/mib-studio-qt/wafer-postcut-v3/`, with the delivered run in
+`live/`; no customer CAD or generated mask was added to Git.
+
+Missing-boundary regression: a 6 mm CAD drawing can now receive an explicitly
+defined 8 mm chip envelope extending to negative mask coordinates. Generation,
+codebook origin, raster bounds and Fit drawing expand consistently without moving
+source entities. The ordinary overall capacity limits still apply. A generator
+round-trip and the UI flow cover this case; no drawing-bounds clipping fallback remains.

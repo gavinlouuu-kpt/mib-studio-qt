@@ -26,6 +26,10 @@ const MAX_UPLOAD = 10 * 1024 * 1024;
 export function importError(error: string | null) {
   if (!error) return null;
   for (const [code, message] of Object.entries({
+    CAD_PLACEMENT_INVALID:
+      "The selected cut boundaries overlap, conflict, or have no usable interior. Reinspect and select one final boundary per chip.",
+    CAD_CHIP_EMPTY:
+      "At least one selected chip has too few dots after clearances and fluid exclusions. Review each chip boundary and the orange faces.",
     CAD_GEOMETRY_LOSS:
       "Some filled geometry could not be preserved during import. Your original drawing is retained; no dots were generated. Contact support with this design selected so its converter can be upgraded.",
     CAD_REGION_UNSUPPORTED:
@@ -91,7 +95,7 @@ export async function api(
     return Response.json(
       (
         await env.DB.prepare(
-          "SELECT id,name,status,error,created_at,json_extract(inspection,'$.no_dot_contract') AS no_dot_contract FROM designs WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100",
+          "SELECT id,name,status,error,created_at,json_extract(inspection,'$.placement_contract') AS placement_contract FROM designs WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100",
         )
           .bind(member.tenant_id)
           .all()
@@ -99,7 +103,7 @@ export async function api(
         id: row.id,
         name: row.name,
         status:
-          row.status === "ready" && row.no_dot_contract !== 1
+          row.status === "ready" && row.placement_contract !== 1
             ? "needs_review"
             : row.status,
         error: importError(row.error),
@@ -246,7 +250,7 @@ export async function api(
         name: d.name,
         status:
           d.status === "ready" &&
-          JSON.parse(d.inspection || "null")?.no_dot_contract !== 1
+          JSON.parse(d.inspection || "null")?.placement_contract !== 1
             ? "needs_review"
             : d.status,
         error: importError(d.error),
@@ -257,7 +261,7 @@ export async function api(
       if (b.confirmed !== true)
         throw new HttpError(400, "Confirm the converted preview and units");
       const inspection = await loadInspection(env, d);
-      if (!inspection || inspection.no_dot_contract !== 1)
+      if (!inspection || inspection.placement_contract !== 1)
         throw new HttpError(409, "Inspect this drawing before generation");
       if (inspection.generation_supported === false)
         throw new HttpError(
@@ -277,7 +281,75 @@ export async function api(
           400,
           "Select the channel, chamber and port interiors before adding dots",
         );
+      const chips = b.chip_regions ?? [];
+      const rectangles = b.manual_chip_rectangles ?? [];
+      const clearance = b.cut_clearance_um ?? 200;
+      if (
+        !Array.isArray(chips) ||
+        chips.length > 100 ||
+        new Set(chips).size !== chips.length ||
+        chips.some(
+          (n) =>
+            !Number.isInteger(n) ||
+            n < 0 ||
+            n >= count ||
+            selection.includes(n),
+        )
+      )
+        throw new HttpError(
+          400,
+          "Choose distinct chip boundaries, not fluid regions",
+        );
+      const [width, height] = inspection.extent_um ?? [0, 0];
+      if (
+        !Array.isArray(rectangles) ||
+        chips.length + rectangles.length > 100 ||
+        rectangles.some(
+          (r) =>
+            !Array.isArray(r) ||
+            r.length !== 4 ||
+            r.some((v) => typeof v !== "number" || !Number.isFinite(v)) ||
+            !(
+              -150000 <= r[0] &&
+              r[0] < r[2] &&
+              r[2] <= 150000 &&
+              -150000 <= r[1] &&
+              r[1] < r[3] &&
+              r[3] <= 150000
+            ),
+        )
+      )
+        throw new HttpError(
+          400,
+          "Manual chip rectangle coordinates exceed the supported range",
+        );
+      if (!chips.length && !rectangles.length)
+        throw new HttpError(
+          400,
+          "Choose or define the final chip boundaries after cutting",
+        );
+      if (
+        typeof clearance !== "number" ||
+        !Number.isFinite(clearance) ||
+        clearance < 0 ||
+        clearance > 5000
+      )
+        throw new HttpError(400, "Cut clearance must be 0–5000 micrometres");
+      const minX = Math.min(0, ...rectangles.map((r) => r[0])),
+        minY = Math.min(0, ...rectangles.map((r) => r[1]));
+      const maxX = Math.max(width, ...rectangles.map((r) => r[2])),
+        maxY = Math.max(height, ...rectangles.map((r) => r[3]));
+      const columns = Math.ceil((maxX - minX) / 30) + 1,
+        rows = Math.ceil((maxY - minY) / 30) + 1;
+      if (Math.max(columns, rows) > 3700 || columns * rows > 14000000)
+        throw new HttpError(
+          400,
+          "The expanded chip area exceeds the supported generation size",
+        );
       inspection.selected_regions = [...new Set(selection)];
+      inspection.chip_regions = chips;
+      inspection.manual_chip_rectangles = rectangles;
+      inspection.cut_clearance_um = clearance;
       const changed = await env.DB.prepare(
         "UPDATE designs SET status='queued_generate',inspection=?,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=? AND status='awaiting_confirmation' RETURNING id",
       )
@@ -303,11 +375,15 @@ export async function api(
     }
     if (match[2] === "retry" && req.method === "POST") {
       const changed = await env.DB.prepare(
-        "UPDATE designs SET status='queued_inspect',error=NULL,inspection=NULL WHERE id=? AND status='failed' RETURNING id",
+        "UPDATE designs SET status='queued_inspect',error=NULL,inspection=NULL WHERE id=? AND status IN ('failed','awaiting_confirmation') RETURNING id",
       )
         .bind(d.id)
         .first();
-      if (!changed) throw new HttpError(409, "Only failed jobs can be retried");
+      if (!changed)
+        throw new HttpError(
+          409,
+          "Only failed or unconfirmed drawings can be reinspected",
+        );
       try {
         await env.JOBS.send({ id: d.id, phase: "inspect" });
       } catch {
@@ -325,7 +401,7 @@ export async function api(
       if (
         !CUSTOMER_FILES.some((f) => f === filename) ||
         d.status !== "ready" ||
-        JSON.parse(d.inspection || "null")?.no_dot_contract !== 1
+        JSON.parse(d.inspection || "null")?.placement_contract !== 1
       )
         throw new HttpError(404, "File not available");
       const file = await env.FILES.get(

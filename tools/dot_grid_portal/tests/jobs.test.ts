@@ -99,9 +99,19 @@ it("runs real Python inspection and generation through job orchestration, publis
       ).status,
     ).toBe("awaiting_confirmation");
     expect(files.has("a/dg-aaaa/mib-map.zip")).toBe(false);
+    const inspection = JSON.parse(
+      (
+        await env.DB.prepare(
+          "SELECT inspection FROM designs WHERE id='dg-aaaa'",
+        ).first()
+      ).inspection,
+    );
+    inspection.manual_chip_rectangles = [[0, 0, 6000, 6000]];
     await env.DB.prepare(
-      "UPDATE designs SET status='queued_generate' WHERE id='dg-aaaa'",
-    ).run();
+      "UPDATE designs SET status='queued_generate',inspection=? WHERE id='dg-aaaa'",
+    )
+      .bind(JSON.stringify(inspection))
+      .run();
     await expect(
       execute({ id: "dg-aaaa", phase: "generate" }, 1, env),
     ).rejects.toThrow("Injected R2 failure");

@@ -21,7 +21,7 @@ identity and persistent local data; never a production Access bypass or producti
 
 Realistic demo: original 12 × 8 mm microfluidic concept, actual exported dot geometry,
 before/after toggle and sample-loading controls. Provenance and generation steps:
-`tools/dot_grid_portal/demo/README.md`. Review seed 11 generated 87,907 dots; no fabricated
+`tools/dot_grid_portal/demo/README.md`. The corrected example generated 85,060 dots; no fabricated
 camera result or fabrication claim. Tailnet example has a separate four-step Driver.js tour.
 
 ## Import recovery (2026-11-04)
@@ -33,9 +33,8 @@ The real Wafer_soRT fixture preserves 88/88 REGIONs through the configured route
 open boundary fragments are reported, not guessed. Annotations stay in delivered CAD.
 The area-selection Driver.js tour resets confirmation on edits and includes feedback.
 `src/inspection.ts` stores large geometry in private object storage, not large D1 rows;
-only server-validated selection IDs enter the confirmation record. Helper exclusion
-polygons are removed before device export. Full-wafer inspection now works, but the
-one-million-node generation cap remains: wafer mask acceptance is still open.
+only server-validated selection IDs enter the confirmation record. Review geometry is kept separate from source entities. The subsequent batching and
+post-cut contracts below supersede the initial import-only and wafer-only workflow.
 
 ## Full-wafer batching (2026-11-04)
 
@@ -48,3 +47,24 @@ conservative all-closed-polygons test produced 3,452,492 dots, with both exporte
 formats independently checked and zero whole-chip clearance violations across
 20 chips. These are tests, not approval of fluid semantics or placement inside chips.
 Ready designs expose actual-dot overview/detail previews; maps and seeds remain private.
+
+## Post-cut chip placement
+
+`generator/placement.py` requires explicit chip inclusion domains independently of
+fluid exclusions. It clips complete dots inside cut boundaries plus clearance and
+rejects overlapping, empty or dot-starved chips. Fluid candidate holes are preserved;
+cut outlines use the exterior. The UI shows these roles separately, supports manual
+rectangular boundaries, verifies translated face copies before group assignment, and
+shows one generated detail per chip. Geometry without this placement contract cannot
+be presented as a cut-chip-ready export. Source geometry is not edited by review roles.
+
+Actual wafer review draft: 20 smaller rectangular envelopes and 20 fluid-network
+faces, with all open fragments covered by the proposed exclusions. The measured
+local output contains 2,689,252 dots inside those envelopes; no fluid-interior,
+fluid-clearance or cut-clearance violations were found by the independent checker.
+The intended physical saw edge and real microscope decoding are not thereby proven.
+
+Delivered tailnet review run: **Wafer_soRT — post-cut review draft**, 2,689,289 dots
+across all 20 chips. Both downloaded formats and preservation of all 9,171 normalized
+device entities passed independent checks. Source geometry and review roles remain
+separate. See the dated portal report for the live receipt and verification scope.

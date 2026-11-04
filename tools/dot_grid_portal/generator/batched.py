@@ -20,7 +20,7 @@ class RegionFilter:
     def __init__(self, areas, clearance):
         self.clearance = clearance
         self.circles = [a for k, a in areas if k == 'circle']
-        polygons = [Polygon(a) for k, a in areas if k == 'polygon']
+        polygons = [(a if isinstance(a, Polygon) else Polygon(a)) for k, a in areas if k == 'polygon']
         self.tree = STRtree(polygons) if polygons else None
 
     def keep(self, xy):
@@ -36,13 +36,14 @@ class RegionFilter:
         return keep
 
 
-def pattern_batches(cb, geometry_pts, chips, marks, wafer, keepout, areas, extent, clearance):
+def pattern_batches(cb, geometry_pts, chips, marks, wafer, keepout, areas, extent, clearance, placement=None, bounds=None):
     """Same ordered nodes and displacement bits as core build_pattern; no global mesh."""
     tree = cKDTree(geometry_pts) if len(geometry_pts) else None
     mark_tree = cKDTree(np.vstack(marks)) if marks else None
     filters = RegionFilter(areas, clearance)
     mns, phi, psi = map(np.asarray, (cb.mns, cb.phi, cb.psi))
     w, h = extent
+    xmin,ymin,xmax,ymax = bounds or (0,0,w,h)
     radius = cb.dot_diameter_um / 2
     for start in range(0, cb.columns * cb.rows, BATCH):
         flat = np.arange(start, min(start+BATCH, cb.columns*cb.rows))
@@ -68,7 +69,8 @@ def pattern_batches(cb, geometry_pts, chips, marks, wafer, keepout, areas, exten
         x = x + np.where(by==0, 1-2*bx, 0)*cb.displacement_um
         y = y + np.where(by==1, 1-2*bx, 0)*cb.displacement_um
         xy = np.column_stack((x,y))
-        keep = filters.keep(xy) & (x>=radius) & (x<=w-radius) & (y>=radius) & (y<=h-radius)
+        keep = filters.keep(xy) & (x>=xmin+radius) & (x<=xmax-radius) & (y>=ymin+radius) & (y<=ymax-radius)
+        if placement is not None: keep &= placement.keep(xy)
         yield np.column_stack((ii[keep],jj[keep],x[keep],y[keep]))
 
 
@@ -136,23 +138,25 @@ def write_gds_stream(dots, cb, path):
     return True
 
 
-def dot_preview(dots, extent):
+def dot_preview(dots, extent, detail_centres=None, bounds=None):
     """Overview uses every dot; magnified detail contains exact centres."""
     import base64
     import cv2
     size = 1600
     w,h = extent
+    xmin,ymin,xmax,ymax = bounds or (0,0,w,h)
     raster = np.zeros((size,size,4), dtype=np.uint8)
-    cx,cy = dots[len(dots)//2,2:4]
-    bounds = [max(0,float(cx)-500),max(0,float(cy)-500),min(w,float(cx)+500),min(h,float(cy)+500)]
-    detail = []
+    centres = detail_centres or [dots[len(dots)//2,2:4]]
+    details = [{'detail_bounds':[max(xmin,float(cx)-500),max(ymin,float(cy)-500),min(xmax,float(cx)+500),min(ymax,float(cy)+500)], 'detail_points':[]} for cx,cy in centres]
     for start in range(0,len(dots),BATCH):
         xy=dots[start:start+BATCH,2:4]
-        px=np.clip((xy[:,0]/w*(size-1)).astype(int),0,size-1)
-        py=np.clip(((1-xy[:,1]/h)*(size-1)).astype(int),0,size-1)
+        px=np.clip(((xy[:,0]-xmin)/w*(size-1)).astype(int),0,size-1)
+        py=np.clip(((ymax-xy[:,1])/h*(size-1)).astype(int),0,size-1)
         raster[py,px]=(180,90,20,190)
-        keep=(xy[:,0]>=bounds[0])&(xy[:,0]<=bounds[2])&(xy[:,1]>=bounds[1])&(xy[:,1]<=bounds[3])
-        detail.extend(xy[keep].tolist())
+        for detail in details:
+            bounds=detail['detail_bounds']
+            keep=(xy[:,0]>=bounds[0])&(xy[:,0]<=bounds[2])&(xy[:,1]>=bounds[1])&(xy[:,1]<=bounds[3])
+            detail['detail_points'].extend(xy[keep].tolist())
     ok, encoded = cv2.imencode('.png',raster)
     if not ok: raise ValueError('Dot preview failed')
-    return {'dot_count':len(dots),'overview_png':base64.b64encode(encoded).decode('ascii'),'detail_bounds':bounds,'detail_points':detail,'dot_radius_um':6}
+    return {'dot_count':len(dots),'overview_png':base64.b64encode(encoded).decode('ascii'),**details[0], 'chip_details':details, 'bounds':[xmin,ymin,xmax,ymax], 'dot_radius_um':6}

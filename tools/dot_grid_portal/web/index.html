@@ -128,7 +128,7 @@
           </section>
         </div>
         <section class="card" id="review" hidden>
-          <h3>2 · Verify converted geometry</h3>
+          <h3>2 · Design for the chip after cutting</h3>
           <div id="summary"></div>
           <svg
             id="preview"
@@ -136,48 +136,92 @@
             aria-label="Converted CAD geometry"
           ></svg>
           <button id="reset-view" type="button">Fit drawing</button>
+          <select id="dot-chip" aria-label="Chip detail" hidden></select>
           <button id="dot-detail" type="button" hidden>
             Magnify actual dots
           </button>
           <div id="dot-summary"></div>
           <div id="region-controls" hidden>
             <button id="region-tour" type="button">
-              Guide me through no-dot areas
+              Guide me through chip placement
             </button>
             <div aria-label="Before area review" class="flow">
-              Before: uploaded drawing → unclassified closed areas → no
-              generation
+              Before: drawing bounds → dots on wafer waste → no dots on the cut
+              chip
             </div>
             <div aria-label="After area review" class="flow">
-              After: shaded exclusions + dimension check → confirmation →
-              batched generation → streamed device + dots
+              After: confirmed chip edge − fluid regions − clearances → dots
+              that stay on each chip
             </div>
             <p>
-              Scroll to zoom. Click closed areas to shade channels, chambers and
-              ports where dots must not go. Closed shapes are candidates, not
-              automatically identified channels. Selecting a shape also excludes
-              any holes inside it.
+              Blue outlines are final chip edges. Orange faces are
+              fluid/exclusion regions; their unshaded holes remain solid
+              material. Dots go inside blue boundaries and outside orange faces.
+              CAD topology cannot tell us what is fluid: review these roles
+              explicitly.
             </p>
+            <label
+              >Assign clicked area as
+              <select id="region-role">
+                <option value="chip">Chip boundary after cutting</option>
+                <option value="fluid">Fluid / no-dot region</option>
+              </select>
+            </label>
             <label
               >Closed area
               <select id="region-choice"></select
             ></label>
             <button id="toggle-region" type="button">
-              Toggle selected area
+              Assign / remove selected area
             </button>
-            <button id="select-polygons" type="button">
-              Exclude all closed polygons
+            <button id="match-regions" type="button">
+              Assign verified translated copies
+            </button>
+            <button id="focus-region" type="button">
+              Zoom to selected area
             </button>
             <button id="clear-regions" type="button">
-              Clear added exclusions
+              Clear boundary and fluid choices
             </button>
           </div>
+          <details>
+            <summary>Boundary missing? Define a rectangular chip</summary>
+            <p>
+              Mask coordinates in µm; this adds a review boundary, not geometry
+              to your CAD. For a non-rectangular chip, supply a closed outline
+              in the drawing.
+            </p>
+            <label
+              >Left X <input id="chip-x0" type="number" step="any"
+            /></label>
+            <label
+              >Bottom Y <input id="chip-y0" type="number" step="any"
+            /></label>
+            <label
+              >Right X <input id="chip-x1" type="number" step="any"
+            /></label>
+            <label>Top Y <input id="chip-y1" type="number" step="any" /></label>
+            <button id="add-manual-chip" type="button">
+              Add chip boundary
+            </button>
+          </details>
+          <label
+            >Dot-edge clearance from final cut (µm)
+            <input
+              id="cut-clearance"
+              type="number"
+              min="0"
+              max="5000"
+              value="200"
+          /></label>
+          <button id="reinspect" type="button">Reinspect original CAD</button>
           <div id="selection-count"></div>
           <div id="warnings"></div>
           <label class="check"
             ><input id="confirmed" type="checkbox" />I checked units,
-            dimensions, orientation, geometry and that shaded no-dot areas cover
-            all channels, chambers and ports.</label
+            dimensions, orientation, the final chip edges and cutting clearance,
+            and that orange regions cover all channels, chambers and
+            ports.</label
           ><button id="generate" class="primary" disabled>Add dots</button>
           <p class="hint">
             Proprietary dot technology. Confirm the device geometry and no-dot

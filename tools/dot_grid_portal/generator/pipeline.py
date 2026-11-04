@@ -15,20 +15,22 @@ from ezdxf import bbox
 from ezdxf.math import Matrix44
 import numpy as np
 try:
+    from .placement import Placement, selected_areas
     from .batched import MAX_NODES, supported, pattern_batches, spool_pattern, write_dxf_stream, write_gds_stream, dot_preview
     from .regions import regions, outside_regions
     from .cad_import import convert, flatten_regions
-    from .domains import candidates, apply_selection
+    from .domains import candidates, matching_groups
 except ImportError:
+    from placement import Placement, selected_areas
     from batched import MAX_NODES, supported, pattern_batches, spool_pattern, write_dxf_stream, write_gds_stream, dot_preview
     from regions import regions, outside_regions
     from cad_import import convert, flatten_regions
-    from domains import candidates, apply_selection
+    from domains import candidates, matching_groups
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts/dot_grid"))
 from dotgrid import core_identity, CODEC_CONTRACT
-from dotgrid.codebook import generate_codebook
+from dotgrid.codebook import generate_codebook, Chip
 from dotgrid.registry import Registry, Design, cross_check
 from dotgrid.pattern import (
     load_design,
@@ -125,7 +127,8 @@ def inspect(source: Path, units: str, out: Path) -> dict:
     doc.header["$EXTMIN"] = (0, 0, 0)
     doc.header["$EXTMAX"] = (width, height, 0)
     areas = regions(doc) if any(e.dxf.layer.upper() == "NO_DOT" for e in entities) else []
-    choices, open_fragments = candidates(doc) if not areas else ([], 0)
+    choices, open_paths = candidates(doc)
+    open_fragments = len(open_paths)
     target = out / "normalized.dxf"
     doc.saveas(target)
     # Numeric preview paths only: never expose embedded CAD XML, scripts or URLs.
@@ -171,10 +174,16 @@ def inspect(source: Path, units: str, out: Path) -> dict:
         "region_candidates": choices,
         "selected_regions": [],
         "open_fragments": open_fragments,
+        "open_paths": open_paths,
+        "matching_groups": matching_groups(choices),
         "converted_regions": converted_regions,
         "annotation_count": len(annotations),
         "generation_supported": supported(columns, rows),
         "no_dot_contract": 1,
+        "placement_contract": 1,
+        "chip_regions": [],
+        "manual_chip_rectangles": [],
+        "cut_clearance_um": 200,
         "converter": converter,
         "paths": paths,
         "no_dot_paths": no_dot_paths,
@@ -192,7 +201,7 @@ def inspect(source: Path, units: str, out: Path) -> dict:
     header_units = {13: "um", 4: "mm", 1: "inch"}.get(ezdxf.readfile(converted).units)
     if header_units and header_units != units:
         result["warnings"].append(f"Drawing header says {header_units}; you selected {units}. Verify a known physical dimension.")
-    if len(json.dumps(result)) > 7 * 1024**2:
+    if len(json.dumps(result)) > 15 * 1024**2:
         raise ValueError("Preview metadata exceeds job limit; simplify drawing")
     json_write(out / "inspection.json", result)
     return result
@@ -210,8 +219,13 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
         known.add(Design.from_dict(entry))
     if known.find(meta["id"]) or any(d.seed == seed for d in known.designs):
         raise ValueError("Design identity or seed already registered")
+    try:
+        placement = Placement(inspection)
+    except ValueError as exc:
+        raise ValueError(f"CAD_PLACEMENT_INVALID: {exc}") from exc
     doc, pts, chips, marks, wafer = load_design(str(source))
-    w, h = inspection["extent_um"]
+    xmin,ymin,xmax,ymax = placement.bounds
+    w,h = xmax-xmin,ymax-ymin
     cols, rows = math.ceil(w / 30) + 1, math.ceil(h / 30) + 1
     if not supported(cols, rows):
         raise ValueError("Job node limit exceeded")
@@ -222,23 +236,27 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
         pitch_um=30,
         dot_diameter_um=12,
         displacement_um=5,
-        origin_um=(0, 0),
-        chips=chip_table(chips),
+        origin_um=(xmin, ymin),
+        chips=[Chip(f"chip-{n+1}",*p.bounds) for n,p in enumerate(placement.polys)],
         design_name=meta["id"],
         design_scale=1.0,
     )
     ko = KeepOut(
         channel_um=50, dicing_um=200, wafer_edge_um=3000, existing_marks_um=300
     )
-    review_shapes = apply_selection(doc, inspection)
-    areas = regions(doc)
+    areas = regions(doc) if inspection.get("no_dot_regions",0)>0 else []
+    areas += selected_areas(inspection)
+    if not areas: raise ValueError("Confirm fluid exclusions before generation")
     out.mkdir(parents=True, exist_ok=True)
     dots = spool_pattern(out / "dots.bin", pattern_batches(
-        cb, pts, chips, marks, wafer, ko, areas, (w,h),
-        ko.channel_um + cb.dot_diameter_um/2 + (0.1 if inspection.get("selected_regions") else 0),
+        cb, pts, [], marks, None, ko, areas, (w,h),
+        ko.channel_um + cb.dot_diameter_um/2 + (0.1 if inspection.get("selected_regions") else 0), placement, placement.bounds,
     ))
     if len(dots) < 100:
         raise ValueError("Too few usable dots after keep-outs")
+    chip_counts = placement.counts(dots)
+    if min(chip_counts) < 100:
+        raise ValueError("CAD_CHIP_EMPTY: A selected chip has fewer than 100 dots after exclusions; review its boundary and fluid regions")
     design = Design.from_codebook(
         cb,
         meta["id"],
@@ -259,9 +277,7 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
             "Cross-design discrimination failed; this allocated pattern cannot be registered"
         )
     out.mkdir(parents=True, exist_ok=True)
-    # Review-only exclusion geometry must not become device fabrication geometry.
-    for shape in review_shapes:
-        doc.modelspace().delete_entity(shape)
+    # Review geometry is kept separate; source entities are never augmented with helper shapes.
     write_dxf_stream(doc, dots, cb, str(out / "design_with_dotgrid.dxf"))
     if not write_gds_stream(dots, cb, str(out / "dotgrid_layer.gds")):
         raise ValueError("GDS exporter unavailable")
@@ -278,6 +294,9 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
         "source_to_mask": inspection["transform"],
         "mask_units": "um",
         "dot_count": len(dots),
+        "placement_contract": 1,
+        "chip_dot_counts": chip_counts,
+        "cut_clearance_um": inspection.get("cut_clearance_um",200),
         "extent_um": [w, h],
         "fabrication_approved": False,
         "gds_contents": "dot-grid layer only, not device geometry",
@@ -300,4 +319,4 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
     with zipfile.ZipFile(out / "mib-map.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for n in ["registry.json", "codebook.json", "manifest.json", "README.txt"]:
             z.write(out / n, n)
-    return {"entry": design.to_dict(), "manifest": manifest, "preview": dot_preview(dots, (w,h))}
+    return {"entry": design.to_dict(), "manifest": manifest, "preview": {**dot_preview(dots, (w,h), [(p.centroid.x,p.centroid.y) for p in placement.polys], placement.bounds), "chip_dot_counts": chip_counts}}

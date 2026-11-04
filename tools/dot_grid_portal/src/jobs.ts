@@ -61,6 +61,7 @@ export async function execute(job: Job, attempt: number, env: Env) {
       record = JSON.stringify({
         geometry_object: true,
         no_dot_contract: inspection.no_dot_contract,
+        placement_contract: inspection.placement_contract,
         selected_regions: [],
       });
     }

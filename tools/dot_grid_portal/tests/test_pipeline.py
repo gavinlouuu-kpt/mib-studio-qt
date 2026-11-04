@@ -27,6 +27,7 @@ def test_real_dxf_map_roundtrip(tmp_path):
     source = drawing(tmp_path / "device.dxf")
     out = tmp_path / "out"
     i = inspect(source, "um", out)
+    i["manual_chip_rectangles"] = [[0,0,*i["extent_um"]]]
     meta = {
         "inspection": i,
         "id": "test-chip-v1",
@@ -115,6 +116,7 @@ def test_undecodable_pattern_is_not_registered(tmp_path):
     source = drawing(tmp_path / "device.dxf")
     out = tmp_path / "out"
     i = inspect(source, "um", out)
+    i["manual_chip_rectangles"] = [[0,0,*i["extent_um"]]]
     with pytest.raises(ValueError, match="discrimination failed"):
         generate(
             out / "normalized.dxf",
@@ -203,9 +205,10 @@ def test_unlabelled_closed_channel_selection_roundtrip(tmp_path):
     d.saveas(p)
     out = tmp_path / "out"
     i = inspect(p, "um", out)
+    i["manual_chip_rectangles"] = [[0,0,*i["extent_um"]]]
     assert i["no_dot_regions"] == 0
     meta = {"inspection":i,"id":"selected-channel","name":"Selected channel","seed":9,"designs":[]}
-    with pytest.raises(ValueError,match="NO_DOT"):
+    with pytest.raises(ValueError,match="fluid exclusions"):
         generate(out / "normalized.dxf",meta,out)
     # The central LINE splits the channel into two closed faces: select both.
     i["selected_regions"] = [r["id"] for r in i["region_candidates"] if r["kind"]=="polygon" and all(1000<=p[0]<=5000 and 2900<=p[1]<=3100 for p in r["points"])]
@@ -243,3 +246,16 @@ def test_actual_wafer_opt_in(tmp_path):
     assert len(i["region_candidates"])==3210
     assert i["generation_supported"] is True
     assert any("header says mm" in w for w in i["warnings"])
+
+
+def test_missing_boundary_can_extend_beyond_source_geometry(tmp_path):
+    p=drawing(tmp_path/'small.dxf');out=tmp_path/'out';i=inspect(p,'um',out)
+    i['manual_chip_rectangles']=[[-1000,-1000,7000,7000]]
+    result=generate(out/'normalized.dxf',{'inspection':i,'id':'expanded-chip','name':'Expanded chip','seed':9,'designs':[]},out)
+    d=ezdxf.readfile(out/'design_with_dotgrid.dxf')
+    dots=[e.dxf.center for e in d.modelspace().query('CIRCLE') if e.dxf.layer=='DOTGRID']
+    assert min(p.x for p in dots)<-200 and max(p.x for p in dots)>6200
+    assert min(p.y for p in dots)<-200 and max(p.y for p in dots)>6200
+    assert len(d.modelspace().query('LINE'))==1
+    assert result['preview']['bounds']==[-1000,-1000,7000,7000]
+    assert result['manifest']['extent_um']==[8000,8000]

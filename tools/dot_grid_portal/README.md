@@ -111,7 +111,7 @@ required deployment credentials through the existing Vault mechanism; never comm
 ## Current bounds and gaps
 
 - 10 MiB upload, 20 designs/tenant/day, 20,000 model-space entities, 200,000 preview vertices,
-  7 MiB inspection metadata, 14,000,000 lattice nodes and 3,700 nodes per axis,
+  15 MiB inspection metadata, 14,000,000 lattice nodes and 3,700 nodes per axis,
   5-minute subprocess timeout, 3 GiB address-space and per-file caps. Generation uses
   65,536-node batches, exact indexed filled-area clearance, a disk spool and streaming
   DXF / hierarchical GDS exports. The frozen displacement codec is unchanged.
@@ -164,7 +164,7 @@ The review import accepts ordinary unlabelled closed geometry; a pre-authored
 `NO_DOT` layer is optional. When absent, closed LINE/ARC/polyline topology and
 circles become **unselected candidates**, not inferred fluid domains. The user
 selects interiors in the zoomable preview and confirms coverage. Open fragments
-are counted, not healed automatically. Candidate holes are conservatively filled.
+are counted, not healed automatically. Candidate fluid faces preserve their holes. Cut-boundary selection uses the exterior only; it is a separate role.
 Selection changes clear confirmation; the API validates IDs against server-owned
 geometry and refuses empty selections. Review-only polygons are never added to
 the delivered device DXF. Existing explicit `NO_DOT` geometry remains supported.
@@ -194,7 +194,7 @@ this change does not raise generation resource limits or qualify the wafer mask.
 
 Before: DWG → incomplete converter output → generic unsupported-entity error.
 After: isolated conversion → payload/topology checks → preserved device preview →
-explicit no-dot choices → capacity/coverage gate → batched generator and streamed exports.
+explicit cut boundaries + fluid faces → coverage/capacity gate → post-cut clipping → batched exports.
 The in-app “Guide me through no-dot areas” tour demonstrates the review controls,
 with restart/skip, selection-gated progress and a feedback checkpoint.
 
@@ -210,3 +210,31 @@ Synthetic fixtures cover empty ACIS payloads, planar/non-planar REGIONs, preserv
 annotations, explicit selection, geometry-only output, and an independent channel
 clearance calculation on exported dots. Import success does not validate the
 choice of fluid domains, fabrication dimensions or manufacturing readiness.
+
+## Post-cut placement contract
+
+New generation requires `placement_contract: 1`, explicit `chip_regions` or manually
+defined `manual_chip_rectangles`, and fluid exclusions. `cut_clearance_um` is the
+requested dot-edge-to-cut clearance (default 200 µm); the engine adds dot radius and
+curve allowance. It never substitutes drawing bounds or a guessed wafer circle.
+Chip boundaries must be non-overlapping and retain at least 100 dots each. This
+minimum is a starvation check, not a microscope-decoding guarantee.
+
+The review UI assigns blue cut outlines and orange fluid faces. Fluid holes remain
+solid islands; the old exclude-all-polygons shortcut is removed. Missing rectangular
+chip boundaries can be supplied in mask coordinates without modifying source CAD.
+Source-layer hints are shown when attributable. Translated-copy assignment compares
+complete face topology including holes within 0.01 µm; it does not infer physical
+semantics. Open fragments are highlighted. Every edit resets confirmation.
+
+Older outputs without this placement contract are retained but not presented as
+cut-chip-ready downloads. Unconfirmed drawings can be reinspected. Ready outputs
+provide one exact 1 mm detail per chip, a dot-occupancy overview, and per-chip counts.
+
+The real wafer review proposal uses the smaller of each pair of chip rectangles
+as a conservative placement envelope, not a verified saw line. Its 20 selected
+fluid-network faces preserve the solid islands. The 20 short open fragments lie
+inside those faces. Local generation produced 2,689,252 dots (133,927–135,093 per
+chip); every exported coordinate and the chosen fluid/cutting clearances were
+independently checked. Physical cut intent and microscope readability remain review
+and fabrication-validation items.
