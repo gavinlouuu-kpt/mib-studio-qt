@@ -56,8 +56,8 @@ code found in its area. Qt bugs found on the way are fixed in the Qt app: #857, 
 - Edit your own area's files ([owner map](../../howto/desktop-area-ownership.md)); change shared
   files (`App.tsx`, `App.css`, `studio/**`, `styles/**`, `bridge.ts`, `transport/**`) only in small,
   additive edits named in the PR.
-- Camera, capture or eGrabber paths are built with `scripts/win11_bench_build.sh` and tested on the
-  win11-agent camera before merge. The orchestrator schedules the rig: one camera, one stream at a time.
+- Camera, capture or eGrabber paths are built with `scripts/win11_bench_build.sh`
+  ([howto](../../howto/win11-bench-build.md)) and tested on the win11-agent camera before merge. The orchestrator schedules the rig: one camera, one stream at a time.
 - The backend half of #845 is #842: merge it before re-testing #845.
 
 ## Acceptance criteria
