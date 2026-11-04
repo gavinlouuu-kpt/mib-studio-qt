@@ -197,7 +197,7 @@ the tag's GitHub Release. Rerun it for an existing tag with **Run workflow**
 the release notes carry the "Open Anyway" / "Run anyway" steps. Committed
 Tauri configs keep the numeric `X.Y.Z`; only the build workspace carries a
 pre-release suffix. Note: tags pushed by `GITHUB_TOKEN` (e.g. the automatic
-develop betas) do not start other workflows, so betas get YOFO Review
+`beta`-branch betas) do not start other workflows, so betas get YOFO Review
 bundles only when the workflow is run by hand for their tag.
 
 **YOFO Review on its own.** A `review-vX.Y.Z` or `review-vX.Y.Z-beta.N`

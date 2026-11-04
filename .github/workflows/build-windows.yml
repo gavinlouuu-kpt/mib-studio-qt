@@ -2,9 +2,10 @@ name: Build Windows
 
 on:
   push:
-    branches: [develop]
-    # Dev-lane release gate: a develop merge only cuts an auto-beta when it
-    # can change the shipped desktop app. Docs, vault, tooling/exploration,
+    branches: [beta]
+    # Staging-lane release gate: a merge into `beta` (promoted from `develop`)
+    # only cuts an auto-beta when it can change the shipped desktop app.
+    # `develop` itself never ships (docs/howto/branching-and-releases.md). Docs, vault, tooling/exploration,
     # wheel-lane, and other-workflow merges must not advance the beta channel
     # (later patterns win; the final re-include keeps edits to this workflow
     # itself releasing so pipeline changes are exercised).

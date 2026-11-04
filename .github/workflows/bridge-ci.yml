@@ -6,7 +6,7 @@ name: Bridge CI
 
 on:
   push:
-    branches: [dev/react-tauri, develop, "agent-b/**"]
+    branches: [dev/react-tauri, develop, beta, "agent-b/**"]
     paths:
       - "crates/mib-bridge/**"
       - "crates/mib-app-commands/**"
@@ -18,7 +18,7 @@ on:
       - "CMakePresets.json"
       - ".github/workflows/bridge-ci.yml"
   pull_request:
-    branches: [dev/react-tauri, develop, "agent-b/**"]
+    branches: [dev/react-tauri, develop, beta, "agent-b/**"]
     paths:
       - "crates/mib-bridge/**"
       - "crates/mib-app-commands/**"

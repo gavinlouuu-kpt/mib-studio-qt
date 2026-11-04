@@ -14,9 +14,9 @@ name: ARMv7 compile smoke
 
 on:
   pull_request:
-    branches: [main, master, develop, dev/react-tauri]
+    branches: [main, master, develop, beta, dev/react-tauri]
   push:
-    branches: [main, master, develop]
+    branches: [main, master, develop, beta]
   workflow_dispatch:
 
 permissions:

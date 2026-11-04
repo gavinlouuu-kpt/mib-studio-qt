@@ -13,7 +13,7 @@ name: YOFO Review CI
 on:
   workflow_dispatch:
   push:
-    branches: [develop, "plan/**", "review/**"]
+    branches: [develop, beta, "plan/**", "review/**"]
     paths:
       - "desktop/**"
       - "crates/mib-bridge/**"
@@ -32,7 +32,7 @@ on:
       - ".github/workflows/review-ci.yml"
       - ".github/workflows/review-bundles.yml"
   pull_request:
-    branches: [develop]
+    branches: [develop, beta]
     paths:
       - "desktop/**"
       - "crates/mib-bridge/**"
