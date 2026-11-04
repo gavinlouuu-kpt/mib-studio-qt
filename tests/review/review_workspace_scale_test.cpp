@@ -35,7 +35,9 @@
 #include <cstdio>
 #include <fstream>
 #include <limits>
-#include <malloc.h>
+#if defined(__GLIBC__)
+#include <malloc.h> // malloc_trim: glibc only
+#endif
 #include <map>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -181,6 +183,14 @@ Json graph() {
                               Json{{"id", "core"}, {"parent", ""}, {"kind", "and"},
                                    {"operands", {"shape", "stiff"}}}})}};
 }
+// Return freed heap pages to the OS before an RSS baseline (glibc only). The
+// memory bounds read /proc/self/status, so they are measured on Linux only;
+// elsewhere statusKb() returns -1 and the bound checks are not meaningful.
+void trimHeap() {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
+}
 long statusKb(const char* field) {
     std::ifstream status("/proc/self/status");
     std::string line;
@@ -293,7 +303,7 @@ int main() {
                 static_cast<unsigned long long>(recA.events()), static_cast<unsigned long long>(recB.events()),
                 std::filesystem::file_size(pathA) / 1048576.0, std::filesystem::file_size(pathB) / 1048576.0);
 
-    malloc_trim(0); // freed writer/oracle memory back to the OS: growth is real growth
+    trimHeap(); // freed writer/oracle memory back to the OS: growth is real growth
     const long beforeOpen = statusKb("VmRSS");
     MIB_REQUIRE(session.open(pathA), "open recording A");
     const double openMiB = (statusKb("VmRSS") - beforeOpen) / 1024.0;
@@ -312,7 +322,7 @@ int main() {
                "last invalid row read on demand");
     MIB_EXPECT(session.scatter().frameIndex.size() == recA.valid, "valid-set scatter streamed page by page");
 
-    malloc_trim(0);
+    trimHeap();
     const bool peak = resetPeak();
     const long baseline = statusKb(peak ? "VmHWM" : "VmRSS");
     const Json descriptorA{{"kind", "stored"}, {"path", pathA}};

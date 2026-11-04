@@ -58,7 +58,7 @@ TOURS = ["fold-in-e01-discovery", "fold-in-e02-features", "fold-in-e04-e06-runs"
 FEEDBACK_TITLE = "Was this tour clear?"
 HOLD_S = 2.2  # an action step must keep waiting at least this long without the operator
 VIEWPORT = {"width": 1440, "height": 900}
-EVIDENCE_DATE = "2026-11-03"
+EVIDENCE_DATE = time.strftime("%Y-%m-%d")
 
 # What a tour (or the app's own polling) may send outside the operator's control use: reads and polls only. Built from the
 # commands desktop/src/bridge.ts has and what the app sends while idle: every `fetch_*`, the `*_status` / `*_status_json`

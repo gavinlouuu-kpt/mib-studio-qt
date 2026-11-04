@@ -9,10 +9,10 @@ directly and simulates driver calls without connecting hardware.
 > listed once in `env/apt-packages.txt` / `env/brew-packages.txt`.
 >
 > **YOFO Review graph** (`-o "&:review_core=True"`, macOS / Windows review
-> lanes): spdlog, HDF5, OpenCV and nlohmann_json only, OpenCV / HDF5 static,
+> lanes): spdlog, HDF5, OpenCV, nlohmann_json and SQLite (static; the analysis
+> host's workspace and recipe store, fold-in I/F) only, OpenCV / HDF5 static,
 > OpenCV limited to core / imgproc / imgcodecs / videoio (no FFmpeg — AVI
-> sources use OpenCV's MJPEG reader / AVFoundation / Media Foundation), no Qt
-> or SQLite. The "Shared?" column below is the default graph.
+> sources use OpenCV's MJPEG reader / AVFoundation / Media Foundation), no Qt. The "Shared?" column below is the default graph.
 
 | Package | Version | Shared? | Notes |
 |---|---|---|---|

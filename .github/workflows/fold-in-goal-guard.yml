@@ -1,0 +1,57 @@
+name: Fold-in goal guard
+
+# docs/architecture/fold-in-backend-goals.md: fold-in work (#806 eGrabber,
+# #807 iQue, #808 FlowJo) is backend first. A fold-in PR must name the backend
+# goal IDs it advances (E01-E09, I01-I12, F01-F16). A fold-in PR that changes
+# desktop views but no backend code must say "UI probe" in its title or body,
+# so a view is never counted as a capability.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Fold-in PRs name a backend goal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check goal IDs and backend changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          text="$PR_TITLE"$'\n'"${PR_BODY:-}"
+          # grep reads here-strings, not a pipe: with pipefail, `grep -q` closing a
+          # pipe early makes printf die of SIGPIPE on bodies over 64 KiB.
+          if ! { grep -E '(^|/)80[678]-' <<<"$HEAD_REF" >/dev/null \
+                 || grep -E '#80[678]\b' <<<"$text" >/dev/null; }; then
+            echo "Not a fold-in PR (no 806/807/808 branch or reference)."
+            exit 0
+          fi
+          if ! grep -E '\b(E0[1-9]|I(0[1-9]|1[0-2])|F(0[1-9]|1[0-6]))\b' <<<"$text" >/dev/null; then
+            echo "::error::Fold-in PR names no backend goal ID. State which goals (E01-E09, I01-I12, F01-F16) this PR advances and the headless proof it adds. See docs/architecture/fold-in-backend-goals.md."
+            exit 1
+          fi
+          changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
+          views="$(printf '%s\n' "$changed" | grep -E '^desktop/src/' | grep -vE '\.test\.(ts|tsx)$|/fixtures/' || true)"
+          backend="$(printf '%s\n' "$changed" | grep -E '^(src|include|crates|tests|tools|workers|bindings|contract)/' || true)"
+          if [ -n "$views" ] && [ -z "$backend" ]; then
+            if ! grep -i 'ui probe' <<<"$text" >/dev/null; then
+              echo "Views changed with no backend change:"
+              printf '%s\n' "$views"
+              echo "::error::Fold-in PR changes desktop views but no backend code. Build the backend goal first, or label the PR 'UI probe' (it then counts for nothing toward acceptance). See docs/architecture/fold-in-backend-goals.md."
+              exit 1
+            fi
+            echo "Labelled UI probe: allowed, counts for nothing toward acceptance."
+          fi
+          echo "Fold-in goal guard passed."

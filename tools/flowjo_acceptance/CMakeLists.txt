@@ -67,7 +67,9 @@ if(MIB_ANALYSIS_HOST_TESTS)
         "${MIB_ROOT}/src/backend/processing/ProcessingCoreSha256.cpp"
         "${MIB_ROOT}/src/backend/evidence/CommittedEventStore.cpp"
         "${MIB_ROOT}/src/backend/database/SqliteService.cpp"
-        "${MIB_ROOT}/src/backend/workspace/WorkspaceStore.cpp")
+        "${MIB_ROOT}/src/backend/workspace/WorkspaceStore.cpp"
+        "${MIB_ROOT}/src/backend/workspace/RecipeProvider.cpp"
+        "${MIB_ROOT}/src/backend/workspace/NextRunPlanning.cpp")
     target_include_directories(mib_analysis_host PUBLIC "${MIB_ROOT}/include")
     target_link_libraries(mib_analysis_host PUBLIC mib_analysis nlohmann_json::nlohmann_json spdlog::spdlog SQLite::SQLite3 Threads::Threads)
     add_executable(analysis_host_test "${MIB_ROOT}/tests/analysis/analysis_host_test.cpp")

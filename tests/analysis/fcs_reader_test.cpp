@@ -36,6 +36,12 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+// MSVC spells the POSIX pipe functions with a leading underscore.
+#define popen _popen
+#define pclose _pclose
+#endif
+
 namespace fcs = mib::test::fcs;
 using backend::analysis::FcsColumns;
 using backend::analysis::FcsError;

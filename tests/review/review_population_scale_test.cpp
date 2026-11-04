@@ -36,7 +36,9 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
-#include <malloc.h>
+#if defined(__GLIBC__)
+#include <malloc.h> // malloc_trim: glibc only
+#endif
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
@@ -138,6 +140,14 @@ Json graph() {
                                    {"operands", {"core", "notShape"}}}})}};
 }
 
+// Return freed heap pages to the OS before an RSS baseline (glibc only). The
+// memory bounds read /proc/self/status, so they are measured on Linux only;
+// elsewhere statusKb() returns -1 and the bound checks are not meaningful.
+void trimHeap() {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
+}
 long statusKb(const char* field) {
     std::ifstream status("/proc/self/status");
     std::string line;
@@ -246,7 +256,7 @@ int main() {
 
     // 2. The product entry point (review_analyze_population's C++ authority).
     backend::review::ReviewSession session;
-    malloc_trim(0); // freed writer/oracle memory back to the OS: growth is real growth
+    trimHeap(); // freed writer/oracle memory back to the OS: growth is real growth
     const long beforeOpenKb = statusKb("VmRSS");
     MIB_REQUIRE(session.open(path), "ReviewSession opens the full file");
     const long afterOpenKb = statusKb("VmRSS");

@@ -800,7 +800,7 @@ generator tests, and the Xvfb boot smoke.
 `review-release.yml` (version stamped from the tag; DMG + installer +
 `SHA256SUMS-yofo-review.txt` appended to the GitHub Release) — build what
 ships: Conan `review_core=True` (static spdlog / HDF5 / OpenCV core, imgproc,
-imgcodecs, videoio — no Qt, no FFmpeg; `~/.conan2/p` cached), the
+imgcodecs, videoio, SQLite — no Qt, no FFmpeg; `~/.conan2/p` cached), the
 `<os>-review-core` preset, the probe run plus an `otool -L` / `dumpbin
 /dependents` check that nothing third-party is loaded dynamically, the link
 manifest, `cargo test --features review-only`, then `npm run tauri:review:build --
