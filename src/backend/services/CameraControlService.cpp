@@ -15,6 +15,7 @@
 #if MIB_HAS_EGRABBER
 #include <EGrabber.h>
 using namespace Euresys;
+#include "backend/camera/egrabber/GenTLHolder.h"
 #endif
 
 #if MIB_HAS_MINDVISION
@@ -45,9 +46,6 @@ using namespace Euresys;
 #endif
 
 #include "backend/camera/mindvision/MindVisionApply.h"
-#if MIB_HAS_EGRABBER
-#include "backend/camera/egrabber/GenTLHolder.h"
-#endif
 #include "backend/camera/mindvision/MindVisionConfig.h"
 
 #include <fstream>
