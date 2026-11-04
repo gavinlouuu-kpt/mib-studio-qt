@@ -294,6 +294,13 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.hdf_review_scatter PROPERTIES LABELS "frontend;recording;safety" TIMEOUT 180)
 
+    # Issue #859: the Review tab's teardown after a UI Automation client visited every
+    # metrics-table cell stays linear (it spun for minutes at exit).
+    mib_test_runner_add(mib_frontend_tests hdf_review_a11y_teardown_test ${PROJECT_SOURCE_DIR}/tests/frontend/hdf_review_a11y_teardown_test.cpp)
+    add_test(NAME frontend.hdf_review_a11y_teardown COMMAND $<TARGET_FILE:mib_frontend_tests> hdf_review_a11y_teardown_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.hdf_review_a11y_teardown PROPERTIES LABELS "frontend;recording;safety" TIMEOUT 180)
+
     # End-to-end: real MainWindow on the mock-camera pipeline with synthetic
     # cells; KDE off / on / off phases gated on ratios (capture, processing,
     # monitoring ring, overlay lag, GUI responsiveness). Each phase waits for
