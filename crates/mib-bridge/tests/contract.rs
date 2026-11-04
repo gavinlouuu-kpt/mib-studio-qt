@@ -128,7 +128,57 @@ fn abi_version_is_stable() {
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
     // v45 (#868 HW-046/HW-049) list_serial_ports; fetch_trigger_status carries the sort-trigger funnel;
     // fetch pulse_generator_status reports its limits and the serial framing.
-    assert_eq!(ffi::bridge_abi_version(), 45);
+    // v46 (#868 HW-003/016/020/021/023/038) fetch_host_settings / host_settings_command: the saved pump settings, the
+    // boot service toggles and the pump address scan.
+    assert_eq!(ffi::bridge_abi_version(), 46);
+}
+
+// ABI 46 (#868 wave 1 hardware PR4): the instrument host's saved settings through the cxx bridge: pump keys are
+// validated and persisted in <data>/host_settings.json, read back, and restored by the next backend on that directory;
+// the boot toggles are validated; the contract describes both commands.
+#[test]
+fn host_settings_abi_46() {
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_host_settings_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&data_dir);
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let read = |bridge: &mut cxx::UniquePtr<ffi::BackendBridge>| -> serde_json::Value {
+        serde_json::from_str(&bridge.pin_mut().fetch_host_settings()).unwrap()
+    };
+    let fresh = read(&mut bridge);
+    assert_eq!((fresh["valid"].as_bool(), fresh["pump_scan"]["state"].as_str()), (Some(true), Some("idle")));
+    assert!(fresh["settings"].as_object().unwrap().is_empty());
+    // A bad value refuses the whole patch; a good one is saved and read back.
+    for bad in [r#"{"action":"set_pumps","settings":{"pump_sample_address":248}}"#, r#"{"action":"set_pumps","settings":{"pump_sample_address":2,"pump_x":1}}"#,
+                r#"{"action":"set_pumps"}"#, r#"{"action":"set_boot_services","services":["nope"]}"#, r#"{"action":"scan_pump_addresses","port":""}"#,
+                r#"{"action":"bogus"}"#, "not json"] {
+        assert!(!bridge.pin_mut().host_settings_command(bad).ok, "{bad}");
+    }
+    assert!(read(&mut bridge)["settings"].as_object().unwrap().is_empty(), "a refused request changes nothing");
+    let saved = bridge.pin_mut().host_settings_command(r#"{"action":"set_pumps","settings":{"pump_sample_port":"COM3","pump_sample_baud_rate":115200,"pump_sample_address":1,"pump_sample_flow_rate":20.5}}"#);
+    assert!(saved.ok, "{}", saved.message);
+    let toggles = bridge.pin_mut().host_settings_command(r#"{"action":"set_boot_services","services":["Trigger","autofocus"]}"#);
+    assert!(toggles.ok, "{}", toggles.message);
+    let after = read(&mut bridge);
+    assert_eq!(after["settings"]["pump_sample_flow_rate"], 20.5);
+    assert_eq!(after["settings"]["boot_disabled_services"], serde_json::json!(["autofocus", "trigger"]));
+    assert!(after["path"].as_str().unwrap().ends_with("host_settings.json"));
+    bridge.pin_mut().shutdown();
+    // The next backend on the same directory starts with them.
+    let mut next = ffi::new_backend_bridge();
+    assert!(next.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let again = read(&mut next);
+    assert_eq!(again["settings"]["pump_sample_port"], "COM3");
+    assert_eq!(again["settings"]["boot_disabled_services"], serde_json::json!(["autofocus", "trigger"]));
+    next.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data_dir);
+    let contract: serde_json::Value = serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["host_settings"];
+    for (key, needle) in [("fetch_host_settings", "open to every client"), ("fetch_host_settings", "pump_scan"), ("fetch_host_settings", "boot_env"),
+                          ("host_settings_command", "control only"), ("host_settings_command", "set_pumps"), ("host_settings_command", "scan_pump_addresses"),
+                          ("host_settings_command", "set_boot_services")] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "host_settings.{key} mentions {needle}");
+    }
 }
 
 // ABI 45 (#868 wave 1 hardware PR2): the serial port list, the sort-trigger funnel in the trigger status and the

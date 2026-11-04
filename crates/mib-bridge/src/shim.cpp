@@ -1438,6 +1438,13 @@ rust::String BackendBridge::pulse_generator_status() {
 rust::String BackendBridge::list_serial_ports() {
     return rust::String(impl_->facade.listSerialPortsJson());
 }
+rust::String BackendBridge::fetch_host_settings() {
+    return rust::String(impl_->facade.fetchHostSettingsJson());
+}
+BridgeCommandResult BackendBridge::host_settings_command(rust::Str json) {
+    try { return toBridgeResult(impl_->facade.hostSettingsCommandJson(toStd(json))); }
+    catch (const std::exception& e) { return errorResult(e.what()); }
+}
 rust::Vec<uint8_t> BackendBridge::render_review_overlay(rust::Str json) {
     try {return bytesToVec(impl_->facade.renderReviewOverlayJson(toStd(json)));}catch(const std::exception&) {}
     return {};
@@ -2722,7 +2729,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 45; }
+std::uint32_t bridge_abi_version() { return 46; }
 
 } // namespace mib_bridge
 

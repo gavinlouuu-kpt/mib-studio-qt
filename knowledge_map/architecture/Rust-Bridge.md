@@ -520,6 +520,31 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 46: the host's saved pump and boot settings (#868 wave 1 hardware PR4)
+
+Additive over ABI 45, for the Syringe Pump Settings and Boot Service Toggles dialogs (HW-003, HW-004, HW-016,
+HW-020, HW-021, HW-023, HW-038). Contract: the top-level `host_settings` object. Backend: [[../services/HostSettings]].
+
+- **`fetch_host_settings`:** `-> {valid, path, settings, load_error, boot_env, pump_scan}`; `settings` holds
+  only the keys the store knows; `boot_env` is the `MIB_DISABLED_SERVICES` value that overrides the saved
+  boot toggles ("" when unset); `pump_scan` is `{state: idle|running|completed|failed, operation_id, port,
+  found, error}`. A read for every client (not in `CONTROL_COMMANDS`).
+- **`host_settings_command`:** a JSON object with `action` (64 KiB at most; a control command, refused for
+  viewers by the server):
+  - `set_pumps {settings: {...}}`: merge-patch of the pump keys, all checked first (one bad value refuses the
+    patch, naming the key), `null` removes a key; reserves the saved ports against probes at once.
+  - `set_boot_services {services: [...]}`: the services to leave off at the next start; unknown tokens refused.
+  - `scan_pump_addresses {port, baud, start, end, timeout_ms}`: starts the tracked `PumpScan` operation
+    (one at a time) and returns its `operation_id`; the answer is the next `fetch_host_settings` whose
+    `pump_scan.operation_id` matches and is no longer `running`.
+- **Path:** C++ `BackendFacade::fetchHostSettingsJson` / `hostSettingsCommandJson` -> cxx `fetch_host_settings`,
+  `host_settings_command` -> `mib-app-commands` -> Tauri commands (`desktop/src-tauri/src/lib.rs`, two thin
+  wrappers) and dispatch -> `bridge.ts` `fetchHostSettings`, `hostSettingsCommand`.
+- **ABI touch points:** `bridge-contract.json` `abi_version` 46 and `host_settings`; `shim.cpp`
+  `bridge_abi_version()`; `contract.rs` `abi_version_is_stable` and `host_settings_abi_46`; `dispatch.rs`
+  `host_settings_through_dispatch`; the server's `CONTROL_COMMANDS`; the generated `bridgeContract.ts`; the
+  `eventAdapter.test.ts` pin. C++ test: `backend.host_settings`.
+
 ## ABI 45: serial ports, the sort-trigger funnel, pulse generator limits (#868 wave 1 hardware PR2)
 
 Additive over ABI 44, for the pulse generator panel and the status bar of the desktop app (HW-046, HW-049,

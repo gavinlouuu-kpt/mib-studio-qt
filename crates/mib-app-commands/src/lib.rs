@@ -536,6 +536,18 @@ pub fn list_serial_ports(state: &AppState) -> Result<serde_json::Value, String> 
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().list_serial_ports()).map_err(|e| e.to_string())
 }
+/// The instrument host's saved settings (HW-003/016/023/038, ABI 46): pump connection and rate, boot service
+/// toggles, the last pump address scan. A read, open to every client.
+pub fn fetch_host_settings(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_host_settings()).map_err(|e| e.to_string())
+}
+/// Save pump settings or boot toggles, or start a pump address scan (`{"action":..}`); control only.
+pub fn host_settings_command(state: &AppState, json: String) -> Result<CmdResult, String> {
+    if json.len() > 65_536 { return Err("Host settings request exceeds 64 KiB".into()); }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().host_settings_command(&json).into())
+}
 
 pub fn autofocus_connect_endpoint(state: &AppState, backend: String, endpoint: String,
     com_port: i32, baud_rate: i32, device_address: i32) -> Result<CmdResult, String> {

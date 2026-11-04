@@ -72,6 +72,8 @@ pub const COMMANDS: &[&str] = &[
     "pulse_generator_command",
     "pulse_generator_status",
     "list_serial_ports",
+    "fetch_host_settings",
+    "host_settings_command",
     "autofocus_connect_endpoint",
     "autofocus_connect",
     "autofocus_disconnect",
@@ -363,6 +365,15 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
         }
         "pulse_generator_status" => crate::pulse_generator_status(state).and_then(json),
         "list_serial_ports" => crate::list_serial_ports(state).and_then(json),
+        "fetch_host_settings" => crate::fetch_host_settings(state).and_then(json),
+        "host_settings_command" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "json")] json: String,
+            }
+            let a: A = args(value)?;
+            crate::host_settings_command(state, a.json).and_then(json)
+        }
         "autofocus_connect_endpoint" => {
             #[derive(Deserialize)]
             struct A {
@@ -1538,6 +1549,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
+    // ABI 46 (#868 HW-003/023/038): the host settings through dispatch (the WebSocket's path): a read, a control command
+    // whose argument is the request text, a refusal that changes nothing, and the restart.
+    #[test]
+    #[serial]
+    fn host_settings_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_host_settings_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let read = || {
+            let Reply::Json(v) = dispatch(&state, &host, "fetch_host_settings", Value::Null).unwrap() else { panic!("JSON") };
+            v
+        };
+        let command = |request: Value| {
+            let Reply::Json(v) = dispatch(&state, &host, "host_settings_command", json!({ "json": request.to_string() })).unwrap() else { panic!("JSON") };
+            v
+        };
+        assert_eq!((read()["valid"].clone(), read()["settings"].clone()), (json!(true), json!({})));
+        assert_eq!(command(json!({"action": "set_pumps", "settings": {"pump_sheath_address": 0}}))["ok"], json!(false));
+        assert_eq!(read()["settings"], json!({}));
+        let saved = command(json!({"action": "set_pumps", "settings": {"pump_sheath_port": "/dev/ttyUSB0", "pump_sheath_address": 2}}));
+        assert_eq!(saved["ok"], json!(true), "{saved}");
+        assert_eq!(read()["settings"], json!({"pump_sheath_port": "/dev/ttyUSB0", "pump_sheath_address": 2}));
+        assert!(dispatch(&state, &host, "host_settings_command", json!({})).unwrap_err().starts_with("INVALID_ARGUMENTS"));
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
     // ABI 44 (#716 A7a): the run quick look through dispatch (the WebSocket's path) and the Tauri
     // function: strict arguments refused before the backend, the parity fixture computed, the
     // reference confirmed with deltas, a second read from the cache, and nothing written.
@@ -1553,7 +1593,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(46)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

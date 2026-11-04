@@ -1089,6 +1089,11 @@ pub mod ffi {
         fn pulse_generator_status(self: Pin<&mut BackendBridge>) -> String;
         /// Read-only serial port list for the port pickers (HW-049): JSON `{"ports":[...]}`.
         fn list_serial_ports(self: Pin<&mut BackendBridge>) -> String;
+        /// Instrument-host settings (HW-003/016/020/021/023/038, ABI 46): the saved pump settings, the boot service
+        /// toggles and the last pump address scan, as JSON `{"valid":..,"settings":{..},"pump_scan":{..},..}`.
+        fn fetch_host_settings(self: Pin<&mut BackendBridge>) -> String;
+        /// `{"action":"set_pumps"|"set_boot_services"|"scan_pump_addresses",..}` (BackendFacade::hostSettingsCommandJson).
+        fn host_settings_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
 
         fn render_review_overlay(self: Pin<&mut BackendBridge>, json: &str) -> Vec<u8>;
         fn fetch_review_reanalysis_preview(self: Pin<&mut BackendBridge>, json: &str) -> BridgeFrame;

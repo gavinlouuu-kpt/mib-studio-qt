@@ -849,6 +849,10 @@ export const bridge = {
   pulseGeneratorStatus: () => invoke<PulseGeneratorStatus>("pulse_generator_status"),
   /** Read-only serial port list for the port pickers (HW-049); opens no port. */
   listSerialPorts: () => invoke<SerialPortList>("list_serial_ports"),
+  /** The instrument host's saved settings (ABI 46): pump connection and rate (Qt's config.json keys), boot service toggles, the last pump address scan. */
+  fetchHostSettings: () => invoke<HostSettingsDocument>("fetch_host_settings"),
+  /** `{action: "set_pumps", settings}`, `{action: "set_boot_services", services}` or `{action: "scan_pump_addresses", port, baud, start, end, timeout_ms}` (control only). */
+  hostSettingsCommand: (request: Record<string, unknown>) => invokeCommand("host_settings_command", {json: JSON.stringify(request)}),
   autofocusConnectEndpoint: (backend: string, endpoint: string, comPort: number, baudRate: number, deviceAddress: number) =>
     invokeCommand("autofocus_connect_endpoint", { backend, endpoint, comPort, baudRate, deviceAddress }),
   autofocusConnect: (comPort: number, baudRate: number, deviceAddress: number) =>
@@ -1093,6 +1097,9 @@ export interface PulseGeneratorStatus {valid: boolean; connected: boolean; owned
 /** One enumerated serial port (`list_serial_ports`): the Qt port combo's description, S/N and VID:PID. */
 export interface SerialPortEntry {system_name: string; system_location: string; description: string; manufacturer: string; serial_number: string; vendor_id: number; product_id: number}
 export interface SerialPortList {ports: SerialPortEntry[]}
+/** `fetch_host_settings` (ABI 46): the saved settings and the last pump address scan. */
+export interface HostPumpScan {state: 'idle' | 'running' | 'completed' | 'failed'; operation_id: string; port: string; found: number[]; error: string}
+export interface HostSettingsDocument {valid: boolean; path: string; settings: Record<string, unknown>; load_error: string; boot_env: string; pump_scan: HostPumpScan}
 
 export interface StartupDiscoveryStatus {preference?: StartupPreference; valid: boolean; camera_running: boolean; nanopositioner_running: boolean; camera_configured: boolean; nanopositioner_connected: boolean; camera: StartupJob; nanopositioner: StartupJob}
 interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}
