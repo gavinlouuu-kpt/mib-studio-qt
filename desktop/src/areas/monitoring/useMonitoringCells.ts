@@ -13,7 +13,7 @@
 import { useEffect, useState } from "react";
 import { bridge } from "../../bridge";
 import {
-  cellKeyString, monitoringCellCaptureMismatch, type MonitoringCell, type MonitoringCellsListing,
+  cellKeyString, monitoringCellCaptureMismatch, type MonitoringCell, type MonitoringCellKeyInput, type MonitoringCellsListing,
 } from "../../monitoringCells";
 import {
   CACHE_CELLS, CONCURRENT_FETCHES, CellImageCache, listedKeys, planFetches, type CellImageState, type CellPixels,
@@ -32,18 +32,20 @@ export interface MonitoringCellsView {
   images: ReadonlyMap<string, CellImageState>;
 }
 
-/** The pull of one cell's pixels: the crop, then its mask when the cell has one. */
-export async function pullCellPixels(
-  cell: MonitoringCell, pull: typeof bridge.fetchMonitoringCellImage = bridge.fetchMonitoringCellImage,
+/** The pull of one cell's pixels by identity: the crop, then its mask when the cell has one (`hasMask` null =
+ *  try: the click-to-view pane does not know from a snapshot row whether there is a mask). */
+export async function pullKeyPixels(
+  key: MonitoringCellKeyInput, hasMask: boolean | null, pull: typeof bridge.fetchMonitoringCellImage = bridge.fetchMonitoringCellImage,
 ): Promise<CellImageState> {
   try {
-    const image = await pull(cell, "image");
+    const image = await pull(key, "image");
     if (!image.valid) return { kind: "none", reason: "the backend no longer holds this cell's image" };
     let mask: Uint8Array | null = null;
-    if (cell.image?.has_mask) {
-      const m = await pull(cell, "mask");
+    if (hasMask !== false) {
+      // Asked for blind (null), a mask that cannot be read is no overlay; for a cell that has one it is an error.
+      const m = hasMask ? await pull(key, "mask") : await pull(key, "mask").catch(() => null);
       // A mask that is gone or of another size is no overlay, never a wrong one.
-      if (m.valid && m.width === image.width && m.height === image.height) mask = m.data;
+      if (m && m.valid && m.width === image.width && m.height === image.height) mask = m.data;
     }
     const pixels: CellPixels = { width: image.width, height: image.height, image: image.data, mask };
     return { kind: "ready", pixels };
@@ -54,6 +56,11 @@ export async function pullCellPixels(
       : { kind: "none", reason: `image pull failed: ${e instanceof Error ? e.message : String(e)}`, retryable: true };
   }
 }
+
+/** The pull of one listed cell's pixels: the crop, then its mask when the cell has one. */
+export const pullCellPixels = (
+  cell: MonitoringCell, pull: typeof bridge.fetchMonitoringCellImage = bridge.fetchMonitoringCellImage,
+): Promise<CellImageState> => pullKeyPixels(cell, cell.image?.has_mask ?? false, pull);
 
 /**
  * Polls the live cell listing while `visible` and pulls the pixels of new cells. The cache and the

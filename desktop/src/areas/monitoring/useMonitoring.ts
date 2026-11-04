@@ -4,7 +4,7 @@
 // hooks in App.tsx's original effect order. The Qt-parity behaviour (epic #866, PR D) is in the pure
 // modules beside this file: startReadiness, runStatus, runFinish, statsReadouts, pollHealth, clearBuffer.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { bridge, type ExperimentStatus, type MonitoringSnapshot, type RunAccounting, type TriggerStatus } from "../../bridge";
+import { bridge, type ExperimentStatus, type MonitoringRow, type MonitoringSnapshot, type RunAccounting, type TriggerStatus } from "../../bridge";
 import { EXPERIMENT_STATES } from "../../bridgeContract";
 import { startExperiment, type StartReadiness } from "../../experimentStart";
 import { describeRunOutcome, runKey } from "../../runOutcome";
@@ -12,6 +12,7 @@ import type { SsdStatus } from "../../ssdView";
 import { isRemote } from "../../transport";
 import { confirm, message, save } from "../../transport/dialogs";
 import { initialTuneState, tuneReducer, type TuneFieldId } from "./tuneDraft";
+import { EMODULUS_TABLE_UNKNOWN, type EmodulusTableState } from "./emodulusLut";
 import type { ConfigState, CoresModel } from "../config/useConfig";
 import type { ConnectState } from "../connect/useConnect";
 import type { HardwareState } from "../hardware/useHardware";
@@ -99,6 +100,14 @@ export function useMonitoringState() {
     return () => { monitoringClearedListeners.current.delete(listener); };
   }, []);
   const notifyMonitoringCleared = useCallback(() => { monitoringClearedListeners.current.forEach((listener) => listener()); }, []);
+  // PR E1: selection, frame window, E-modulus table (click to view MON-044..048, the gate overlay MON-064..068). The
+  // selected cell is a copy of its snapshot row, so it outlives its place in the monitoring ring; the pin that keeps
+  // its image (useCellView) and the table fetch (useEmodulusTable) are hooks in their own files.
+  const [monSelection, setMonSelection] = useState<MonitoringRow | null>(null);
+  const [cellWindowOpen, setCellWindowOpen] = useState(false);
+  // The valid strip's Show Overlay (CellStrips.tsx): the selected cell's pane follows it, as in Qt.
+  const [validOverlay, setValidOverlay] = useState(false);
+  const [emodulusTable, setEmodulusTable] = useState<EmodulusTableState>(EMODULUS_TABLE_UNKNOWN);
   return {
     tune, dispatchTune, tuneDraft, setTuneField,
     expTab, setExpTab, expStatus, setExpStatus, monSnapshot, setMonSnapshot, monSettings, setMonSettings,
@@ -110,6 +119,7 @@ export function useMonitoringState() {
     startReadiness, setStartReadiness, readinessHealth, setReadinessHealth, monitoringIssue, setMonitoringIssue,
     snapshotHealth, setSnapshotHealth, triggerHealth, setTriggerHealth, accountingError, setAccountingError,
     backgroundRevision, setBackgroundRevision, onMonitoringCleared, notifyMonitoringCleared,
+    monSelection, setMonSelection, cellWindowOpen, setCellWindowOpen, validOverlay, setValidOverlay, emodulusTable, setEmodulusTable,
   };
 }
 export type MonitoringState = ReturnType<typeof useMonitoringState>;

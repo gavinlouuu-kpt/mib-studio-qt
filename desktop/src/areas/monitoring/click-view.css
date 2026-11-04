@@ -1,0 +1,120 @@
+/* The selected-cell pane and window and the gate's live count (monitoring area, epic #866 PR E1: MON-044..048, 064..068). Part of the App.css cascade. */
+
+/* The pane is docked at the top of the histogram's card and appears with the first click. */
+.mon-cell-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mon-cell-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.mon-cell-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.mon-cell-close {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  line-height: 1.4;
+}
+
+.mon-cell-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mon-cell-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  max-height: 280px;
+  background: #111;
+  border: 1px solid var(--border);
+}
+
+.mon-cell-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 278px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.mon-cell-note {
+  margin: 0;
+  padding: 8px;
+  font-size: 12px;
+  color: #ddd;
+  overflow-wrap: anywhere;
+}
+
+.mon-cell-refused {
+  color: #ffb4a8;
+}
+
+.mon-cell-metrics {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.mon-cell-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* The floating viewer: inside the app, over the page, with no backdrop so the charts behind it keep working. */
+.mon-cell-window {
+  position: fixed;
+  right: 24px;
+  bottom: 56px;
+  z-index: 60;
+  width: min(380px, calc(100vw - 16px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 8px 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+
+.mon-cell-window-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 -8px;
+  padding: 6px 8px;
+  background: #eef1f6;
+  border-bottom: 1px solid var(--border);
+  cursor: move;
+  touch-action: none;
+}
+
+.mon-gate-count {
+  margin: 0;
+  font-size: 12px;
+}
+
+.mon-gate-notice {
+  margin: 0;
+  font-size: 12px;
+  color: rgb(170, 30, 30);
+}

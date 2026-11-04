@@ -4,13 +4,13 @@
 // panel replaced its processing-settings link; Clear Buffer's question and the polling failure notices are
 // #866 additions.
 import { bridge } from "../../bridge";
-import { MonitoringCharts } from "../../components/MonitoringCharts";
 import { ResultMetricCells } from "../../components/ResultMetricCells";
 import { ViewerGate } from "../../components/ViewerGate";
 import { useStudio } from "../../studio/StudioContext";
 import { ask } from "../../transport/dialogs";
 import { TriggerTestControls } from "../hardware/TriggerTestControls";
 import { CellStrips } from "./CellStrips";
+import { LiveMonitoringCharts } from "./LiveMonitoringCharts";
 import { clearMonitoringBuffer } from "./clearBuffer";
 import { TunePanel } from "./TunePanel";
 import { latestRows, MONITORING_TABLE_ROWS } from "./monitoringChartModel";
@@ -19,6 +19,7 @@ import { isMonitoringVisible } from "./useMonitoring";
 export function MonitoringPanel() {
   const {
     append, ready, caps, trigStatus, monSnapshot, tab, expTab, setMonSnapshot, notifyMonitoringCleared, monitoringNotices,
+    validOverlay, setValidOverlay,
   } = useStudio();
   return (
     <>
@@ -55,11 +56,11 @@ export function MonitoringPanel() {
       {monitoringNotices.map((notice) => <p key={notice} role="alert" className="monitoring-notice" data-tour="monitoring-notice">{notice}</p>)}
       <div className="monitoring-split">
         <div className="config-grid monitoring-charts">
-          <MonitoringCharts snapshot={monSnapshot} />
+          <LiveMonitoringCharts snapshot={monSnapshot} />
         </div>
         <TunePanel />
       </div>
-      <CellStrips ready={ready} visible={isMonitoringVisible(tab, expTab)} />
+      <CellStrips ready={ready} visible={isMonitoringVisible(tab, expTab)} validOverlay={validOverlay} onValidOverlay={setValidOverlay} />
       <div className="table-panel" style={{ maxHeight: 180, overflow: "auto" }}>
         <table className="metrics-table">
           <thead>

@@ -70,10 +70,15 @@ interface StripProps {
   cells: MonitoringCell[];
   images: ReadonlyMap<string, CellImageState>;
   empty: string;
+  /** The flag lives with the caller (PR E1: the selected cell's pane follows the valid strip's Show Overlay). */
+  overlay?: boolean;
+  onOverlay?: (on: boolean) => void;
 }
 
-function CellStrip({ kind, title, cells, images, empty }: StripProps) {
-  const [overlay, setOverlay] = useState(false); // Qt: off until ticked
+function CellStrip({ kind, title, cells, images, empty, overlay: controlled, onOverlay }: StripProps) {
+  const [own, setOwn] = useState(false); // Qt: off until ticked
+  const overlay = controlled ?? own;
+  const setOverlay = (on: boolean) => { setOwn(on); onOverlay?.(on); };
   return (
     <section className={`cell-strip cell-strip-${kind}`} data-tour={`monitoring-${kind}-cells`} aria-label={title}>
       <div className="cell-strip-head">
@@ -117,14 +122,16 @@ export function cellStripsNotice(
   return null;
 }
 
-export function CellStrips({ ready, visible }: { ready: boolean; visible: boolean }) {
+export function CellStrips({ ready, visible, validOverlay, onValidOverlay }: {
+  ready: boolean; visible: boolean; validOverlay?: boolean; onValidOverlay?: (on: boolean) => void;
+}) {
   const { listing, unavailable, error, images } = useMonitoringCells({ ready, visible });
   const notice = cellStripsNotice(listing, unavailable, error);
   return (
     <div className="cell-strips" data-tour="monitoring-cell-strips">
       {notice && <p className="pending-note cell-strips-notice" role="status">{notice}</p>}
       <div className="cell-strips-grid">
-        <CellStrip kind="valid" title="Valid cells" cells={listing?.strip ?? []} images={images}
+        <CellStrip kind="valid" title="Valid cells" cells={listing?.strip ?? []} images={images} overlay={validOverlay} onOverlay={onValidOverlay}
           empty="No valid cells yet: cells appear while capture and realtime processing run with Monitoring visible." />
         <CellStrip kind="invalid" title="Invalid cells" cells={listing?.invalid_strip ?? []} images={images}
           empty="No invalid cells yet." />

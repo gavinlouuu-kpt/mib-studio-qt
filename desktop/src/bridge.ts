@@ -793,7 +793,14 @@ export const bridge = {
   // Processing (bridge schema v3).
   applyProcessing: (realtimeEnabled: boolean, pixelToMicron: number) =>
     sourceMutation("apply_processing", { realtimeEnabled, pixelToMicron }),
-  fetchProcessingStats: async () => decodeProcessingStats(await invoke<unknown>("fetch_processing_stats")),
+  fetchProcessingStats: async () => {
+    const raw = await invoke<unknown>("fetch_processing_stats");
+    const stats = decodeProcessingStats(raw);
+    // ABI 46: the realtime mode and the camera telemetry come out of this same reply (one invoke per poll). A reply that
+    // breaks the contract costs those rows only, not the rates; the sidebar then shows the rate measured here and says why.
+    try { stats.telemetry = decodeProcessingTelemetry(raw); } catch (e) { stats.telemetry_error = e instanceof Error ? e.message : String(e); }
+    return stats;
+  },
   // Operation state + bounded-queue observability (bridge schema v4, BE-1).
   cancelOperation: (operationId: number | string | bigint) =>
     invokeCommand("cancel_operation", { operationId: decimalU64(operationId) }),

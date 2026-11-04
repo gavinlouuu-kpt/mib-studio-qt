@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   algoTimeReadout, cameraRateReadouts, cameraStatusReadout, compactStatusLine, flushReadout, formatMetricSample, formatRuntime, runtimeText,
+  type MetricSample,
 } from "./statsReadouts";
 
 describe("runtime (MON-100)", () => {
@@ -42,13 +43,13 @@ describe("Algo Time (MON-095)", () => {
 });
 
 describe("camera group (MON-098)", () => {
-  it("writes the telemetry validity as text (Qt formatMetric)", () => {
-    expect(formatMetricSample({ value: 29.6, validity: "valid" })).toBe("30");
-    expect(formatMetricSample({ value: 29.6, validity: "valid" }, 1)).toBe("29.6");
-    expect(formatMetricSample({ value: 29.6, validity: "stale", age_us: 2_500_000 })).toBe("30 (stale 2.5 s)");
-    expect(formatMetricSample({ value: 0, validity: "unavailable" })).toBe("n/a");
-    expect(formatMetricSample({ value: 0, validity: "unsupported" })).toBe("unsupported");
-    expect(formatMetricSample({ value: 0, validity: "error" })).toBe("error");
+  const sample = (state: MetricSample["state"], value: number | null, age_ms: number | null = null): MetricSample => ({ state, value, age_ms });
+  it("writes the telemetry validity as text, whole numbers like Qt's formatMetric", () => {
+    expect(formatMetricSample(sample("valid", 29.6, 10))).toBe("29"); // Qt casts to an unsigned integer: no rounding up
+    expect(formatMetricSample(sample("stale", 29.6, 2500))).toBe("29 (stale 2.5 s)");
+    expect(formatMetricSample(sample("unavailable", null))).toBe("n/a");
+    expect(formatMetricSample(sample("unsupported", null))).toBe("unsupported");
+    expect(formatMetricSample(sample("error", null))).toBe("error");
   });
   it("is Running in green or Stopped in grey", () => {
     expect(cameraStatusReadout(true)).toEqual({ text: "Running", cls: "ok" });
@@ -56,22 +57,29 @@ describe("camera group (MON-098)", () => {
   });
   it("reads zero when the camera is stopped", () => {
     expect(cameraRateReadouts({ running: false, displayFps: 12, dataRateMBs: 4 })).toEqual({ fps: { text: "0.0" }, dataRate: { text: "0.0 MB/s" } });
+    expect(cameraRateReadouts({ running: false, displayFps: 12, dataRateMBs: 4, captureFps: sample("valid", 500, 1) }).fps.text).toBe("0.0");
   });
   it("uses the backend's capture sample when there is one, and says what stands in when there is not", () => {
     const own = cameraRateReadouts({
-      running: true, displayFps: 12, dataRateMBs: 4,
-      captureFps: { value: 500, validity: "valid" }, captureMBs: { value: 31.25, validity: "stale", age_us: 3_000_000 },
+      running: true, displayFps: 12, dataRateMBs: 4, captureFps: sample("valid", 500, 100), captureMBs: sample("stale", 31, 3000),
     });
-    expect(own).toEqual({ fps: { text: "500" }, dataRate: { text: "31.3 (stale 3.0 s) MB/s" } });
+    expect(own).toEqual({ fps: { text: "500" }, dataRate: { text: "31 (stale 3.0 s) MB/s" } });
     const measured = cameraRateReadouts({ running: true, displayFps: 12.34, dataRateMBs: 4.56 });
     expect(measured.fps.text).toBe("12.3");
-    expect(measured.fps.title).toContain("does not report the capture rate");
+    expect(measured.fps.title).toContain("sent no capture rate");
     expect(measured.dataRate.text).toBe("4.6 MB/s");
+    expect(cameraRateReadouts({ running: true, displayFps: 1, dataRateMBs: 1, captureFps: null, captureMBs: null }).fps.title).toContain("sent no capture rate");
   });
-  it("writes an unsupported capture sample instead of a number", () => {
-    const r = cameraRateReadouts({ running: true, displayFps: 12, dataRateMBs: 4, captureFps: { value: 0, validity: "unsupported" }, captureMBs: { value: 0, validity: "unavailable" } });
+  it("writes an unsupported or unavailable capture sample instead of a number", () => {
+    const r = cameraRateReadouts({ running: true, displayFps: 12, dataRateMBs: 4, captureFps: sample("unsupported", null), captureMBs: sample("unavailable", null) });
     expect(r.fps.text).toBe("unsupported");
     expect(r.dataRate.text).toBe("n/a MB/s");
+    expect(r.fps.title).toBeUndefined();
+  });
+  it("says when the telemetry came but could not be read, instead of passing the stand-in off as the camera's", () => {
+    const r = cameraRateReadouts({ running: true, displayFps: 12, dataRateMBs: 4, telemetryError: "camera.frame_rate.state is not a contract metric state" });
+    expect(r.fps.text).toBe("12.0");
+    expect(r.fps.title).toContain("could not be read (camera.frame_rate.state is not a contract metric state)");
   });
 });
 

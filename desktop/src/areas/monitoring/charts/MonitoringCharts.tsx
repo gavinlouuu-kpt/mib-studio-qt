@@ -3,11 +3,11 @@
 // window of the latest monitoring snapshot. Qt reference: ExperimentMonitoringTab (setupCharts,
 // updateScatterplot, updateHistogram). The pieces are MonitoringScatter / MonitoringHistogram; the model
 // is monitoringChartModel.ts and the fixed axes are monitoringSettings.ts.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { MonitoringSnapshot } from "../../../bridge";
 import { metricNumber } from "../../../metricFormat";
 import { invoke } from "../../../transport";
-import { extentHistogram, MONITORING_WINDOW, monitoringChartData } from "../monitoringChartModel";
+import { extentHistogram, MONITORING_WINDOW, monitoringChartData, type ScatterData } from "../monitoringChartModel";
 import { DEFAULT_MONITORING_SETTINGS, type MonitoringSettings } from "../monitoringSettings";
 import type { ReferenceCurve } from "./drawMonitoringScatter";
 import { MonitoringHistogram } from "./MonitoringHistogram";
@@ -16,6 +16,11 @@ import { MonitoringScatter, type MonitoringScatterProps } from "./MonitoringScat
 export interface MonitoringChartsViewProps extends Pick<MonitoringScatterProps, "selectedKey" | "onSelectPoint" | "overlay" | "emodulusAt"> {
   snapshot: MonitoringSnapshot | null;
   settings?: MonitoringSettings;
+  /** PR E1: the selected cell's pane, docked over the histogram (at the top of its card), from the plotted points
+   *  (Previous / Next walk them); null or absent: the histogram alone. */
+  histogramPane?: (scatter: ScatterData) => ReactNode;
+  /** PR E1: under the scatter, from the plotted points (the gate's live count). */
+  scatterFooter?: (scatter: ScatterData) => ReactNode;
 }
 
 interface Reference {
@@ -33,7 +38,7 @@ function parseReference(text: string): Reference {
 }
 
 export function MonitoringChartsView(props: MonitoringChartsViewProps) {
-  const { snapshot, selectedKey, onSelectPoint, overlay, emodulusAt } = props;
+  const { snapshot, selectedKey, onSelectPoint, overlay, emodulusAt, histogramPane, scatterFooter } = props;
   const settings = props.settings ?? DEFAULT_MONITORING_SETTINGS;
   const data = useMemo(() => monitoringChartData(snapshot?.valid ? snapshot.rows : []), [snapshot]);
   const modulus = useMemo(() => extentHistogram(data.moduli), [data.moduli]);
@@ -68,6 +73,7 @@ export function MonitoringChartsView(props: MonitoringChartsViewProps) {
           overlay={overlay}
           emodulusAt={emodulusAt}
         />
+        {scatterFooter?.(data.scatter)}
         {!snapshot?.valid || !data.scatter.xs.length ? <p>No calibrated finite valid-object samples available.</p> : null}
         <p>
           Valid objects only; green: valid, blue: target group; newest {MONITORING_WINDOW} valid rows, each point with its exact
@@ -83,6 +89,7 @@ export function MonitoringChartsView(props: MonitoringChartsViewProps) {
         {referenceError && <p>Isoelastic reference unavailable: {referenceError}</p>}
       </div>
       <div className="config-group mon-chart-group mon-histogram-group">
+        {histogramPane?.(data.scatter)}
         <h5>Ring-ratio distribution (dimensionless)</h5>
         <MonitoringHistogram values={data.ratios} settings={settings} />
         {!snapshot?.valid || !data.ratios.length ? <p>No finite ring-ratio samples available.</p> : null}

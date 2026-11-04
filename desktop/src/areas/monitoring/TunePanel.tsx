@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ViewerGate } from "../../components/ViewerGate";
 import { PL_IGNORED_SETTINGS_TEXT } from "../../platformCapabilities";
 import { useStudio } from "../../studio/StudioContext";
+import { EMODULUS_TABLE_UNKNOWN, emodulusTableHint } from "./emodulusLut";
 import {
   RUN_LOCKED_FIELDS, RUN_LOCKED_REASON, appliedValueText, formatTuneValue, normalizeTuneValue, tuneApplyBlocker, tuneCanApply,
   tuneCanRevert, tuneChanged, tuneSpec, tuneStateText, tuneValidationList, type TuneFieldId, type TuneState,
@@ -93,7 +94,7 @@ function Criterion({ ctx, id, name, tooltip, children, description, parentOff = 
 }
 
 export function TunePanel() {
-  const { tune: s, setTuneField, onTuneApply, onTuneRevert, tuneScopeNow: scope, checkedConfig, hostProcessing } = useStudio();
+  const { tune: s, setTuneField, onTuneApply, onTuneRevert, tuneScopeNow: scope, checkedConfig, hostProcessing, emodulusTable = EMODULUS_TABLE_UNKNOWN } = useStudio();
   const frozen = !s.draft || s.applying;
   const locked: ReadonlySet<TuneFieldId> = new Set(scope.midRun ? RUN_LOCKED_FIELDS : []);
   const ctx: Ctx = { s, set: setTuneField, frozen, locked };
@@ -148,7 +149,7 @@ export function TunePanel() {
               tooltip="When enabled, a target cell must also have a Young's modulus (kPa, looked up in the loaded E-modulus table) inside this range. A cell whose lookup falls outside the table is never target group. When no table is loaded this range is skipped and the target group is the area and deformability box alone.">
               <TuneNumber ctx={ctx} id="targetEmodulusMin" enabled={Boolean(s.draft?.targetGroupEnabled && s.draft?.targetEmodulusEnabled)} />
               <TuneNumber ctx={ctx} id="targetEmodulusMax" enabled={Boolean(s.draft?.targetGroupEnabled && s.draft?.targetEmodulusEnabled)} />
-              <p className="tune-hint">Skipped when no E-modulus table is loaded.</p>
+              <p className="tune-hint" data-testid="tune-emodulus-hint" data-tour="monitoring-tune-emodulus-table">{emodulusTableHint(emodulusTable)}</p>
             </Criterion>
           </Criterion>
 

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EXPERIMENT_STATES } from "../../bridgeContract";
 import type { ConfigDocument } from "../../configDocument";
 import { StudioContext } from "../../studio/StudioContext";
+import type { EmodulusTableState } from "./emodulusLut";
 import { TunePanel } from "./TunePanel";
 import { initialTuneState, tuneReducer, type TuneFieldId } from "./tuneDraft";
 import { TUNE_SYNC_MS, useTunePanel } from "./useTune";
@@ -51,6 +52,7 @@ let expState: number;
 let hostProcessing: boolean;
 let checked: { doc: ConfigDocument | null; dirty: boolean; busy: boolean; adopt: ReturnType<typeof vi.fn> };
 let monitoringVisible: boolean;
+let emodulusTable: EmodulusTableState;
 let append: ReturnType<typeof vi.fn>;
 let refreshConfig: ReturnType<typeof vi.fn>;
 let host: HTMLDivElement, root: Root;
@@ -59,7 +61,7 @@ function Harness() {
   const [tune, dispatchTune] = useReducer(tuneReducer, undefined, initialTuneState);
   const setTuneField = useCallback((field: TuneFieldId, value: unknown) => dispatchTune({ type: "edit", field, value }), []);
   const model = useTunePanel({ ready: true, append, hostProcessing, tune, dispatchTune, expState, refreshConfig, checkedConfig: checked as never, monitoringVisible });
-  const studio = { tune, setTuneField, onTuneApply: model.onTuneApply, onTuneRevert: model.onTuneRevert, tuneScopeNow: model.tuneScopeNow, checkedConfig: checked, hostProcessing };
+  const studio = { tune, setTuneField, onTuneApply: model.onTuneApply, onTuneRevert: model.onTuneRevert, tuneScopeNow: model.tuneScopeNow, checkedConfig: checked, hostProcessing, emodulusTable };
   return <StudioContext.Provider value={studio as never}><TunePanel /></StudioContext.Provider>;
 }
 const render = async () => { await act(async () => root.render(<Harness />)); };
@@ -90,7 +92,7 @@ async function click(element: HTMLElement) { await act(async () => element.click
 beforeEach(async () => {
   vi.resetAllMocks();
   running = imageProcessing();
-  expState = EXPERIMENT_STATES.Idle; hostProcessing = true; monitoringVisible = true;
+  expState = EXPERIMENT_STATES.Idle; hostProcessing = true; monitoringVisible = true; emodulusTable = { status: "none" };
   checked = { doc: null, dirty: false, busy: false, adopt: vi.fn() };
   append = vi.fn(); refreshConfig = vi.fn().mockResolvedValue(undefined);
   vi.mocked(bridge.fetchProcessingConfigJson).mockImplementation(async () => liveDocument());
@@ -122,7 +124,7 @@ describe("the panel", () => {
     expect(host.textContent).toContain("An object must pass every enabled criterion to count as a valid cell.");
     expect(host.textContent).toContain("Applied to valid cells only: selects which of them fire the sort trigger. Never changes validity.");
     expect(host.textContent).toContain("Reject objects touching the ROI edge.");
-    expect(host.textContent).toContain("Skipped when no E-modulus table is loaded.");
+    expect(host.textContent).toContain("No E-modulus table is loaded: this range is skipped and the target group is the area and deformability box alone.");
     expect(state()).toBe("Applied");
   });
 

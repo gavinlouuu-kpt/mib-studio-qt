@@ -3,6 +3,11 @@
 // MainWindow::renderStats. The shell views (Sidebar, StatusBar) only place what these return.
 // Pure: no React or Tauri imports.
 import { metricNumber } from "../../metricFormat";
+import { formatMetricSample, type MetricSample } from "../../monitoringDensity";
+
+// The bridge decoder's sample ({state, value, age_ms}) and its Qt formatter are the ones used here too (PR E1).
+export { formatMetricSample };
+export type { MetricSample };
 
 export interface Readout {
   text: string;
@@ -43,37 +48,26 @@ export function algoTimeReadout(avgUs: number | null | undefined, ageMs: number 
     : { text: `${avgUs.toFixed(1)} µs` };
 }
 
-/** A telemetry sample with its validity (Qt backend::services::MetricSample). */
-export interface MetricSample { value: number; validity: "valid" | "stale" | "unavailable" | "unsupported" | "error"; age_us?: number }
-
-/** Qt StatsDisplayManager::formatMetric: an unavailable, unsupported, stale or failed reading is written as text,
- *  never shown as a number that could be mistaken for a measurement. */
-export function formatMetricSample(m: MetricSample, digits = 0): string {
-  switch (m.validity) {
-    case "valid": return m.value.toFixed(digits);
-    case "stale": return `${m.value.toFixed(digits)} (stale ${((m.age_us ?? 0) / 1e6).toFixed(1)} s)`;
-    case "unavailable": return "n/a";
-    case "unsupported": return "unsupported";
-    case "error": return "error";
-  }
-}
-
 /** Camera Status row (MON-098): Running in green, Stopped in grey. */
 export function cameraStatusReadout(running: boolean): Readout {
   return running ? { text: "Running", cls: "ok" } : { text: "Stopped", cls: "dim" };
 }
 
-const MEASURED_HERE = "Measured from the frames this window received. The backend does not report the capture rate yet.";
+const MEASURED_HERE = "Measured from the frames this window received. The backend sent no capture rate.";
 
-/** Camera FPS and Data Rate rows. A backend capture sample is shown as text with its validity; until the bridge
- *  carries one, the rate measured from the frames this window received stands in (and says so). A stopped
- *  camera reads zero, as in Qt. */
+/** Camera FPS and Data Rate rows. The backend's capture sample (processing_stats.camera, bridge ABI 46) is shown as
+ *  text with its validity, whole numbers as Qt's formatMetric writes them ("n/a", "unsupported", "error", "<n>
+ *  (stale 3.0 s)"); only when the backend sends no camera telemetry does the rate measured from the frames this
+ *  window received stand in (and say so). A stopped camera reads zero, as in Qt. */
 export function cameraRateReadouts(i: {
   running: boolean; displayFps: number; dataRateMBs: number; captureFps?: MetricSample | null; captureMBs?: MetricSample | null;
+  /** The backend sent camera telemetry that broke the contract: the stand-in says so instead of passing for a measurement of the camera. */
+  telemetryError?: string;
 }): { fps: Readout; dataRate: Readout } {
   if (!i.running) return { fps: { text: "0.0" }, dataRate: { text: "0.0 MB/s" } };
-  const fps: Readout = i.captureFps ? { text: formatMetricSample(i.captureFps) } : { text: metricNumber(i.displayFps, 1), title: MEASURED_HERE };
-  const rate: Readout = i.captureMBs ? { text: `${formatMetricSample(i.captureMBs, 1)} MB/s` } : { text: `${metricNumber(i.dataRateMBs, 1)} MB/s`, title: MEASURED_HERE };
+  const why = i.telemetryError ? `The backend's camera telemetry could not be read (${i.telemetryError}). ${MEASURED_HERE}` : MEASURED_HERE;
+  const fps: Readout = i.captureFps ? { text: formatMetricSample(i.captureFps) } : { text: metricNumber(i.displayFps, 1), title: why };
+  const rate: Readout = i.captureMBs ? { text: `${formatMetricSample(i.captureMBs)} MB/s` } : { text: `${metricNumber(i.dataRateMBs, 1)} MB/s`, title: why };
   return { fps, dataRate: rate };
 }
 

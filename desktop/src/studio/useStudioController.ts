@@ -9,6 +9,7 @@ import {
   experimentModel, useExperimentLifecycle, useMonitoringConfigRange, useMonitoringPolling, useMonitoringState, useSsdStatus,
   useStartReadiness,
 } from "../areas/monitoring/useMonitoring";
+import { useEmodulusTable, useSelectionReset } from "../areas/monitoring/useMonitoringView";
 import { useTunePanel } from "../areas/monitoring/useTune";
 import { useLiveFrames, useLivePreview, usePreviewBufferModel, usePreviewState } from "../areas/preview/usePreview";
 import { useReviewAccounting, useReviewJobs, useReviewSource, useReviewState } from "../areas/review/useReview";
@@ -75,6 +76,8 @@ export function useStudioController() {
   };
   const closeGuard = useShellCloseGuard(composed); // shell
   const tunePanel = useTunePanel(composed); // monitoring: the tune panel's sync, Apply and Revert (#866)
+  useEmodulusTable(composed); // monitoring: the E-modulus table behind the gate overlay and the tooltip (#866 PR E1)
+  useSelectionReset(composed); // monitoring: Clear Buffer clears the selected cell (#866 PR E1)
   // Render-time values (no hooks).
   const startExperiment = experimentModel(composed); // monitoring
   const connectView = connectModel(composed); // connect: Start Camera gate, preflight, quality gates

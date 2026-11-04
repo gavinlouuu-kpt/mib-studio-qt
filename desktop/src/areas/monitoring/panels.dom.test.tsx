@@ -13,7 +13,8 @@ vi.mock("../../bridge", () => ({ bridge }));
 vi.mock("../../transport/dialogs", () => dialogs);
 vi.mock("../hardware/TriggerTestControls", () => ({ TriggerTestControls: () => null }));
 vi.mock("../preview/PreviewPanel", () => ({ PreviewPanel: () => <div data-testid="preview" /> }));
-vi.mock("../../components/MonitoringCharts", () => ({ MonitoringCharts: () => <div data-testid="charts" /> }));
+// The charts with the cell pane and the gate (PR E1) have their own tests (LiveMonitoringCharts.dom.test.tsx).
+vi.mock("./LiveMonitoringCharts", () => ({ LiveMonitoringCharts: () => <div data-testid="charts" /> }));
 // The tune panel (PR A) and the cell strips (PR C) have their own tests; here the panel is under test, not them.
 vi.mock("./TunePanel", () => ({ TunePanel: () => null }));
 vi.mock("./CellStrips", () => ({ CellStrips: () => null }));

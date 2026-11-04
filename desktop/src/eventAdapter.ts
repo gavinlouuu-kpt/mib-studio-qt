@@ -3,6 +3,7 @@ import { CAMERA_STATES, FRAME_READY_SOURCES, COMMAND_TYPES, ERROR_SOURCES, EVENT
   JSON_TRANSPORT, OPERATION_KINDS, OPERATION_STATES, RECORDING_STATES, READINESS_GATE_STATUSES, RUN_COMPLETION_STATES } from "./bridgeContract";
 import { decimalU64 } from "./framePacket";
 import { decodeMethodCalibration, type MethodCalibration } from "./calibrationRecords";
+import type { ProcessingTelemetry } from "./monitoringDensity";
 
 export function wireU64(value: unknown): string {
   if (typeof value !== "string") throw new Error("TRANSPORT_U64_MUST_BE_STRING");
@@ -158,6 +159,11 @@ export interface ProcessingStats {
    *  (epic #866 MON-095). Optional: the bridge's processing stats carry rates only until it adds `algo_avg_us` and
    *  `algo_avg_age_ms`; a backend without them leaves both undefined and the side panel hides the row. */
   algo_avg_us?:number|null; algo_avg_age_ms?:number|null;
+  /** Bridge ABI 46 (#866 PR E1, MON-098): the realtime mode and the camera telemetry of the same `fetch_processing_stats` reply
+   *  (bridge.fetchProcessingStats decodes both from it). Absent from a stats object built elsewhere. */
+  telemetry?:ProcessingTelemetry;
+  /** Why `telemetry` is missing when the reply carried it but broke the contract; the sidebar says so. */
+  telemetry_error?:string;
   freshness:"unavailable";
 }
 export function decodeProcessingStats(value:unknown):ProcessingStats {

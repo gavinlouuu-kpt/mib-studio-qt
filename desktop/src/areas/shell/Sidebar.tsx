@@ -27,7 +27,11 @@ export function TelemetrySidebar() {
   } = useStudio();
   const algoTime = algoTimeReadout(stats?.algo_avg_us, stats?.algo_avg_age_ms);
   const camStatus = cameraStatusReadout(running);
-  const camRates = cameraRateReadouts({ running, displayFps, dataRateMBs: dataRate });
+  // The capture rate and data rate are the backend's own (processing_stats.camera, ABI 46, the same reply as the algorithm time).
+  const camera = stats?.telemetry?.camera ?? null;
+  const camRates = cameraRateReadouts({
+    running, displayFps, dataRateMBs: dataRate, captureFps: camera?.frame_rate, captureMBs: camera?.data_rate_mbps, telemetryError: stats?.telemetry_error,
+  });
   const flush = flushReadout(!!expStatus?.flushing);
   return (
     <>
