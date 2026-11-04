@@ -33,8 +33,8 @@ export function TriggerTestControls() {
       const res = await bridge.triggerPeriodicStop();
       append(res.ok ? "periodic test stopped (Monitoring tab left)" : `periodic test failed to stop: ${res.message}`);
       setTrigStatus(await bridge.fetchTriggerStatus());
-    })().catch(() => undefined);
-  }, []);
+    })().catch((failure) => append(`periodic test stop on leaving Monitoring failed: ${String(failure)}`));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <>
       {/* UX-9: trigger tests are commissioning controls, gated
