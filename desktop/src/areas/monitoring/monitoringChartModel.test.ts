@@ -13,7 +13,7 @@ const row = (over: Partial<MonitoringRow> = {}): MonitoringRow => ({
 describe("the rolling window (MON-036)", () => {
   it("fetches the whole backend window: 1000 valid and 1000 invalid rows", () => {
     expect(MONITORING_WINDOW).toBe(1000);
-    expect(MONITORING_FETCH_ROWS).toBe(2000);
+    expect(MONITORING_FETCH_ROWS).toBe(1015);
   });
 
   it("plots the newest 1000 valid rows, not the first 200, and ignores invalid rows", () => {

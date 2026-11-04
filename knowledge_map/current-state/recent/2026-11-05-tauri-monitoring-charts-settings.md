@@ -1,9 +1,9 @@
 ## 2026-11-05 — Tauri Monitoring charts rebuilt, Monitoring Settings dialog added (#866, MON-036..043, 049..051, 082, 087..091)
 
 The Monitoring sub-tab's charts in the React/Tauri app now behave like Qt's `ExperimentMonitoringTab`.
-They are canvas charts under `desktop/src/areas/monitoring/charts/` over the full rolling window (the
-poll asks for 2000 rows, the backend ring's 1000 valid + 1000 invalid, instead of a hard-coded 200; a
-poll with nothing new keeps the old snapshot so nothing re-renders). Scatter: fixed default axes
+They are canvas charts under `desktop/src/areas/monitoring/charts/` over Qt's plotted window (the
+poll asks for 1015 rows, the backend ring's 1000 newest valid rows plus 15 for the latest-rows table,
+instead of a hard-coded 200; a poll with nothing new keeps the old snapshot so nothing re-renders). Scatter: fixed default axes
 (X 0-1000 µm², Y 0-1) that hold between polls, wheel zoom around the pointer (Ctrl X, Shift Y, over an
 axis that axis), drag/middle-drag pan, double-click on empty space resets, isoelastic curves always drawn
 with a "x.xx kPa" legend on the right, pointer tooltips ("Area · deformability", "Frame N · click to

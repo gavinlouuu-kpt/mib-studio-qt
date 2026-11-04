@@ -81,7 +81,7 @@ export function useMonitoringPolling({ ready, tab, expTab, setMonSnapshot, setTr
     const id = window.setInterval(async () => {
       if (polling) return; polling = true;
       try {
-        // The whole rolling window (1000 valid + 1000 invalid, MON-036), not a fixed 200 rows.
+        // The plotted window (1000 valid rows, MON-036) plus the latest-rows table, not a fixed 200 rows.
         const snapshot = await bridge.fetchMonitoringSnapshot(MONITORING_FETCH_ROWS);
         const trigger = await bridge.fetchTriggerStatus();
         // A poll that finds nothing new keeps the previous snapshot: no re-render, no redraw.

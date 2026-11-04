@@ -5,14 +5,19 @@
 // 500 ms (ExperimentMonitoringTab.h MAX_RECENT_FRAMES, UPDATE_INTERVAL_MS). The backend's monitoring
 // ring already holds exactly that (ProcessingService MAX_MONITORING_FRAMES = 1000 per ring, reported as
 // MonitoringSnapshot.capacity), and fetch_monitoring_snapshot(maxRows) returns the newest valid rows
-// first (oldest to newest), then the newest invalid rows with what is left of maxRows. So one poll with
-// 2 x 1000 rows is the whole window; nothing is merged or kept on the UI side between polls.
+// first (oldest to newest), then the newest invalid rows with what is left of maxRows. No chart plots
+// invalid rows (the invalid cells strip has its own listing), so a poll asks for the valid window plus
+// the latest-rows table's 15 rows: the newest 15 rows of both kinds are always among them. That halves
+// the JSON per poll (about 360 KiB instead of 713 KiB at 2 Hz, which matters on the remote/board path);
+// nothing is merged or kept on the UI side between polls.
 import type { MonitoringRow, MonitoringSnapshot } from "../../bridge";
 
 /** Rows per kind the charts use (Qt MAX_RECENT_FRAMES). */
 export const MONITORING_WINDOW = 1000;
-/** maxRows for fetch_monitoring_snapshot: the valid window and the invalid window. */
-export const MONITORING_FETCH_ROWS = 2 * MONITORING_WINDOW;
+/** Rows the latest-rows table under the charts lists (valid and invalid, newest first). */
+export const MONITORING_TABLE_ROWS = 15;
+/** maxRows for fetch_monitoring_snapshot: the valid window plus the table's rows. */
+export const MONITORING_FETCH_ROWS = MONITORING_WINDOW + MONITORING_TABLE_ROWS;
 
 /** A row's identity (run, capture, frame, object), the same string monitoringCells.cellKeyString makes
  *  for a cell; a backend older than ABI 41 sends no run or capture and gets "0" for both. */

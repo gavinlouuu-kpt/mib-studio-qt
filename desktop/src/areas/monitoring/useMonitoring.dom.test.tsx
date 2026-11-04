@@ -62,7 +62,7 @@ describe("the Monitoring poll (MON-036)", () => {
     expect(calls.snapshot).not.toHaveBeenCalled();
     await tick();
     expect(calls.snapshot).toHaveBeenCalledWith(MONITORING_FETCH_ROWS);
-    expect(MONITORING_FETCH_ROWS).toBe(2000);
+    expect(MONITORING_FETCH_ROWS).toBe(1015);
     await tick();
     expect(calls.snapshot).toHaveBeenCalledTimes(2);
   });

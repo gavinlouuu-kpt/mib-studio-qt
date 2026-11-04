@@ -651,10 +651,13 @@ The Monitoring sub-tab's charts are canvas charts in `areas/monitoring/charts/`
 (`components/MonitoringCharts.tsx` keeps the `<MonitoringCharts snapshot>` call and
 reads the settings from the studio state when mounted in the classic view):
 
-- *Window.* `useMonitoringPolling` fetches `MONITORING_FETCH_ROWS` = 2000 rows every
+- *Window.* `useMonitoringPolling` fetches `MONITORING_FETCH_ROWS` = 1015 rows every
   500 ms while the Monitoring sub-tab is shown: the backend's monitoring ring is
   1000 valid + 1000 invalid frames (`MonitoringSnapshot.capacity`) and the snapshot
-  returns the valid tail first, so that is Qt's whole rolling buffer (MAX_RECENT_FRAMES).
+  returns the valid tail first, so 1000 rows are Qt's plotted window (MAX_RECENT_FRAMES)
+  and 15 more carry the newest invalid rows for the latest-rows table (no chart plots
+  invalid rows; the invalid cells strip has its own listing). Asking for both whole rings
+  (2000 rows) would double the JSON to ~713 KiB per poll for nothing on screen.
   `monitoringChartData` plots the newest 1000 valid rows. A poll that finds nothing new
   (`sameSnapshot`: appended and held counters, newest timestamp) keeps the previous
   snapshot object, so nothing re-renders or redraws; the canvases draw only when data,
