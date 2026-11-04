@@ -852,29 +852,48 @@ RecordingCapacityInputs ExperimentCoordinator::capacityInputsLocked(const RunCon
     in.invalidSamplingRate = std::max<size_t>(1, proc.getInvalidFrameSamplingRate());
 
     // The destination's sustained write rate: measured once per (directory,
-    // frame size), bounded (DestinationWriteRate.h).
+    // frame size), bounded (DestinationWriteRate.h). A slow sample is measured
+    // again, up to three probes, keeping the best; a result that fails the
+    // floor stream is shown but not kept, so the next measuring evaluation (the
+    // next Start) probes again instead of holding one bad sample until the
+    // app restarts (#841).
     if (bytesPerFrame > 0 && !outputPath.empty()) {
         const std::string key = writeRateDirectory(outputPath) + "|" + std::to_string(bytesPerFrame);
+        const double floorBytesPerSecond = recordingFloorBytesPerSecond(in);
         auto it = writeRates_.find(key);
-        if (it == writeRates_.end() && measure) {
+        // A kept result is used while it still carries the floor of the current rate.
+        const bool reusable = it != writeRates_.end() && it->second.settled &&
+                              !writeRateFailsFloor(it->second.measurement, floorBytesPerSecond);
+        if (!reusable && measure) {
+            WriteRateEntry entry;
+            entry.measurement = measureBestWriteRate(
+                [&] {
+                    return writeRateProbe_ ? writeRateProbe_(outputPath, bytesPerFrame)
+                                           : measureDestinationWriteRate(outputPath, bytesPerFrame);
+                },
+                floorBytesPerSecond);
             // A failure is kept too (the rate stays unknown, a warning), so a
             // destination that cannot be measured does not delay every evaluation.
-            it = writeRates_.emplace(key, writeRateProbe_ ? writeRateProbe_(outputPath, bytesPerFrame)
-                                                          : measureDestinationWriteRate(outputPath, bytesPerFrame))
-                     .first;
+            entry.settled = !writeRateFailsFloor(entry.measurement, floorBytesPerSecond);
+            if (it == writeRates_.end()) {
+                it = writeRates_.emplace(key, std::move(entry)).first;
+            } else {
+                it->second = std::move(entry);
+            }
         }
-        if (it != writeRates_.end() && it->second.ok) {
+        if (it != writeRates_.end() && it->second.measurement.ok) {
+            const auto& m = it->second.measurement;
             lastWriteRateKey_ = key;
-            in.diskBytesPerSecond = it->second.bytesPerSecond;
-            in.diskRateNote = it->second.note + " at " + it->second.directory;
+            in.diskBytesPerSecond = m.bytesPerSecond;
+            in.diskRateNote = m.note + " at " + m.directory;
         } else if (it != writeRates_.end()) {
-            in.diskRateNote = it->second.note;
+            in.diskRateNote = it->second.measurement.note;
         } else {
             in.diskRateNote = "measured when the destination is checked at Start";
         }
     } else if (const auto last = writeRates_.find(lastWriteRateKey_); last != writeRates_.end()) {
-        in.diskBytesPerSecond = last->second.bytesPerSecond;
-        in.diskRateNote = "last destination, " + last->second.directory + ", " + last->second.note;
+        in.diskBytesPerSecond = last->second.measurement.bytesPerSecond;
+        in.diskRateNote = "last destination, " + last->second.measurement.directory + ", " + last->second.measurement.note;
     } else {
         in.diskRateNote = "measured when the destination is chosen at Start";
     }

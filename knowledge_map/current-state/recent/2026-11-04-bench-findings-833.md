@@ -28,3 +28,19 @@ The `catch` blocks of `start()` called `stop()` with `stateMutex_` held (a self-
 release the half-started grabber through the teardown `stop()` shares. The code is under
 `#if MIB_HAS_EGRABBER`: syntax-checked against the SDK headers on Linux, not run. **Needs the
 win11-agent bench test** (camera with no trigger: switch Overview to Experiment, stop, restart).
+
+**#841, one slow write-rate sample was cached.** One of nine probes of the healthy bench NVMe read
+15.2 MB/s (the probe ran into its 0.75 s bound), against 469-700 MB/s for the others and a floor
+of 12.6 MB/s at 1216x208 and 5000 fps; the result is cached per (directory, frame size) for the
+app's life, so a bad sample could fail `storage.throughput` until restart. Now
+`measureBestWriteRate` (`app/DestinationWriteRate.h`) measures again while the best result is
+below 4x the floor or ran into the bound: up to 3 probes, the best kept, and no new probe once
+2.25 s of timed writing is spent (a healthy disk takes one probe; the worst case is about 3 s in
+the Start evaluation). A result that fails the floor is not kept for later: the Overview panel
+still shows it, the next Start probes again (as does a kept result that no longer carries a
+higher rate's floor). The floor formula is shared as `recordingFloorBytesPerSecond`. Tests:
+`backend.destination_write_rate` (scripted probes), `backend.recording_capacity_readiness`
+(slow then healthy, stays slow then recovers, a rising floor).
+
+**Not done.** #839's optional cap of the ring by bytes is left out. #840 needs the win11-agent
+bench test; the eGrabber code is not compiled on Linux CI.
