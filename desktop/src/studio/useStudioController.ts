@@ -2,7 +2,7 @@ import { useViewerOnly } from "../components/ViewerGate";
 import { useWallClockSync } from "../transport/wallClockSync";
 import { useCameraSetup, useConfigDocuments, useConfigState, useConfigSync, useCores } from "../areas/config/useConfig";
 import {
-  connectModel, useAlignPeakReset, useCameraConnection, useCameraModeSwitch, useCameraWindowing, useConnectState,
+  connectModel, syncScriptSources, useAlignPeakReset, useCameraConnection, useCameraModeSwitch, useCameraWindowing, useConnectState,
 } from "../areas/connect/useConnect";
 import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
 import {
@@ -64,6 +64,7 @@ export function useStudioController() {
   const viewerOnly = useViewerOnly();
   const documents = useConfigDocuments({ ...states, ...configSync, ...cores }); // config
   const reviewJobs = useReviewJobs(states); // review
+  syncScriptSources({ ...states, ...cameraSetup, ...documents }); // connect: the camera scripts the stage change and the window save use
   const composed = {
     ...states, ...liveFrames, ...polling, ...monitoringPolling, ...preferences, ...configSync, ...connection,
     ...livePreview, ...ssd, ...reviewSource, ...experiment, ...windowing, ...modeSwitch, ...cameraSetup,

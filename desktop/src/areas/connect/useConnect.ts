@@ -7,15 +7,21 @@ import { bridge, type CameraDiscovery, type CameraGeometry, type CameraSelection
 import { PUMP_IDS } from "../../bridgeContract";
 import { snapRunWindow, type Rect } from "../../cameraAlignment";
 import { runModeBlockReason, useCameraWindow, type CameraModeError } from "../../cameraWindow";
+import { useViewerOnly } from "../../components/ViewerGate";
+import { invoke } from "../../transport";
 import { derivePreflight, type PreflightInput } from "../../preflight";
 import { deriveQualityGates, type ImageQualityInput, type QualityInput } from "../../quality";
 import type { RunFpsStatus } from "../../runFps";
-import type { CameraSetupModel, ConfigState, CoresModel } from "../config/useConfig";
+import type { CameraSetupModel, ConfigDocumentsModel, ConfigState, CoresModel } from "../config/useConfig";
 import type { HardwareState } from "../hardware/useHardware";
 import type { MonitoringState } from "../monitoring/useMonitoring";
 import type { LiveFramesModel, PreviewState } from "../preview/usePreview";
 import type { ReviewState } from "../review/useReview";
 import type { ShellState, StatePollingModel } from "../shell/useShell";
+import {
+  isEgrabber, NO_SOURCES, resolveExperimentScript, runEgrabberStage, runOverviewAutoStart,
+  type ScriptSources, type StageIo, type StageName, type StageNotice,
+} from "./cameraStage";
 
 export function useConnectState() {
   const [running, setRunning] = useState(false);
@@ -51,6 +57,11 @@ export function useConnectState() {
   const [modeRetry, setModeRetry] = useState(0);
   // The Run frame rate and exposure (ABI 38): polled on a PZ7035; set by the PZ7035 camera document (Config → Camera document), which re-enters Run when the instrument is in it.
   const [runFpsStatus, setRunFpsStatus] = useState<RunFpsStatus | null>(null);
+  // What entering the Overview / Experiment stage did to the camera (#846), why the geometry could not be
+  // read and where the camera scripts may come from.
+  const [stageNotice, setStageNotice] = useState<StageNotice | null>(null);
+  const [geometryError, setGeometryError] = useState("");
+  const scriptSourcesRef = useRef<ScriptSources>(NO_SOURCES);
   return {
     running, setRunning, camStatus, setCamStatus, connectTab, setConnectTab,
     discovery, setDiscovery, camSelection, setCamSelection, pickedDevice, setPickedDevice,
@@ -58,6 +69,7 @@ export function useConnectState() {
     liveCanvasRef, alignImage, setAlignImage, alignBestRef, alignImageMs,
     cameraGeometry, setCameraGeometry, cameraGeometryRef, cameraWindowRef, refreshCameraGeometryRef,
     modeError, setModeError, modeRetry, setModeRetry, runFpsStatus, setRunFpsStatus,
+    stageNotice, setStageNotice, geometryError, setGeometryError, scriptSourcesRef,
   };
 }
 export type ConnectState = ReturnType<typeof useConnectState>;
@@ -201,29 +213,51 @@ export function useCameraConnection({
 export type CameraConnectionModel = ReturnType<typeof useCameraConnection>;
 
 type WindowingDeps = Pick<ShellState, "ready" | "instrumentModes" | "append">
-  & Pick<ConnectState, "cameraGeometryRef" | "cameraWindowRef" | "refreshCameraGeometryRef" | "setCameraGeometry" | "setRunFpsStatus">
+  & Pick<ConnectState, "cameraGeometryRef" | "cameraWindowRef" | "refreshCameraGeometryRef" | "setCameraGeometry" | "setRunFpsStatus"
+    | "scriptSourcesRef" | "setGeometryError">
   & Pick<MonitoringState, "expActive">;
+
+/** Whether a script file can be read: an existing .js file the camera document command opens. */
+export async function scriptExists(path: string): Promise<boolean> {
+  try {
+    await invoke("camera_document", { action: "read", path, kind: "js", baseline: "", text: "" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // The camera window (ROI 1 on the full sensor) and the PZ7035 Run frame rate.
 export function useCameraWindowing({
   ready, instrumentModes, append, cameraGeometryRef, cameraWindowRef, refreshCameraGeometryRef, setCameraGeometry,
-  setRunFpsStatus, expActive,
+  setRunFpsStatus, expActive, scriptSourcesRef, setGeometryError,
 }: WindowingDeps) {
   const cameraWin = useCameraWindow({
     instrumentModes, geometryRef: cameraGeometryRef, expActive, append, windowRef: cameraWindowRef,
     refreshGeometry: () => refreshCameraGeometryRef.current(),
+    // An eGrabber window is written into the Experiment script (#846): the operator's current choice.
+    resolveScriptPath: async () => (await resolveExperimentScript(scriptSourcesRef.current, scriptExists))?.path ?? "",
   });
   const cameraWindow = cameraWin.window, setCameraWindow = cameraWin.setWindow;
+  const lastGeometryError = useRef("");
   const refreshCameraGeometry = useCallback(async (): Promise<CameraGeometry | null> => {
+    const fetchedAt = cameraWin.saveGeneration();
     try {
       const geometry = await bridge.fetchCameraGeometry();
       setCameraGeometry(geometry);
+      setGeometryError("");
+      lastGeometryError.current = "";
+      cameraWin.syncFromGeometry(geometry, fetchedAt);
       cameraWin.showDefault(geometry);
       return geometry;
-    } catch {
+    } catch (e) {
+      // Shown in the Overview as well as logged (once per change: the poll retries every 2 s).
+      const text = `Camera geometry unavailable: ${e instanceof Error ? e.message : String(e)}`;
+      setGeometryError(text);
+      if (lastGeometryError.current !== text) { lastGeometryError.current = text; append(text); }
       return null;
     }
-  }, [cameraWin.showDefault]);
+  }, [cameraWin.showDefault, cameraWin.syncFromGeometry, cameraWin.saveGeneration, append]);
   refreshCameraGeometryRef.current = refreshCameraGeometry;
 
   const refreshRunFps = useCallback(async () => {
@@ -240,28 +274,40 @@ export function useCameraWindowing({
 }
 export type CameraWindowingModel = ReturnType<typeof useCameraWindowing>;
 
-type ModeSwitchDeps = Pick<ShellState, "ready" | "tab" | "append" | "instrumentModes" | "instrumentRef" | "instrumentMode"
+type ModeSwitchDeps = Pick<ShellState, "ready" | "tab" | "tabRef" | "append" | "instrumentModes" | "instrumentRef" | "instrumentMode"
     | "instrument" | "runMode">
-  & Pick<ConnectState, "cameraWindowRef" | "setModeError" | "modeRetry" | "modeError" | "setRunning">
-  & Pick<MonitoringState, "expActive"> & CameraWindowingModel;
+  & Pick<ConnectState, "cameraWindowRef" | "setModeError" | "modeRetry" | "modeError" | "setRunning" | "scriptSourcesRef" | "setStageNotice">
+  & Pick<MonitoringState, "expActive"> & Pick<PreviewState, "recording"> & Pick<ReviewState, "setReviewing"> & CameraWindowingModel;
 
 // Qt parity: the tab picks the camera mode (Align / full sensor on Overview, Run / the window on Experiment).
 export function useCameraModeSwitch({
-  ready, tab, append, instrumentModes, instrumentRef, instrumentMode, instrument, runMode, cameraWindowRef, setModeError,
-  modeRetry, modeError, setRunning, expActive, cameraWin, refreshCameraGeometry,
+  ready, tab, tabRef, append, instrumentModes, instrumentRef, instrumentMode, instrument, runMode, cameraWindowRef, setModeError,
+  modeRetry, modeError, setRunning, expActive, recording, setReviewing, cameraWin, refreshCameraGeometry, scriptSourcesRef, setStageNotice,
 }: ModeSwitchDeps) {
+  // A browser that only watches (#763) never changes the camera: its stage tabs are navigation, and the
+  // controlling client's own change shows through the polled geometry.
+  const viewerOnly = useViewerOnly();
   // After a page reload the backend still holds the Run window it applied: take it back.
   useEffect(() => { cameraWin.restore(instrumentMode); }, [instrumentMode?.run_set, instrumentMode?.run_x, instrumentMode?.run_y, cameraWin.restore]);
 
   // Qt parity (MainWindow tab change): Camera & Alignment shows the whole sensor, Experiment the
   // saved window, other tabs leave the camera as it is; never during a run. A running capture
   // restarts in the new mode (backend).
+  // An eGrabber camera has no preset: entering a stage applies its script with that stage's role (#846),
+  // once per entry, and Overview starts a stopped, configured camera (cameraStage.ts).
+  const entered = useRef<StageName | null>(null);
+  const stageQueue = useRef<Promise<void>>(Promise.resolve());
+  const live = useRef({ expActive, recording });
+  live.current = { expActive, recording };
   useEffect(() => {
-    if (!ready || (tab !== "overview" && tab !== "experiment")) return;
+    if (!ready || (tab !== "overview" && tab !== "experiment")) { entered.current = null; return; }
     let cancelled = false;
     void (async () => {
       const geometry = await refreshCameraGeometry();
-      if (cancelled || expActive) return;
+      if (cancelled) return;
+      const firstEntry = entered.current !== tab;
+      entered.current = tab;
+      if (expActive) return;
       if (instrumentModes) {
         // PZ7035 (#501 P1): the backend owns the switch (LED, cell path, producer timing).
         const want = tab === "overview" ? "align" : "run";
@@ -285,15 +331,53 @@ export function useCameraModeSwitch({
         await refreshCameraGeometry();
         return;
       }
-      if (!geometry?.supported) return;
-      const overview = tab === "overview";
-      if (geometry.overview === overview) return;
-      const result = await bridge.setCameraOverview(overview);
-      append(result.ok ? result.message : `Camera mode: ${result.message}`);
-      if (!cancelled) await refreshCameraGeometry();
+      if (viewerOnly) return;
+      if (isEgrabber(geometry)) {
+        if (!firstEntry) return; // the scripts are applied once per entry, not on every effect re-run
+        setStageNotice(null);
+        const stage: StageName = tab;
+        const io: StageIo = {
+          fetchSelection: () => bridge.fetchCameraSelection(),
+          stopCapture: () => bridge.stopCapture(),
+          startCapture: async () => { setReviewing(false); return bridge.startCapture(); },
+          applyScript: (path, overview) => bridge.applyCameraScriptWithRole(path, overview),
+          refreshGeometry: () => refreshCameraGeometry(),
+          scriptExists,
+          setRunning,
+          log: append,
+        };
+        // Serialised, and dropped when the operator has moved on before its turn: a script apply is not interrupted.
+        stageQueue.current = stageQueue.current.then(async () => {
+          if (tabRef.current !== stage) return;
+          const notice = await runEgrabberStage({
+            stage, expActive: live.current.expActive, recording: live.current.recording, sources: scriptSourcesRef.current, geometry,
+          }, io);
+          setStageNotice(notice);
+        }).catch(() => undefined);
+        return;
+      }
+      if (geometry?.supported) {
+        const overview = tab === "overview";
+        if (geometry.overview !== overview) {
+          const result = await bridge.setCameraOverview(overview);
+          append(result.ok ? result.message : `Camera mode: ${result.message}`);
+          if (!cancelled) await refreshCameraGeometry();
+        }
+      }
+      // Overview starts a stopped, configured camera, once per entry (not an illuminated MindVision profile).
+      if (tab === "overview" && firstEntry && !cancelled) {
+        const fresh = geometry?.supported ? await refreshCameraGeometry() : geometry;
+        const notice = await runOverviewAutoStart({ expActive: live.current.expActive, geometry: fresh, instrumentModes }, {
+          fetchSelection: () => bridge.fetchCameraSelection(),
+          startCapture: async () => { setReviewing(false); return bridge.startCapture(); },
+          setRunning,
+          log: append,
+        });
+        setStageNotice(notice);
+      }
     })();
     return () => { cancelled = true; };
-  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry, instrumentMode?.idle, instrument?.ring?.run_frozen]);
+  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry, instrumentMode?.idle, instrument?.ring?.run_frozen, viewerOnly]);
 
   // The camera's read-back (applied window, sensor and delivered rate) follows its restart.
   useEffect(() => {
@@ -309,6 +393,19 @@ export function useCameraModeSwitch({
   // camera stream (Run stops the producer); a missing window or a refused switch says why.
   const runModeBlock = instrumentModes ? runModeBlockReason({windowPlaced: cameraWin.placed, modeError, runMode}) : undefined;
   return { saveCameraWindow, onWindowPointerDown, onWindowPointerMove, onWindowPointerUp, runModeBlock };
+}
+
+// Where the camera scripts may come from, read from the config area's state each render (no hook): the
+// stage change and the window save read the operator's current choice through scriptSourcesRef, which the
+// connect hooks above own but the config hooks, called later, fill.
+export function syncScriptSources({ scriptSourcesRef, cameraScript, scriptDocument, profiles }:
+  Pick<ConnectState, "scriptSourcesRef"> & Pick<CameraSetupModel, "cameraScript" | "scriptDocument"> & Pick<ConfigDocumentsModel, "profiles">) {
+  scriptSourcesRef.current = {
+    ...scriptSourcesRef.current,
+    cameraScriptPath: cameraScript.path,
+    cameraDocumentPath: scriptDocument.doc?.path ?? "",
+    profileConfigPath: profiles.activeProfile?.path ?? "",
+  };
 }
 
 type ConnectModelDeps = Pick<ShellState, "ready" | "caps" | "instrument" | "pz7035" | "instrumentModes">

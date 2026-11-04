@@ -1,16 +1,17 @@
 // Connect and Overview (epic #863): the Overview (Camera & Alignment) stage: the camera window on the
 // full sensor, the live canvas and the UX-4 quality gates. Moved from App.tsx without change (#869 wave 0).
-import { rateSummary, RUN_WINDOW } from "../../cameraAlignment";
+import { egrabberWindowLine, rateSummary, RUN_WINDOW, windowInputLimits } from "../../cameraAlignment";
 import { CameraScriptControls } from "../../cameraScript";
 import { RunWindowNotice } from "../../components/RunWindowNotice";
 import { ViewerGate, viewerReason } from "../../components/ViewerGate";
 import { GATE_STATUS_LABEL } from "../../quality";
 import { useStudio } from "../../studio/StudioContext";
+import { CameraStageNotice } from "./CameraStageNotice";
 
 export function OverviewTab() {
   const {
     instrumentModes, cameraWin, modeError, setTab, setModeRetry, runFrozen, ring, resumeFromBanner, experimentRequestBusy,
-    viewerOnly, setFitWindow, fitWindow, cameraGeometry, cameraWindow, expActive, setCameraWindow, saveCameraWindow, ready,
+    viewerOnly, setFitWindow, fitWindow, cameraGeometry, cameraWindow, expActive, saveCameraWindow, ready,
     hostProcessing, roiFields, setRoiFields, onApplyRoi, lastMeta, liveCanvasRef, onWindowPointerDown, onWindowPointerMove,
     onWindowPointerUp, quality, qualityInput, alignBestRef, setAlignImage, caps, cameraScript,
   } = useStudio();
@@ -39,8 +40,11 @@ export function OverviewTab() {
                   type="number"
                   aria-label={`Camera window ${key}`}
                   value={cameraWindow ? cameraWindow[key] : 0}
+                  {...windowInputLimits(cameraGeometry, key, cameraWindow)}
                   disabled={!cameraWindow || expActive}
-                  onChange={(e) => setCameraWindow((w) => (w ? {...w, [key]: Number(e.target.value) || 0} : w))}
+                  onChange={(e) => cameraWin.edit(key, Number(e.target.value) || 0)}
+                  onBlur={cameraWin.flush}
+                  onKeyDown={(e) => { if (e.key === "Enter") cameraWin.flush(); }}
                 />
                 {key === "width" || key === "height" ? " px" : ""}
               </label>
@@ -49,7 +53,7 @@ export function OverviewTab() {
               className="btn"
               onClick={() => cameraWindow && void saveCameraWindow(cameraWindow)}
               disabled={!ready || expActive || !cameraWindow || cameraGeometry.sensor_width === 0}
-              title="Save the experiment window; Experiment uses it"
+              title={cameraGeometry.camera === "egrabber" ? "Save the window now (it is also saved a moment after each change)" : "Save the experiment window; Experiment uses it"}
             >
               Save camera ROI
             </button>
@@ -74,6 +78,7 @@ export function OverviewTab() {
           </>
         ) : null}</ViewerGate>
       </div>
+      <CameraStageNotice stage="overview" />
       {cameraGeometry?.supported && (
         <div className="camera-alignment-status" aria-label="Camera mode">
           <strong>
@@ -81,7 +86,10 @@ export function OverviewTab() {
               ? `Full sensor ${cameraGeometry.sensor_width || "?"}×${cameraGeometry.sensor_height || "?"}`
               : "Experiment window"}
           </strong>
-          {cameraGeometry.overview && " — drag the yellow box or edit X/Y/W/H, then save; Experiment uses it."}
+          {cameraGeometry.overview && cameraGeometry.camera !== "egrabber" && " — drag the yellow box or edit X/Y/W/H, then save; Experiment uses it."}
+          {cameraGeometry.camera === "egrabber" && (
+            <span>{cameraGeometry.overview ? " — drag the yellow box or edit W/H: each change is snapped and saved to the Experiment script (and to the profile's camera.window when it has one). " : " — "}{egrabberWindowLine(cameraGeometry)}</span>
+          )}
           {cameraGeometry.overview && instrumentModes && ` The run window is ${RUN_WINDOW.width}×${RUN_WINDOW.height}: x a multiple of ${RUN_WINDOW.xStep}, y a multiple of ${RUN_WINDOW.yStep} (the producer's offset check).`}
           {rateSummary(cameraGeometry) && <span> {rateSummary(cameraGeometry)}</span>}
         </div>

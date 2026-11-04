@@ -326,6 +326,27 @@ held at ~10 fps by per-byte frame copies in the bridge.
 `vitest` discovery is limited to `src/` (`vite.config.ts`): crawling
 `src-tauri/target`'s cxx symlink loop hung `vitest run`.
 
+### eGrabber cameras (#863, #846)
+
+An eGrabber hardware camera has no overview preset, so `useCameraModeSwitch` (areas/connect/useConnect.ts)
+drives its two scripts the way Qt's `MainWindow::onTabChanged` does, once per entry into a stage
+(`cameraStage.ts`, `runEgrabberStage`, tested with a fake backend): never during an experiment (the
+Overview stage tab is disabled with Qt's sentence while one runs), not with raw recording on and not from a
+browser that only watches (viewer-only); a running camera is
+stopped, the stage's script applied with its role (`apply_camera_script_with_role`: Overview as
+is, Experiment followed by the profile's `camera.window`), the camera restarted; Overview also starts a
+stopped, configured camera ("Failed to start camera. Please check camera connection and try again." when
+it fails; MindVision illuminated profiles never auto-start). Script paths (`ScriptSources`, filled each
+render by `syncScriptSources` from the config area's state): Experiment = Config > Camera script selection,
+else the EGrabber script editor's file, else the active profile folder's `egrabberConfig.js` if it exists
+("No Experiment camera script: the camera keeps its current window" otherwise); Overview = the profile
+folder's `overviewConfig.js` if it exists. The window box is the geometry's `roi` (profile, else script);
+Qt's snapping (`snapEgrabberWindow`: offsets rounded then snapped down, sizes snapped down) runs while
+dragging and the backend repeats it when `save_camera_window` writes the script and the profile, on release
+and a moment after each W/H/X/Y edit (`useCameraWindow.edit`); a window that changed in the backend (a
+profile applied or reloaded) redraws the box unless an edit is in progress (`syncFromGeometry`); geometry
+errors and save results are lines in the Overview (`CameraStageNotice`).
+
 ## Command layer
 
 Thin wrappers over the bridge (all take the managed `AppState`; bodies in

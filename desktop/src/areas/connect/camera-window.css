@@ -5,3 +5,13 @@
   font-size: 0.9em;
   color: var(--muted, #555);
 }
+
+/* What entering a stage did to the camera (#846): the script that failed, the window the camera ended up with. */
+.stage-notice {
+  margin: 6px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--border);
+  font-size: 13px;
+}
+.stage-notice.warn { border-left-color: var(--warn); color: var(--warn); }
+.stage-notice.error { border-left-color: var(--err); color: var(--err); }

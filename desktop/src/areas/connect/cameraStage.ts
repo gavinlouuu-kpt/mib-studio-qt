@@ -1,0 +1,224 @@
+// Connect and Overview (epic #863, bug #846): what entering the Overview or Experiment stage does to an
+// eGrabber camera, as the Qt app's MainWindow::onTabChanged does it, and where the scripts come from.
+// Pure decisions and one orchestration over a small IO interface, so the sequence is unit-tested
+// without a camera: stop a running camera, apply the stage's script with its role (Overview = the full
+// sensor as is; Experiment = the script followed by the profile's camera.window), restart it, and on
+// Overview start a stopped, configured camera. Never during an experiment.
+import type { CameraGeometry, CameraSelection } from "../../bridge";
+import { CAMERA_SELECTION_MODES } from "../../bridgeContract";
+
+export type StageName = "overview" | "experiment";
+
+/** What the operator is told about a stage change; shown in the stage it concerns. */
+export interface StageNotice { stage: StageName; level: "info" | "warn" | "error"; text: string }
+
+export const NO_EXPERIMENT_SCRIPT = "No Experiment camera script: the camera keeps its current window";
+export const NO_OVERVIEW_SCRIPT = "No Overview camera script: the camera keeps its current mode. Choose one in Camera & Alignment (overviewConfig.js).";
+/** Qt's wording when the Overview's auto-start fails (MainWindow::onTabChanged). */
+export const START_FAILED = "Failed to start camera. Please check camera connection and try again.";
+export const OVERVIEW_DISABLED_TITLE = "Overview tab is disabled while an experiment is active. Please stop the experiment first.";
+
+// ---- script paths -------------------------------------------------------------------------------
+
+/** Where the scripts may come from. Filled from the config area's state each render
+ *  (studio/useStudioController.ts) so the stage change reads the operator's current choice. */
+export interface ScriptSources {
+  /** Config › Camera script: the file the operator chose to apply. */
+  cameraScriptPath: string;
+  /** Config › the EGrabber script editor's file. */
+  cameraDocumentPath: string;
+  /** The applied profile's config.json (its folder holds egrabberConfig.js and overviewConfig.js); "" when none. */
+  profileConfigPath: string;
+  /** The Overview script editor's resolved path (Camera & Alignment); "" until it knows. */
+  overviewScriptPath: string;
+}
+
+export const NO_SOURCES: ScriptSources = { cameraScriptPath: "", cameraDocumentPath: "", profileConfigPath: "", overviewScriptPath: "" };
+
+const separatorOf = (path: string) => (path.includes("\\") && !path.includes("/") ? "\\" : "/");
+
+/** The folder of a file path, written with the path's own separator; "" when it has none. */
+export function folderOf(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return cut > 0 ? path.slice(0, cut) : "";
+}
+
+export function joinPath(folder: string, name: string): string {
+  if (!folder) return name;
+  return /[\\/]$/.test(folder) ? folder + name : folder + separatorOf(folder) + name;
+}
+
+/** A profile's files sit next to its config.json. */
+export function profileFile(profileConfigPath: string, name: string): string {
+  const folder = folderOf(profileConfigPath);
+  return folder ? joinPath(folder, name) : "";
+}
+
+export type ScriptSource = "selection" | "document" | "profile" | "overview-editor";
+export interface ResolvedScript { path: string; source: ScriptSource }
+
+/** The Experiment script, in the order the task fixes: the Config › Camera script selection if set,
+ *  else the camera document editor's file if set, else the active profile's egrabberConfig.js if it exists. */
+export async function resolveExperimentScript(
+  sources: ScriptSources, exists: (path: string) => Promise<boolean>,
+): Promise<ResolvedScript | null> {
+  if (sources.cameraScriptPath) return { path: sources.cameraScriptPath, source: "selection" };
+  if (sources.cameraDocumentPath) return { path: sources.cameraDocumentPath, source: "document" };
+  const profile = profileFile(sources.profileConfigPath, "egrabberConfig.js");
+  if (profile && await exists(profile)) return { path: profile, source: "profile" };
+  return null;
+}
+
+/** The Overview script: the Overview editor's resolved path (it creates the default file when it is
+ *  missing), else the active profile's overviewConfig.js if it exists. */
+export async function resolveOverviewScript(
+  sources: ScriptSources, exists: (path: string) => Promise<boolean>,
+): Promise<ResolvedScript | null> {
+  if (sources.overviewScriptPath) return { path: sources.overviewScriptPath, source: "overview-editor" };
+  const profile = profileFile(sources.profileConfigPath, "overviewConfig.js");
+  if (profile && await exists(profile)) return { path: profile, source: "profile" };
+  return null;
+}
+
+// ---- decisions ----------------------------------------------------------------------------------
+
+/** Qt MainWindow::onTabChanged: a connection navigates to Overview and starts a stopped, configured
+ *  camera, except a MindVision profile that is illuminated (or cannot be read): navigation must never
+ *  energize the rig. The PZ7035 starts through its own Align switch. (Qt's MindVision branch returns
+ *  before that code for the Overview, so Qt in practice starts no MindVision camera on a tab change; the
+ *  documented intent is followed here and an illuminated or unreadable profile never starts.) */
+export function overviewAutoStart(geometry: CameraGeometry | null, selection: Pick<CameraSelection, "configured" | "running">, instrumentModes: boolean): boolean {
+  if (instrumentModes || !selection.configured || selection.running) return false;
+  if (geometry?.camera === "mindvision" && (geometry.illuminated_live || !!geometry.profile_error)) return false;
+  return true;
+}
+
+/** An eGrabber camera: a selected hardware camera whose geometry says "egrabber". */
+export const isEgrabber = (geometry: CameraGeometry | null | undefined): boolean => !!geometry?.supported && geometry.camera === "egrabber";
+
+/** The line under the stage change for an Experiment apply: what window the camera ended up with. */
+export function experimentWindowNotice(geometry: CameraGeometry | null): StageNotice | null {
+  const apply = geometry?.window_apply;
+  if (!apply) return null;
+  const failed = !!apply.refusal || !!apply.error;
+  return { stage: "experiment", level: failed ? "error" : "info", text: `Camera window: ${apply.text}${failed ? ` (${apply.refusal || apply.error})` : ""}` };
+}
+
+// ---- the sequence -------------------------------------------------------------------------------
+
+export interface CmdLike { ok: boolean; message: string }
+
+export interface StageIo {
+  fetchSelection(): Promise<CameraSelection>;
+  stopCapture(): Promise<CmdLike>;
+  startCapture(): Promise<CmdLike>;
+  applyScript(path: string, overview: boolean): Promise<CmdLike>;
+  refreshGeometry(): Promise<CameraGeometry | null>;
+  scriptExists(path: string): Promise<boolean>;
+  /** The camera is running (true) or stopped (false) now. */
+  setRunning(running: boolean): void;
+  log(line: string): void;
+}
+
+export interface StageInput {
+  stage: StageName;
+  expActive: boolean;
+  /** Raw recording is on: the camera cannot be stopped underneath it. */
+  recording: boolean;
+  sources: ScriptSources;
+  /** The geometry that said "egrabber" (read for the auto-start rule only). */
+  geometry: CameraGeometry | null;
+}
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Enter a stage with an eGrabber camera. Resolves with what the operator should read (or null);
+ *  never throws. The camera is stopped only when a script is about to be applied, and restarted only
+ *  when it was running (or, on Overview, when it was stopped and configured: the auto-start). */
+export async function runEgrabberStage(input: StageInput, io: StageIo): Promise<StageNotice | null> {
+  const { stage } = input;
+  const overview = stage === "overview";
+  const label = overview ? "Overview" : "Experiment";
+  try {
+    if (input.expActive) return null; // never during an experiment
+    if (input.recording) {
+      return { stage, level: "warn", text: `Stop the raw recording before the camera can change to the ${label} script.` };
+    }
+    const selection = await io.fetchSelection();
+    if (!selection.valid || !selection.configured || selection.mode !== CAMERA_SELECTION_MODES.Hardware) return null;
+    const script = overview ? await resolveOverviewScript(input.sources, io.scriptExists) : await resolveExperimentScript(input.sources, io.scriptExists);
+    const wasRunning = selection.running;
+    const autoStart = overviewAutoStart(input.geometry, selection, false);
+
+    if (!script) {
+      // Qt logs it and leaves the camera as it is; Overview still starts a stopped camera.
+      const notice: StageNotice = { stage, level: "warn", text: overview ? NO_OVERVIEW_SCRIPT : NO_EXPERIMENT_SCRIPT };
+      io.log(notice.text);
+      if (overview && autoStart) return (await startCamera(io, stage, false)) ?? notice;
+      return notice;
+    }
+
+    if (wasRunning) {
+      const stopped = await io.stopCapture();
+      if (!stopped.ok) {
+        const text = `Camera not stopped, ${label} script not applied: ${stopped.message}`;
+        io.log(text);
+        return { stage, level: "error", text };
+      }
+      io.setRunning(false);
+    }
+    io.log(`applying the ${label} camera script ${script.path}`);
+    const applied = await io.applyScript(script.path, overview);
+    if (!applied.ok) {
+      const text = `${label} camera script not applied: ${applied.message}`;
+      io.log(text);
+      await io.refreshGeometry();
+      return { stage, level: "error", text }; // Qt leaves the capture stopped here as well
+    }
+    io.log(`${label} camera script applied`);
+    const geometry = await io.refreshGeometry();
+    let notice: StageNotice | null = overview ? null : experimentWindowNotice(geometry);
+    if (notice) io.log(notice.text);
+
+    if (wasRunning || (overview && autoStart)) {
+      const failure = await startCamera(io, stage, wasRunning);
+      if (failure) notice = failure;
+    }
+    return notice;
+  } catch (e) {
+    const text = `Camera ${label} change failed: ${errorText(e)}`;
+    io.log(text);
+    return { stage, level: "error", text };
+  }
+}
+
+/** Start the camera; null on success, the notice to show on failure. */
+async function startCamera(io: StageIo, stage: StageName, restart: boolean): Promise<StageNotice | null> {
+  const started = await io.startCapture();
+  if (started.ok) {
+    io.setRunning(true);
+    io.log(restart ? "camera restarted after the script change" : "camera started on entering Overview");
+    return null;
+  }
+  const text = restart ? `Camera script applied, but restart failed: ${started.message}` : START_FAILED;
+  io.log(`${text} (${started.message})`);
+  return { stage, level: "error", text };
+}
+
+/** Overview for a camera without scripts (mock, MindVision, Aravis): start a stopped, configured
+ *  camera, once per entry. Null when started, not eligible, or nothing to say. */
+export async function runOverviewAutoStart(
+  input: Pick<StageInput, "expActive" | "geometry"> & { instrumentModes: boolean },
+  io: Pick<StageIo, "fetchSelection" | "startCapture" | "setRunning" | "log">,
+): Promise<StageNotice | null> {
+  try {
+    if (input.expActive) return null;
+    const selection = await io.fetchSelection();
+    if (!overviewAutoStart(input.geometry, selection, input.instrumentModes)) return null;
+    return await startCamera(io as StageIo, "overview", false);
+  } catch (e) {
+    const text = `${START_FAILED} (${errorText(e)})`;
+    io.log(text);
+    return { stage: "overview", level: "error", text: START_FAILED };
+  }
+}

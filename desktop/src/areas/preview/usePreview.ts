@@ -97,8 +97,10 @@ export function useLiveFrames({
       ctx.putImageData(mono8ToImageData(bytes, meta.width, meta.height, meta.stride_bytes), 0, 0);
       // Camera & Alignment: the experiment window over a full-sensor image.
       const geometry = cameraGeometryRef.current, experimentWindow = cameraWindowRef.current;
+      // An eGrabber Overview frame is whatever the Overview script yields (its window starts at 0, 0), so it
+      // is not compared with the sensor size the camera reports (#863).
       if (canvas === liveCanvasRef.current && geometry?.overview && experimentWindow &&
-          meta.width === geometry.sensor_width && meta.height === geometry.sensor_height) {
+          (geometry.camera === "egrabber" || (meta.width === geometry.sensor_width && meta.height === geometry.sensor_height))) {
         ctx.strokeStyle = "#ffd400";
         ctx.lineWidth = 2;
         ctx.strokeRect(experimentWindow.x + 1, experimentWindow.y + 1, experimentWindow.width - 2, experimentWindow.height - 2);
