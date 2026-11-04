@@ -673,3 +673,10 @@ the application shell. See [module commands](../../tools/flowjo_acceptance/READM
 and [[../services/AnalysisWorker]]. Python dependency constraints live only in
 `env/analysis-worker/`; this is development qualification, not a distribution
 installer. The standalone demo does not open recordings or command hardware.
+
+With `-DMIB_ANALYSIS_HOST_TESTS=ON` the module also builds `mib_analysis_host`,
+its own source list of the backend files `analysis_host_test` links (analysis host,
+SQLite, `WorkspaceStore`, `RecipeProvider`, `NextRunPlanning`). It is not derived
+from `src/backend/CMakeLists.txt`, so a workspace source that the host test starts
+calling must be added there too; `analysis-ci.yml` (PRs into `develop`) is the only lane
+that builds it.
