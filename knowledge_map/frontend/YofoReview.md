@@ -9,7 +9,7 @@ menus, exports and update flow below).
 
 **Source:** `desktop/review.html`, `desktop/src/review/` (`main.tsx`,
 `ReviewApp.tsx`, `ReviewPanel.tsx`, `RegenerateMasks.tsx`, `review.css`,
-`charts/`, `exports/`),
+`charts/`, `exports/`, `open/`, `inspect/`, `shell/`),
 `desktop/src-tauri/tauri.review.conf.json`, cargo feature `review-only` in
 `desktop/src-tauri/Cargo.toml` (features `studio` / `review-only`),
 `src/main.rs` + `src/review_app.rs`, `src/review.rs`, `src/review_packet.rs`,
@@ -57,7 +57,7 @@ to see the UI, or build a release binary.
 ## `ReviewPanel` (shared module)
 
 `src/review/ReviewPanel.tsx` owns the review state (file info, metrics
-page, selection, sub-tab) and the `"review"` / `"viewer"` slots of the
+page, selection, sub-view and set, the record card's image view) and the `"review"` / `"viewer"` slots of the
 host's `FramePullScheduler`, and imports `review.css` itself (the host page
 needs no stylesheet). The host supplies: `ready` (backend initialized), the
 scheduler, `fitWindow`, a `log` sink and three hooks — `beforeLoad` (MIB
@@ -153,9 +153,8 @@ branch wires the words and B3d's comparison. Tests:
 `object_origin_x` / `object_origin_y`, the offset that places a stored box
 or centroid in image coordinates (#756 review 2; `REVIEW_OBJECT_COORDINATES`
 in the generated contract). A client never places a box when the space is
-`unknown`. The B3b PR adds the client only; R3 Inspect (B3a,
-on `feat/egrabber-workspace`) is its first user. `reviewIpc.golden.json`
-records the calls.
+`unknown`. The B3b PR added the client only; R3 Inspect uses all of it from
+B3c on (see **R3 Inspect** below). `reviewIpc.golden.json` records the calls.
 
 ### Transport (#512 S9)
 
@@ -235,12 +234,14 @@ The Qt tab's layout per set (Valid / Invalid, or "Frames" for a recording):
   ROI change. Cells follow the image aspect (`imageBand`: a 512×96 frame is a
   128×24 band of the letterboxed tile; the Qt KeepAspectRatio rule). Arrow
   keys move the selection, Enter opens the viewer.
-- **Preview + table** (`ReviewPanel.tsx`) — the selected frame at full
-  resolution with the backend overlay / ROI over the paged metrics table
-  (100 rows per page, `metricsColumns.ts`: every Qt column, default set,
-  "Columns…" chooser persisted in `localStorage` key `yofo.review.columns`;
-  recording files show index + timestamp only). Grid, table and preview
-  share one selection; the table pages to follow it.
+- **Record card + table** (`ReviewPanel.tsx`, `inspect/`) — the selected
+  record's image (the full frame at full resolution with the backend
+  overlay / ROI, or a crop, see R3 Inspect below) beside the paged records
+  table (kit `DataTable`, 100 rows per page, `metricsColumns.ts`: every Qt
+  column, default set, "Columns…" chooser persisted in `localStorage` key
+  `yofo.review.columns`; recording files show index + timestamp only).
+  Scatter, grid, table and record card share one selection; the table pages
+  to follow it.
 - **`FrameViewer.tsx`** — in-app overlay (scheduler slot "viewer"): frame
   prev/next (←/→, wraps), multi-image series (↑/↓; frame → series 1…n),
   zoom Fit / 1× / 2× / 4×, the frame's key metrics, Esc closes.
@@ -264,10 +265,16 @@ under Xvfb with the dev server running.
 ## Charts view (PR 3)
 
 Experiment files only (recording files carry no metrics). `charts/ChartsView.tsx`:
-scatter on the left, the panel's preview pane over the ring-width histogram
-on the right; clicking a point selects that valid cell (same selection as
-the Frames view, so the table page, preview and viewer follow); ←/→ step
-through the valid set. Both charts are `<canvas>` with no chart library.
+scatter on the left, an optional frame pane (`framePane`, omitted by R3
+Inspect, whose record card sits beside the view) over the ring-width
+histogram on the right; clicking a point selects that valid cell (same
+selection as the Frames view, so the table page, record card and viewer
+follow); ←/→ step through the valid set. Both charts are `<canvas>` with no
+chart library; since #717 B3a they draw with the kit's colours
+(`charts/chartPalette.ts`, the `tokens.css` values mirrored for the
+offscreen exports: valid records in the accent colour, the inspected
+record outlined in the inspect colour), on screen and in exported PNGs
+alike (charts are compared with Qt through their data, `tools/review_parity`).
 
 - **Data** — `fetch_review_scatter` (columnar: area µm² with the recorded
   factor, deformability, valid-set position, frame index, ring ratio);
@@ -537,14 +544,246 @@ when the bundles carry signatures. `review-release.yml` runs on the shared
 
 ## `ReviewApp` (the product shell)
 
-Initializes the review bridge on boot (`init("")` → Tauri `app_data_dir`)
-and renders the menu row (File ▸ Open… / Close / Preferences…, View ▸ Fit,
-Help ▸ About with the stamped version from `@tauri-apps/api/app`), the
-panel, a status bar and the log drawer. **Preferences** holds the fallback
-px→µm (`localStorage` `yofo.review.pixelToMicron`, default 0.4886 like the Qt tab) passed to
-the panel. No camera, experiment or hardware state exists. Against a server
-without the review commands it shows the unavailable notice (with Retry)
-instead of a usable Open (see **Transport**, #763 F7).
+Initializes the review bridge on boot (`init("")` → Tauri `app_data_dir`).
+Since #717 B1 (#269) it is built on the `@mib/ui` kit (it imports
+`@mib/ui/fonts.css` and `@mib/ui/style.css`; layout only in
+`review/shell/shell.css`, every selector under `.rv-app`): an `AppShell`
+(brand "YOFO Review", tag "Analysis · PC", context "Open run", status chips
+for the backend and "Read-only · opening never modifies a file") with the
+Review app's stages **Open** (R1), **Overview** (R2), **Inspect** and
+**Export** (`REVIEW_STAGES`; Populations and Compare are reference views, not
+scheduled). Header buttons replace the old menu row: Fit (the panel's image
+scaling), Settings (Preferences), Updates…, About (stamped version from
+`@tauri-apps/api/app`). The status bar and the log drawer stay below the
+shell. **Preferences** holds the fallback px→µm (`localStorage`
+`yofo.review.pixelToMicron`, default 0.4886 like the Qt tab) passed to the
+panel. Selecting a stage only changes what is shown: no backend call
+(`ReviewApp.test.tsx` checks it). No camera, experiment or hardware state
+exists. Against a server without the review commands it shows the
+unavailable notice (with Retry) above the stages, the backend chip reads
+"Review not served by this server" ("Backend · checking review" during a
+recheck), and Open and Inspect stay disabled with no listing sent (see
+**Transport**, #763 F7).
+
+- **Open (R1, `review/open/OpenView.tsx`, `openModel.ts`, `libraryModel.ts`).**
+  Open folder… (directory dialog) lists the folder with `review_list_dir`
+  (`.h5` / `.hdf5` names only, hidden work files `.<name>.partial-…`
+  dropped). Then it probes the files' headers with `review_probe_runs`
+  (review ABI 2) in calls of at most `REVIEW_PROBE.max_paths` (256,
+  `probeChunks`), one after another; the card shows "Reading N of M files"
+  meanwhile. The folder is remembered (`yofo.review.libraryFolder`) and
+  listed again at start. Open file…, Refresh and Close file sit beside it.
+  - **Grouping (`groupRuns`, B1b part 2).** One group per declared
+    `experiment_id`, newest first by its runs' recorded starts (experiments
+    without one after, by id), runs by `run_index` (runs declaring none
+    after, by name). Then, each by file name:
+    - "Runs without an experiment": a snapshot (v1, an undeclared v3, or an
+      unreadable one) without an `experiment_id`;
+    - "Legacy files · no run snapshot";
+    - "Cannot be read": `ok` false, the probe's per-file message on the row;
+    - "Not read" / "Reading run identities…": no probe yet, or the probe was
+      refused, with a warn `Notice` giving the backend's words; the rows stay
+      openable.
+  - **Tables.** The kit has no grouped table rows (#715), so each group is
+    its own `DataTable`, its `caption` the group header (`GroupCaption`). An
+    experiment's header carries runs · samples, start dates, conditions, core,
+    calibration and one status chip (`groupSummary`: the worst state, "k of
+    n runs · …" when mixed). Run rows show Run, File, Sample (`sample_ref` ·
+    annotation sample), Condition, Started, Records, Core, Calibration, the
+    accounting chip and Open. The "Runs without an experiment" group shows
+    Snapshot in place of Run. Every table's missing value is "Not recorded".
+    Experiment names, methods and plans are not in the files; a note says the
+    workspace store holds them, and an experiment shows its id.
+  - **Ordering guard (#747 review, extended to the probe).** The rows are
+    kept with the folder they were listed for. A folder change drops the old
+    rows at once. Each listing takes a generation, and both the names' answer
+    and every probe answer of a superseded generation are dropped, so a late
+    answer never fills a newer folder, nor a refresh's newer result. While
+    the names are out, the card shows "Listing…" and the Open buttons are
+    disabled. While the probe is out they stay enabled, since opening and
+    probing are serialized by the review bridge. `openRun` also refuses a row
+    from another folder or one shown during a listing. An unmount (#753
+    review) supersedes the listing in flight: its cleanup bumps the
+    generation and clears an `alive` ref, so a pending probe call's answer
+    starts no further call, and a folder dialog answering afterwards lists
+    nothing. A stage change does not unmount Open (the shell only hides
+    it), so a probe goes on in the background and returning starts nothing
+    new.
+  - **Open run card.** Opening calls the panel's `openPath` (`review_open`),
+    stays on Open and shows a `FactList` of what the file records: file,
+    folder and kind; then `identityFacts(info.identity)` (Run snapshot,
+    Experiment, Run, Sample, Condition, the rest of the annotation,
+    Calibration record, the operator selected at Start; a legacy file says
+    "Not recorded · legacy file" once and every other member is null); then
+    records, started / ended, px→µm recorded or fallback, processing core and
+    run accounting, with the accounting as one `StateChip`. A value the file
+    does not record shows "Not reported", and a legacy file's accounting
+    "Not recorded · legacy file", never Complete. A refused open is a blocked
+    `Notice` with the backend's words, and nothing is open afterwards (the
+    panel's `openPath` returns `{ ok, message }` and clears its info on
+    failure: the backend has already closed the previous file).
+- **Overview (R2):** a "not available yet" `Notice`: the statistics come
+  from the #523 worker (step B2), and the shell shows no number it does not
+  have.
+- **Inspect (R3, #717 B3a):** `ReviewPanel` on the kit, see **R3 Inspect**
+  below. It stays mounted (hidden) while another
+  stage shows, so the open run, the selection and a running job survive a
+  stage change. A launch file (`review_launch_path`, `?open=`) or a macOS
+  open request (`review_take_open_request`) opens straight into Inspect.
+- **Export (R6):** a `Notice` and a `FactList` naming where each export is on
+  Inspect's toolbar, with "Go to Inspect"; the export view itself is step B4.
+
+## R3 Inspect (#717 B3a, B3c, B3d)
+
+`ReviewPanel` laid out as the Penpot R3 board (`dcdbaa6b-9790-4e69-bea4-936747f588b1`)
+(B3a), wired to the review ABI 3 commands in B3c (object coordinate space,
+E-LUT and profile, track rows, reprocess one record), and to the review ABI 4
+reprocess reply's E-LUT in B3d; nothing the file does not record is shown as
+a value.
+
+- **Toolbar** (kit `Toolbar`): the sub-views **Scatter** (experiment files:
+  `ChartsView` in a `Card`, valid records only), **Records** (the table
+  alone) and **Frames** (the thumbnail grid over the table; the default
+  after an open, as before), then the set: **Valid Frames (n)** /
+  **Invalid Frames (n)** (**Frames (n)** for a recording). A second row
+  keeps the file actions and every export (Select HDF File…, Close File,
+  Export Metrics to CSV…, Export All…, More…: Batch Metrics…, Batch Export
+  All…, Export Charts…, Regenerate masks…), the overlay select (all five
+  modes) and ROI, which apply to the thumbnails, the full frame and the
+  viewer. A sub-view only changes what is shown and keeps the selection;
+  the scatter from the invalid set moves to the valid set with nothing
+  selected, and the invalid set from the scatter shows its frames.
+- **Selected measurement** (`inspect/InspectCards.tsx` `RecordCard`): the
+  record named `frame N · object M`, a recording's `frame N` (coordinator
+  ruling on #717: files carry no record id and none is invented; the kit's `RecordIdentity` needs one,
+  so the card uses its layout classes until #715 makes it optional), its
+  place (`valid record i of n · run R · sample S`) and the run's declared
+  provenance (experiment, snapshot version, calibration record, from the
+  B1a identity). **Raw / Contour / Mask** ask `fetch_review_frame` for
+  overlay None / AllContour / AllMask without the ROI and cut the square
+  around the record's bounding box on the client (`cropSquare`: 1.6 × the
+  box, at least 24 px, shifted inside the image; `inspect/packetCrop.ts`
+  draws it through a canvas into a data URL for the kit's `CellImage`,
+  which takes a URL). The crop places the stored box through the file's
+  object coordinate space (`fetch_review_info` `object_coordinates`,
+  coordinator ruling on #717 of 2026-10-21; `objectOffset` / `placedBox` /
+  `recordCrop`): `roi_local` at box + (`object_origin_x`, `object_origin_y`),
+  `image` as stored. For `unknown` no crop is cut: Raw / Contour / Mask are
+  disabled and the card says "No cell crop: the file does not record whether
+  its bounding boxes are relative to its ROI or to the image, and its masks
+  do not tell" (`CROP_UNKNOWN_SPACE`). `cropSquare` keeps the square inside
+  the image, and a placed box wholly outside the image is not cut at an
+  edge. **Full frame** is the canvas the panel always drew
+  (the toolbar's overlay and ROI; double-click opens the viewer). Views a
+  record cannot show are disabled with the reason (a recording has no
+  objects, a file whose space is unknown gives no crop, a set without masks
+  has no Contour / Mask); a crop that cannot
+  be drawn says so, and a set without images shows the kit's "Image not
+  recorded". The stored values (`measurementFacts`: area, deformability,
+  stored E, ring ratio, timestamp, validation, track, objects in frame, the
+  core; a raw recording stores only the frame and timestamp, so the rest
+  reads **Not recorded**, never the row's unfilled 0 or "invalid", #757
+  review 1) and **What is recorded?** (`recordedFacts`, from dataset presence:
+  measurement, full frame, mask / contour, image series). **Previous /
+  Next record** step through the set (its rows when it stores no images,
+  #649) and **Record details** opens the frame viewer.
+  The provenance line also carries the snapshot's `profile_id` and the
+  E-LUT id and revision ("profile not recorded" / "E-LUT not recorded" for
+  a v3 snapshot without them, "no E-LUT loaded" when the run had none; a
+  legacy file only says it has no snapshot).
+- **Stored E of a run without an E-LUT** (coordinator ruling on #774,
+  option b; `storedENotComputed` / `storedEText`): where the identity's
+  `emodulus_lut` is present with `loaded` false, the stored E (which such
+  runs store as 0) reads "Not computed (no E-LUT loaded)" in the record
+  card, the comparison's Stored column, the records table's E column ("not
+  computed") and the frame viewer's metrics line, never "0.00 kPa". A legacy
+  file (no snapshot, `emodulus_lut` null) keeps its E as stored; nothing is
+  guessed.
+- **Linked cell records** (`TrackCard`, B3c; experiment files): the
+  selected record's track. **Show linked records** sends
+  `fetch_review_track_rows(valid, track_id, 256)` and lists the track's
+  records in the set (position, frame, object, area, deformability,
+  validation; a row selects its record). When the cap truncated the track
+  the summary says so ("Track T: N records in the valid set; the first 256
+  are shown"). An untracked record has no button; a refusal reads "Not
+  read: …". The rows stay shown while the selection stays on that track and
+  are never read on navigation.
+- **Stored vs reprocessed** (`StoredCard`): the core recorded in the file
+  (`core X (source) recorded in this file`; neutral, because a regenerated
+  file records the core that regenerated it and no marker tells it from a
+  capture, #757 review 1), the run snapshot, the calibration and px→µm
+  (recorded or fallback, in the warn tone), **Profile** and **E-LUT**
+  (`profileFact`, `lutFact`: id, revision, source, sha256 prefix, checksum
+  status as recorded; "Not recorded" when absent, never a value),
+  **Object coordinates** (`objectSpaceFact`: the space and what decided it,
+  from `object_coordinates_source`: the file's attribute, the run snapshot,
+  the mask check, or the ROI at the origin; unknown in the warn tone), and
+  the run accounting. **This record, reprocessed now** (B3c): a settings
+  choice (recorded / default) and **Reprocess this record**, which alone
+  sends `review_reprocess_record(valid, index, settings)`; it is never sent
+  on selection, stepping, a sub-view, the set or a stage change. The answer
+  is shown as a Stored / Reprocessed table (`reprocessComparison`: area,
+  deformability, area ratio, ring ratio, E, validation, the box and centroid
+  in image coordinates with the stored box placed through the space,
+  objects in frame), the match line (`reprocessMatchText`: matched object k
+  of n, or "No match" with why), a count difference, and the settings label
+  and core; "nothing is written". A reprocessed E without a LUT
+  (`emodulus_recomputed` false) reads "not recomputed (no E-LUT loaded)".
+  **Which E-LUT (B3d, review ABI 4, #778; `reprocessLut`):** the reply's
+  `emodulus_lut` (name) and `emodulus_lut_sha256` name the LUT a recomputed E
+  used ("1.70 kPa, E-LUT emod-lut-2026a 3 (sha256 9f86d081884c)", the short
+  hash added when the name lacks it), and the match line says the same ("its
+  E was computed with …"). When the file's run identity records its LUT's
+  sha256 (`identity.emodulus_lut`, from the snapshot), the two are compared by
+  sha256 (case-insensitive): the same hash adds ", the run's"; another hash,
+  or a run that loaded none, marks the E row "different E-LUT: not comparable
+  (the run's: sha256 …)" (`DIFFERENT_LUT`, warn tone) and the match line
+  says "not the run's (…): E is not comparable" in the warn tone (the match
+  line's E note appears only when the matched object has an E value). Since #778
+  the backend uses the run's LUT or refuses, so that should be rare; it is
+  checked, not assumed. A backend before review ABI 4 sends neither field
+  (`reprocessRecord` keeps them `undefined`; the bridge's "" becomes `null`):
+  only then does a recomputed E keep the B3c caveat "x kPa, computed with the
+  app's current E-LUT, which may differ from the run's"
+  (`REPROCESSED_E_CAVEAT`), on the E row and the match line. Naming the LUT
+  reads nothing more: the reprocess call is unchanged. Refusals read "Not reprocessed: <backend message>" (a
+  claimed job lane, no stored image, an unknown space, a kernel failure).
+  Cases the backend would refuse are said under the button before any call
+  (`reprocessUnavailable`: no selection, a recording, an unknown space, no
+  stored images, a running job). An answer is kept with its file, the
+  px→µm factor in use, the set and the record (the linked records with the
+  track), and a request sequence number: a reply that lands after the
+  operator moved on is dropped and leaves nothing pending, an older reply
+  never replaces a newer one, and a fallback px→µm change drops answers
+  computed with the old factor without re-sending (Codex rounds 1 and 2).
+  Records pages carry a sequence too (`loadRows`, Codex round 3): only the
+  latest request fills the table, and a reset (open, close, set change)
+  retires pages in flight, so a late page of the other set or file never
+  becomes the selected record the buttons ask about.
+  "Reprocessing writes a new file; this view lists no history" (#754 defers
+  regenerate provenance and Compare); **Reprocess into a new file…** opens
+  the Regenerate masks dialog, unchanged.
+- **Records** (kit `DataTable`, compact): the selected row in the inspect
+  colour (`aria-current`); a double-click on a row opens the viewer; ◀ / ▶
+  page (the kit has no paging, #715).
+- **Not shown** (rulings on #717): the analysis plan, populations, polygon
+  and E gates, method names, Open in window.
+- **Tests:** `inspect/inspectModel.test.ts` (names, crop square and its
+  placement for `roi_local` / `image` / `unknown` with a moved ROI, view
+  availability, facts, E-LUT and profile, track truncation, the comparison
+  and match text, the reprocess E-LUT (the run's, named, different, not
+  recomputed, an older backend), when reprocessing is offered) and
+  `inspect/InspectView.test.tsx` (the panel over a mocked IPC: the overlay
+  each view asks for and the crop rectangle in each space, the reasons,
+  stepping, the viewer from Record details / full frame / a row, sub-views
+  keeping the selection, the Stored card's E-LUT / profile / space, linked
+  records with the cap, reprocess only on its button with every refusal and
+  a late reply dropped, the reprocess E-LUT named, marked different, not
+  recomputed and caveated for an older backend, no new IPC on selection / sub-view / set changes,
+  and every pre-B3a control still reachable). `ReviewApp.test.tsx` checks a
+  stage change with a run open sends nothing. `reviewIpc.golden.json`
+  gained one flow in B3c ("linked records and reprocess one record": the
+  two buttons' calls); every other flow is unchanged.
 
 ## CI
 
@@ -561,7 +800,7 @@ generator tests, and the Xvfb boot smoke.
 `review-release.yml` (version stamped from the tag; DMG + installer +
 `SHA256SUMS-yofo-review.txt` appended to the GitHub Release) — build what
 ships: Conan `review_core=True` (static spdlog / HDF5 / OpenCV core, imgproc,
-imgcodecs, videoio — no Qt, no FFmpeg; `~/.conan2/p` cached), the
+imgcodecs, videoio, SQLite — no Qt, no FFmpeg; `~/.conan2/p` cached), the
 `<os>-review-core` preset, the probe run plus an `otool -L` / `dumpbin
 /dependents` check that nothing third-party is loaded dynamically, the link
 manifest, `cargo test --features review-only`, then `npm run tauri:review:build --
@@ -585,3 +824,26 @@ signing or notarisation. How-tos: `docs/howto/macos-build.md`,
 Metric labels and frame-viewer summaries use the shared `metricFormat.ts` finite
 number formatter (em dash for absent/non-finite values). The shell wraps its main
 review panel in `PanelErrorBoundary` with a Reload view action (#540).
+
+## Native population analysis (#808)
+
+ReviewPanel mounts `PopulationAnalysis.tsx`, shared with Studio's review tab.
+Expand **Population analysis · stored observations** after opening an experiment;
+choose stored area/deformability and inclusive optional bounds. The real backend
+returns both-set membership counts and exact raw-value reductions. Results clear
+on source/gate changes; late replies cannot replace a new source. Limits and
+legacy missingness are explicit; no saved strategy or live/polygon UI claim.
+Since review ABI 10 (#808 F-1) `review_analyze_population` evaluates the whole
+file natively in chunks (no 10,000-event cap) and returns only bounded results:
+`rows` is a page (`page` {offset, limit ≤1000, membership}), plus `populations`,
+optional `histogram` / decimated `scatter`, `membershipKey` and, with
+`fingerprint: true`, the streamed full-file SHA-256 (no 64 MiB cap). The view
+does not read `rows`, so its display is unchanged apart from the limits text.
+See [[../services/AnalysisWorker]].
+Since #808 F-1b (review ABI 10, additive) the Review analysis workspace resolves a
+stored source to an F-source/2 columnar handle (`columnar: true`) and lends its
+chunked columns through `ReviewJobs::withRecordingColumns`, so saved strategies,
+reports, plots, comparisons and overlays run on the full file; evaluation replies
+carry no per-event `rows` for stored files (the UI reads only the binding fields
+of `snapshot`). Browse metadata is paged in `ReviewSession` (open no longer holds
+every row).

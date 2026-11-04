@@ -167,6 +167,7 @@ struct SessionTable {
 
 /// Commands that change the instrument's state; viewers may not send them.
 const CONTROL_COMMANDS: &[&str] = &[
+    "analysis_write", "analysis_job",
     "configure_mock", "start_capture", "stop_capture", "set_camera_overview", "save_camera_roi",
     "select_hardware_camera", "select_mindvision_camera", "apply_camera_script", "soft_trigger_camera",
     "reset_hardware_camera", "start_recording", "stop_recording", "seek_latest", "seek_index", "load_recording",
@@ -197,7 +198,13 @@ const CONTROL_COMMANDS: &[&str] = &[
     "monitoring_cell_pin", "monitoring_cell_unpin", "monitoring_cell_clear_pins",
     // Calibration apply (#716 A4a, ABI 42): it sets the instrument's pixel-to-micron factor, so
     // only the controlling client may send it. Listing and reading records stay open to viewers.
+    "workspace_write",
+    // ABI 50 (#807 I02): creating and deriving recipes are writes; list/get/diff/apply_preview
+    // are reads every client may use (apply_preview never applies anything).
+    "recipe_create", "recipe_derive",
     "calibration_apply",
+    // Camera feature writes (#806 E-2, ABI 49) change the device; the tree and reads stay open.
+    "camera_feature_write",
 ];
 
 impl Server {
@@ -705,9 +712,25 @@ mod stage_control_tests {
     // control; the list and get are reads every client may use.
     #[test]
     fn calibration_apply_is_control_only_but_reads_are_not() {
+        assert!(CONTROL_COMMANDS.contains(&"workspace_write"));
+        assert!(!CONTROL_COMMANDS.contains(&"workspace_read"));
+        for cmd in ["recipe_create", "recipe_derive"] { assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} is a write"); }
+        for cmd in ["recipe_list", "recipe_get", "recipe_diff", "recipe_apply_preview"] {
+            assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
         assert!(CONTROL_COMMANDS.contains(&"calibration_apply"), "calibration_apply must be a CONTROL command");
         for cmd in ["calibration_records_list", "calibration_record_get"] {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
+    }
+
+    // Camera features (#806 E-2, ABI 49): only the controller writes; any client reads.
+    #[test]
+    fn camera_feature_write_is_control_and_reads_are_open() {
+        assert!(CONTROL_COMMANDS.contains(&"camera_feature_write"), "a write changes the device");
+        for cmd in ["camera_feature_tree", "camera_feature_read"] {
+            assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+            assert!(mib_app_commands::dispatch::COMMANDS.contains(&cmd), "the server dispatches {cmd}");
         }
     }
 

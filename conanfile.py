@@ -7,7 +7,8 @@ class MibStudioQtDeps(ConanFile):
     # review_core: the dependency graph of YOFO Review's review core only
     # (plan 2026-10-01-standalone-review-app, ADR 0014) — mib_processing +
     # mib_review_core need spdlog, HDF5, OpenCV (core / imgproc / imgcodecs /
-    # videoio) and nlohmann_json; no Qt or SQLite. Libraries
+    # videoio), nlohmann_json and SQLite (the analysis host's workspace and
+    # recipe store, fold-in I/F); no Qt. Libraries
     # are static so the Tauri binary carries them and the DMG / installer
     # bundle no third-party dylibs or DLLs. Used by the macos-review-core and
     # windows-review-core presets:
@@ -47,12 +48,14 @@ class MibStudioQtDeps(ConanFile):
         self.requires("hdf5/1.14.6")
         self.requires("opencv/4.12.0")
         self.requires("nlohmann_json/3.11.3")
+        # mib_review_core links SqliteService (AnalysisHost, WorkspaceStore,
+        # RecipeProvider), so the review graph needs it too (static there).
+        self.requires("sqlite3/3.51.0")
         if self.options.review_core:
             return
 
         if self.options.with_qt:
             self.requires("qt/6.7.3")
-        self.requires("sqlite3/3.51.0")
 
         if self.settings.os == "Linux" and self.options.with_qt:
             self.requires("xkbcommon/1.6.0", override=True)

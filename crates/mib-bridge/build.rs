@@ -375,6 +375,7 @@ fn main() {
             println!("cargo:rustc-link-lib=static={lib}");
         }
 
+        println!("cargo:rustc-link-lib=dylib=sqlite3");
         if !review_only() {
             // sentry-native (CrashReporter): the backend-only preset builds it
             // as a static archive under _deps when MIB_USE_SENTRY is ON
@@ -389,7 +390,7 @@ fn main() {
             // libcurl: sentry-native's transport and the backend's own
             // MinidumpUploader (CMake links CURL::libcurl when found).
             println!("cargo:rustc-link-lib=dylib=curl");
-            println!("cargo:rustc-link-lib=dylib=sqlite3");
+
 
             // Aravis (MIB_ENABLE_ARAVIS=ON): the libraries pkg-config resolved for CMake.
             let cache = std::fs::read_to_string(build_dir.join("CMakeCache.txt")).unwrap_or_default();

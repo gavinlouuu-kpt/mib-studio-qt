@@ -1,0 +1,739 @@
+/* Layout of the opt-in workspace (#713). Components and colours come from @mib/ui; this file
+   only places them, with the kit's spacing tokens. Every selector is under .ws-shell. */
+.ws-shell {
+  height: 100%;
+  overflow: auto;
+}
+.ws-shell .ws-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-4);
+  padding: 0 var(--mib-space-6) var(--mib-space-6);
+}
+.ws-shell .ws-body--banner {
+  padding-top: var(--mib-space-4);
+  padding-bottom: 0;
+}
+.ws-shell .ws-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--mib-space-4);
+}
+.ws-shell .ws-note {
+  margin: 0;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}
+/* Cards keep their text inside them (#763 F10): a grid or flex item may shrink below its content
+   (min-width: 0), a fact's value takes the rest of the row and wraps, and a card's state chips (one
+   line in the kit) wrap inside the card. The label column stays as wide as its longest label, up
+   to 45% of the card. */
+.ws-shell .ws-grid > .mib-card,
+.ws-shell .mib-card,
+.ws-shell .mib-card__body {
+  min-width: 0;
+}
+.ws-shell .mib-facts {
+  grid-template-columns: fit-content(45%) minmax(0, 1fr);
+}
+.ws-shell .mib-facts__label,
+.ws-shell .mib-facts__value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ws-shell .mib-card__status .mib-chip,
+.ws-shell .mib-facts__value .mib-chip {
+  white-space: normal;
+  max-width: 100%;
+}
+.ws-shell .ws-gate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-1) var(--mib-space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+/* The raw gate id under its plain label, for matching the logs. */
+.ws-shell .ws-gate-id {
+  display: block;
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-mute);
+  overflow-wrap: anywhere;
+}
+.ws-shell .ws-gate-fix {
+  flex-basis: 100%;
+  min-width: 0;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}
+/* O2 Align (A3): the persistent image beside the quick controls; one column when narrow. */
+.ws-shell .ws-align {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(420px, 2fr);
+  gap: var(--mib-space-4);
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .ws-shell .ws-align {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-align__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-1);
+  margin-bottom: var(--mib-space-2);
+}
+.ws-shell .ws-align__viewport {
+  position: relative;
+  height: clamp(220px, 42vh, 520px);
+  background: var(--mib-color-tile);
+  border: 1px solid var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+  overflow: hidden;
+}
+.ws-shell .ws-align__viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+.ws-shell .ws-align__viewport canvas:focus-visible {
+  outline: 2px solid var(--mib-color-accent);
+  outline-offset: -2px;
+}
+.ws-shell .ws-align__hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--mib-space-4);
+  text-align: center;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+  pointer-events: none;
+}
+.ws-shell .ws-align__plots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--mib-space-4);
+  margin-top: var(--mib-space-2);
+}
+.ws-shell .ws-plot {
+  margin: 0;
+}
+.ws-shell .ws-plot figcaption {
+  margin-bottom: var(--mib-space-1);
+  font-size: var(--mib-font-size-sm);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-ink);
+}
+.ws-shell .ws-plot svg {
+  display: block;
+  width: 100%;
+  height: 72px;
+  background: var(--mib-color-tile);
+  border-radius: var(--mib-radius-sm);
+}
+/* Plots are measurements, not states: grey bars, the inspect blue for the profile line. */
+.ws-shell .ws-plot path {
+  fill: var(--mib-color-sub);
+}
+.ws-shell .ws-plot polyline {
+  fill: none;
+  stroke: var(--mib-color-inspect);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+/* Typed quick-control fields (app-local until the kit has an input component). */
+.ws-shell .ws-roi {
+  display: inline-grid;
+  grid-template-columns: repeat(2, auto);
+  gap: var(--mib-space-1) var(--mib-space-2);
+}
+/* Secondary facts under a readback, and the dash of a feature not writable here. */
+.ws-shell .ws-detail {
+  display: block;
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-field input {
+  width: 58px;
+  height: 24px;
+  padding: 0 4px;
+  font: inherit;
+  font-size: var(--mib-font-size-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--mib-color-ink);
+  border: 1px solid var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+}
+.ws-shell .ws-field input:disabled {
+  background: var(--mib-color-tile);
+  color: var(--mib-color-mute);
+}
+/* The quick-controls table keeps its column widths; long state chips wrap inside their cell. */
+.ws-shell .ws-align__controls .mib-table {
+  table-layout: fixed;
+}
+.ws-shell .ws-align__controls .mib-table .mib-chip {
+  white-space: normal;
+  max-width: 100%;
+}
+/* O3 Experiment · Plan (A5): format, sheet and identity side by side (the sheet widest), one
+   column when narrow; the Start card below. Text fields are app-local until the kit has one. */
+.ws-shell .ws-plan {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2.2fr) minmax(260px, 1.1fr);
+  gap: var(--mib-space-4);
+  align-items: start;
+}
+@media (max-width: 1200px) {
+  .ws-shell .ws-plan {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .ws-shell .ws-plan__sheet {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+}
+@media (max-width: 760px) {
+  .ws-shell .ws-plan {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-plan-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mib-space-2) var(--mib-space-3);
+  margin-top: var(--mib-space-3);
+}
+.ws-shell .ws-plan-form--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+.ws-shell .ws-plan-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ws-shell .ws-plan-field--wide {
+  grid-column: 1 / -1;
+}
+.ws-shell .ws-plan-field > label,
+.ws-shell .ws-plan-label {
+  font-size: var(--mib-font-size-xs);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-plan-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.6fr);
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-plan-field input,
+.ws-shell .ws-plan-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 28px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-ink);
+  background: var(--mib-color-card);
+  border: 1px solid var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+}
+.ws-shell .ws-plan-field textarea {
+  resize: vertical;
+}
+.ws-shell .ws-plan-field input::placeholder,
+.ws-shell .ws-plan-field textarea::placeholder {
+  color: var(--mib-color-mute);
+}
+.ws-shell .ws-plan-field input:disabled,
+.ws-shell .ws-plan-field textarea:disabled {
+  background: var(--mib-color-tile);
+  color: var(--mib-color-mute);
+}
+.ws-shell .ws-plan-field [aria-invalid="true"] {
+  border-color: var(--mib-color-blocked);
+}
+/* A refused value: the reason under the field, in the blocked state's colour; one line per issue
+   (#763 F21). */
+.ws-shell .ws-plan-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-blocked);
+}
+/* The sheet's issues in the Start block: one list item per issue. */
+.ws-shell .ws-issue-list {
+  margin: 0;
+  padding-left: var(--mib-space-4);
+}
+.ws-shell .ws-plan-kv {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) auto;
+  gap: var(--mib-space-1) var(--mib-space-2);
+  align-items: center;
+}
+.ws-shell .ws-plan-kv .ws-plan-issue {
+  grid-column: 1 / -1;
+}
+.ws-shell .ws-plan-operators {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-1);
+  margin-top: var(--mib-space-2);
+}
+.ws-shell .ws-plan-id {
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+/* The unavailable option's reason wraps inside the narrow format card (the kit chip is one line). */
+.ws-shell .ws-plan__format .mib-option__reason {
+  white-space: normal;
+  max-width: 100%;
+}
+/* The sheet's preview row keeps to the card: long values wrap, never cut off. */
+.ws-shell .ws-plan__sheet .mib-table {
+  width: 100%;
+}
+.ws-shell .ws-plan__sheet .mib-table__cell {
+  overflow-wrap: anywhere;
+}
+/* O3 sample queue (A5): the sheet takes the wide column (it holds every sample, its state and its
+   file), format and identity stack beside it; one column when narrow. */
+.ws-shell .ws-plan--queue {
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr);
+}
+.ws-shell .ws-plan--queue .ws-plan__format { grid-column: 1; grid-row: 1; }
+.ws-shell .ws-plan--queue .ws-plan__identity { grid-column: 1; grid-row: 2; }
+.ws-shell .ws-plan--queue .ws-plan__sheet { grid-column: 2; grid-row: 1 / span 2; }
+@media (max-width: 1200px) {
+  .ws-shell .ws-plan--queue { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .ws-shell .ws-plan--queue .ws-plan__sheet { grid-column: 1 / -1; grid-row: 1; }
+  .ws-shell .ws-plan--queue .ws-plan__format { grid-column: 1; grid-row: 2; }
+  .ws-shell .ws-plan--queue .ws-plan__identity { grid-column: 2; grid-row: 2; }
+}
+@media (max-width: 760px) {
+  .ws-shell .ws-plan--queue { grid-template-columns: minmax(0, 1fr); }
+  .ws-shell .ws-plan--queue .ws-plan__format,
+  .ws-shell .ws-plan--queue .ws-plan__identity,
+  .ws-shell .ws-plan--queue .ws-plan__sheet { grid-column: 1; grid-row: auto; }
+}
+/* The queue card: the current row's lifecycle beside its step (notice, progress, blocks). */
+.ws-shell .ws-queue-body {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: var(--mib-space-4);
+  align-items: start;
+}
+.ws-shell .ws-queue-now {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  min-width: 0;
+}
+@media (max-width: 760px) {
+  .ws-shell .ws-queue-body { grid-template-columns: minmax(0, 1fr); }
+}
+/* O3 sample queue (A5): the row's state chips and order buttons stay on one line where they fit;
+   the file shows its name, the full path as a tooltip. */
+.ws-shell .ws-queue-state,
+.ws-shell .ws-queue-order {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-1);
+  align-items: center;
+  overflow-wrap: normal;
+}
+.ws-shell .ws-queue-order {
+  flex-wrap: nowrap;
+}
+.ws-shell .ws-queue-file {
+  font-variant-numeric: tabular-nums;
+}
+.ws-shell .ws-queue-sheet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-2);
+  margin-top: var(--mib-space-2);
+}
+.ws-shell .ws-queue-editing {
+  margin: var(--mib-space-3) 0 0;
+  font-size: var(--mib-font-size-sm);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-ink);
+}
+/* The current row's lifecycle above its step notice; a flagged step carries its kit chip. */
+.ws-shell .ws-queue-lifecycle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-1);
+}
+.ws-shell .ws-queue-step {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-2);
+}
+/* O4 Experiment · Live (A6b), as the board: live cells beside the scatter; the pinned cell beside
+   the run status; the sample queue beside the run lifecycle. One column when narrow. */
+.ws-shell .ws-live__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--mib-space-4);
+  align-items: stretch;
+}
+.ws-shell .ws-live__row--wide {
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+}
+@media (max-width: 1100px) {
+  .ws-shell .ws-live__row,
+  .ws-shell .ws-live__row--wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-live__layers {
+  display: inline-flex;
+  gap: var(--mib-space-1);
+}
+.ws-shell .ws-live__frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  margin-bottom: var(--mib-space-3);
+  border: 1px solid var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+  background: var(--mib-color-tile);
+  overflow: hidden;
+}
+.ws-shell .ws-live__canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+.ws-shell .ws-live__frame-label {
+  position: absolute;
+  left: var(--mib-space-2);
+  bottom: var(--mib-space-2);
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--mib-color-card);
+  font-size: var(--mib-font-size-xs);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-live__chart {
+  overflow-x: auto;
+}
+.ws-shell .ws-live__chart--pick svg {
+  cursor: crosshair;
+}
+.ws-shell .ws-live__pin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--mib-space-4);
+}
+.ws-shell .ws-live__pin > .mib-facts {
+  flex: 1;
+  min-width: 220px;
+}
+/* A pin without an image: the reason in the crop's place, never a picture. */
+.ws-shell .ws-live__noimage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-1);
+  box-sizing: border-box;
+  padding: var(--mib-space-2);
+  border: 1px dashed var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+  background: var(--mib-color-tile);
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-live__noimage strong {
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-ink);
+}
+.ws-shell .ws-live__file {
+  display: block;
+  margin-bottom: var(--mib-space-3);
+  font-size: var(--mib-font-size-md);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-ink);
+  overflow-wrap: anywhere;
+}
+.ws-shell .ws-live__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: var(--mib-space-3);
+}
+.ws-shell .ws-live__samples {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-live__sample {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  padding: var(--mib-space-2) var(--mib-space-3);
+  border: 1px solid var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+  font-size: var(--mib-font-size-sm);
+}
+/* A tile's state chip wraps inside the tile ("Finalized · file closed"; #763 F10, F14). */
+.ws-shell .ws-live__sample {
+  min-width: 0;
+}
+.ws-shell .ws-live__sample .mib-chip {
+  align-self: flex-start;
+  max-width: 100%;
+  white-space: normal;
+}
+.ws-shell .ws-live__sample--current {
+  border-color: var(--mib-color-accent);
+  background: var(--mib-color-accent-bg);
+}
+.ws-shell .ws-live__sample-name {
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-ink);
+}
+.ws-shell .ws-live__lifecycle-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-2);
+  margin-top: var(--mib-space-2);
+}
+/* The pinned cell's viewer: a modal over the workspace (a second window is not used: see the PR). */
+.ws-shell .ws-live__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--mib-space-6);
+  background: rgba(27, 38, 38, 0.45);
+}
+.ws-shell .ws-live__viewer {
+  max-width: min(760px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  outline: none;
+}
+.ws-shell .ws-live__pin--large > .mib-facts {
+  min-width: 260px;
+}
+
+/* Prepare's Calibration card (#716 A4b): full width in the card grid; its records stack. */
+.ws-shell .ws-grid > .ws-card--wide {
+  grid-column: 1 / -1;
+}
+.ws-shell .ws-cal-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  margin-top: var(--mib-space-3);
+  min-width: 0;
+}
+.ws-shell .ws-cal-heading {
+  margin: 0;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-cal-record {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  padding-top: var(--mib-space-2);
+  border-top: 1px solid var(--mib-color-line);
+  min-width: 0;
+}
+.ws-shell .ws-cal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-2);
+}
+
+/* ---- Experiment · O5 Run summary and O6 Quick look (#716 A7b, own sub-views in A7c) ---- */
+.ws-shell .ws-ql__board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--mib-space-3);
+  align-items: start;
+}
+.ws-shell .ws-ql__tiles {
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+}
+.ws-shell .ws-ql__run .mib-card__status {
+  flex-wrap: wrap;
+}
+.ws-shell .ws-ql__facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--mib-space-4);
+  margin-top: var(--mib-space-3);
+}
+@media (max-width: 1100px) {
+  .ws-shell .ws-ql__facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-ql__decisions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  margin-top: var(--mib-space-4);
+  padding-top: var(--mib-space-3);
+  border-top: 1px solid var(--mib-color-line);
+}
+.ws-shell .ws-ql__decision-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-ql__reason {
+  margin: 0;
+}
+
+/* O5 Run summary (A7c, board O5): Outcome · Counts · Provenance, then Snapshot · Next. */
+.ws-shell .ws-o5__row {
+  display: grid;
+  gap: var(--mib-space-3);
+  align-items: start;
+}
+.ws-shell .ws-o5__row--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.ws-shell .ws-o5__row--two {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+@media (max-width: 1100px) {
+  .ws-shell .ws-o5__row--three,
+  .ws-shell .ws-o5__row--two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-o5__pick {
+  display: flex;
+  align-items: center;
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-o5__checklist {
+  list-style: none;
+  margin: 0 0 var(--mib-space-2);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-o5__step {
+  display: flex;
+  gap: var(--mib-space-2);
+  align-items: flex-start;
+}
+.ws-shell .ws-o5__step-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ws-shell .ws-o5__mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  border: 1px solid var(--mib-color-line);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-o5__step--done .ws-o5__mark {
+  background: var(--mib-color-confirmed);
+  border-color: var(--mib-color-confirmed);
+  color: var(--mib-color-on-dark);
+}
+.ws-shell .ws-o5__step--current .ws-o5__mark {
+  border-color: var(--mib-color-confirmed);
+  color: var(--mib-color-confirmed);
+}
+.ws-shell .ws-o5__step--unknown .ws-o5__mark {
+  border-style: dashed;
+}
+.ws-shell .ws-o5__counts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-o5__next-name {
+  margin: 0;
+  font-weight: 600;
+}
+.ws-shell .ws-o5__calibration {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  margin-top: var(--mib-space-3);
+  padding: var(--mib-space-3);
+  background: var(--mib-color-tile);
+  border-radius: 4px;
+}
+
+/* O6 Quick look (A7c, board O6): placeholders, mini scatters, overlay beside "Refine the experiment". */
+.ws-shell .ws-ql__run--placeholder {
+  opacity: 0.75;
+}
+.ws-shell .ws-ql__dash {
+  margin: 0;
+  font-size: 20px;
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-ql__thumb {
+  display: block;
+  margin-bottom: var(--mib-space-2);
+}
+.ws-shell .ws-o6__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
+  gap: var(--mib-space-3);
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .ws-shell .ws-o6__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-o6__decisions {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
+  gap: var(--mib-space-2) var(--mib-space-3);
+  align-items: center;
+}
+.ws-shell .ws-o6__pair {
+  display: inline-flex;
+  gap: var(--mib-space-2);
+  align-items: center;
+}

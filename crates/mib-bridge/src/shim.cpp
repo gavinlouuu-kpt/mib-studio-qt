@@ -10,6 +10,8 @@
 #include "backend/app/BackendFacade.h"
 #include "backend/app/CalibrationStore.h"
 #include "backend/app/MethodApply.h"
+#include "backend/camera/features/FeatureJson.h"
+#include "backend/camera/features/FeatureTree.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/recording/RunStartIdentity.h"
 #include "backend/review/RunStatistics.h"
@@ -265,6 +267,11 @@ static_assert(backend::review::kRunStatisticsOverlayMaxPoints == 2000);
 static_assert(backend::review::kRunStatisticsLowN == 200);
 static_assert(backend::review::kRunStatisticsCacheEntries == 64);
 static_assert(backend::review::kRunStatisticsSchemaVersion == 1);
+// ABI 49 (#806 E-1/E-2): camera_features (bridge-contract.json; camera/features/FeatureJson.h, FeatureTree.h).
+static_assert(::camera::features::kFeatureRequestMaxBytes == 16384);
+static_assert(::camera::features::kFeatureSchemaVersion == 1);
+static_assert(::camera::features::TreeLimits{}.maxCategoriesPerModule == 2048);
+static_assert(::camera::features::TreeLimits{}.maxFeaturesPerModule == 8192);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Complete) == 0);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IntentionallyPartial) == 1);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IncompleteLoss) == 2);
@@ -1379,6 +1386,20 @@ BridgeReviewMetadata BackendBridge::fetch_review_metadata() {
     return out;
 }
 
+rust::String BackendBridge::analysis_read(rust::Str request) {
+    return rust::String(impl_->facade.analysisRequestJson(std::string(request), false));
+}
+rust::String BackendBridge::analysis_write(rust::Str request) {
+    return rust::String(impl_->facade.analysisRequestJson(std::string(request), true));
+}
+rust::String BackendBridge::fetch_live_evidence() {
+    return rust::String(impl_->facade.fetchLiveEvidenceJson());
+}
+
+rust::String BackendBridge::analyze_population(rust::Str request_json) {
+    return rust::String(impl_->facade.analyzePopulationJson(std::string(request_json)));
+}
+
 BridgeReviewMetricsPage BackendBridge::fetch_review_metrics_page(bool valid,
                                                                  std::uint64_t offset,
                                                                  std::uint64_t count) {
@@ -1618,6 +1639,7 @@ BridgeDiscoveryStart toBridge(const backend::bridge::BackendDiscoveryStart& in) 
     out.job_id = in.jobId;
     out.rejection = static_cast<std::uint32_t>(in.rejection);
     out.reason = rust::String(in.reason);
+    out.instance = rust::String(in.instance);
     return out;
 }
 
@@ -1652,8 +1674,8 @@ BridgeDiscoveryStart BackendBridge::start_camera_discovery() {
     return toBridge(impl_->facade.startDeviceDiscovery(req));
 }
 
-bool BackendBridge::cancel_device_discovery(std::uint64_t job_id) {
-    return impl_->facade.cancelDeviceDiscovery(job_id);
+bool BackendBridge::cancel_device_discovery(std::uint64_t job_id, rust::Str instance) {
+    return impl_->facade.cancelDeviceDiscovery(job_id, std::string(instance));
 }
 
 // ---- Central profile registry (schema v25, #398) ----
@@ -1974,10 +1996,15 @@ BridgeRegistryJob BackendBridge::fetch_registry_job(std::uint64_t job_id) {
     }
 }
 
-BridgeDiscoverySnapshot BackendBridge::fetch_device_discovery(std::uint64_t job_id) {
+BridgeDiscoverySnapshot BackendBridge::fetch_device_discovery(std::uint64_t job_id,
+                                                              rust::Str instance) {
     BridgeDiscoverySnapshot out{};
     backend::bridge::BackendDiscoverySnapshot snapshot;
-    if (!impl_->facade.fetchDeviceDiscovery(job_id, snapshot)) {
+    const bool found = impl_->facade.fetchDeviceDiscovery(job_id, snapshot, std::string(instance));
+    out.instance = rust::String(snapshot.instance);
+    out.stale = snapshot.stale;
+    // A stale reply (E01) still carries its reason in errors; an unknown job does not.
+    if (!found && !snapshot.stale) {
         out.valid = false;
         return out;
     }
@@ -2390,6 +2417,17 @@ rust::String BackendBridge::monitoring_cell_pin(std::uint64_t expected_start_gen
 }
 
 // ABI 42 (#716 A4a): calibration records. JSON documents (bridge-contract.json calibration_records).
+// ABI 50 (#807 I02): the native recipe provider (bridge-contract.json recipes).
+rust::String BackendBridge::recipe_request(rust::Str request, bool write) {
+    try { return rust::String(impl_->facade.recipeRequestJson(std::string(request), write)); }
+    catch (...) { return rust::String(R"({"status":"storage","message":"Recipe reply failed; retry the same command"})"); }
+}
+
+rust::String BackendBridge::workspace_request(rust::Str request, bool write) {
+    try { return rust::String(impl_->facade.workspaceRequestJson(std::string(request), write)); }
+    catch (...) { return rust::String(R"({"status":"storage","message":"Workspace reply failed; retry the same command"})"); }
+}
+
 rust::String BackendBridge::calibration_records_list() {
     try {
         return rust::String(impl_->facade.calibrationRecordsListJson());
@@ -2422,6 +2460,46 @@ rust::String BackendBridge::run_quick_look(rust::Str request_json) {
         return rust::String(backend::review::runQuickLookRefusedJson(std::string("run_quick_look failed: ") + e.what()));
     } catch (...) {
         return rust::String(backend::review::runQuickLookRefusedJson("run_quick_look failed"));
+    }
+}
+
+// ABI 49 (#806 E-1/E-2): the camera's GenApi node map (bridge-contract.json camera_features).
+// JSON documents; tree and read are reads, write is a control command on the server. The tree
+// is a job (camera_features.job): start and fetch return at once, the walk runs on the
+// facade's worker, so the caller's bridge lock is never held for it.
+std::uint64_t BackendBridge::camera_feature_tree_start(rust::Str request_json) {
+    // Never throws to Rust: a failure to start is a job whose reply is the refusal.
+    return impl_->facade.startCameraFeatureTree(std::string(request_json));
+}
+
+rust::String BackendBridge::camera_feature_tree_fetch(std::uint64_t job_id) {
+    try {
+        return rust::String(impl_->facade.fetchCameraFeatureTree(job_id));
+    } catch (const std::exception& e) {
+        return rust::String(::camera::features::featureRefusedJson(std::string("camera_feature_tree failed: ") + e.what()));
+    } catch (...) {
+        return rust::String(::camera::features::featureRefusedJson("camera_feature_tree failed"));
+    }
+}
+
+rust::String BackendBridge::camera_feature_read(rust::Str request_json) {
+    try {
+        return rust::String(impl_->facade.cameraFeatureReadJson(std::string(request_json)));
+    } catch (const std::exception& e) {
+        return rust::String(::camera::features::featureRefusedJson(std::string("camera_feature_read failed: ") + e.what()));
+    } catch (...) {
+        return rust::String(::camera::features::featureRefusedJson("camera_feature_read failed"));
+    }
+}
+
+rust::String BackendBridge::camera_feature_write(rust::Str request_json) {
+    try {
+        return rust::String(impl_->facade.cameraFeatureWriteJson(std::string(request_json)));
+    } catch (const std::exception& e) {
+        // The facade catches inside the guarded write; an exception here never follows a submit.
+        return rust::String(::camera::features::featureRefusedJson(std::string("camera_feature_write failed: ") + e.what()));
+    } catch (...) {
+        return rust::String(::camera::features::featureRefusedJson("camera_feature_write failed"));
     }
 }
 
@@ -2706,12 +2784,16 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // the command result and experiment_stop's expected start generation (#741, stop
 // outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
 // run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6); v42 calibration records
-// (#716 A4a); v43 the readiness report's method_calibration (#776). All additive over v1 except that removal (ADR
-// 0003/0004). Must match
+// (#716 A4a); v43 the readiness report's method_calibration (#776); v44 run_quick_look (#716 A7a); v49 the
+// camera's GenApi node map, camera_feature_tree_start / camera_feature_tree_fetch (the tree as a job) /
+// camera_feature_read / camera_feature_write (#806 E-1/E-2; 47 is
+// the F track's, 48 the I track's). All additive over v1 except that removal (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 44; }
+std::uint32_t bridge_abi_version() {
+    return 50;
+}
 
 } // namespace mib_bridge
 

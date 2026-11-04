@@ -104,6 +104,30 @@ void TriggerService::start() {
     SPDLOG_INFO("TriggerService started");
 }
 
+bool TriggerService::runSerializedWithPulses(const std::function<void()>& fn, std::string& reason) {
+    // pulseMutex_ is held by the trigger thread across both edges of a pulse:
+    // running `fn` under it means a feature operation and a pulse never
+    // interleave. Refuse only when a pulse is pending or imminent, so a node-map
+    // call never delays one that is waiting.
+    std::lock_guard<std::mutex> pulseLock(pulseMutex_);
+    bool queued = false;
+    {
+        std::lock_guard<std::mutex> lk(triggerMutex_);
+        queued = !pendingRequests_.empty();
+    }
+    if (queued || firing_.load()) {
+        reason = "Camera feature access is refused while sort pulses are pending: a node-map call "
+                 "would delay them.";
+        return false;
+    }
+    if (periodicRunning_.load()) {
+        reason = "Camera feature access is refused while periodic test pulses are running.";
+        return false;
+    }
+    fn();
+    return true;
+}
+
 void TriggerService::stop() {
     // The periodic test generator feeds this service; stop it first so no
     // synthetic pulses arrive during (or after) teardown.
@@ -340,7 +364,13 @@ void TriggerService::triggerLoop() {
             if (!running_.load()) break;
             pending = pendingRequests_.front();
             pendingRequests_.pop_front();
+            firing_.store(true); // under triggerMutex_: never a gap with the queue check
         }
+        // Clears firing_ when this request's pulse (or drop) is done, whatever path ends it.
+        struct FiringDone {
+            std::atomic<bool>& f;
+            ~FiringDone() { f.store(false); }
+        } firingDone{firing_};
 
         // Own the camera for the whole pulse: setCamera() blocks on this
         // mutex, so the pointer loaded below stays valid until we release it.

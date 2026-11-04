@@ -21,6 +21,8 @@ export interface FrameViewerProps {
   roiOverlay: boolean;
   /** The frame's metrics row, when loaded. */
   row: ReviewRow | null;
+  /** The run had no E-LUT loaded: its stored E is not shown as a value (#774). */
+  eNotComputed?: boolean;
   onIndexChange: (index: number) => void;
   onClose: () => void;
   log: (line: string) => void;
@@ -134,7 +136,7 @@ export function FrameViewer(props: FrameViewerProps) {
         {row && (
           <div className="viewer-metrics mono">
             area {metricNumber(row.area, 1)} px² ({metricNumber(row.area_um2, 2)} µm²) · deformability {metricNumber(row.deformability, 4)} · ring
-            ratio {metricNumber(row.ring_ratio, 3)} · E {metricNumber(row.youngs_modulus, 2)} kPa · object {row.object_id} · track {row.track_id}
+            ratio {metricNumber(row.ring_ratio, 3)} · E {props.eNotComputed ? "not computed (no E-LUT loaded)" : `${metricNumber(row.youngs_modulus, 2)} kPa`} · object {row.object_id} · track {row.track_id}
             {row.target_group ? " · target" : ""}
           </div>
         )}

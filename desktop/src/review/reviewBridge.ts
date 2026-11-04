@@ -1,3 +1,4 @@
+import type { PopulationResult } from "./PopulationAnalysis";
 // Typed client for the review bridge commands (src-tauri/src/review.rs;
 // ADR 0014, plan 2026-10-01-standalone-review-app). YOFO Review calls these
 // and nothing else for review; MIB Studio's Review tab still uses its own
@@ -257,9 +258,10 @@ export interface ReviewReprocess {
   emodulus_recomputed: boolean;
   /** Review ABI 4 (#764): the E-LUT used, in words (lut id, revision, the
    * hash's first 12 hex digits), and its full sha256; `null` when E was not
-   * recomputed. */
-  emodulus_lut: string | null;
-  emodulus_lut_sha256: string | null;
+   * recomputed (`reprocessRecord` maps the bridge's "" to `null`).
+   * `undefined`: a backend before review ABI 4, which does not name it. */
+  emodulus_lut?: string | null;
+  emodulus_lut_sha256?: string | null;
   stored: ReviewRow | null;
   reprocessed: ReviewRow[];
   match_index: number | null;
@@ -354,6 +356,11 @@ async function command(name: string, args?: Record<string, unknown>): Promise<Re
 }
 
 export const reviewBridge = {
+  analysisJob: (request: Record<string, unknown>) => invoke<Record<string, any>>("review_analysis_job", { request }),
+  analysisRead: (request: Record<string, unknown>) => invoke<Record<string, any>>("review_analysis_read", { request }),
+  analysisWrite: (request: Record<string, unknown>) => invoke<Record<string, any>>("review_analysis_write", { request }),
+  analyzePopulation: (request: import("./PopulationAnalysis").PopulationRequest) =>
+    invoke<PopulationResult>("review_analyze_population", { request }),
   abiVersion: () => invoke<number>("review_abi_version"),
   /** Isoelastic reference curves embedded in the app (descending E). */
   isoelasticCurves: () =>
@@ -420,6 +427,10 @@ export const reviewBridge = {
       stored: r.ok ? (r.stored ?? null) : null,
       reprocessed: r.reprocessed ?? [],
       match_index: r.match_index ?? null,
+      // Review ABI 4 (#764): absent (undefined) from an older backend, which
+      // does not name the E-LUT; "" or null when E was not recomputed.
+      emodulus_lut: r.emodulus_lut === undefined ? undefined : r.emodulus_lut || null,
+      emodulus_lut_sha256: r.emodulus_lut_sha256 === undefined ? undefined : r.emodulus_lut_sha256 || null,
     };
   },
   frame: (dataset: number, index: number | string, overlay: OverlayMode = OVERLAY.None, roiOverlay = false) =>

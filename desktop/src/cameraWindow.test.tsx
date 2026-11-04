@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CameraGeometry } from "./bridge";
-import { restoredRunWindow, runModeBlockReason, useCameraWindow } from "./cameraWindow";
+import { classicModeNotice, restoredRunWindow, runModeBlockReason, useCameraWindow } from "./cameraWindow";
 
 const saveCameraRoi = vi.fn(async (_x: number, _y: number, _w: number, _h: number) => ({ ok: true, message: "ROI saved" }));
 vi.mock("./bridge", () => ({ bridge: { saveCameraRoi: (x: number, y: number, w: number, h: number) => saveCameraRoi(x, y, w, h) } }));
@@ -123,5 +123,35 @@ describe("saving the window on release", () => {
     act(() => api.onPointerDown(fakeEvent(150, 150)));
     await act(async () => api.onPointerUp());
     expect(saveCameraRoi).not.toHaveBeenCalled();
+  });
+});
+
+describe("classicModeNotice: the classic tab after the workspace changed the mode (#716 A3)", () => {
+  const base = { stale: true, tab: "experiment", instrumentModes: false, instrumentMode: null, geometry: geometry({ overview: true }),
+    windowPlaced: true, expActive: false, runFrozen: false };
+
+  it("desktop: the full sensor on the Experiment tab offers the experiment window", () => {
+    expect(classicModeNotice(base)).toEqual({ actual: "the full sensor", expected: "the experiment window", action: "Show the experiment window", blocked: "" });
+    expect(classicModeNotice({ ...base, tab: "overview" })).toBeNull(); // Camera & Alignment uses the full sensor
+    expect(classicModeNotice({ ...base, tab: "overview", geometry: geometry({ overview: false }) })!.action).toBe("Show the full sensor");
+    expect(classicModeNotice({ ...base, expActive: true })!.blocked).toBe("a run is active");
+  });
+
+  it("is shown only when the workspace changed the mode, only on the tabs that use one, only on a mismatch", () => {
+    expect(classicModeNotice({ ...base, stale: false })).toBeNull();
+    expect(classicModeNotice({ ...base, tab: "connect" })).toBeNull();
+    expect(classicModeNotice({ ...base, tab: "review" })).toBeNull();
+    expect(classicModeNotice({ ...base, geometry: geometry({ overview: false }) })).toBeNull();
+    expect(classicModeNotice({ ...base, geometry: geometry({ supported: false }) })).toBeNull();
+  });
+
+  it("PZ7035: Align on the Experiment tab offers Run once the window is placed", () => {
+    const pz = { ...base, instrumentModes: true, instrumentMode: "align" };
+    expect(classicModeNotice(pz)).toEqual({ actual: "Align", expected: "Run", action: "Switch to Run", blocked: "" });
+    expect(classicModeNotice({ ...pz, windowPlaced: false })).toBeNull(); // RunWindowNotice asks for the window instead
+    expect(classicModeNotice({ ...pz, instrumentMode: "run" })).toBeNull();
+    expect(classicModeNotice({ ...pz, instrumentMode: null })).toBeNull();
+    expect(classicModeNotice({ ...pz, tab: "overview", instrumentMode: "run" })).toMatchObject({ action: "Switch to Align" });
+    expect(classicModeNotice({ ...pz, tab: "overview", instrumentMode: "run", runFrozen: true })!.blocked).toContain("Resume Run");
   });
 });

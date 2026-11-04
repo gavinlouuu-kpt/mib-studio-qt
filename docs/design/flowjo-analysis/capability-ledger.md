@@ -1,0 +1,469 @@
+# FlowJo capability acceptance ledger
+
+Status: native composition and bounded real-engine worker implemented; full integration incomplete. No F capability is fully accepted.
+
+**Engine (2026-11-02, decision D3, ADR 0016 `docs/decisions/0016-native-analysis-authority.md`).**
+The native C++ analysis code is the single production authority for F02–F11 and F13 in
+every host. Cytoflow 1.3.2 and FlowKit 1.3.2 are CI comparators, not bundled. The
+supervised worker runs only t-SNE (F07) with scikit-learn 1.9.1 (engine id
+`sklearn-tsne-1.9.1`, checked by `crates/mib-analysis-worker`). Rows below that say
+"real Cytoflow" describe parity evidence, not the production path. See the F-3 section.
+
+Backend evidence base: `0a58e201`; UI/design base: `71337496` (freshly fetched branch heads, not a reset). Paths under `tests/review/` unless otherwise shown. Test names below are inspected existing evidence, **not tests rerun in this audit**. Original board IDs and research hashes: [catalogue](evidence-catalogue.json). Each FJ maps to the corresponding #523 guide/research package; board coverage supplements rather than replaces FJ requirements.
+
+| ID / research | Original boards | Existing code / PR / test | Disposition | Owned implementation package | Remaining acceptance |
+|---|---|---|---|---|---|
+| F01 / FJ01 | 13,15,16 | ReviewSession / ReviewTypes::RunIdentity; UI open/libraryModel.ts; review_run_identity_test.cpp; #746/#753 | extend | #523 A01/A02,FJ01; #808 coordination | Verified relink/fingerprints, labels/units, metadata editing and deduplicated groups absent. |
+| F02 / FJ02 | 11 | RunStatistics descriptive flags; processing validity; review_run_statistics_test.cpp; #786 | missing | #523 A03,FJ02; #808 coordination | No persisted good/bad/unknown scientific QC graph; descriptive flags are not QC qualification. |
+| F03 / FJ03 | 11 | SourceEModulusLut preserves mechanics provenance (not compensation); review_source_elut_test.cpp; #764/#783 | missing | #523 A03,FJ03; #808 coordination | Compensation controls, estimation/applicability and ordered transforms absent. |
+| F04 / FJ04 | 01,12,16 | Processing target predicate and EModulusLut; review charts; review_charts_json_test.cpp | restore | #523 A02/A03/A04,FJ04; #808 coordination | Native tri-state Boolean/parent/QC composition and inclusive scalar predicates now tested; bounded population DAG now tested; persisted full plans, overrides/resync and reversible edits remain; sort target is not the analysis authority. |
+| F05 / FJ05 | 10 | review/charts/ChartsView.tsx and chartData.ts; review/charts/charts.test.ts; #801 | extend | #523 FJ05; #808 coordination | Saved revision-bound gallery/PlotSpec and bounded scientific queries absent. |
+| F06 / FJ06 | 02,17,18 | ReviewSession::fetchImage, ThumbnailGrid, inspectModel/packetCrop; review_inspect_test.cpp; reviewIdentity.test.ts; #757/#774 | extend | #523 A01,FJ06; #808 coordination | Existing record/image inspection; population membership, durable EventRef mapping and live captured asset retention absent. |
+| F07 / FJ07 | none: FJ07 research | No production embedding adapter found; No acceptance test found | missing | #523 A03,FJ07; #808 coordination | Seeded embedding artifacts, exact event map, subsampling policy and repeatability absent. |
+| F08 / FJ08 | 01 | RunStatistics.cpp exact descriptive run medians; review_run_statistics_test.cpp; #786 | extend | #523 A03,FJ08; #808 coordination | No reusable population tables, CV/percentile definitions or revision-bound table export; retain quick-look authority. |
+| F09 / FJ09 | 03,13 | RunStatistics deltas; #314 comparison specification; review_run_statistics_test.cpp; #801 | restore | #523 S02,FJ09; #808 coordination + #314 | Endpoint compatibility/design/weighting/fits missing; R5 unscheduled in old plan. |
+| F10 / FJ10 | 09 | ExportEngine / ReviewJobs batch export; review_export_engine_test.cpp; #802 | missing | #523 FJ10; #808 coordination | Existing batch file export is not saved report composition/batching. |
+| F11 / FJ11 | 01,10 | ReviewCharts histogram display; review_charts_json_test.cpp; review/charts/charts.test.ts | extend | #523 FJ11; #808 coordination | Saved multi-layer OverlaySpec/normalization/offsets with independent numeric semantics absent. |
+| F12 / FJ12 | 11,16 | Existing review UI state and settings; source files read-only; review_session_test.cpp | missing | #523 A02,FJ12; #808 coordination | No portable analysis manifest, revisioned undo/redo, recovery/relink or preference precedence implementation. |
+| F13 | 05,06,17,18 | MonitoringCellStore for retained images, not unbiased event history; monitoring cell tests; #749 | missing | #523 L01; #808 coordination | No immutable unbiased metrics snapshots/watermarks; HDF5 reader/writer exclusion blocks naive reuse. |
+| F14 | 04,07,08,14,19,20 | RunStartIdentity/method provenance; #314 research loop; review_run_identity_test.cpp | restore | #523 S01/S02/S03,E01; #808 coordination + #314 | Pinned references/findings/next-run evidence linkage absent; existing methods retain apply authority. |
+| F15 | FJ interchange research | FcsWriter.cpp + HdfExportService; tests/recording/fcs_writer_test.cpp; scripts/test_fcs_flowio.py; #520 | extend | #523 I01 / #553; #808 coordination | Native per-detection export exists; FCS import, GatingML, React export and qualified per-cell policy missing. |
+| F16 | 15 | ReviewJobs export/processing lanes; safe Reanalysis publication; review_jobs_lanes_test.cpp; review_reanalysis_test.cpp; #742 | extend | #523 A01/A02/A03; #808 coordination | Unix Cytoflow process supervisor, revision/key acceptance and atomic private terminal journal implemented and tested. Windows supervision, workspace integration, scheduling UI and distribution remain. |
+
+## Acceptance status
+All 16 rows remain open. The initial audit recovered requirements and reuse. The runnable headless batch module now demonstrates real Cytoflow + native scalar composition and fresh-process terminal reopen on a synthetic immutable fixture; it does not prove recording/live/renderer integration. Missing tests/features are obligations, not waived scope. The first two-recording milestone and complete F01–F16 acceptance are separately pending.
+
+## Research limits
+R01–R07 are static/continuation evidence, including incomplete renderer/native edges. R08–R10 are version-specific historical Windows 10.8.1 evidence: 229,585 imported events, 190,705 in one rectangle, two 4,096-bin exports. No boundary events occurred, so that fixture does not prove inclusive boundary behavior. Saved workspace parsing is not an independent reopen test. Exact raw medians differ from histogram-derived medians. No FlowJo 11 numerical parity claim.
+
+The historical Penpot inventory has 20 boards, 214 interactions and three flows. Live pages projection pins revision 23/version 0 and 5,011 shapes only; it omits prototypes and cannot revalidate those 214 interactions. No Penpot edits or vendor source/assets were copied.
+
+## Native/worker slice evidence (2026-10-22)
+
+`analysis.population` and `analysis.graph`: normal and ASan/UBSan pass. Python real-engine adapter: 8 tests pass. Rust host/journal: 6 tests pass including the normally ignored real-engine test. Fresh-process module query reproduces `true, unknown, unknown, false` by exact source/set/row keys. Commands, limits and fixture are in [module README](../../../tools/flowjo_acceptance/README.md). Historical bare-engine qualification remains distinct and intentionally red for its two adapter-required cases. Remote [analysis CI](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/39762481872) passes at `1278cfe5`, including native sanitizers, host/journal checks, clean pinned engine build and real-engine adapter tests. This is not a claim all repository CI is green.
+
+## Production integration delta (2026-10-23)
+
+The [production API](production-api.md) is implemented in the real Studio/Review
+bridges, not a replacement UI. Acceptance remains per-row, not inferred from a
+successful checkpoint:
+
+| Rows | Implemented and verified delta | Still open |
+|---|---|---|
+| F01/F12 | Full-file SHA256 (64 MiB budget), source mismatch refusal, SQLite immutable CAS revisions, receipt replay/restart/rollback, append-only restore, client pending-command journal | Scalable fingerprints, portable manifest/import/relink workflow, groups/metadata/preferences |
+| F04 | Native persisted interval/Boolean DAG, exact revision evaluation, raw nullable reductions | Full interactive gate editing, per-source overrides/resync and QC strategy graph |
+| F05/F06 | Fingerprint-fenced selected gallery with exact event keys, real stored thumbnails, 12/page | Saved PlotSpec; E retained images require exact provider asset locators (currently absent) |
+| F13 | Actual E producer integration, immutable bounded lease snapshots, batch watermark/coverage preservation, live-run/archive parity | Retained live application snapshots across advancing source; hardware EGrabber qualification |
+| F14 | Exact pinned plan lookup/evaluation and method triple lookup; absent compatibility stays unknown; no implicit apply | Full findings/endpoint/next-run evidence linkage and comparison design |
+| F16 | Production app scheduler, native source freeze, real Cytoflow polygon AND graph eligibility, cancel/reap/join, durable query/reconnect/reopen | Windows process supervision and distribution qualification; other engines/operations |
+
+F02/F03/F07/F08/F09/F10/F11/F15 retain their original obligations above. No scientific
+QC, compensation, embedding, report or interchange capability is accepted merely
+because source persistence/jobs now exist.
+
+Observed native tests: producer/archive parity and source fencing; strategy host
+CAS/fault/restart; shared store/host tests; Review source concurrency. Eight Review
+bridge tests pass including saved strategy reopen and gallery key parity. Ten UI
+tests pass including journal failure and lost-reply recovery. Real Cytoflow worker
+six tests and application scheduler two tests pass. Tailnet production WebSocket
+round trip: 10 selected, mean 104.6, 10 matching thumbnail keys and real-engine 10
+selected on the synthetic file. Browser automation is currently unavailable (no
+browsers registered), so the new controls' click-through is not claimed. TSan
+remains host-startup blocked; no sanitizer pass is inferred from normal tests.
+
+### Continued independent work
+
+F08 now has explicit native type-7 quantiles, sample SD, absolute-mean CV and
+positive-only geometric mean, plus exact-revision population tables/native CSV.
+F12 now has checksummed portable typed manifest export/import through the same
+source-verified CAS/receipt path. F13 can retain an immutable normalized source
+projection in the metadata DB (900,000-byte cap) and evaluate it after live source
+advancement/restart. F10 has deterministic evidence JSON/table export, **not** a
+full report-layout/batch designer. These additions narrow the remaining rows;
+they do not waive original advanced workflow, comparison, transform, embedding,
+interchange or platform qualification requirements.
+
+F05/F11 now include source/revision-bound saved histogram PlotSpec with up to eight
+graph-population layers, native exact bins, explicit count/fraction/density
+normalization, separately reported outside-range/missing/unknown values and
+presentation-only offsets. F02 has source-bound, attributed manual good/bad/unknown
+assertions and a native good-only three-valued filter, propagated into job QC
+fingerprints and portable manifests. Automated QC qualification, arbitrary plot
+families, multi-source overlays and full layout composition remain open.
+
+F04 now includes pinned template applications, interval overrides, explicit resync
+by new revision and removed-node migration refusal. F09 includes equal-unit native
+descriptive independent/paired comparisons over immutable retained sources, with
+source-reuse rejection and explicit missing semantics. F14 includes durable immutable
+findings with exact plan/source references and content hash. Inferential fits,
+scientific compatibility qualification and I next-run linkage remain open. The
+two-recording production backend milestone passes; full F01–F16 acceptance does not.
+
+F10 now has revisioned ordered-block layouts and atomic immutable report runs over
+retained table/plot/finding references, exact replay/collision handling, checksum
+reopen and standalone HTML/JSON downloads. Arbitrary layout editing and background
+multi-report batch scheduling remain open; bounded report composition is not full
+F10 acceptance. Tailnet real-app build/reopen and native fault/identity tests pass.
+
+F03 now has explicit ordered derived linear/asinh/log10 parameters, unit validation,
+null-domain propagation and parameter fingerprints shared by gates/stats/plots/jobs.
+Compensation controls/estimation and Logicle remain unimplemented; no channel or
+calibration authority is fabricated. Native and real-engine transformed-input parity
+passes through the production tailnet backend.
+
+F07 now has a production supervised seeded t-SNE artifact over two explicit raw or
+derived parameters, bounded hash-ranked subsampling, exact event-key mapping,
+config/eligibility validation and durable reopen. Same-runtime repeatability passes.
+High-dimensional selection, UMAP and cross-platform qualification remain open; this
+is not all F07 acceptance. Coordinates are not interpreted as QC or causal evidence.
+
+### Current remaining scope after continued production integration
+
+The initial audit table above is historical; these remaining obligations supersede
+its absent-feature wording. No aggregate F01–F16 acceptance is claimed.
+
+| Rows | Current implemented evidence | Remaining implementation/qualification |
+|---|---|---|
+| F01 | Verified SHA256 relink (10 gates/images unchanged), retained-source labels/tags/groups library, duplicate detection, unit provenance; streamed full-file SHA-256 at any size (F-1: 64 MiB cap removed, >64 MiB file proven) | Relink of a >64 MiB file through the workspace path (its JSON source is bounded at 100k events); asynchronous/cancellable fingerprint UI; broader metadata workflow |
+| F02 | Durable attributed manual tri-state QC, native eligibility/job propagation | Qualified automated scientific QC and biological validation |
+| F03 | Ordered linear/asinh/log10 derived columns, exact units/domain/null semantics, shared worker/native fingerprint | Compensation controls/estimation, Logicle, applicable fluorescence channels |
+| F04 | Persisted interval/polygon/ellipse/quadrant/Boolean DAG, rectangles, forms/scatter gestures, revisions and overrides | Rotated/fitted gates and full rendered interaction qualification |
+| F05/F11 | Saved native histogram/scatter, sampled display, multi-source overlays, immutable report plotting | Other plot families and graphical layout controls |
+| F06 | Fingerprint-fenced stored gallery, exact keys, real thumbnails and relink parity | E retained-image locators absent; live image retention cannot be fabricated |
+| F07 | Supervised 2–16-feature seeded t-SNE, explicit sampling, exact map, same-runtime reorder/reopen tests | Other embedding engines, cross-platform qualification |
+| F08 | Native raw/derived quantiles/SD/CV/geometric mean and population tables/CSV | Graphical table designer and advanced statistics |
+| F09 | Explicit experimental units, paired/independent descriptive comparisons, duplicate-source rejection | Scientific compatibility qualification, inferential fits/models |
+| F10 | Saved ordered-block layouts, immutable runs, durable cancellable bounded batches, JSON/standalone HTML | Arbitrary layout designer; preemptive cancellation/platform qualification |
+| F12 | Source-bound CAS/restore, checksummed portable strategies, pending receipts, retained sources, library/sample display preference precedence | Full portable workspace lifecycle/global preferences and scalable relink |
+| F13 | Pinned E producer live/archive parity, source fencing, immutable retention, coverage semantics | Actual hardware acquisition-budget qualification, TSan host startup failure |
+| F14 | Exact plan/method APIs, immutable findings and pinned report evidence; API sent to I | Final I-owned next-run linkage/composition and scientific applicability qualification |
+| F15 | Existing native detection FCS export; pinned observation JSON/CSV with exact keys/nulls | FCS import, GatingML and qualified per-cell interchange |
+| F16 | Durable real app Cytoflow+t-SNE jobs, cancellation/reap/restart, exact parameter/QC pins | Windows supervision and distribution/license decision |
+
+Library and display defaults are non-scientific metadata only. Browser connector
+currently has no registered browser, so latest controls lack rendered click-through
+acceptance despite builds/backend tests. This is an evidence gap, not a waived task.
+
+F05 continuation: saved native raw/derived scatter now shares exact source/parameter
+revision identity and explicit hash-ranked display sampling. Counts/statistics use
+all selected observations, with missing coordinates separately reported. Empty and
+extreme finite presentation tests pass; multi-source overlays remain open.
+
+F11 continuation: native multi-source saved histogram overlays now require exact
+retained references and matching bins/domain/units/normalization, preserve per-layer
+denominators and keep offsets presentation-only. Exact overlays embed in immutable
+report runs. Tailnet14/22-observation proof, mismatch refusal and sanitizer tests pass.
+Scientific compatibility, arbitrary plot/layout families and full graphical editing
+remain separate obligations.
+
+F07 further continuation: explicit2–16 raw/derived feature selection is now supported
+and pinned in supervised t-SNE jobs. Missing selected-feature rows are separately
+counted, never imputed or silently removed from the original population. Production
+three-feature proof and legacy artifact reopen pass. Other embedding engines and
+cross-platform qualification remain separate, not a high-dimensional selection gap.
+
+F04 continuation: production form-based interval/Boolean editing, reference-safe
+rename/delete, draft undo/redo and exact saved-graph loading now preserve CAS and
+method/application provenance. Native graph content fingerprints prevent unchanged
+draft labels from aliasing edited bounds. Real revision/replay/conflict proof passes.
+Full graphical gesture editing and remaining gate families are still open.
+
+F04 rectangle creation now reuses explicit native interval/AND populations, with
+real7-selected/7-image proof. Selected/restored revisions require exact loading
+before draft save to protect previously unseen method/application provenance.
+
+F08 continuation: reusable source-bound table definitions now persist exact ordered
+population/column selections through strategy revisions, applications/manifests,
+native CSV and immutable report rendering. Native missing-population/domain-column
+refusals and real tailnet two-row projection pass. Advanced estimators and a graphical
+table designer remain separate; no formula language is inferred.
+
+F01/F12 continuation: bounded native saved-record discovery and exact library reopen
+are now exposed in the production module. Catalog pages list IDs/revisions only,
+never fabricate source compatibility or silently follow a moving head. Full workspace
+portability and large-source/asynchronous fingerprinting remain open.
+
+F04 graphical continuation: saved scatter supports pointer-drag rectangle drafts
+using the same native interval/AND representation, with explicit edit-base/template
+checks. Scaled/reverse/cancel/tiny gesture tests pass; real browser gesture
+qualification remains blocked by no registered browser. Polygon/ellipse/quadrant
+families and their full interaction acceptance remain open.
+
+F04 ellipse continuation: native source-bound axis-aligned ellipse predicates and
+production form editing now share tri-state graph/QC semantics, gallery identities
+and job eligibility. Boundary/missing/extreme and zero-radius refusal tests pass.
+Rotated/covariance ellipses, native polygon and quadrant authoring remain separate
+implementation obligations, not claimed by axis-aligned support.
+
+F04 quadrant continuation: native/form quadrant predicates define right/upper tie
+ownership and preserve missing-coordinate unknown. Tests prove all9 known cut-grid
+points belong to exactly one of four populations. Native polygon authoring and
+rotated/fitted geometry remain separate; the existing supervised Cytoflow polygon
+job is not mislabeled a persisted native polygon DAG node.
+
+### 2026-10-30 native polygon continuation
+
+Native simple polygons now persist/evaluate through the existing graph authority;
+forms edit axes/vertices, with backend rejection of invalid geometry. Tests cover
+edges/vertices, winding/closure, concavity, missingness and degenerate geometry.
+Review bridge proves SQLite reopen and exact gallery parity. Real Studio WSS
+polygon-e2e-1793363829418 selects10, mean104.6, returns10 thumbnails; real Cytoflow
+job884046f815e4e2b1495080ea13b6e720cc0f8d299d02d6b7e10dd06b6d7110cb
+matches all14 membership rows. Invalid save leaves revision1 unchanged.
+Native6, Review8, ASan/UBSan4, real worker8 pass. UI graph/workspace13 pass.
+Browser navigation is currently policy-blocked; DOM interaction is not claimed as
+rendered browser acceptance. Physical Windows availability is now documented by
+E fd32a99e / E-windows-validation-20261024.md; it is NOT full app qualification.
+Retained E images remain unavailable pending exact producer locators. Remaining
+interchange/workspace/report-batch work is implementation work, not a shared-owner gate.
+
+### 2026-10-30 interchange/batch continuation
+
+Native observation export and exact-revision strategy batch export are implemented
+in both application shells. WSS observation artifact includes14 rows/10 selected,
+source-bound raw pixel2; two exact strategy revisions export together, and a
+missing third refuses the whole artifact. Native6, Review8, sanitizer4, UI15 pass.
+Batch export is not portable dependency provisioning/import, report scheduling,
+FCS import or GatingML. Those remain implementation scope, not generic blockers.
+
+### 2026-10-30 durable report batches
+
+Backend metadata now owns bounded exact-layout queues, immutable results, per-step
+CAS progress, failed-state retry and cooperative cancellation. Native fault injection
+proves report-success/progress-failure reconciliation without duplicate artifacts;
+interleaving proves cancellation cannot be overwritten by a stale advance. SQLite
+reopen does not schedule work. UI cancellation waits for the current bounded report
+and stops subsequent steps; it is not preemptive interruption.
+
+Real WSS report-batch-1793364471847 cancels after1/2, second run absent;
+report-batch-1793364471847-complete finishes2/2 with pinned artifact hashes.
+Final regression native6, Review8, ASan/UBSan4, UI29 pass; worker8 passed for the
+polygon slice and no worker changes followed. Production builds and docs pass.
+The whole batch is not atomic; completed reports survive cancellation.
+
+Remaining full scope includes FCS import/GatingML, full dependency-aware workspace
+import/lifecycle and global preferences, large-file asynchronous fingerprinting,
+compensation/Logicle/qualified automatic QC, fitted/rotated gates, additional plots
+and inferential models, other embeddings, arbitrary report layout, and platform/
+scientific qualification. These are not all external blockers. E retained-image
+API and I next-run linkage remain peer-owned integrations. No F01–F16 acceptance.
+
+### Exact E image consumer continuation (2026-10-30)
+
+The historical "E locator absent" gap is superseded by selective provider pin
+`7e344c68`: F now routes live-run and run-archive selected keys to exact retained
+images/masks. Live lease fencing and separate archive full-file fingerprints guard
+pixel reads; epoch/retained scalar snapshots remain explicitly unavailable. This
+narrows F06/F13, not complete retention, hardware or full scientific qualification.
+
+### F-1 full-recording scale (2026-11-02, `claude/808-f1-full-scale`)
+
+Goals advanced: F01, F04, F05, F08, F16. Evidence class: **real backend, synthetic
+full-size MIB-schema file** (production `Hdf5Service` writer, imageless PL-style
+rows), headless native ctest. No real-instrument recording was available (the only
+MIB HDF5 asset in `env/assets.json`, `z-adjustment-50v`, is private), so no
+real-recording or hardware evidence is claimed.
+
+- **Removed caps.** 10,000 events (PopulationGraph, PopulationStatistics,
+  SourceAnalysis evaluate/freeze/archive, ParameterTransforms, ReviewSession,
+  gallery offsets) and 64 MiB (ReviewSession stored/run-archive fingerprints).
+- **New explicit bounds.** Columnar: ≤2^32−1 events, bitsets ≤256 MiB, exact
+  order statistics ≤2^26 values, 65,536-event chunks. Keyed (string-key) path:
+  ≤1,000,000 events / 16,777,216 node-events. F-source/1 JSON rows: ≤100,000
+  events. Each refusal names its bound.
+- **Mechanism.** `RecordingColumns` (chunked HDF5 columns) → `evaluateColumns`
+  (tri-state DAG per chunk) → `TriStateBits` membership keyed to source identity +
+  graph revision → `columnStatistics` / `columnHistogram` / `columnScatter` /
+  bounded event-reference pages. F-source/1 evaluation uses the same evaluator.
+- **Proof.** `review.population_scale`: 300,000 events (240,000 valid + 60,000
+  invalid), file > 64 MiB; interval + polygon + Boolean (AND/OR/NOT, parents,
+  missing values) populations exact against an independent oracle at every node;
+  exact n/mean/median/p05/p95; histogram sums to n; decimated scatter bounded;
+  selected page and a gallery page at offset 120,612 (of 120,632 selected) match
+  oracle ranks; membership reused; streamed SHA-256 equals an independent hash;
+  HDF5 reads never exceed the 4,096-event chunk in the direct run. Measured
+  (Release, Linux): output 120,632 selected / 5,559 unknown / 173,809 excluded;
+  membership 450,048 bytes for 6 populations; 5 chunks of 65,536; analysis peak
+  RSS growth 1.9 MiB (VmHWM after clear_refs; asserted < 64 MiB). Opening the
+  file in ReviewSession costs +174 MiB RSS for the per-row browse metadata,
+  which the analysis does not use. `analysis.columnar`:
+  columnar == keyed `evaluatePlan` at every node, chunk size 1/7/64/65,536 and QC
+  pattern; statistics bit-identical; bounds refuse.
+- **Remaining (not F-1 acceptance of the rows).** The workspace path
+  (`AnalysisHost` evaluate/report/plot/observations/jobs) still transports
+  sources as F-source/1 JSON rows, now bounded at 100,000 events: a columnar
+  source handle for saved strategies, reports and worker jobs is the next F-1
+  step. `ReviewSession::open` still materializes per-row browse metadata
+  (`ProcessedFrame` per event) for the review table. FlowJo reference
+  229,585 / 190,705 through `PopulationGraph` needs F-2 (FCS import, F15).
+  No real-recording run; F16 worker memory bound at full size unproven.
+
+
+### F-1b workspace path at full scale (2026-11-02, `claude/808-f1b-f2`)
+
+Goals advanced: F01, F04, F05, F08, F12, F16. Evidence class: **real backend,
+synthetic full-size MIB-schema files** (production `Hdf5Service` writer), headless
+native ctest. No real-instrument recording, no hardware.
+
+- **Mechanism.** Stored files resolve to an **F-source/2 columnar handle**
+  (descriptor, no rows; same fingerprint/sourceKey/parameters/scope as before, so
+  saved bindings stay valid). `AnalysisHost` takes a `ColumnResolver`; both hosts
+  lend `RecordingColumns` through `ReviewJobs::withRecordingColumns` (session
+  lock, coverage check, full-file SHA-256 re-verified; a non-open file through a
+  short-lived reader). One core (`SourceCore`) serves row and columnar sources:
+  evaluate, report (one membership pass), plot, scatter (bounded heap, identical
+  sample), gallery (bitset rank lookup), overlay, comparison, library, report
+  batches. `observations` (≤65,536 events) and `jobInput` (≤100,000) materialize
+  rows and refuse above, naming the bound. Retained stored sources are small
+  file-pinned handles; a changed file is refused.
+- **Browse memory.** `ReviewSession` no longer holds a `ProcessedFrame` per row:
+  counts at open, 1,024-row pages (8 cached), streamed passes for scatter/track
+  rows. Open RSS: **+7.9 MiB at 300,000 events** (was +174 MiB), +7.1 MiB at
+  255,000 (asserted < 24 MiB, after `malloc_trim`).
+- **Proof.** `review.workspace_scale`: rows vs columnar parity (evaluation with
+  a log10 transform and good-only QC, density histogram, seeded scatter) on 2,200
+  events; on 255,000 (A) and 260,000 (B) events a saved interval + polygon +
+  Boolean strategy's 4-population report (selected/unknown/excluded, n, mean,
+  median, p05, p95, denominator), 48-bin plot and a gallery at the last selected
+  ranks equal an independent oracle; the strategy applied to B, both retained,
+  and an independent-design comparison (A not open) gives oracle means
+  133.778052045 / 133.635478269 and their difference. Peak RSS growth of the
+  whole save → report → plot → gallery → retain → apply → compare sequence:
+  **15.9 MiB** (VmHWM after clear_refs; asserted < 64 MiB). Each recording is
+  lent once per comparison. `review.population_scale` additionally asserts the
+  open bound. Bridge: `review_bridge` source-bound strategy test now runs on the
+  columnar handle.
+- **Remaining.** Worker jobs (`jobInput`, Cytoflow parity/t-SNE) still take rows
+  ≤100,000 events (F16 memory bound at full size unproven); observation export is
+  bounded at 65,536 events; run-archive and live sources stay inline (≤100k by
+  design); no real-recording run; the desktop view shows no FCS/columnar-specific
+  affordance yet.
+
+### F-2 FCS import feeding the native evaluator (2026-11-02, `claude/808-f1b-f2`)
+
+Goals advanced: F15 (read side), F04. Evidence class: **real backend, synthetic
+FCS files written by the test**; the FlowJo reference acceptance is implemented
+but **was not run here** (private fixture absent: `analysis.flowjo_reference`
+reports SKIPPED, exit 77, never a pass).
+
+- **Mechanism.** Native `FcsReader` (FCS 3.0/3.1 HEADER, TEXT with delimiter
+  escapes, supplemental TEXT, `$BEGINDATA/$ENDDATA`; list mode F/D/I with
+  `$BYTEORD`, `$PnB`, `$PnR` masking, `$PnE` log decoding, optional `$PnG`) →
+  `FcsColumns` (chunked DATA reads) → F-source/2 handle (scope `fcs`, full-file
+  SHA-256, explicit units, `import` block listing unapplied constructs) → the same
+  `ColumnarEvaluation` / `AnalysisHost` path as MIB recordings. Both hosts
+  resolve `{kind: fcs, path}` and lend `scope: fcs`. No Python in the path.
+- **Unsupported (refused):** FCS2.0, `$MODE` C/U, `$DATATYPE` A, packed integer
+  widths, mixed byte orders, F/D width mismatch, truncated DATA. **Reported, not
+  applied:** compensation (F03), `$PnCALIBRATION`, `$PnD`, `$TIMESTEP`, `$PnE` on
+  float data, extra data sets, ANALYSIS segment, `$PnG` unless `applyGain`.
+- **Proof.** `analysis.fcs_reader`: tokenizer escapes (keywords and values, `|`
+  and form-feed delimiters, odd/duplicate refusal); F big-endian (250,000 events,
+  lowercase keywords), D little-endian with DATA offsets only in TEXT, I with
+  8/16/32-bit, masking, log decoding and gain — every value equals the
+  independent writer's; seven refusals; a rectangle gate over 250,000 events
+  (62,507 selected) through `evaluateSource` and a saved strategy report through
+  `AnalysisHost` equal the oracle; a changed file is refused. Optional comparator
+  `tools/flowjo_acceptance/fcs_comparator.py` (fcsparser 0.2.8, else flowio;
+  both pip-installable here) agreed with the native reader on event count and sum
+  when `MIB_FCS_COMPARATOR_PYTHON` pointed at a scratch venv; it is not in the
+  production path or the default CI run.
+- **Reference acceptance (pending fixture).** `analysis.flowjo_reference` with
+  `MIB_FLOWJO_REFERENCE_ROOT`: SHA-256 pins, 229,585 events, 190,705 in the
+  documented rectangle through PopulationGraph semantics, zero boundary events,
+  both 4,096-bin exports compared bin by bin (`ResourceBounds::maxHistogramBins`
+  raised for this tool only), optional comparator recount.
+- **Review fixes (#823).** `$PnR` masking is closed-form and bounded by the bit
+  width (a 64-bit `$PnR` in (2^63, 2^64) hung the reader); "no mask" is
+  `std::nullopt`, so `$PnR` 1 masks to 0 per FCS 3.1. `lendFcsColumns` fences the
+  file's size and write time before and after the scan; the descriptor's
+  `retention` text no longer claims a per-evaluation re-hash (the SHA-256 is
+  recomputed only when size or write time changed; a rewrite preserving both is
+  not detected). Columnar sources take up to 1,024 parameters (was 64, while the
+  reader accepted 1,024), with lazy columns. Proof: `analysis.fcs_hardening`.
+- **Remaining.** Run the reference on a host with the fixture; FCS export of
+  units/transforms and GatingML (F-6); compensation/Logicle (F03); `$TIMESTEP`
+  scaling; a review-bridge test of the `fcs` kind; a desktop affordance for
+  choosing an FCS source.
+
+### F-4 Comparison and concentration-response fits (2026-11-02, `claude/808-f4-comparison-fits`)
+
+Goals advanced: F09, and the fit authority behind I09/I10. Evidence class:
+**real backend (AnalysisHost, pinned revisions, exact statistics) on synthetic
+sources; independent numbers from scipy 1.18.1**.
+
+- **Mechanism.** `AnalysisInference.cpp` (pure C++: incomplete beta/gamma,
+  t/F/chi-square/normal, tests, Levenberg-Marquardt 4PL/3PL) under
+  `compareSpec` / `fitSpec` in `AnalysisComparison.cpp`; host read actions
+  `comparisonSpec` and `concentrationFit`; `evaluate` gains the optional
+  `metric {population, parameter}`. Results bind each unit value to its
+  planId, revision, graphFingerprint and sourceFingerprint and carry a
+  contentHash. Review ABI stays 10 (additive to the unmerged contract).
+- **Declared inputs.** Experimental unit per source (shared units in a group
+  are technical replicates, averaged), groups (first is the reference), design
+  unpaired or paired by unit id, inference none/parametric/rank/both,
+  confidence level; fits: model 4PL or 3PL (hill 1), concentration unit, scale
+  log10 or linear, weighting none or inverse-variance of replicate units,
+  design independent-units.
+- **Compatibility.** Excluded with reasons: different parameters or units,
+  different parameter preprocessing, different processing core/contract,
+  calibration or E-LUT identity (source provenance; unknown matches only
+  unknown), missing metric (refused evaluation, absent population, no finite
+  statistic), repeated source fingerprint; fits also exclude other
+  concentration units and concentrations <= 0.
+- **Rules.** >= 3 independent units per group (paired: complete pairs);
+  otherwise `insufficient`, no test, no p-value. Fits: no fit with <= p unit
+  points, < p distinct concentrations, constant response or unweighable
+  replicates; suspect when not converged, EC50 outside the tested range, EC50
+  CI wider than the tested range, < 5 concentrations, a parameter at a bound,
+  or a singular covariance.
+- **Proof.** `analysis.inference` (Welch on unequal variances, Mann-Whitney
+  with ties and exact, paired t, Wilcoxon exact (Darwin) and with ties/zeros,
+  ANOVA and Kruskal-Wallis on the McDonald mussel data, 4PL unweighted /
+  weighted / 3PL / linear-scale EC50 vs `curve_fit`, suspect, insufficient);
+  `analysis.comparison_spec` (the same numbers through `AnalysisHost`, seven
+  exclusion reasons, insufficient units, technical replicates, fit unit
+  exclusion, suspect and insufficient fits). Generator:
+  `tools/analysis_inference/generate_reference.py` (outside production).
+- **Remaining.** CIs for rank shifts and ANOVA effect sizes; repeated measures
+  (paired > 2 groups, dose series within one unit) are refused, not modelled;
+  no multiplicity correction; the I-6 view.
+- **Review fixes (#824).** Degenerate inputs (zero within-group or
+  paired-difference variance, every paired difference zero, all values tied, or a
+  non-finite intermediate near 1e200 / 1e308) give test `status: undefined` with
+  `undefinedReason` and null statistic, p-value and CI, never p = 0 or 1; the
+  comparison is `undefined` only when no requested test is defined. Fit suspect
+  flags no longer depend on the reporting scale (the CI-width rule uses the log10
+  interval; a linear Wald CI reaching <= 0 is flagged), a damping blow-up is
+  `termination: stalled`, inverse-variance weights from < 3 replicates are
+  flagged, and one confidence rule (0.5, 0.999] covers comparisons and fits.
+  Proof: `analysis.inference` (n = 3, effect sizes and Hodges-Lehmann vs
+  scipy/numpy, degenerate and overflow cases, bounded hill `atBound`, the
+  linear-scale review dataset) and `analysis.comparison_spec`.
+
+### F-3 Engine decision applied (2026-11-02, `claude/808-f4-comparison-fits`)
+
+Decision D3 / ADR 0016 recorded in the F ledger and design docs (this ledger,
+[contracts](contracts.md), [production API](production-api.md),
+[acceptance handoff](acceptance-handoff.md)) and the AnalysisWorker vault note.
+
+| Role | Implementation | Version | Where it runs |
+|---|---|---|---|
+| Production authority (populations, statistics, transforms, overlays, comparison, fits, reports) | native C++ `src/backend/analysis/` | this repository | every host (Studio, Review, I views) |
+| Supervised worker job (F07 t-SNE only) | scikit-learn `TSNE` | 1.9.1 (`sklearn-tsne-1.9.1`) | `crates/mib-analysis-worker`; results bound to that runtime |
+| Polygon parity comparator | Cytoflow `PolygonOp` | 1.3.2 | CI (`analysis-ci.yml`, ignored tests), qualification; not bundled |
+| Rectangle / FCS comparator | FlowKit `RectangleGate` on its own `Sample` parser (flowio) | FlowKit 1.3.2, flowio 1.4.0 | optional `tools/flowjo_acceptance/fcs_comparator.py --flowkit` |
+| Inference reference values | scipy | 1.18.1 | `tools/analysis_inference/generate_reference.py` (offline) |
+
+- **FlowKit comparator.** `fcs_comparator.py --rect ... --flowkit` gates the
+  rectangle with FlowKit's GatingML gate. `analysis.fcs_reader`, with
+  `MIB_FCS_COMPARATOR_PYTHON` and `MIB_FCS_COMPARATOR_FLOWKIT` set, compares
+  both the comparator's own count and FlowKit's count with the native gate on
+  the synthetic 10,000-event FCS file: 2,525 = 2,525 = 2,525 here (scratch
+  venv). GatingML maxima are exclusive and MIB's inclusive, so the fixture has
+  no event on a bound. The FlowJo reference run with FlowKit is still pending
+  the private fixture.
+- **Remaining.** Run FlowKit on the FlowJo reference fixture; add the FlowKit
+  comparator to a CI lane; the distribution review for scikit-learn (the only
+  worker dependency left in a production path).
+

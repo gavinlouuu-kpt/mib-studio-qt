@@ -1,9 +1,9 @@
+import { PopulationAnalysis } from "./PopulationAnalysis";
 import { noImagesNotice } from "./noImages";
-import { metricNumber } from "../metricFormat";
 // The HDF5 review module (UI-4, #269; plan 2026-10-01-standalone-review-app).
 //
-// YOFO Review (`review.html` → `ReviewApp.tsx`) mounts this panel as the
-// whole window. MIB Studio does not mount it yet: its Review tab is built
+// YOFO Review (`review.html` → `ReviewApp.tsx`) mounts this panel as its
+// Inspect stage. MIB Studio does not mount it yet: its Review tab is built
 // inline in `App.tsx` (develop #450, ADR 0014 amendment); mounting it there
 // is #512 step B5. The panel owns its review state and the "review" and
 // "viewer" slots of the shared FramePullScheduler, and talks only to the
@@ -12,15 +12,23 @@ import { metricNumber } from "../metricFormat";
 // Backend calls, dialogs and the opener go through `../transport` (#512 S9),
 // so the module is the same over Tauri and the WebSocket.
 //
-// Layout (the Qt HdfReviewTab): per set (Valid / Invalid, or "Frames" for a
-// recording file) a virtualised thumbnail grid on the left, the selected
-// frame's preview over the paged metrics table on the right; selection is
-// shared by grid, table and preview; double-click / Enter opens the frame
-// viewer (series, zoom, prev/next). Charts (experiment files): the
-// deformability scatter, the same frame pane and the ring-width histogram
-// (`charts/ChartsView.tsx`, PR 3); clicking a point selects that valid cell.
+// Layout: R3 Inspect on the @mib/ui kit (#717 B3a; Penpot R3 board
+// dcdbaa6b-9790-4e69-bea4-936747f588b1). A toolbar with the sub-views
+// Scatter / Records / Frames and the set (Valid / Invalid, or "Frames" for a
+// recording file), then the file actions and exports; a second row with the
+// overlay and ROI the backend draws. The left column is the sub-view: the
+// deformability scatter over the ring-width histogram (`charts/ChartsView`,
+// experiment files; clicking a point selects that valid record), the
+// virtualised thumbnail grid, and under both the paged records table; the
+// Records sub-view shows the table alone. The right column is the selected
+// record (`inspect/InspectCards.tsx`: frame and object, Raw / Contour / Mask
+// crops placed through the file's object coordinate space or the full frame,
+// stored values, what is recorded), its linked records (the track, read when
+// asked) and what the stored results came from, with the record reprocessed
+// on request (B3c; never on navigation, never written). Selection is shared by scatter, grid, table and
+// record card; Record details, a double-click on the full frame or a
+// thumbnail, or Enter opens the frame viewer (series, zoom, prev/next).
 // Export dialogs with progress / cancel / series range are in `exports/`.
-
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { open, save } from "../transport/dialogs";
 import type { FramePacket } from "../framePacket";
@@ -41,11 +49,19 @@ import {
   reviewBridge,
   type OverlayMode,
   type ReviewInfo,
+  type ReviewReprocess,
   type ReviewRow,
   type ReviewRows,
+  type ReviewTrackRows,
 } from "./reviewBridge";
+import { REVIEW_REPROCESS, REVIEW_TRACK_ROWS } from "./reviewContract";
 import { ThumbnailGrid } from "./ThumbnailGrid";
+import { Button, Card, DataTable, Notice, Toolbar, type DataTableColumn } from "@mib/ui";
+import { RecordCard, StoredCard, TrackCard, type Asked, type CropState } from "./inspect/InspectCards";
+import { cropOverlay, objectOffset, recordCrop, reprocessUnavailable, storedENotComputed, type CellView } from "./inspect/inspectModel";
+import { cropPacketToDataUrl } from "./inspect/packetCrop";
 import "./review.css";
+import "./inspect/inspect.css";
 
 export const H5_FILTER = [{ name: "HDF5", extensions: ["h5", "hdf5"] }];
 export const METRICS_PAGE_SIZE = 100;
@@ -82,16 +98,24 @@ export interface ReviewPanelProps {
   fallbackPixelToMicron?: number;
 }
 
+/** How an open ended: `message` is the backend's reason when `ok` is false. */
+export interface OpenOutcome {
+  ok: boolean;
+  message: string;
+}
+
 export interface ReviewPanelHandle {
   /** The File ▸ Open… action. */
   openFile: () => Promise<void>;
-  /** Open a known path (command line, file association, test harness). */
-  openPath: (path: string) => Promise<void>;
+  /** Open a known path (command line, file association, R1 Open's library,
+   * test harness). */
+  openPath: (path: string) => Promise<OpenOutcome>;
   /** The File ▸ Close action. */
   closeFile: () => Promise<void>;
 }
 
-type ReviewTab = "valid" | "invalid" | "charts";
+/** Inspect's sub-views (R3: Scatter, Records, Frames). */
+export type InspectView = "scatter" | "records" | "frames";
 
 function loadColumns(): string[] {
   try {
@@ -121,7 +145,10 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   const [info, setInfo] = useState<ReviewInfo | null>(null);
   const [fileKey, setFileKey] = useState("");
-  const [reviewTab, setReviewTab] = useState<ReviewTab>("valid");
+  const [subView, setSubView] = useState<InspectView>("frames");
+  const [validSet, setValidSet] = useState(true);
+  const [cellView, setCellView] = useState<CellView>("full");
+  const [crop, setCrop] = useState<CropState>({ status: "idle" });
   const [rows, setRows] = useState<ReviewRows | null>(null);
   const [rowsOffset, setRowsOffset] = useState(0);
   const [selected, setSelected] = useState(-1);
@@ -129,6 +156,15 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   const [overlay, setOverlay] = useState<OverlayMode>(OVERLAY.None);
   const [roiOverlay, setRoiOverlay] = useState(false);
   const [columns, setColumns] = useState<string[]>(loadColumns);
+  // B3c: answers to the record's buttons, each kept with the key of what it
+  // was asked for (file, set, track or record) and shown only while that is
+  // still what the card shows. Nothing here is sent on navigation.
+  // `seq` numbers each request: only the latest one's reply is taken, so an
+  // older reply for the same record never replaces a newer one.
+  const [track, setTrack] = useState<{ key: string; seq: number; answer: Asked<ReviewTrackRows> } | null>(null);
+  const [reprocess, setReprocess] = useState<{ key: string; seq: number; answer: Asked<ReviewReprocess> } | null>(null);
+  const requestSeq = useRef(0);
+  const [reprocessSettings, setReprocessSettings] = useState<number>(REVIEW_REPROCESS.settings.recorded);
   const [showColumns, setShowColumns] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rowsRef = useRef<ReviewRows | null>(null);
@@ -136,15 +172,41 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   const reviewing = !!info?.file_open;
   const isRecording = !!info?.recording_file;
-  const validSet = reviewTab !== "invalid";
+  // No cell crop: a recording has no objects, and a file whose object
+  // coordinate space is unknown cannot place its boxes (B3c, ruling on #717).
+  const cropBlocked = isRecording || (!!info && !objectOffset(info));
   const setTotal = !info ? 0 : Number(validSet ? info.valid_images.count || info.recorded_images.count : info.invalid_images.count);
   const rowTotal = Number(rows?.total ?? 0);
+  // Records of the set: its images, or its rows when it stores none (#649).
+  const recordTotal = Math.max(setTotal, rowTotal);
   const selectedRow: ReviewRow | null =
     rows && selected >= rowsOffset && selected < rowsOffset + rows.rows.length ? rows.rows[selected - rowsOffset] : null;
   const shownColumns = visibleColumns(columns, isRecording);
+  // The crop views cut the selected record's box out of the frame packet.
+  const cropView = cellView !== "full";
+  const cellViewRef = useRef(cellView);
+  cellViewRef.current = cellView;
+  const selectedRowRef = useRef(selectedRow);
+  selectedRowRef.current = selectedRow;
+  const infoRef = useRef(info);
+  infoRef.current = info;
+  const offset = objectOffset(info);
+  const cropKey =
+    cropView && selectedRow && offset
+      ? `${selectedRow.frame_index}:${selectedRow.object_id}:${selectedRow.bbox_x},${selectedRow.bbox_y},${selectedRow.bbox_width},${selectedRow.bbox_height}@${offset.dx},${offset.dy}`
+      : "";
 
-  // Draw only the pixels owned by this exact immutable pull response.
+  // Draw only the pixels owned by this exact immutable pull response: the
+  // full frame into the canvas, or the record's crop as the CellImage's URL.
   const draw = useCallback((p: FramePacket) => {
+    if (cellViewRef.current !== "full") {
+      const row = selectedRowRef.current;
+      // The stored box placed in image coordinates (the packet is the full frame).
+      const rect = p.valid && row ? recordCrop(row, infoRef.current, p.width, p.height) : null;
+      const src = rect ? cropPacketToDataUrl(p, rect) : null;
+      setCrop(src ? { status: "ready", src } : { status: "failed" });
+      return;
+    }
     const canvas = canvasRef.current;
     if (!p.valid || !canvas) return;
     canvas.width = p.width;
@@ -162,28 +224,55 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     }
   }, [columns]);
 
+  // Only the latest page request fills the table (B3c, Codex round 3): a
+  // page of another set or file that lands late would otherwise become the
+  // selected row, and the record's buttons would ask about the wrong record.
+  // A reset (open, close, set change) retires every page in flight.
+  const rowsSeq = useRef(0);
   const loadRows = useCallback(
-    async (valid: boolean, offset: number) => {
+    async (valid: boolean, offset: number): Promise<ReviewRows | null> => {
+      const seq = ++rowsSeq.current;
       try {
         const page = await reviewBridge.rows(valid, offset, METRICS_PAGE_SIZE);
+        if (seq !== rowsSeq.current) return null;
         if (page.valid) {
           setRows(page);
           setRowsOffset(offset);
+          return page;
         }
       } catch (e) {
         log(`metrics page error: ${e}`);
       }
+      return null;
     },
     [log],
   );
 
-  // Preview follows the selection and the overlay / ROI choice.
+  // The record card's image follows the selection, its view and (full
+  // frame) the overlay / ROI choice. A crop waits for the record's row (its
+  // bounding box); the backend draws the overlay either way.
   useEffect(() => {
     if (!reviewing || selected < 0 || selected >= setTotal) return;
-    scheduler.request("review", () =>
-      reviewBridge.frame(validSet ? REVIEW_DATASET.ValidImage : REVIEW_DATASET.InvalidImage, selected, overlay, roiOverlay),
-    );
-  }, [reviewing, reviewTab, selected, setTotal, validSet, overlay, roiOverlay, scheduler]);
+    const dataset = validSet ? REVIEW_DATASET.ValidImage : REVIEW_DATASET.InvalidImage;
+    if (cellView === "full") {
+      scheduler.request("review", () => reviewBridge.frame(dataset, selected, overlay, roiOverlay));
+      return;
+    }
+    setCrop({ status: "loading" });
+    if (!cropKey) {
+      scheduler.invalidate("review");
+      return;
+    }
+    const mode = cropOverlay(cellView);
+    scheduler.request("review", () => reviewBridge.frame(dataset, selected, mode, false));
+  }, [reviewing, selected, setTotal, validSet, overlay, roiOverlay, cellView, cropKey, scheduler]);
+
+  // A view a record cannot show (a raw recording has no objects to crop; a
+  // file whose object coordinate space the client cannot tell, #757) falls
+  // back to the full frame.
+  useEffect(() => {
+    if (cropBlocked && cellView !== "full") setCellView("full");
+  }, [cropBlocked, cellView]);
 
   // The table page follows the selection.
   const select = useCallback(
@@ -197,25 +286,44 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   );
 
   const resetView = useCallback(() => {
+    rowsSeq.current++;
     scheduler.invalidate("review");
     scheduler.invalidate("viewer");
     setRows(null);
     setRowsOffset(0);
     setSelected(-1);
     setViewerOpen(false);
+    setCrop({ status: "idle" });
     const canvas = canvasRef.current;
     canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
   }, [scheduler]);
 
-  const selectTab = useCallback(
-    async (tab: ReviewTab) => {
+  // The set (Valid / Invalid): its first page and record. The scatter shows
+  // valid records only, so the invalid set shows its frames.
+  const selectSet = useCallback(
+    async (valid: boolean) => {
       resetView();
-      setReviewTab(tab);
-      if (tab === "charts") return;
-      await loadRows(tab !== "invalid", 0);
+      setValidSet(valid);
+      if (!valid) setSubView((v) => (v === "scatter" ? "frames" : v));
+      await loadRows(valid, 0);
       setSelected(0);
     },
     [loadRows, resetView],
+  );
+
+  // A sub-view only changes what is shown; the selection stays. The scatter
+  // (valid records) from the invalid set starts on the valid set with no
+  // record selected: a click on a point selects one.
+  const selectView = useCallback(
+    async (view: InspectView) => {
+      setSubView(view);
+      if (view === "scatter" && !validSet) {
+        resetView();
+        setValidSet(true);
+        await loadRows(true, 0);
+      }
+    },
+    [loadRows, resetView, validSet],
   );
 
   const closeFile = useCallback(async () => {
@@ -227,13 +335,14 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     resetView();
     setInfo(null);
     setFileKey("");
-    setReviewTab("valid");
+    setSubView("frames");
+    setValidSet(true);
     onInfo?.(null);
     onFileChange?.("");
   }, [log, onFileChange, onInfo, resetView]);
 
   const openPath = useCallback(
-    async (path: string) => {
+    async (path: string): Promise<OpenOutcome> => {
       beforeLoad?.();
       resetView();
       onFileChange?.(path);
@@ -241,7 +350,13 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         const res = await reviewBridge.open(path);
         if (!res.ok) {
           log(`open failed: ${res.message}`);
-          return;
+          // The backend closed the previous file before it tried this one
+          // (ReviewSession::open resets first): nothing is open now.
+          setInfo(null);
+          setFileKey("");
+          onInfo?.(null);
+          onFileChange?.("");
+          return { ok: false, message: res.message };
         }
         const fresh = await reviewBridge.info();
         setInfo(fresh);
@@ -251,11 +366,16 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         // Start on the valid set, or the invalid one when there are no valid
         // frames (a regenerated file can have none).
         const startTab = initialTab(fresh);
-        setReviewTab(startTab);
-        await loadRows(startTab !== "invalid", 0);
-        setSelected(setTotalFor(fresh, startTab !== "invalid") > 0 ? 0 : -1);
+        setSubView("frames");
+        setValidSet(startTab !== "invalid");
+        const page = await loadRows(startTab !== "invalid", 0);
+        // The first record, also in a file that stores records without
+        // images (its record card still has the stored values).
+        setSelected(setTotalFor(fresh, startTab !== "invalid") > 0 || Number(page?.total ?? 0) > 0 ? 0 : -1);
+        return { ok: true, message: "" };
       } catch (e) {
         log(`open error: ${e}`);
+        return { ok: false, message: String(e) };
       }
     },
     [beforeLoad, loadRows, log, onFileChange, onInfo, resetView],
@@ -409,43 +529,190 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   );
 
   const pageTo = (offset: number) => void loadRows(validSet, Math.max(0, offset));
+  const openViewer = () => selected >= 0 && setViewerOpen(true);
+  const step = (delta: number) => {
+    const next = selected + delta;
+    if (selected >= 0 && next >= 0 && next < recordTotal) select(next);
+  };
 
-  const previewPane = (
-    <div className="canvas-wrap preview" onDoubleClick={() => selected >= 0 && setViewerOpen(true)} title="Double-click to open the viewer">
-      <canvas ref={canvasRef} className={fitWindow ? "fit" : ""} />
-      <span className="preview-caption mono">
-        {selected >= 0
-          ? `#${selected + 1} of ${setTotal}${selectedRow ? ` · frame ${selectedRow.frame_index}` : ""}`
-          : reviewTab === "charts"
-            ? "Click a point to show its cell"
-            : "—"}
-      </span>
-    </div>
+  // ---- the record's buttons (B3c) ---------------------------------------------
+  // Each answer is kept with the key of what was asked and shown only while
+  // the card still shows that: a reply that lands after the operator moved on
+  // is dropped (`*KeyRef` is the key now), never shown against another record,
+  // and a reply to anything but the latest request (`seq`) is ignored.
+  // The px→µm factor in use is part of both keys: a fallback change (a file
+  // without a recorded factor) drops answers whose µm² values used the old
+  // one (Codex round 2); nothing is re-sent on its own.
+  const factorKey = info ? `${info.pixel_to_micron}` : "";
+  const trackKey = reviewing && selectedRow && selectedRow.track_id >= 0 ? `${fileKey}|${factorKey}|${validSet}|${selectedRow.track_id}` : "";
+  const recordKey = reviewing && selected >= 0 ? `${fileKey}|${factorKey}|${validSet}|${selected}` : "";
+  const trackKeyRef = useRef(trackKey);
+  trackKeyRef.current = trackKey;
+  const recordKeyRef = useRef(recordKey);
+  recordKeyRef.current = recordKey;
+  const showTrack = async () => {
+    if (!trackKey || !selectedRow) return;
+    const key = trackKey;
+    const seq = ++requestSeq.current;
+    setTrack({ key, seq, answer: { status: "pending" } });
+    let answer: Asked<ReviewTrackRows>;
+    try {
+      const t = await reviewBridge.trackRows(validSet, selectedRow.track_id, REVIEW_TRACK_ROWS.max_rows);
+      answer = t.ok ? { status: "ready", value: t } : { status: "refused", message: t.message };
+    } catch (e) {
+      answer = { status: "refused", message: String(e) };
+    }
+    // Moved on meanwhile: the reply is dropped and nothing stays pending.
+    setTrack((cur) => (cur?.seq !== seq ? cur : trackKeyRef.current === key ? { key, seq, answer } : null));
+  };
+  const reprocessReason = reprocessUnavailable(info, selected >= 0, imagesMissingFor(info, validSet), jobs.busy);
+  const reprocessRecord = async () => {
+    if (!recordKey || reprocessReason !== null) return;
+    const key = recordKey;
+    const seq = ++requestSeq.current;
+    setReprocess({ key, seq, answer: { status: "pending" } });
+    let answer: Asked<ReviewReprocess>;
+    try {
+      const r = await reviewBridge.reprocessRecord(validSet, selected, reprocessSettings);
+      answer = r.ok && r.stored ? { status: "ready", value: r } : { status: "refused", message: r.message || "The backend gave no reason" };
+    } catch (e) {
+      answer = { status: "refused", message: String(e) };
+    }
+    setReprocess((cur) => (cur?.seq !== seq ? cur : recordKeyRef.current === key ? { key, seq, answer } : null));
+  };
+
+  // The records table: today's metric columns on the kit's DataTable, one
+  // page at a time (the kit has no paging, #715); a double-click on a row
+  // opens the viewer as before.
+  type PageRow = { row: ReviewRow; index: number };
+  const pageRows: PageRow[] = (rows?.rows ?? []).map((row, k) => ({ row, index: rowsOffset + k }));
+  // A run without an E-LUT stores E as 0: not a value (coordinator ruling, #774).
+  const eNotComputed = storedENotComputed(info);
+  const tableColumns: DataTableColumn<PageRow>[] = shownColumns.map((c) => ({
+    key: c.id,
+    header: c.label,
+    cell: (r) =>
+      c.id === "youngs_modulus" && eNotComputed ? (
+        <span className="rv-e-not-computed" title="No E-LUT was loaded for this run">
+          not computed
+        </span>
+      ) : (
+        c.format(r.row)
+      ),
+    emphasis: c.id === "frame_index",
+  }));
+  const setName = isRecording ? "Frames" : validSet ? "Valid records" : "Invalid records";
+  const recordsCard = (
+    <Card
+      className="rv-records-card"
+      title="Records"
+      subtitle={`${setName} · one row per stored record · ${rowTotal > 0 ? `${rowsOffset + 1}–${Math.min(rowTotal, rowsOffset + METRICS_PAGE_SIZE)} of ${rowTotal}` : "no rows"}`}
+    >
+      <div className="table-toolbar">
+        <Button size="small" aria-label="Previous page" disabled={rowsOffset === 0} onClick={() => pageTo(rowsOffset - METRICS_PAGE_SIZE)}>◀</Button>
+        <Button size="small" aria-label="Next page" disabled={rowsOffset + METRICS_PAGE_SIZE >= rowTotal} onClick={() => pageTo(rowsOffset + METRICS_PAGE_SIZE)}>▶</Button>
+        <span className="right" />
+        {!isRecording && (
+          <div className="column-chooser">
+            <Button size="small" aria-expanded={showColumns} onClick={() => setShowColumns((s) => !s)}>Columns…</Button>
+            {showColumns && (
+              <div className="menu-popup column-popup" role="menu">
+                {METRIC_COLUMNS.filter((c) => !c.recording || c.id === "frame_index").map((c) => (
+                  <label key={c.id}>
+                    <input type="checkbox" checked={columns.includes(c.id)} onChange={() => setColumns((ids) => toggleColumn(ids, c.id))} /> {c.label}
+                  </label>
+                ))}
+                <button onClick={() => setColumns(DEFAULT_COLUMNS)}>Reset</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      <div
+        className="table-panel"
+        onDoubleClick={(e) => {
+          if ((e.target as Element).closest?.("tbody tr.mib-table__row")) openViewer();
+        }}
+      >
+        <DataTable
+          className="metrics-table"
+          density="compact"
+          columns={tableColumns}
+          rows={pageRows}
+          rowKey={(r) => String(r.index)}
+          selectedKey={selected >= 0 ? String(selected) : undefined}
+          onSelect={(_, r) => select(r.index)}
+          empty="No metric rows in this set."
+        />
+      </div>
+    </Card>
   );
+
+  const counts = (valid: boolean) => (reviewing ? ` (${setTotalFor(info, valid)})` : "");
+  const imagesMissing = imagesMissingFor(info, validSet);
 
   return (
     <>
-      <div className="toolbar">
-        <button onClick={openFile} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
+      <Toolbar className="rv-inspect-toolbar" aria-label="Inspect" title={reviewing && info ? `Inspect · ${setName.toLowerCase()}` : "Inspect"}>
+        {!isRecording && (
+          <Button
+            variant={subView === "scatter" ? "selected" : "secondary"}
+            aria-pressed={subView === "scatter"}
+            disabled={!reviewing || setTotalFor(info, true) === 0}
+            title="Area–deformability scatter and the ring-width histogram (valid records)"
+            onClick={() => void selectView("scatter")}
+          >
+            Scatter
+          </Button>
+        )}
+        <Button variant={subView === "records" ? "selected" : "secondary"} aria-pressed={subView === "records"} disabled={!reviewing} onClick={() => void selectView("records")}>
+          Records
+        </Button>
+        <Button variant={subView === "frames" ? "selected" : "secondary"} aria-pressed={subView === "frames"} disabled={!reviewing} onClick={() => void selectView("frames")}>
+          Frames
+        </Button>
+        <span className="rv-toolbar-gap" aria-hidden="true" />
+        <Button
+          variant={reviewing && validSet ? "selected" : "secondary"}
+          aria-pressed={reviewing && validSet}
+          disabled={!reviewing || setTotalFor(info, true) === 0}
+          onClick={() => void selectSet(true)}
+        >
+          {isRecording ? "Frames" : "Valid Frames"}{counts(true)}
+        </Button>
+        {!isRecording && (
+          <Button
+            variant={reviewing && !validSet ? "selected" : "secondary"}
+            aria-pressed={reviewing && !validSet}
+            disabled={!reviewing || setTotalFor(info, false) === 0}
+            onClick={() => void selectSet(false)}
+          >
+            Invalid Frames{counts(false)}
+          </Button>
+        )}
+      </Toolbar>
+      <div className="rv-inspect-actions" role="toolbar" aria-label="File and exports">
+        <Button size="small" onClick={openFile} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
           Select HDF File…
-        </button>
-        <button onClick={closeFile} disabled={!reviewing} title={reviewing ? "Close the current file" : "No file loaded"}>
+        </Button>
+        <Button size="small" onClick={closeFile} disabled={!reviewing} title={reviewing ? "Close the current file" : "No file loaded"}>
           Close File
-        </button>
-        <button
+        </Button>
+        <Button
+          size="small"
           onClick={onExportMetrics}
           disabled={!isExperiment || jobs.busy}
           title={isRecording ? "Recording files carry no metrics" : "Write the metrics CSV (recorded px→µm factor)"}
         >
           Export Metrics to CSV…
-        </button>
-        <button onClick={onExportAll} disabled={!reviewing || jobs.busy} title="Metrics, images, series and charts into <root>/<file>/">
+        </Button>
+        <Button size="small" onClick={onExportAll} disabled={!reviewing || jobs.busy} title="Metrics, images, series and charts into <root>/<file>/">
           Export All…
-        </button>
+        </Button>
         <div className="more-menu">
-          <button aria-haspopup="menu" aria-expanded={showMore} onClick={() => setShowMore((v) => !v)} onBlur={() => window.setTimeout(() => setShowMore(false), 150)}>
+          <Button size="small" aria-haspopup="menu" aria-expanded={showMore} onClick={() => setShowMore((v) => !v)} onBlur={() => window.setTimeout(() => setShowMore(false), 150)}>
             More…
-          </button>
+          </Button>
           {showMore && (
             <div className="menu-popup" role="menu">
               <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatch(true)}>
@@ -463,10 +730,11 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
             </div>
           )}
         </div>
+        <span className="rv-toolbar-gap" aria-hidden="true" />
         <select
           value={overlay}
           disabled={!reviewing || isRecording}
-          title={isRecording ? "Recording files carry no masks" : "Overlay drawn by the backend"}
+          title={isRecording ? "Recording files carry no masks" : "Overlay drawn by the backend on thumbnails, the full frame and the viewer"}
           onChange={(e) => setOverlay(Number(e.target.value) as OverlayMode)}
           aria-label="Overlay mode"
         >
@@ -482,138 +750,106 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
           <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
         </span>
-        <span className="path-label right" title={info?.file_path}>
-          {reviewing && info
-            ? `${info.file_path} · ${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid}, invalid ${info.total_invalid}${info.has_core_identity ? ` · core v${info.core_version}` : ""} · px→µm ${metricNumber(info.pixel_to_micron, 4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}${info.accounting_summary}`
-            : "No file selected"}
-        </span>
       </div>
-      {noImagesNotice(info) && <p className="pending-note" role="status" data-testid="review-no-images">{noImagesNotice(info)}</p>}
-      <div className="subtabs" role="tablist" aria-label="Review views">
-        <button
-          className={reviewTab === "valid" ? "active" : ""}
-          disabled={!reviewing || setTotalFor(info, true) === 0}
-          onClick={() => void selectTab("valid")}
-        >
-          {isRecording ? "Frames" : "Valid Frames"} {reviewing ? `(${setTotalFor(info, true)})` : ""}
-        </button>
-        {!isRecording && (
-          <button
-            className={reviewTab === "invalid" ? "active" : ""}
-            disabled={!reviewing || setTotalFor(info, false) === 0}
-            onClick={() => void selectTab("invalid")}
-          >
-            Invalid Frames {reviewing ? `(${setTotalFor(info, false)})` : ""}
-          </button>
-        )}
-        {!isRecording && (
-          <button
-            className={reviewTab === "charts" ? "active" : ""}
-            disabled={!reviewing || setTotalFor(info, true) === 0}
-            title="Deformability vs area, ring-width histogram"
-            onClick={() => void selectTab("charts")}
-          >
-            Charts
-          </button>
-        )}
-      </div>
-      <div className="subtab-body">
-        {!reviewing ? (
+      {isExperiment && info && <PopulationAnalysis key={fileKey} path={info.file_path} disabled={jobs.busy} />}
+      {noImagesNotice(info) && (
+        <Notice tone="unknown" title="Images not recorded" data-testid="review-no-images">
+          {noImagesNotice(info)}
+        </Notice>
+      )}
+      <div className="rv-inspect-body">
+        {!reviewing || !info ? (
           <div className="review-empty">
-            <p>No recording loaded.</p>
-            <button onClick={openFile} disabled={!ready}>Select HDF File…</button>
+            <Notice
+              tone="info"
+              title="No run open"
+              actions={
+                <Button variant="primary" onClick={openFile} disabled={!ready}>
+                  Select HDF File…
+                </Button>
+              }
+            >
+              Open a run from the Open stage, or choose a file.
+            </Notice>
           </div>
-        ) : reviewTab === "charts" && info ? (
-          <ChartsView
-            info={info}
-            fileKey={fileKey}
-            selected={selected}
-            validTotal={setTotal}
-            onSelect={select}
-            framePane={previewPane}
-            refreshInfo={refreshInfo}
-            onViewChange={onChartViewChange}
-            log={log}
-          />
         ) : (
-          <div className="review-frames">
-            <ThumbnailGrid
-              valid={validSet}
-              total={setTotal}
-              overlay={isRecording ? OVERLAY.None : overlay}
-              roiOverlay={!isRecording && roiOverlay}
-              selected={selected}
-              fileKey={fileKey}
-              imageWidth={imageDims(info, validSet).w}
-              imageHeight={imageDims(info, validSet).h}
-              onSelect={select}
-              onOpen={(i) => {
-                select(i);
-                setViewerOpen(true);
-              }}
-              log={log}
-            />
-            <div className="review-side">
-              {previewPane}
-              <div className="table-toolbar">
-                <span className="mono">
-                  {rowTotal > 0 ? `${rowsOffset + 1}–${Math.min(rowTotal, rowsOffset + METRICS_PAGE_SIZE)} of ${rowTotal}` : "no rows"}
-                </span>
-                <button disabled={rowsOffset === 0} onClick={() => pageTo(rowsOffset - METRICS_PAGE_SIZE)}>◀</button>
-                <button disabled={rowsOffset + METRICS_PAGE_SIZE >= rowTotal} onClick={() => pageTo(rowsOffset + METRICS_PAGE_SIZE)}>▶</button>
-                <span className="right" />
-                {!isRecording && (
-                  <div className="column-chooser">
-                    <button aria-expanded={showColumns} onClick={() => setShowColumns((s) => !s)}>Columns…</button>
-                    {showColumns && (
-                      <div className="menu-popup column-popup" role="menu">
-                        {METRIC_COLUMNS.filter((c) => !c.recording || c.id === "frame_index").map((c) => (
-                          <label key={c.id}>
-                            <input type="checkbox" checked={columns.includes(c.id)} onChange={() => setColumns((ids) => toggleColumn(ids, c.id))} /> {c.label}
-                          </label>
-                        ))}
-                        <button onClick={() => setColumns(DEFAULT_COLUMNS)}>Reset</button>
-                      </div>
-                    )}
+          <div className="rv-inspect-grid">
+            <div className="rv-inspect-main">
+              {subView === "scatter" && !isRecording ? (
+                <Card className="rv-scatter-card" title="Area–Deformability" subtitle="Valid records · click a point to inspect its record · double-click empty space to reset the zoom">
+                  <ChartsView
+                    info={info}
+                    fileKey={fileKey}
+                    selected={validSet ? selected : -1}
+                    validTotal={setTotalFor(info, true)}
+                    onSelect={select}
+                    refreshInfo={refreshInfo}
+                    onViewChange={onChartViewChange}
+                    log={log}
+                  />
+                </Card>
+              ) : subView === "frames" ? (
+                <Card className="rv-frames-card" title="Frames" subtitle={`${setName} · ${setTotal} stored · double-click a frame to open the viewer`}>
+                  <div className="review-frames">
+                    <ThumbnailGrid
+                      valid={validSet}
+                      total={setTotal}
+                      overlay={isRecording ? OVERLAY.None : overlay}
+                      roiOverlay={!isRecording && roiOverlay}
+                      selected={selected}
+                      fileKey={fileKey}
+                      imageWidth={imageDims(info, validSet).w}
+                      imageHeight={imageDims(info, validSet).h}
+                      onSelect={select}
+                      onOpen={(i) => {
+                        select(i);
+                        setViewerOpen(true);
+                      }}
+                      log={log}
+                    />
                   </div>
-                )}
-              </div>
-              <div className="table-panel">
-                <table className="metrics-table">
-                  <thead>
-                    <tr>
-                      {shownColumns.map((c) => (
-                        <th key={c.id}>{c.label}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(rows?.rows ?? []).map((r, k) => {
-                      const index = rowsOffset + k;
-                      return (
-                        <tr
-                          key={index}
-                          className={index === selected ? "selected" : r.target_group ? "target" : ""}
-                          onClick={() => select(index)}
-                          onDoubleClick={() => {
-                            select(index);
-                            setViewerOpen(true);
-                          }}
-                        >
-                          {shownColumns.map((c) => (
-                            <td key={c.id}>{c.format(r)}</td>
-                          ))}
-                        </tr>
-                      );
-                    })}
-                    {(rows?.rows?.length ?? 0) === 0 && (
-                      <tr>
-                        <td colSpan={shownColumns.length} style={{ color: "#777" }}>No metric rows in this set.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                </Card>
+              ) : null}
+              {recordsCard}
+            </div>
+            <div className="rv-inspect-side">
+              <RecordCard
+                info={info}
+                valid={validSet}
+                position={selected}
+                total={recordTotal}
+                row={selectedRow}
+                view={cellView}
+                onView={setCellView}
+                canvasRef={canvasRef}
+                fitWindow={fitWindow}
+                crop={crop}
+                imagesMissing={imagesMissing}
+                onPrevious={() => step(-1)}
+                onNext={() => step(1)}
+                onDetails={openViewer}
+                emptyHint={subView === "scatter" ? "Click a point to inspect its record" : "Select a record"}
+              />
+              {!isRecording && (
+                <TrackCard
+                  valid={validSet}
+                  row={selectedRow}
+                  position={selected}
+                  track={track && track.key === trackKey ? track.answer : null}
+                  onShow={() => void showTrack()}
+                  onSelect={select}
+                />
+              )}
+              <StoredCard
+                info={info}
+                onReprocess={() => setShowRegenerate(true)}
+                reprocessDisabled={!ready || jobs.busy}
+                onReprocessRecord={() => void reprocessRecord()}
+                reprocessRecordUnavailable={reprocessReason}
+                reprocessSettings={reprocessSettings}
+                onReprocessSettings={setReprocessSettings}
+                reprocess={reprocess && reprocess.key === recordKey ? reprocess.answer : null}
+              />
             </div>
           </div>
         )}
@@ -642,6 +878,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           overlay={isRecording ? OVERLAY.None : overlay}
           roiOverlay={!isRecording && roiOverlay}
           row={selectedRow}
+          eNotComputed={eNotComputed}
           onIndexChange={select}
           onClose={() => setViewerOpen(false)}
           log={log}
@@ -650,6 +887,11 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     </>
   );
 });
+
+/** The shown set stores no images (a file written without them, #649). */
+function imagesMissingFor(info: ReviewInfo | null, valid: boolean): boolean {
+  return !!info && !(valid ? (info.recording_file ? info.recorded_images : info.valid_images) : info.invalid_images).present;
+}
 
 function imageDims(info: ReviewInfo | null, valid: boolean): { w: number; h: number } {
   if (!info) return { w: 0, h: 0 };

@@ -126,6 +126,10 @@ public:
     BridgeCommandResult stage_apply_profile();
     BridgeStageStatus fetch_stage_status();
     BridgeReviewMetadata fetch_review_metadata();
+    rust::String analysis_read(rust::Str request);
+    rust::String analysis_write(rust::Str request);
+    rust::String fetch_live_evidence();
+    rust::String analyze_population(rust::Str request_json);
     BridgeReviewMetricsPage fetch_review_metrics_page(bool valid, std::uint64_t offset,
                                                       std::uint64_t count);
     BridgeFrame fetch_review_image(std::uint32_t dataset, std::uint64_t index);
@@ -164,8 +168,8 @@ public:
     BridgeProcessingCoreStatus fetch_processing_core_status();
     BridgeDiscoveryStart start_device_discovery(const BridgeDiscoveryRequest& request);
     BridgeDiscoveryStart start_camera_discovery();
-    bool cancel_device_discovery(std::uint64_t job_id);
-    BridgeDiscoverySnapshot fetch_device_discovery(std::uint64_t job_id);
+    bool cancel_device_discovery(std::uint64_t job_id, rust::Str instance);
+    BridgeDiscoverySnapshot fetch_device_discovery(std::uint64_t job_id, rust::Str instance);
     BridgeCameraSelection fetch_camera_selection();
     // Central profile registry (schema v25, #398).
     bool set_registry_transport(
@@ -233,11 +237,18 @@ public:
                                               std::uint64_t frame_index, std::int32_t object_id);
     BridgeCommandResult monitoring_cell_clear_pins();
     // ABI 42 (#716 A4a): calibration records (bridge-contract.json calibration_records).
+    rust::String workspace_request(rust::Str request, bool write);
+    rust::String recipe_request(rust::Str request, bool write);
     rust::String calibration_records_list();
     rust::String calibration_record_get(rust::Str record_id);
     rust::String calibration_apply(rust::Str record_id, double expected_current_factor);
     // ABI 44 (#716 A7a): the run quick look (bridge-contract.json run_quick_look).
     rust::String run_quick_look(rust::Str request_json);
+    // ABI 49 (#806 E-1/E-2): the camera's GenApi node map (bridge-contract.json camera_features).
+    std::uint64_t camera_feature_tree_start(rust::Str request_json);
+    rust::String camera_feature_tree_fetch(std::uint64_t job_id);
+    rust::String camera_feature_read(rust::Str request_json);
+    rust::String camera_feature_write(rust::Str request_json);
     BridgeMonitoringCellImage fetch_monitoring_cell_image(std::uint64_t start_generation, std::uint64_t capture_epoch,
                                                           std::uint64_t frame_index, std::int32_t object_id,
                                                           bool mask);

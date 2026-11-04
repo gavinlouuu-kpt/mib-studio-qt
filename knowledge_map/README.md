@@ -16,9 +16,11 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[architecture/Rust-Bridge]] — Rust ↔ C++ bridge (React + Tauri migration)
 - [[architecture/Desktop-Shell]] — React + Tauri v2 desktop app (Phase 3)
 - [[frontend/YofoReview]] — YOFO Review, the standalone review product built from `desktop/`
+- [[frontend/UI-Language-Kit]] — `@mib/ui`, the shared UI language kit (`desktop/ui/`), wired to Penpot and Claude Design
 - [[services/ReviewSession]] — Qt-free review implementation shared by the Qt tab, the Tauri shell and YOFO Review
 
 ### Services (`src/backend/services/`)
+- [[services/AnalysisWorker]] — native population semantics, bounded Cytoflow worker and terminal job recovery
 - [[services/_MOC|Services MOC]]
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
 - Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
@@ -102,3 +104,6 @@ verifies wikilink integrity (enforced in CI).
 - `knowledge_map/task/` — dated task records (historical design/debug notes)
 
 - [[services/ProfileRegistryService]] — central registry/cache foundation (#398); desktop integration pending.
+
+Workspace persistence core (#807): [[services/WorkspaceStore]] (isolated; host integration pending).
+Recipe authority (#807 I02): [[services/RecipeProvider]] (immutable recipes, backend diff, apply preview only).

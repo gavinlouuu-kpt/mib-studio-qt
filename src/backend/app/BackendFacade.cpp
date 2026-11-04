@@ -1,4 +1,16 @@
+#include "backend/analysis/EvidenceGallery.h"
+#include "backend/workspace/NextRunPlanning.h"
+#include "backend/workspace/RecipeProvider.h"
+#include "backend/app/CalibrationRecord.h"
+#include "backend/profiles/ProfileRegistry.h"
+#include <fstream>
+#include <sstream>
+#include "backend/analysis/AnalysisHost.h"
+#include "backend/analysis/FcsReader.h"
+#include "backend/analysis/SourceAnalysis.h"
+#include "backend/database/SqliteService.h"
 #include "backend/app/BackendFacade.h"
+#include "backend/database/SqliteService.h"
 #include "backend/app/CalibrationStore.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/recording/RecordingAccounting.h"
@@ -32,6 +44,8 @@
 
 #include <cstring>
 #include <cmath>
+#include <deque>
+#include <mutex>
 #include <thread>
 #include "backend/playback/FrameStore.h"
 #include "backend/playback/PlaybackService.h"
@@ -40,6 +54,7 @@
 #include "backend/services/AutofocusService.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/CaptureService.h"
+#include "backend/camera/features/FeatureJson.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/TriggerService.h"
 #include "backend/services/PulseGeneratorService.h"
@@ -207,6 +222,47 @@ namespace backend::bridge
         }
     } // namespace
 
+    // E02 (#806): the camera feature tree job. One enumeration in flight; finished
+    // replies kept for the last kKeep jobs. The worker runs cameraFeatureTreeJson
+    // with `cancel` set at shutdown, so a long walk ends at its next guarded step.
+    struct BackendFacade::FeatureTreeJobs
+    {
+        static constexpr std::size_t kKeep = 16;
+        std::mutex mutex;
+        std::thread worker;
+        std::uint64_t nextId{1};
+        std::uint64_t running{0};
+        std::string runningRequest;
+        std::deque<std::pair<std::uint64_t, std::string>> done;
+        std::atomic<bool> cancel{false};
+        bool closed{false};
+
+        // Caller holds `mutex`.
+        std::uint64_t finished(std::string reply)
+        {
+            const auto id = nextId++;
+            keep(id, std::move(reply));
+            return id;
+        }
+        void keep(std::uint64_t id, std::string reply)
+        {
+            done.emplace_back(id, std::move(reply));
+            while (done.size() > kKeep) done.pop_front();
+        }
+        // Stops accepting jobs, cancels the walk and joins the worker.
+        void close()
+        {
+            std::thread joinable;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                closed = true;
+                cancel.store(true);
+                joinable = std::move(worker);
+            }
+            if (joinable.joinable()) joinable.join();
+        }
+    };
+
     BackendFacade::BackendFacade(AppBackend &backend)
         : backend_(backend), review_(std::make_shared<review::ReviewSession>()),
           // The review lanes report through the facade's operations: Started
@@ -229,7 +285,8 @@ namespace backend::bridge
               review::ReviewJobsOptions::forFacade(review::ReviewJobHost{
                   [this](review::ReviewJobKind kind, const std::string &message, CancelFlag &cancel) {
                       return beginOperation(operationKindOf(kind), &cancel, message);
-                  }})))
+                  }}))),
+          featureTreeJobs_(std::make_unique<FeatureTreeJobs>())
     {
     }
 
@@ -240,6 +297,8 @@ namespace backend::bridge
 
     BackendFacade::~BackendFacade()
     {
+        // A camera feature tree walk left running: cancelled and joined.
+        featureTreeJobs_->close();
         // Review jobs left running without shutdown(): cancelled and joined
         // before the session closes (before #512 S7 a joinable job thread
         // here ended the process).
@@ -362,6 +421,9 @@ namespace backend::bridge
         backend_.experiment().setStatusCallback({});
         backend_.experiment().setClosedRunStatisticsReader({});
         cancelAllOperations("Backend shutdown");
+        // The camera feature tree job (E02): cancelled at its next guarded step
+        // and joined before capture is torn down.
+        featureTreeJobs_->close();
         // The review lanes (#512 S7): their jobs observe the (now set) cancel
         // flags, clean partial outputs and report; joined so no callback
         // fires after destruction. Then the pump scans and stage waiters.
@@ -856,7 +918,19 @@ namespace backend::bridge
                                             BackendCommandType::Camera, message});
                 return {false, BackendCommandType::Camera, message};
             }
-            backend_.capture().stop();
+            {
+                // Stopping an active camera ends the monitoring capture at once ("the camera
+                // stopped", from the camera-ready callback inside stop()). Realtime then drains
+                // and stops for the live evidence summary; that is part of the same stop, not a
+                // second capture change that would replace the reason (#716 A6a review 2-3).
+                // A camera that dropped by itself (Faulted, so not isRunning()) already ended
+                // that capture on the capture thread: decided by whether the camera session's
+                // close is still the current capture, not by the lifecycle (#821 review). With
+                // no camera close since the last capture change, the realtime stop ends it.
+                backend_.capture().stop();
+                const bool cameraEndedCapture = backend_.monitoringCaptureEndedByCameraClose();
+                backend_.processing().drainAndStopRealtime(!cameraEndedCapture);
+            }
             emitEvent(makeCameraStatus(CameraState::Stopped));
             return {true, BackendCommandType::Camera, "Capture stopped"};
         }
@@ -1492,6 +1566,17 @@ namespace backend::bridge
         }
     } // namespace
 
+    std::string BackendFacade::analyzePopulationJson(const std::string& requestJson) {
+        if (!initialized_) return R"({"ok":false,"message":"Backend not initialized"})";
+        std::string result =
+            R"({"ok":false,"message":"Stop acquisition and recording before offline analysis"})";
+        backend_.experiment().withIdleConfiguration([&] {
+            if (backend_.isFrameRecording()) return;
+            result = reviewJobs_->analyzePopulation(requestJson);
+        });
+        return result;
+    }
+
     std::string BackendFacade::runQuickLookJson(const std::string &requestJson)
     {
         if (!initialized_) return review::runQuickLookRefusedJson("Backend not initialized");
@@ -1542,6 +1627,251 @@ namespace backend::bridge
         std::optional<review::RunStatisticsResult> reference;
         if (request.reference) reference = one(request.reference->path);
         return review::runQuickLookReplyJson(runs, request.reference, reference);
+    }
+
+    // #807 I02: the recipe provider's host: the metadata store, the method authority (registry
+    // cache and local profile store), F's analysis authority, and the instrument's state as the
+    // coordinator, processing service and calibration store report it. All reads.
+    static workspace::RecipeHost recipeHost(AppBackend& backend,
+                                            std::function<std::string(const std::string&)> analysisRead)
+    {
+        using J = nlohmann::json;
+        workspace::RecipeHost host;
+        host.store = [&backend](const J& q, bool write) {
+            return J::parse(backend.sqlite().recipeStoreRequest(q.dump(), write));
+        };
+        host.plan = [analysisRead](const std::string& id, const std::string& revision) {
+            return J::parse(analysisRead(J{{"action", "read"}, {"planId", id}, {"revision", revision}}.dump()));
+        };
+        // A finding reference (derive, adopted lineage) must be known to F's analysis authority.
+        host.finding = [analysisRead](const std::string& id, const std::string& revision) {
+            return J::parse(
+                analysisRead(J{{"action", "readFinding"}, {"findingId", id}, {"revision", revision}}.dump()));
+        };
+        host.now = [] { return app::utcIsoFromUnixMs(app::WallClock::nowNs() / 1'000'000ull); };
+        auto policy = [](workspace::RecipeMethodFacts& f, const std::string& config) {
+            app::CalibrationMethodSpec spec;
+            std::string why;
+            if (app::parseCalibrationMethodSpec(config, spec, &why)) f.calibrationPolicy = std::string(app::toString(spec.policy));
+            else f.calibrationReason = "the method's calibration declarations are malformed: " + why;
+        };
+        host.method = [&backend, policy](const J& ref, const std::string& base) {
+            workspace::RecipeMethodFacts f;
+            const auto id = ref.at("id").get<std::string>();
+            const auto revision = ref.at("revision").get<std::string>();
+            if (ref.at("source") == "registry") {
+                f.reason = "Revision is not in the verified registry cache";
+                for (const auto& r : backend.profileRegistry().snapshot().revisions) {
+                    if (r.methodId != id || r.revisionId != revision) continue;
+                    f.resolved = true;
+                    f.reason.clear();
+                    f.provider = "registry-cache";
+                    f.contentSha256 = r.contentHash;
+                    f.configSha256 = r.configSha256;
+                    f.coreReason = "the revision is not materialized in the local method cache; materialize it to read its declarations";
+                    f.calibrationReason = f.coreReason;
+                    if (r.materializedDir.empty()) break;
+                    std::ifstream in(std::filesystem::path(r.materializedDir) / "method.canonical.json", std::ios::binary);
+                    std::stringstream bytes;
+                    bytes << in.rdbuf();
+                    if (!in || profiles::contentHash(bytes.str()) != r.contentHash) {
+                        f.coreReason = "the materialized method files do not match the revision hash";
+                        f.calibrationReason = f.coreReason;
+                        break;
+                    }
+                    const auto envelope = J::parse(bytes.str());
+                    f.coreVersion = envelope.at("processing_core_id").get<std::string>();
+                    f.contractVersion = envelope.at("processing_contract_version").get<int>();
+                    f.coreReason.clear();
+                    f.calibrationReason.clear();
+                    policy(f, envelope.at("config").dump());
+                    break;
+                }
+                return f;
+            }
+            if (base.empty()) {
+                f.reason = "No local profile directory was given";
+                return f;
+            }
+            const auto catalog = J::parse(app::profileStoreCommand(backend, base, R"({"operation":"list"})"));
+            if (!catalog.value("ok", false)) {
+                f.reason = catalog.value("error", std::string{"Local profile lookup failed"});
+                return f;
+            }
+            std::string name;
+            int matches = 0;
+            for (const auto& p : catalog.at("profiles"))
+                if (p.at("profile_id") == id && p.at("revision") == revision) {
+                    ++matches;
+                    name = p.at("name").get<std::string>();
+                }
+            if (matches != 1) {
+                f.reason = matches ? "Ambiguous local method identity" : "No local profile has this id and revision";
+                return f;
+            }
+            const auto read = J::parse(app::profileStoreCommand(backend, base, J{{"operation", "read"}, {"name", name}}.dump()));
+            if (!read.value("ok", false) || read.at("profile").at("revision") != revision) {
+                f.reason = "The local profile changed while it was read";
+                return f;
+            }
+            const auto& profile = read.at("profile");
+            const auto config = profile.at("document_json").get<std::string>();
+            f.resolved = true;
+            f.provider = "local-profile";
+            f.localName = name;
+            f.contentSha256 = revision;
+            f.configSha256 = profiles::canonicalConfigSha256(config);
+            policy(f, config);
+            const auto meta = profile.contains("metadata") ? profile.at("metadata") : J::object();
+            if (meta.is_object() && meta.contains("processing_contract_version") &&
+                meta.at("processing_contract_version").is_number_integer() &&
+                meta.at("processing_contract_version").get<int>() > 0)
+                f.contractVersion = meta.at("processing_contract_version").get<int>();
+            if (!f.contractVersion)
+                f.coreReason = "the local profile declares no processing contract and pins no core build";
+            return f;
+        };
+        host.instrument = [&backend] {
+            workspace::RecipeInstrumentState s;
+            const auto r = backend.experiment().evaluateReadiness();
+            const auto& c = r.candidate;
+            s.generation = std::to_string(r.generation);
+            s.methodSource = c.method.source;
+            if (c.method.source == "central") {
+                s.methodId = c.method.methodId;
+                s.methodRevision = c.method.revisionId;
+                s.methodNamed = !c.method.methodId.empty() && !c.method.revisionId.empty();
+            } else if (c.method.source == "local") {
+                s.methodId = c.method.localProfileId;
+                s.methodRevision = c.method.localProfileRevision;
+                s.methodNamed = !s.methodId.empty() && !s.methodRevision.empty();
+                s.methodModified = c.method.localProfileModified;
+            }
+            s.configSha256 = c.method.configCanonicalSha256;
+            s.coreVersion = c.processingCore.version;
+            s.contractVersion = static_cast<int>(c.processingCore.contractVersion);
+            s.coreSha256 = c.processingCore.artifactSha256;
+            auto* store = backend.calibrationStore();
+            if (!store) {
+                s.calibrationKnown = false;
+                s.calibrationReason = "this instrument has no calibration record store";
+            } else if (!store->error().empty()) {
+                s.calibrationKnown = false;
+                s.calibrationReason = "the calibration record store is unreadable: " + store->error();
+            } else {
+                s.calibrationRecordId = r.calibrationRecordId;
+            }
+            const auto lut = backend.processing().eModulusLutIdentity();
+            s.lutLoaded = lut.loaded;
+            s.lutSha256 = lut.loaded ? lut.sha256 : std::string{};
+            return s;
+        };
+        return host;
+    }
+
+    std::string BackendFacade::recipeRequestJson(const std::string& request, bool write)
+    {
+        if (!initialized_) return R"({"status":"unavailable","message":"Backend not initialized"})";
+        const workspace::RecipeProvider provider(recipeHost(backend_, [this](const std::string& q) {
+            return analysisRequestJson(q, false);
+        }));
+        return provider.request(request, write);
+    }
+
+    std::string BackendFacade::workspaceRequestJson(const std::string& request, bool write)
+    {
+        if (!initialized_) return R"({"status":"unavailable","message":"Backend not initialized"})";
+        try {
+            const auto action=nlohmann::json::parse(request).value("action",std::string{});
+            if(action=="resolve_finding" || action=="draft_from_finding"||action=="verify_next_run") {
+                const workspace::RecipeProvider recipes(recipeHost(backend_, [this](const std::string& q) {
+                    return analysisRequestJson(q, false);
+                }));
+                return workspace::nextRunPlanning(backend_.sqlite(),request,write,
+                    [&](const nlohmann::json& q){return nlohmann::json::parse(analysisRequestJson(q.dump(),false));},
+                    [&](const nlohmann::json& q){return nlohmann::json::parse(workspaceRequestJson(q.dump(),false));},
+                    &recipes);
+            }
+            if (action=="evaluate_recipe") {
+                using J=nlohmann::json;
+                const auto q=J::parse(request);
+                if (q.size()!=6) return R"({"status":"invalid","message":"Expected exact workspace, source and method-provider fields"})";
+                const auto saved=J::parse(backend_.sqlite().workspaceRequest(J{{"action","read"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")}}.dump(),false));
+                if (saved.at("status")!="ok") return saved.dump();
+                const auto& recipe=saved.at("document").at("recipe");
+                const auto& link=saved.at("document").at("sources").at(q.at("source_id").get<std::string>());
+                const J verify={{"action","verify_source"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},{"source_id",q.at("source_id")}};
+                const J methodRequest={{"action","resolve_recipe"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},{"profile_base",q.at("profile_base")}};
+                const auto verified=J::parse(workspaceRequestJson(verify.dump(),false));
+                if (verified.at("status")!="ok") return verified.dump();
+                const auto resolved=J::parse(workspaceRequestJson(methodRequest.dump(),false));
+                if (resolved.at("status")!="ok" || resolved.at("method").at("status")!="resolved")
+                    return J{{"status","unavailable"},{"message","Pinned acquisition method could not be resolved; no recipe evaluation performed"}}.dump();
+                const auto& planRef=recipe.at("analysis_plan");
+                const auto strategy=J::parse(analysisRequestJson(J{{"action","read"},{"planId",planRef.at("id")},{"revision",planRef.at("revision")}}.dump(),false));
+                if (strategy.at("status")!="ok") return strategy.dump();
+                const auto method=strategy.at("document").value("method",J(nullptr));
+                if (!method.is_null() && (method.at("method_id")!=recipe.at("method").at("id") ||
+                    method.at("revision_id")!=recipe.at("method").at("revision") ||
+                    method.at("content_hash")!=resolved.at("method").value("content_sha256",std::string{})))
+                    return R"({"status":"reference_mismatch","message":"Strategy and recipe pin different acquisition methods"})";
+                const auto kind=q.at("source_kind").get<std::string>();
+                if (kind!="stored" && kind!="run-archive") return R"({"status":"invalid","message":"Unsupported workspace source kind"})";
+                const auto evaluated=J::parse(analysisRequestJson(J{{"action","evaluate"},{"planId",planRef.at("id")},{"revision",planRef.at("revision")},
+                    {"source",{{"kind",kind},{"path",link.at("path")}}}}.dump(),false));
+                if (evaluated.at("status")!="ok") return evaluated.dump();
+                const auto reverified=J::parse(workspaceRequestJson(verify.dump(),false));
+                if (reverified.at("status")!="ok") return reverified.dump();
+                const auto remethod=J::parse(workspaceRequestJson(methodRequest.dump(),false));
+                if (remethod!=resolved) return R"({"status":"conflict","message":"Method changed during evaluation"})";
+                if (kind=="stored" && evaluated.at("evaluation").at("sourceFingerprint")!="sha256:"+link.at("sha256").get<std::string>())
+                    return R"({"status":"source_mismatch","message":"Evaluation source differs from pinned file bytes"})";
+                return J{{"status","ok"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},{"source_id",q.at("source_id")},
+                    {"evaluation",evaluated.at("evaluation")},{"method",resolved.at("method")},{"compatibility","unknown"},
+                    {"hardwareReadiness","not_evaluated"},{"applied",false}}.dump();
+            }
+            if (action=="resolve_recipe") {
+                using J=nlohmann::json;
+                const auto q=J::parse(request);
+                if (q.size()>4 || !q.contains("revision")) return R"({"status":"invalid","message":"Exact workspace revision required"})";
+                const auto saved=J::parse(backend_.sqlite().workspaceRequest(J{{"action","read"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")}}.dump(),false));
+                if (saved.at("status")!="ok") return saved.dump();
+                const auto& recipe=saved.at("document").at("recipe");
+                const auto& method=recipe.at("method");
+                J resolution={{"status","unresolved"},{"reason","Pinned method is not available from the selected provider"}};
+                if (method.at("source")=="registry") {
+                    const auto registry=backend_.profileRegistry().snapshot();
+                    for (const auto& r:registry.revisions)
+                        if (r.methodId==method.at("id") && r.revisionId==method.at("revision"))
+                            resolution={{"status","resolved"},{"provider","registry-cache"},{"id",r.methodId},{"revision",r.revisionId},
+                                        {"content_sha256",r.contentHash},{"state",profiles::toString(r.state)}};
+                } else if (method.at("source")=="local") {
+                    const auto base=q.value("profile_base",std::string{});
+                    const auto catalog=J::parse(app::profileStoreCommand(backend_,base,R"({"operation":"list"})"));
+                    if (catalog.value("ok",false)) {
+                        int matches=0;
+                        for (const auto& p:catalog.at("profiles"))
+                            if (p.at("profile_id")==method.at("id") && p.at("revision")==method.at("revision")) {
+                                ++matches;
+                                resolution={{"status","resolved"},{"provider","local-profile"},{"id",p.at("profile_id")},
+                                            {"revision",p.at("revision")},{"content_sha256",p.at("revision")},{"path",p.at("path")}};
+                            }
+                        if (matches>1) resolution={{"status","unresolved"},{"reason","Ambiguous local method identity"}};
+                    } else resolution["reason"]=catalog.value("error",std::string{"Method lookup failed"});
+                }
+                return J{{"status","ok"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},
+                         {"recipe_id",recipe.at("id")},{"recipe_revision",recipe.at("revision")},{"method",resolution},
+                         {"compatibility","unknown"},{"message","Method resolution does not apply settings or establish scientific compatibility"}}.dump();
+            }
+            if (action=="attach_source" || action=="relink" || action=="verify_source") {
+                std::string result=R"({"status":"unavailable","message":"Source verification requires idle acquisition and recording"})";
+                backend_.experiment().withIdleConfiguration([&] {
+                    if (!backend_.isFrameRecording()) result=backend_.sqlite().workspaceRequest(request,write);
+                });
+                return result;
+            }
+        } catch (...) { /* Strict request errors are returned by the metadata host. */ }
+        return backend_.sqlite().workspaceRequest(request, write);
     }
 
     std::string BackendFacade::calibrationRecordsListJson() const
@@ -2825,6 +3155,8 @@ namespace backend::bridge
             out.valid = s.jobId != 0;
             out.jobId = s.jobId;
             out.generation = s.generation;
+            out.instance = s.instance;
+            out.stale = s.stale;
             out.state = static_cast<int>(s.state);
             out.complete = s.complete;
             out.overflow = s.overflow;
@@ -2862,16 +3194,21 @@ namespace backend::bridge
         out.jobId = start.jobId;
         out.rejection = static_cast<int>(start.rejection);
         out.reason = start.reason;
+        out.instance = start.instance;
         return out;
     }
 
-    bool BackendFacade::cancelDeviceDiscovery(std::uint64_t jobId)
+    bool BackendFacade::cancelDeviceDiscovery(std::uint64_t jobId, const std::string &instance)
     {
         if (!initialized_)
         {
             return false;
         }
         auto &service = backend_.deviceDiscovery();
+        if (!instance.empty())
+        {
+            return service.cancelDiscovery(jobId, instance);
+        }
         const auto snapshot = service.discoverySnapshot(jobId);
         if (snapshot.jobId == 0 || discovery::isTerminal(snapshot.state))
         {
@@ -2881,14 +3218,17 @@ namespace backend::bridge
         return true;
     }
 
-    bool BackendFacade::fetchDeviceDiscovery(std::uint64_t jobId, BackendDiscoverySnapshot &out) const
+    bool BackendFacade::fetchDeviceDiscovery(std::uint64_t jobId, BackendDiscoverySnapshot &out,
+                                             const std::string &instance) const
     {
         out = BackendDiscoverySnapshot{};
         if (!initialized_)
         {
             return false;
         }
-        out = toSnapshot(backend_.deviceDiscovery().discoverySnapshot(jobId));
+        const auto &service = backend_.deviceDiscovery();
+        out = toSnapshot(instance.empty() ? service.discoverySnapshot(jobId)
+                                          : service.discoverySnapshot(jobId, instance));
         return out.valid;
     }
 
@@ -3958,6 +4298,160 @@ std::string BackendFacade::fetchCameraGeometryJson() const {
     }.dump();
 }
 
+namespace {
+// E02: the facade's view of the camera as a GuardedPort. Every step runs
+//   [writes: the coordinator's idle transaction, so Start is excluded]
+//   -> TriggerService::runSerializedWithPulses (the pulse lock, always: no
+//      feature operation between a pulse's edges; refused while pulses are
+//      queued or firing)
+//   -> CaptureService::withCameraFeatures (the capture guard; the gate below is
+//      evaluated there, before the port)
+//   -> the camera's own port guard.
+// Every refusal is decided under those locks, never before taking them, and
+// none touches the device.
+class CaptureFeaturePort final : public ::camera::features::GuardedPort {
+public:
+    CaptureFeaturePort(AppBackend &backend, bool write, const std::atomic<bool> *cancel = nullptr)
+        : backend_(backend), write_(write), cancel_(cancel) {}
+
+    ::camera::features::Access run(
+        const std::function<void(::camera::features::Port &, ::camera::features::CurrentSession &)> &fn,
+        std::string &reason) override {
+        using ::camera::features::Access;
+        if (cancel_ && cancel_->load()) {
+            reason = "The backend is shutting down.";
+            return Access::Refused;
+        }
+        Access access = Access::Refused;
+        const auto guarded = [&] {
+            if (!backend_.trigger().runSerializedWithPulses(
+                    [&] { access = backend_.capture().withCameraFeatures(fn, reason, gate()); }, reason))
+                access = Access::Refused;
+        };
+        if (!write_) {
+            guarded();
+            return access;
+        }
+        auto &experiment = backend_.experiment();
+        if (!experiment.withIdleConfiguration(guarded)) {
+            reason = std::string("Feature writes are refused while the experiment is ") +
+                     app::toString(experiment.stateNow()) + ".";
+            return Access::Refused;
+        }
+        return access;
+    }
+
+private:
+    services::CameraFeatureGate gate() {
+        services::CameraFeatureGate g;
+        // Refused while sorting is possible, i.e. a pulse could become pending at
+        // any moment: a run from Starting to Stopping, realtime processing (its
+        // target selection feeds the trigger) or autofocus running. Queued pulses
+        // are refused by runSerializedWithPulses.
+        g.refuseAll = [this]() -> std::string {
+            const auto run = backend_.experiment().stateNow();
+            if (run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
+                run == app::ExperimentRunState::Stopping)
+                return std::string("Camera feature access is refused while the experiment is ") +
+                       app::toString(run) + ".";
+            if (backend_.processing().isRealtimeRunning())
+                return "Camera feature access is refused while realtime processing is running: its target "
+                       "selection drives sort pulses.";
+            if (backend_.autofocus().isEnabled())
+                return "Camera feature access is refused while autofocus is running.";
+            return {};
+        };
+        // Writes also: a frame recording records the camera's configuration.
+        g.refuseWrites = [this]() -> std::string {
+            if (backend_.isFrameRecording())
+                return "Feature writes are refused while a frame recording is running.";
+            return {};
+        };
+        return g;
+    }
+
+    AppBackend &backend_;
+    bool write_;
+    const std::atomic<bool> *cancel_;
+};
+} // namespace
+
+std::string BackendFacade::cameraFeatureTreeJson(const std::string &requestJson) {
+    if (!initialized_) return ::camera::features::featureRefusedJson("Backend not initialized");
+    CaptureFeaturePort port(backend_, false, &featureTreeJobs_->cancel);
+    return ::camera::features::featureTreeJson(port, requestJson);
+}
+
+std::string BackendFacade::cameraFeatureReadJson(const std::string &requestJson) {
+    if (!initialized_) return ::camera::features::featureRefusedJson("Backend not initialized");
+    CaptureFeaturePort port(backend_, false);
+    return ::camera::features::featureReadJson(port, requestJson);
+}
+
+std::string BackendFacade::cameraFeatureWriteJson(const std::string &requestJson) {
+    if (!initialized_) return ::camera::features::featureRefusedJson("Backend not initialized");
+    CaptureFeaturePort port(backend_, true);
+    return ::camera::features::featureWriteJson(port, requestJson);
+}
+
+std::uint64_t BackendFacade::startCameraFeatureTree(const std::string &requestJson) {
+    auto &jobs = *featureTreeJobs_;
+    std::thread previous;
+    {
+        std::lock_guard<std::mutex> lock(jobs.mutex);
+        if (!initialized_ || jobs.closed)
+            return jobs.finished(::camera::features::featureRefusedJson("Backend not initialized"));
+        if (jobs.running != 0) {
+            if (jobs.runningRequest == requestJson) return jobs.running; // join the walk in flight
+            return jobs.finished(::camera::features::featureRefusedJson(
+                "A camera feature tree enumeration is already running (job " + std::to_string(jobs.running) +
+                "); request the tree again when it finishes."));
+        }
+        // The last worker has finished (running == 0); reap it outside the lock,
+        // which its last step takes.
+        previous = std::move(jobs.worker);
+    }
+    if (previous.joinable()) previous.join();
+    std::lock_guard<std::mutex> lock(jobs.mutex);
+    if (jobs.closed)
+        return jobs.finished(::camera::features::featureRefusedJson("The backend is shutting down."));
+    if (jobs.running != 0) {
+        if (jobs.runningRequest == requestJson) return jobs.running;
+        return jobs.finished(::camera::features::featureRefusedJson(
+            "A camera feature tree enumeration is already running (job " + std::to_string(jobs.running) +
+            "); request the tree again when it finishes."));
+    }
+    const auto id = jobs.nextId++;
+    jobs.running = id;
+    jobs.runningRequest = requestJson;
+    jobs.worker = std::thread([this, id, requestJson] {
+        std::string reply;
+        try {
+            reply = cameraFeatureTreeJson(requestJson);
+        } catch (const std::exception &e) {
+            reply = ::camera::features::featureRefusedJson(std::string("camera_feature_tree failed: ") + e.what());
+        } catch (...) {
+            reply = ::camera::features::featureRefusedJson("camera_feature_tree failed");
+        }
+        auto &j = *featureTreeJobs_;
+        std::lock_guard<std::mutex> done(j.mutex);
+        j.keep(id, std::move(reply));
+        j.running = 0;
+        j.runningRequest.clear();
+    });
+    return id;
+}
+
+std::string BackendFacade::fetchCameraFeatureTree(std::uint64_t jobId) {
+    auto &jobs = *featureTreeJobs_;
+    std::lock_guard<std::mutex> lock(jobs.mutex);
+    for (const auto &[id, reply] : jobs.done)
+        if (id == jobId) return reply;
+    if (jobId != 0 && jobs.running == jobId) return {};
+    return ::camera::features::featureRefusedJson("Unknown or expired camera feature tree job " +
+                                                   std::to_string(jobId) + ".");
+}
+
 std::string BackendFacade::fetchPreviewBufferJson() const {
     uint64_t first = 0, last = 0; size_t count = 0;
     const bool available = initialized_ && backend_.playback().queryRange(first, last, count);
@@ -4447,3 +4941,104 @@ std::string BackendFacade::fetchCaptureLifecycleJson() const {
         .dump();
 }
 } // namespace backend::bridge
+
+std::string backend::bridge::BackendFacade::fetchLiveEvidenceJson() {
+    if (!isInitialized()) return R"({"available":false,"reason":"Backend is not initialized"})";
+    return backend_.processing().liveEvidenceJson();
+}
+std::string backend::bridge::BackendFacade::analysisRequestJson(const std::string& request, bool write) {
+    if (!isInitialized()) return R"({"status":"unavailable","message":"Backend is not initialized"})";
+    using Json = nlohmann::json;
+    auto source = [this](const Json& descriptor) -> Json {
+        const auto kind = descriptor.at("kind").get<std::string>();
+        if (kind == "run-archive-gallery") {
+            if (descriptor.size() != 6)
+                throw std::invalid_argument("Expected archive path, fingerprints, keys and mask");
+            const auto response = nlohmann::json::parse(analyzePopulationJson(nlohmann::json{
+                {"expectedPath", descriptor.at("path")},
+                {"feature", "area"},
+                {"minimum", nullptr},
+                {"maximum", nullptr},
+                {"snapshot", true},
+                {"sourceKind", "run-archive"},
+                {"galleryKeys", descriptor.at("keys")},
+                {"expectedFingerprint", descriptor.at("fingerprint")},
+                {"expectedFileFingerprint", descriptor.at("fileFingerprint")},
+                {"mask", descriptor.at("mask")}}.dump()));
+            if (!response.value("ok", false))
+                throw std::invalid_argument(response.value("message", "Archive gallery refused"));
+            return response.at("source");
+        }
+        if (kind == "live-run-gallery") {
+            if (descriptor.size() != 4)
+                throw std::invalid_argument("Expected live fingerprint, keys and mask");
+            nlohmann::json gallery;
+            auto& processing = backend_.processing();
+            const bool mask = descriptor.at("mask").get<bool>();
+            backend::analysis::freezeEvidence(
+                processing.runLiveEvidence(), "live-run",
+                [&](const backend::evidence::Identity& identity, uint64_t lease,
+                    const nlohmann::json& frozen) {
+                    if (frozen.at("fingerprint") != descriptor.at("fingerprint"))
+                        throw std::invalid_argument("Live gallery advanced; refresh the source");
+                    gallery = backend::analysis::evidenceGallery(
+                        frozen, descriptor.at("keys"), mask,
+                        [&](const std::string& set, const std::string& ordinal) {
+                            return processing.readRunEvidenceImage(identity, lease, set, ordinal,
+                                                                   mask);
+                        });
+                });
+            return gallery;
+        }
+        if (kind == "stored-gallery") {
+            if (descriptor.size() != 4) throw std::invalid_argument("Expected gallery path, fingerprint and keys");
+            const auto response = nlohmann::json::parse(analyzePopulationJson(nlohmann::json{
+                {"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr}, {"maximum", nullptr},
+                {"snapshot", true}, {"galleryKeys", descriptor.at("keys")}, {"expectedFingerprint", descriptor.at("fingerprint")}}.dump()));
+            if (!response.value("ok", false)) throw std::invalid_argument(response.value("message", "Gallery refused"));
+            return response.at("source");
+        }
+
+        if (kind == "live-run" || kind == "live-epoch") {
+            if (descriptor.size() != 1) throw std::invalid_argument("Unexpected live source fields");
+            return backend::analysis::freezeEvidence(kind == "live-run" ? backend_.processing().runLiveEvidence() : backend_.processing().liveEvidence(), kind);
+        }
+        // F-2 (F15): an FCS 3.0/3.1 file through the native reader, as a columnar handle.
+        if (kind == "fcs") return backend::analysis::fcsSourceDescriptor(descriptor);
+        if (kind != "stored" && kind != "run-archive") throw std::invalid_argument("Unsupported source kind");
+        if (descriptor.size() != 2) throw std::invalid_argument("Expected source kind and path");
+        // F-1b: a stored file is a columnar handle (F-source/2, no rows); the
+        // run archive stays an inline F-source/1 (bounded at 4 MiB).
+        Json lookup{{"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr},
+                    {"maximum", nullptr}, {"snapshot", true}, {"sourceKind", kind}};
+        if (kind == "stored") lookup["columnar"] = true;
+        const auto response = Json::parse(analyzePopulationJson(lookup.dump()));
+        if (!response.value("ok", false)) throw std::invalid_argument(response.value("message", "Source refused"));
+        return response.at("source");
+    };
+    auto method = [this](const Json& ref) -> Json {
+        if (!ref.is_object() || ref.size() != 3) throw std::invalid_argument("Expected method_id, revision_id and content_hash");
+        const auto methodId = ref.at("method_id").get<std::string>();
+        const auto revisionId = ref.at("revision_id").get<std::string>();
+        const auto hash = ref.at("content_hash").get<std::string>();
+        if (methodId.empty() || revisionId.empty() || hash.empty()) throw std::invalid_argument("Method references must be pinned");
+        const auto snapshot = backend_.profileRegistry().snapshot();
+        for (const auto& item : snapshot.revisions) {
+            if (item.revisionId != revisionId) continue;
+            if (item.methodId != methodId || item.contentHash != hash)
+                return Json{{"status", "reference_mismatch"}, {"message", "Pinned method identity/hash mismatch"}};
+            return Json{{"status", "ok"}, {"method", ref}, {"config_sha256", item.configSha256},
+                {"scientificCompatibility", "unknown"}, {"hardwareReadiness", "not_evaluated"}, {"applied", false}};
+        }
+        return Json{{"status", "unavailable"}, {"message", "Exact method revision is not in the verified registry cache"}};
+    };
+    auto columns = [this](const Json& source, const backend::analysis::ColumnVisitor& use) {
+        if (source.value("scope", std::string{}) == "fcs") return backend::analysis::lendFcsColumns(source, use);
+        if (source.value("scope", std::string{}) != "stored")
+            throw std::invalid_argument("This host lends columns for stored experiment files only");
+        if (!reviewJobs_) throw std::invalid_argument("Review is unavailable in this host");
+        reviewJobs_->withRecordingColumns(source.at("path").get<std::string>(),
+                                          source.at("fingerprint").get<std::string>(), use);
+    };
+    return backend::analysis::analysisRequest(backend_.sqlite(), request, write, source, method, columns);
+}

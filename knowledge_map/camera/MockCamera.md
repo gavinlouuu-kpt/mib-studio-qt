@@ -35,6 +35,17 @@ bool loopFiles{true};
   to hit `frameInterval`. Returns false when `loopFiles == false` and
   the list is exhausted.
 
+## Fake GenApi node map (E02, #806)
+
+MockCamera owns a `camera::features::FakeNodeMap` (built in `makeMockNodeMap()`)
+and returns itself as the `FeatureSession` ([[FeatureControl]]), so the feature
+commands run headless end to end. Evidence class `fixture/mock`, never
+`device`. The port is open only while the camera runs (`featureMutex_`). The
+fixture has nested categories under `Root`, a read-only string, bounded floats,
+an enumeration that gates another node's write access, a selector with a
+selected node and a boolean. Its SFNC-style names are fixture data: they drive
+nothing (frame pacing and pixels ignore them).
+
 ## Decode (`loadFrameFromPath`)
 
 Decoding is **Qt-free** (epic #246): `cv::imread(path, IMREAD_GRAYSCALE)` for

@@ -2,8 +2,9 @@
 // 2026-10-01-standalone-review-app, ADR 0014).
 //
 // Owns the open HDF5 file through its own Hdf5Service reader (never the
-// experiment writer's handle), caches the metadata rows once per open, and
-// serves bounded reads: metrics pages, single frames with the overlay
+// experiment writer's handle), counts the metadata rows at open and pages them on
+// demand (F-1b: no per-row metadata held), and serves bounded reads: metrics
+// pages, single frames with the overlay
 // composed here, series frames, packed thumbnail strips, the columnar
 // scatter, run accounting, stored KDE records and the recorded
 // pixel-to-micron factor (TD-17). Qt-free; lives in `mib_review_core`,
@@ -19,6 +20,7 @@
 #include "backend/review/RunStatistics.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -26,6 +28,7 @@
 
 namespace cv { class Mat; }
 namespace backend::services { class Hdf5Service; struct ProcessedFrame; }
+namespace backend::analysis { class EventColumns; }
 
 namespace backend::review
 {
@@ -99,6 +102,21 @@ namespace backend::review
         // lanes as well (ReviewJobs::runStatistics); the bridges only call that.
         RunStatisticsResult runStatistics(const std::string &path, const std::string &computedAt) const;
 
+        // Bounded atomic both-set native interval analysis of the open file.
+        // Read-only metadata; result identity is ephemeral, not a durable fingerprint.
+        std::string analyzePopulation(const std::string& requestJson) const;
+        // F-1b: lend the stored measurements of an experiment file as chunked
+        // columns (RecordingColumns: valid then invalid set, area / deformability
+        // / youngsModulus) to `use`, under this session's mutex (#722), after
+        // verifying that the file's full-file SHA-256 is `expectedFingerprint`
+        // ("sha256:<hex>") and that its stored counts match its readable rows.
+        // The open file is read through the session's reader; any other path
+        // through a short-lived reader of its own (probeRuns' rule; its hash is
+        // cached by path, size and write time). Hosts gate it on the job lanes
+        // (ReviewJobs::withRecordingColumns). Throws std::invalid_argument
+        // naming the refusal; exceptions from `use` propagate.
+        void withRecordingColumns(const std::string& path, const std::string& expectedFingerprint,
+                                  const std::function<void(const analysis::EventColumns&)>& use) const;
         ReviewMetadata metadata() const;
         bool isRecordingFile() const;
 

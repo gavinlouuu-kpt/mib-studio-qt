@@ -95,6 +95,14 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1e9).toFixed(bytes < 1e10 ? 2 : 1)} GB`;
 }
 
+/** A byte count sent as a decimal string (a u64 counter, e.g. the run quick look's file size) in
+ *  decimal units ("15.1 MB"); null for null or a malformed value. Unit formatting for display only:
+ *  the workspace's no-client-arithmetic pin (quickLookModel.test.ts) exempts this formatter. */
+export function formatByteCount(decimal: string | null | undefined): string | null {
+  if (decimal === null || decimal === undefined || !/^\d{1,20}$/.test(decimal)) return null;
+  return formatBytes(Number(decimal));
+}
+
 export function hoursAtTypicalRate(freeBytes: number): number {
   return freeBytes / (TYPICAL_RECORDS_PER_S * RECORD_BYTES) / 3600;
 }

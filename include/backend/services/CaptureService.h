@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/camera/common/ICamera.h"
+#include "backend/camera/features/FeatureTree.h"
 #include "backend/services/CaptureLifecycle.h"
 #include "backend/services/TelemetrySample.h"
 
@@ -18,6 +19,18 @@
 namespace backend { namespace playback { class FrameStore; } }
 
 namespace backend::services {
+
+// E02 (#806): the run-state gate of a camera feature operation. Both checks are
+// evaluated by CaptureService::withCameraFeatures while it holds its camera
+// guard, immediately before the port is touched, so the decision and the
+// device access are one step. A non-empty string is the refusal reason.
+struct CameraFeatureGate {
+    // Refuses every operation (tree, read, write): outcome "refused", the port
+    // is never touched.
+    std::function<std::string()> refuseAll;
+    // Refuses writes only (reads stay open): FeatureControl's write gate.
+    std::function<std::string()> refuseWrites;
+};
 
 struct CaptureStats {
     std::atomic<uint64_t> framesProcessed{0};
@@ -125,6 +138,31 @@ public:
     // (Acquisition trigger — not the sort-output pulse.)
     bool softTriggerActiveCamera();
 
+    // E02 (#806): run `fn` against the active camera's GenApi port under the
+    // capture session guard (cameraMutex_, which pins activeCamera_ against
+    // release) and the camera's own port guard. The CurrentSession token is
+    // {camera source, this capture session's generation, capability revision};
+    // the revision starts at 1 per generation and `fn` may advance it (stored
+    // back). `gate` is evaluated under the guard: refuseAll refuses the
+    // operation (Refused, the port is never touched), refuseWrites makes
+    // writes unauthorized. Unsupported: the active camera has no GenApi node
+    // map. NoSession: no camera is active or its port is not open.
+    ::camera::features::Access withCameraFeatures(
+        const std::function<void(::camera::features::Port&,
+                                 ::camera::features::CurrentSession&)>& fn,
+        std::string& reason, const CameraFeatureGate& gate);
+    // Same, with a fixed write-block reason (empty: writes authorized).
+    ::camera::features::Access withCameraFeatures(
+        const std::function<void(::camera::features::Port&,
+                                 ::camera::features::CurrentSession&)>& fn,
+        std::string& reason, const std::string& writeBlockReason = {});
+
+    // E01 (E-4): this backend instance's identity, a random UUID drawn at
+    // construction. It is part of every feature session token, so a token
+    // issued before a backend restart (generations restart at 1) never
+    // matches a session of the new instance.
+    const std::string& instanceId() const { return instanceId_; }
+
     const CaptureStats& stats() const { return stats_; }
 
     // Consistent per-metric telemetry view (issue #368): every metric carries
@@ -168,6 +206,12 @@ private:
     CameraReadyCallback cameraReadyCallback_;
     ::camera::common::ICamera* activeCamera_{nullptr};
     std::mutex cameraMutex_;
+    const std::string instanceId_;
+    // Guarded by cameraMutex_: the capture generation activeCamera_ belongs
+    // to, and the GenApi capability revision of that generation (E02).
+    uint64_t activeCameraGeneration_{0};
+    uint64_t featureRevisionGeneration_{0};
+    uint64_t featureRevision_{0};
 
     // Serializes start()/stop() and guards thread_/snapshot_. The worker
     // takes it only for short transitions, never while blocked in grabFrame.

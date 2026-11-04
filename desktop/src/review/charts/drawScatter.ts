@@ -3,6 +3,7 @@ import { metricNumber } from "../../metricFormat";
 // exported snapshots (chartExport.ts, 1200 × 1200 like the Qt tab), so an
 // export shows exactly what the view shows. Pure canvas 2D; no React.
 import { levelColor, niceTicks, toPx, type Range, type Viewport } from "./chartMath";
+import { CHART_PALETTE as P } from "./chartPalette";
 
 export interface ContourFamily {
   name: string;
@@ -34,8 +35,8 @@ export const SCATTER_MARGIN = { left: 64, top: 30, right: 12, bottom: 44 };
 export const LEGEND_W = 158;
 export const MARKER = 6; // Qt marker size (diameter, px)
 const HIGHLIGHT = 13;
-export const POINT_COLOUR = "#209fdf"; // Qt light theme, first series
-const HIGHLIGHT_COLOUR = "#f28e2b";
+export const POINT_COLOUR = P.point; // kit accent (#717 B3a; was Qt's first series)
+const HIGHLIGHT_COLOUR = P.inspect; // kit inspect colour: the inspected record
 export const CURVE_COLOURS = ["#99ca53", "#f6a625", "#6d5fd5", "#bf593e", "#7f7f7f", "#2bb5a3", "#d55fa8", "#8c6d31", "#5f8dd5", "#c2a400", "#3d9970"];
 
 export function scatterViewport(w: number, h: number, ranges: { x: Range; y: Range }): Viewport {
@@ -62,16 +63,16 @@ export function drawScatter(g: CanvasRenderingContext2D, w: number, h: number, m
   const vp = scatterViewport(w, h, m.ranges);
   const n = m.xs.length;
   g.clearRect(0, 0, w, h);
-  g.fillStyle = "#fff";
+  g.fillStyle = P.background;
   g.fillRect(0, 0, w, h);
 
   const xTicks = niceTicks(m.ranges.x, Math.max(3, Math.floor(vp.width / 90)));
   const yTicks = niceTicks(m.ranges.y, Math.max(3, Math.floor(vp.height / 50)));
   const xd = decimalsFor(xTicks), yd = decimalsFor(yTicks);
-  g.font = "11px system-ui, sans-serif";
-  g.strokeStyle = "#e6e6e6";
+  g.font = `11px ${P.font}`;
+  g.strokeStyle = P.grid;
   g.lineWidth = 1;
-  g.fillStyle = "#444";
+  g.fillStyle = P.tick;
   g.textAlign = "center";
   g.textBaseline = "top";
   for (const t of xTicks) {
@@ -92,14 +93,14 @@ export function drawScatter(g: CanvasRenderingContext2D, w: number, h: number, m
     g.stroke();
     g.fillText(metricNumber(t, yd), vp.left - 6, py);
   }
-  g.strokeStyle = "#999";
+  g.strokeStyle = P.frame;
   g.strokeRect(vp.left + 0.5, vp.top + 0.5, vp.width, vp.height);
-  g.fillStyle = "#222";
+  g.fillStyle = P.ink;
   g.textAlign = "center";
   g.textBaseline = "alphabetic";
-  g.font = "bold 13px system-ui, sans-serif";
+  g.font = `600 13px ${P.font}`;
   g.fillText("Deformability vs Area (μm²)", vp.left + vp.width / 2, 18);
-  g.font = "12px system-ui, sans-serif";
+  g.font = `12px ${P.font}`;
   g.fillText("Area (μm²)", vp.left + vp.width / 2, h - 8);
   g.save();
   g.translate(14, vp.top + vp.height / 2);
@@ -157,12 +158,15 @@ export function drawScatter(g: CanvasRenderingContext2D, w: number, h: number, m
 
   if (m.highlight >= 0 && m.highlight < n) {
     const [px, py] = toPx(vp, m.xs[m.highlight], m.ys[m.highlight]);
+    // The inspected record (R3): an outline in the inspect colour over a
+    // light halo, so the point itself stays visible.
     g.beginPath();
     g.arc(px, py, HIGHLIGHT / 2, 0, Math.PI * 2);
-    g.fillStyle = HIGHLIGHT_COLOUR;
-    g.fill();
-    g.strokeStyle = "#fff";
-    g.lineWidth = 1.5;
+    g.strokeStyle = P.background;
+    g.lineWidth = 4;
+    g.stroke();
+    g.strokeStyle = HIGHLIGHT_COLOUR;
+    g.lineWidth = 2;
     g.stroke();
   }
   g.restore();
@@ -173,7 +177,7 @@ export function drawScatter(g: CanvasRenderingContext2D, w: number, h: number, m
   m.curves.forEach((c, k) => entries.push({ name: `${metricNumber(c.emodulus_kpa, 2)} kPa`, color: CURVE_COLOURS[k % CURVE_COLOURS.length], line: true }));
   const lx = vp.left + vp.width + 14;
   let ly = vp.top + 6;
-  g.font = "11px system-ui, sans-serif";
+  g.font = `11px ${P.font}`;
   g.textAlign = "left";
   g.textBaseline = "middle";
   for (const e of entries) {
@@ -193,13 +197,13 @@ export function drawScatter(g: CanvasRenderingContext2D, w: number, h: number, m
       g.arc(lx + 8, ly, 3.5, 0, Math.PI * 2);
       g.fill();
     }
-    g.fillStyle = "#333";
+    g.fillStyle = P.ink;
     g.fillText(e.name, lx + 22, ly, LEGEND_W - 30);
     ly += 17;
   }
   if (levels && ly < h - 30) {
     ly += 4;
-    g.fillStyle = "#333";
+    g.fillStyle = P.ink;
     g.fillText("Density", lx, ly);
     ly += 12;
     const lw = LEGEND_W - 30;
@@ -207,15 +211,15 @@ export function drawScatter(g: CanvasRenderingContext2D, w: number, h: number, m
       g.fillStyle = levelColor((k / (lw - 1)) * (m.levelCount - 1), m.levelCount);
       g.fillRect(lx + k, ly, 1, 9);
     }
-    g.fillStyle = "#666";
+    g.fillStyle = P.tick;
     g.fillText("low", lx, ly + 18);
     g.textAlign = "right";
     g.fillText("high", lx + lw, ly + 18);
   }
   if (n === 0) {
-    g.fillStyle = "#888";
+    g.fillStyle = P.empty;
     g.textAlign = "center";
-    g.font = "13px system-ui, sans-serif";
+    g.font = `13px ${P.font}`;
     g.fillText("No valid cells to plot", vp.left + vp.width / 2, vp.top + vp.height / 2);
   }
 }

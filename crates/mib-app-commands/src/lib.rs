@@ -20,12 +20,13 @@ pub mod preview_buffer;
 /// The one backend bridge a process owns. Every transport (the Tauri webview, the YOFO Studio
 /// WebSocket server) serialises its calls through this mutex.
 pub struct AppState {
+    pub analysis_jobs: Mutex<mib_analysis_worker::app::Service>,
     pub bridge: Mutex<cxx::UniquePtr<ffi::BackendBridge>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        AppState { bridge: Mutex::new(ffi::new_backend_bridge()) }
+        AppState { analysis_jobs: Mutex::new(Default::default()), bridge: Mutex::new(ffi::new_backend_bridge()) }
     }
 }
 
@@ -124,7 +125,10 @@ pub fn is_initialized(state: &AppState) -> Result<bool, String> {
 /// path; found by the Xvfb E2E run: the UI passed "" and init always failed).
 pub fn init(state: &AppState, data_dir: &str, resource_dir: &str) -> Result<bool, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().initialize_with_resources(data_dir, resource_dir))
+    let ok = guard.pin_mut().initialize_with_resources(data_dir, resource_dir);
+    drop(guard);
+    if ok { state.analysis_jobs.lock().map_err(|e| e.to_string())?.initialize(std::path::Path::new(data_dir)); }
+    Ok(ok)
 }
 
 pub fn configure_mock(
@@ -962,6 +966,26 @@ pub fn fetch_review_metadata(state: &AppState) -> Result<ReviewMetadata, String>
     })
 }
 
+/// Native analysis of the open review source, with the facade's idle fence.
+pub fn analysis_read(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().analysis_read(&request.to_string())).map_err(|e| e.to_string())
+}
+pub fn analysis_write(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().analysis_write(&request.to_string())).map_err(|e| e.to_string())
+}
+pub fn fetch_live_evidence(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    // Before init the facade answers {available:false, reason}: the EvidenceResolver contract is
+    // an explicit unavailable reason, not a transport error.
+    serde_json::from_str(&guard.pin_mut().fetch_live_evidence()).map_err(|e| e.to_string())
+}
+pub fn analyze_population(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().analyze_population(&request.to_string())).map_err(|e| e.to_string())
+}
+
 /// Pull one bounded page of review metrics.
 pub fn fetch_review_metrics_page(
     state: &AppState,
@@ -1205,6 +1229,8 @@ pub struct DiscoveryStart {
     job_id: u64,
     rejection: u32,
     reason: String,
+    /// E01 (ABI 49): the backend instance that owns `job_id`; pass it back to fetch/cancel.
+    instance: String,
 }
 
 /// One discovered device for the webview (schema v14).
@@ -1251,6 +1277,10 @@ pub struct DiscoverySnapshot {
     job_id: u64,
     #[serde(serialize_with = "event_transport::serialize_u64")]
     generation: u64,
+    /// E01 (ABI 49): the backend instance that owns `job_id`.
+    instance: String,
+    /// E01 (ABI 49): the fetch named an earlier backend instance (refused).
+    stale: bool,
     state: u32,
     complete: bool,
     overflow: bool,
@@ -1271,6 +1301,7 @@ impl From<ffi::BridgeDiscoveryStart> for DiscoveryStart {
             job_id: s.job_id,
             rejection: s.rejection,
             reason: s.reason,
+            instance: s.instance,
         }
     }
 }
@@ -1281,6 +1312,8 @@ impl From<ffi::BridgeDiscoverySnapshot> for DiscoverySnapshot {
             valid: s.valid,
             job_id: s.job_id,
             generation: s.generation,
+            instance: s.instance,
+            stale: s.stale,
             state: s.state,
             complete: s.complete,
             overflow: s.overflow,
@@ -1380,16 +1413,29 @@ pub fn start_camera_discovery(state: &AppState) -> Result<DiscoveryStart, String
     Ok(guard.pin_mut().start_camera_discovery().into())
 }
 
-/// Poll a discovery job's bounded snapshot (schema v14).
-pub fn fetch_device_discovery(state: &AppState, job_id: String) -> Result<DiscoverySnapshot, String> {
+/// Poll a discovery job's bounded snapshot (schema v14). `instance` (E01, ABI 49): the start
+/// reply's backend instance; when given, a job of an earlier backend instance is refused as
+/// `stale` instead of being matched by its (reused) job ID.
+pub fn fetch_device_discovery(
+    state: &AppState,
+    job_id: String,
+    instance: Option<String>,
+) -> Result<DiscoverySnapshot, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().fetch_device_discovery(parse_frame_index(&job_id)?).into())
+    let instance = instance.unwrap_or_default();
+    Ok(guard.pin_mut().fetch_device_discovery(parse_frame_index(&job_id)?, &instance).into())
 }
 
-/// Cancel a running discovery job (schema v14); false for unknown/ended jobs.
-pub fn cancel_device_discovery(state: &AppState, job_id: String) -> Result<bool, String> {
+/// Cancel a running discovery job (schema v14); false for unknown/ended jobs, and (E01,
+/// ABI 49) for a job of an earlier backend instance when `instance` is given.
+pub fn cancel_device_discovery(
+    state: &AppState,
+    job_id: String,
+    instance: Option<String>,
+) -> Result<bool, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().cancel_device_discovery(parse_frame_index(&job_id)?))
+    let instance = instance.unwrap_or_default();
+    Ok(guard.pin_mut().cancel_device_discovery(parse_frame_index(&job_id)?, &instance))
 }
 
 /// Pull the authoritative selected-device snapshot.
@@ -1805,6 +1851,35 @@ fn calibration_record_id(record_id: &str) -> Result<(), String> {
 
 /// ABI 42 (#716 A4a): the instrument's calibration records (bridge-contract.json
 /// `calibration_records.list_reply`). A read: it never applies or changes anything.
+pub fn workspace_read(state: &AppState, request: String) -> Result<serde_json::Value, String> {
+    workspace_request(state, request, false)
+}
+pub fn workspace_write(state: &AppState, request: String) -> Result<serde_json::Value, String> {
+    workspace_request(state, request, true)
+}
+/// ABI 50 (#807 I02): the native recipe provider. `action` is the command name; `request` is
+/// the command's argument object (bridge-contract.json `recipes`). Reads never write; create and
+/// derive are the control-only writes. Nothing applies a method or actuates hardware.
+pub const RECIPE_READS: &[&str] = &["recipe_list", "recipe_get", "recipe_diff", "recipe_apply_preview"];
+pub const RECIPE_WRITES: &[&str] = &["recipe_create", "recipe_derive"];
+pub fn recipe_command(state: &AppState, action: &str, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let write = RECIPE_WRITES.contains(&action);
+    if !write && !RECIPE_READS.contains(&action) { return Err(format!("Unknown recipe command {action}")); }
+    let serde_json::Value::Object(mut map) = request else { return Err("Recipe request must be an object".into()); };
+    if map.contains_key("action") { return Err("Recipe request must not name an action".into()); }
+    map.insert("action".into(), serde_json::Value::String(action.into()));
+    let text = serde_json::Value::Object(map).to_string();
+    if text.len() > 65_536 { return Err("Recipe request too large".into()); }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().recipe_request(&text, write)).map_err(|e| e.to_string())
+}
+
+fn workspace_request(state: &AppState, request: String, write: bool) -> Result<serde_json::Value, String> {
+    if request.len() > 2_200_000 { return Err("Workspace request too large".into()); }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().workspace_request(&request, write)).map_err(|e| e.to_string())
+}
+
 pub fn calibration_records_list(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().calibration_records_list()).map_err(|e| e.to_string())
@@ -1887,6 +1962,63 @@ pub fn run_quick_look(
     let request = quick_look_request(&paths, reference.as_ref())?;
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().run_quick_look(&request.to_string())).map_err(|e| e.to_string())
+}
+
+/// ABI 49 (#806 E-1/E-2): the camera feature commands (bridge-contract.json `camera_features`).
+/// `request` is the JSON object the contract describes (null = `{}`); a non-object or a request over
+/// `request_max_bytes` is an error reply and nothing reaches the backend, which checks the rest.
+pub const CAMERA_FEATURE_REQUEST_MAX_BYTES: usize = 16384;
+
+fn camera_feature_request(request: &serde_json::Value) -> Result<String, String> {
+    let text = match request {
+        serde_json::Value::Null => "{}".to_string(),
+        serde_json::Value::Object(_) => request.to_string(),
+        _ => return Err("INVALID_ARGUMENTS: request must be a JSON object".into()),
+    };
+    if text.len() > CAMERA_FEATURE_REQUEST_MAX_BYTES {
+        return Err(format!("INVALID_ARGUMENTS: request exceeds {CAMERA_FEATURE_REQUEST_MAX_BYTES} bytes"));
+    }
+    Ok(text)
+}
+
+/// How long `camera_feature_tree` waits for its enumeration job before giving up (the job keeps
+/// its reply; a later identical request joins it while it runs).
+pub const CAMERA_FEATURE_TREE_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+/// Poll interval for the tree job; the bridge lock is taken only for each short fetch.
+const CAMERA_FEATURE_TREE_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// ABI 49: the active camera's GenApi node map, enumerated from the device (a read). The walk
+/// runs as a backend job (`camera_features.job`): the bridge lock is held only to start it and
+/// for each fetch, never for the walk, so frame pulls, status and experiment stop keep running.
+/// The reply is the tree document itself, as if the call were synchronous.
+pub fn camera_feature_tree(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let text = camera_feature_request(&request)?;
+    let job = state.bridge.lock().map_err(|e| e.to_string())?.pin_mut().camera_feature_tree_start(&text);
+    let deadline = std::time::Instant::now() + CAMERA_FEATURE_TREE_WAIT;
+    loop {
+        let reply = state.bridge.lock().map_err(|e| e.to_string())?.pin_mut().camera_feature_tree_fetch(job);
+        if !reply.is_empty() {
+            return serde_json::from_str(&reply).map_err(|e| e.to_string());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!("camera_feature_tree: enumeration job {job} did not finish in time"));
+        }
+        std::thread::sleep(CAMERA_FEATURE_TREE_POLL);
+    }
+}
+
+/// ABI 49: one feature's descriptor by name under the session token (a read).
+pub fn camera_feature_read(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let text = camera_feature_request(&request)?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().camera_feature_read(&text)).map_err(|e| e.to_string())
+}
+
+/// ABI 49: a typed write by name with readback (a control command on the WebSocket server).
+pub fn camera_feature_write(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let text = camera_feature_request(&request)?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().camera_feature_write(&text)).map_err(|e| e.to_string())
 }
 
 /// The owned crop (`layer` "image", pull kind 5) or its mask ("mask", pull kind 6) of a pinned
@@ -1987,6 +2119,17 @@ pub fn fetch_processing_stats(state: &AppState) -> Result<ProcessingStats, Strin
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scientific_numbers_preserve_native_double_bits() {
+        let raw = "[0.12000000000000001,0.24000000000000002,5.0]";
+        let value: serde_json::Value = serde_json::from_str(raw).unwrap();
+        for (i, expected) in [0.12000000000000001_f64,0.24000000000000002_f64,5.0].iter().enumerate() {
+            assert_eq!(value[i].as_f64().unwrap().to_bits(), expected.to_bits());
+        }
+        let again: serde_json::Value = serde_json::from_str(&value.to_string()).unwrap();
+        assert_eq!(again, value);
+    }
+
     use super::kind_name;
     use mib_bridge::ffi::{self, BridgeEventKind};
     use serial_test::serial;
@@ -2157,4 +2300,8 @@ mod method_calibration_tests {
         assert_eq!(serde_json::to_value(MethodCalibration::from(with_e)).unwrap()["calibration_reference"]["nominal_e_kpa"],
                    serde_json::json!(1.5));
     }
+}
+
+pub fn analysis_job(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    state.analysis_jobs.lock().map_err(|e| e.to_string())?.command(request, |q| analysis_read(state, q))
 }

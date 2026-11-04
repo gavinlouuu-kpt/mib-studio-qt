@@ -526,7 +526,12 @@ through it, at the moment it happens:
   is reported twice, from `stop()` and the capture thread, and
   `monitoringClosedCaptureSession_` keeps it one change). With the floor, a
   frame of the closed session still arriving or still in processing never
-  becomes a cell of the next capture.
+  becomes a cell of the next capture. The close's epoch is kept in
+  `monitoringClosedCaptureEpoch_`; `monitoringCaptureEndedByCameraClose()` is
+  true while it is still the store's current capture. The facade's
+  `stop_capture` asks it after `capture().stop()` and then stops realtime
+  without a second change, whether the user stopped an active camera or the
+  camera had already dropped by itself (Faulted, not `isRunning()`) (#821 review).
 - The facade's buffer `resize` calls `advanceCapture` after `FrameStore::resize`
   renumbered the frames (until then the renumbered frames enter with no
   capture); [[ExperimentCoordinator]]'s `beginRun` is the run start's change.

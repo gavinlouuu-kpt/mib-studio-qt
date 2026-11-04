@@ -76,6 +76,14 @@ a macro). Unit-tested by `tests/backend/hdf_write_queue_test.cpp`.
   never the whole row and never every row at once (the PZ7035's RAM). A member
   the file predates reads as 0, as in `readValidMetadata`. The run quick look's
   column path ([[RunQuickLook]]); byte-equal results to the row path are tested.
+- **Paged metadata** (#808 F-1b): `metadataRowCount(valid)` (0 for an absent
+  dataset, nullopt when it cannot be queried) and `readMetadataRange(valid,
+  start, count, frames)`: rows `[start, start+count)` exactly as
+  `readValidMetadata` gives them (the same `readMetadataDataset`, now with one
+  hyperslab selection for every member pass; count clipped to the extent).
+  `recordingMetadataRowCount()` / `readRecordingMetadataRange` do the same for
+  `/recorded_frames/metadata`. [[ReviewSession]] pages its browse metadata
+  through these instead of holding every row.
 - Chart snapshots: `saveChartSnapshot` / `readChartSnapshot` (2D/3D images
   without batch dim).
 - **Multi-image series** (`multi_image_enabled` in ProcessingConfig):

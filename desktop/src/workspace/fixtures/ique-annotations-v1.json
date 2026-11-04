@@ -1,0 +1,15 @@
+{
+  "schema": "mib.ique.annotation-fixture",
+  "version": 1,
+  "evidence": "Synthetic planned metadata only; no acquisition or scientific results",
+  "plan": {
+    "experimentId": "12345678-1234-4234-8234-123456789abc",
+    "format": "queue",
+    "operator": { "name": "", "id": "" },
+    "rows": [
+      { "ref": "S1", "sample": "", "condition": " Vehicle ", "experimentalUnit": "D1", "concentrationValue": "0", "concentrationUnit": "µM", "channel": "", "medium": "", "temperatureC": "", "notes": "", "free": [{ "key": " batch ", "value": "A" }] },
+      { "ref": "S2", "sample": "", "condition": "Drug", "experimentalUnit": "D2", "concentrationValue": "1", "concentrationUnit": "µM", "channel": "", "medium": "", "temperatureC": "", "notes": "", "free": [{ "key": "batch", "value": "B" }] },
+      { "ref": "S3", "sample": "", "condition": "Vehicle", "experimentalUnit": "D1", "concentrationValue": "", "concentrationUnit": "", "channel": "", "medium": "", "temperatureC": "", "notes": "", "free": [{ "key": "batch", "value": "A" }] }
+    ]
+  }
+}

@@ -122,6 +122,16 @@ def render(contract: dict) -> str:
     quick = {k: v for k, v in contract["run_quick_look"].items() if isinstance(v, int)}
     lines.append("export const RUN_QUICK_LOOK = " + json.dumps(quick, indent=2) + " as const;")
     lines.append("")
+    # ABI 49 (#806 E-1/E-2): the camera feature commands' bounds (numbers only).
+    feats = {k: v for k, v in contract["camera_features"].items() if isinstance(v, int)}
+    lines.append("export const CAMERA_FEATURES = " + json.dumps(feats, indent=2) + " as const;")
+    lines.append("")
+    # ABI 50 (#807 I02): the recipe provider's diff vocabulary and bounds (the prose stays in the JSON).
+    rec = contract["recipes"]
+    recipes = {k: v for k, v in rec.items() if isinstance(v, int)}
+    recipes.update({k: rec[k] for k in ("document_type", "dimensions", "item_statuses")})
+    lines.append("export const RECIPES = " + json.dumps(recipes, indent=2) + " as const;")
+    lines.append("")
     # Reverse lookup for event kinds: numeric value -> stable name.
     lines.append("export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {")
     for name, value in contract["event_kinds"].items():
@@ -297,6 +307,16 @@ def check_bridge(contract: dict) -> str | None:
         bound = re.search(const + r"\s*=\s*(\d+)", header)
         if not bound or int(bound.group(1)) != contract["run_quick_look"][member]:
             return f"run_quick_look.{member} differs from RunStatistics.h {const}"
+    # ABI 49 (#806 E-1/E-2): the camera feature bounds equal FeatureJson.h's / FeatureTree.h's.
+    features_json = (REPO_ROOT / "include/backend/camera/features/FeatureJson.h").read_text(encoding="utf-8")
+    features_tree = (REPO_ROOT / "include/backend/camera/features/FeatureTree.h").read_text(encoding="utf-8")
+    for member, const, text in (("request_max_bytes", "kFeatureRequestMaxBytes", features_json),
+                                ("schema_version", "kFeatureSchemaVersion", features_json),
+                                ("max_categories_per_module", "maxCategoriesPerModule", features_tree),
+                                ("max_features_per_module", "maxFeaturesPerModule", features_tree)):
+        bound = re.search(const + r"\s*(?:=|\{)\s*(\d+)", text)
+        if not bound or int(bound.group(1)) != contract["camera_features"][member]:
+            return f"camera_features.{member} differs from the C++ constant {const}"
     return None
 
 

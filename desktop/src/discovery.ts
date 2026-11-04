@@ -11,8 +11,9 @@ export { DISCOVERY_JOB_STATES };
 
 export interface DiscoveryApi {
   start: () => Promise<DiscoveryStart>;
-  fetch: (jobId: string) => Promise<DiscoverySnapshot>;
-  cancel: (jobId: string) => Promise<boolean>;
+  /** `instance` is the start reply's backend instance (E01, ABI 49). */
+  fetch: (jobId: string, instance: string) => Promise<DiscoverySnapshot>;
+  cancel: (jobId: string, instance: string) => Promise<boolean>;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -33,8 +34,10 @@ export function isTerminalDiscoveryState(state: number): boolean {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Start a discovery job and poll until it ends. Rejects on a refused start
- *  or on timeout (after requesting cancellation). Never blocks the bridge. */
+/** Start a discovery job and poll until it ends. Rejects on a refused start,
+ *  on timeout (after requesting cancellation), or when the backend reports
+ *  the reply stale (E01: the backend restarted since the start, so the job ID
+ *  may now name another job). Never blocks the bridge. */
 export async function pollDiscovery(api: DiscoveryApi, opts: PollOptions = {}): Promise<DiscoverySnapshot> {
   const timeoutMs = opts.timeoutMs ?? 65_000;
   const intervalMs = opts.intervalMs ?? 100;
@@ -47,10 +50,15 @@ export async function pollDiscovery(api: DiscoveryApi, opts: PollOptions = {}): 
   }
   const deadline = now() + timeoutMs;
   for (;;) {
-    const snap = await api.fetch(start.job_id);
+    const snap = await api.fetch(start.job_id, start.instance);
+    if (snap.stale) {
+      throw new Error(
+        `discovery job ${start.job_id} is stale: the backend restarted (instance ${snap.instance}); scan again`,
+      );
+    }
     if (snap.valid && isTerminalDiscoveryState(snap.state)) return snap;
     if (now() >= deadline) {
-      await api.cancel(start.job_id).catch(() => false);
+      await api.cancel(start.job_id, start.instance).catch(() => false);
       throw new Error(`discovery job ${start.job_id} timed out after ${timeoutMs} ms`);
     }
     await sleep(intervalMs);

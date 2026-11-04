@@ -55,7 +55,16 @@ virtual TimestampDescriptor timestampDescriptor() const { return {}; } // Frame:
 virtual FrameDeliveryCapabilities deliveryCapabilities() const;
 virtual FrameDeliveryMode activeDeliveryMode() const;   // backend-confirmed
 virtual bool pollAcquisitionQueueStats(AcquisitionQueueStats& out) const;
+
+// E02 (#806): the GenApi node map, when the backend has one ([[FeatureControl]]).
+virtual camera::features::FeatureSession* featureSession() { return nullptr; } // nullptr = unsupported
 ```
+
+`featureSession()` is optional: [[EGrabberCamera]] (SDK builds) and
+[[MockCamera]] (fake node map, evidence `fixture/mock`) return one; MindVision,
+Aravis and the SDK-less EGrabber stub return nullptr, which the feature commands
+report as `unsupported`, never as an empty tree. Use it only under
+`CaptureService::withCameraFeatures`.
 
 ## Related
 

@@ -29,10 +29,10 @@ Details: [`Overview`](knowledge_map/architecture/Overview.md), [`Threading-Model
 | Build, run modes, dependencies, assets | [`knowledge_map/build-and-run/Build.md`](knowledge_map/build-and-run/Build.md) |
 | Code and logging conventions | [`knowledge_map/conventions/Code-Conventions.md`](knowledge_map/conventions/Code-Conventions.md) |
 | How-tos, ADRs, execution plans, known debt | [`docs/README.md`](docs/README.md), [`docs/decisions/README.md`](docs/decisions/README.md), [`docs/exec-plans/README.md`](docs/exec-plans/README.md), [`tech-debt-tracker`](docs/exec-plans/tech-debt-tracker.md) |
+| Fold-in work (#806 eGrabber, #807 iQue, #808 FlowJo): **backend first** | [`fold-in-backend-goals`](docs/architecture/fold-in-backend-goals.md): read before any change; views follow met goals |
 | What shipped recently | [`knowledge_map/current-state/recent/`](knowledge_map/current-state/recent/README.md) (one file per change; `scripts/recent_work.py`), archive [`Recent-Work.md`](knowledge_map/current-state/Recent-Work.md) |
 
-**Vault maintenance is required:** every code change lands with matching vault
-updates in the same PR ([`knowledge_map/Vault-Maintenance.md`](knowledge_map/Vault-Maintenance.md)).
+**Vault maintenance is required:** every code change lands with matching vault updates in the same PR ([`knowledge_map/Vault-Maintenance.md`](knowledge_map/Vault-Maintenance.md)).
 
 ## Build and Run
 

@@ -28,15 +28,123 @@ YOFO Review and click **Open Anyway**. Later launches open normally.
 only and needs no administrator rights. The installer is not signed, so
 SmartScreen may warn: click **More info ▸ Run anyway**.
 
-## Open a file
+## The window
 
-- Double-click a `.h5` / `.hdf5` file (the installer registers YOFO Review
-  for both), or drag it onto the app icon.
-- Or use **File ▸ Open…** inside the app.
+Along the top are four stages: **Open**, **Overview**, **Inspect** and
+**Export**. Choosing a stage only changes what you see. It never opens,
+closes, exports or changes a file.
 
-Opening another file replaces the current one. **Close File** on the
-toolbar (or **File ▸ Close**) releases the file, so you can move or delete
-it.
+- **Open**: choose a folder of runs, open one, and read what the file
+  records about itself.
+- **Overview**: per-run statistics. This is **not available yet**. It needs
+  the statistics worker, which this version does not include, so the page
+  says so and shows no numbers.
+- **Inspect**: the open run's records: the scatter, the records table and
+  the frames, with the selected record's image and stored values beside
+  them, and the export and regenerate actions on its toolbar.
+- **Export**: a list of where each export is on Inspect's toolbar. The
+  export page itself comes in a later version.
+
+The header shows the open run. **Settings**, **Updates…** and **About** are
+at the top right, beside **Fit**, which switches the image scaling between
+fit-to-window and 1:1. The status bar at the bottom shows the file, its frame
+counts and the pixel-to-micron factor in use. **Log** opens the message log.
+
+## Open
+
+To open a run from a folder:
+
+1. Click **Open folder…** and choose the folder where your runs are saved.
+2. YOFO Review finds the `.h5` and `.hdf5` files in the folder. It reads
+   what each file's header says about its run, and groups the runs by
+   experiment. It does not load images, and it never changes a file.
+3. Click **Open** beside a run.
+
+**Experiments in this folder** shows one table per experiment, with its
+runs in run order (Run 1, Run 2, …). The experiment's header line gives:
+
+- the number of runs and samples;
+- the start dates;
+- the planned conditions;
+- the processing core;
+- the calibration record;
+- one status for how its runs ended.
+
+Each run's row gives:
+
+- the sample (sample sheet reference and name);
+- the condition;
+- when it started;
+- its valid and invalid record counts;
+- the processing core and calibration record;
+- how the run ended.
+
+An experiment is shown by the id its files record. Experiment names,
+methods and analysis plans are kept by the workspace, which YOFO Review does
+not read.
+
+Files that do not belong to an experiment have their own tables:
+
+- **Runs without an experiment**: the file has a run snapshot, but the
+  snapshot names no experiment. This is the case for older snapshots, and
+  for snapshots that cannot be read.
+- **Legacy files · no run snapshot**: files recorded before run identity
+  existed. Their experiment, run, sample, condition and calibration show as
+  **Not recorded**.
+- **Cannot be read**: each row gives the reason, for example a file that is
+  still being copied or is locked by another program.
+
+YOFO Review remembers the folder and lists it again the next time it starts.
+**Refresh** lists the folder again, for example after a run has finished
+saving.
+
+While a folder is being listed, the list says **Listing…**. While the files'
+headers are being read, it says **Reading N of M files**. Large folders are
+read 256 files at a time, and you can open a run that is already shown at
+any point.
+
+When you choose another folder, the previous folder's runs disappear at once.
+Results that arrive late for a folder you have left are ignored. During a
+**Refresh** the runs stay in view, but you cannot open them until the
+listing is done.
+
+If the headers cannot be read at all, a yellow banner says why. For example,
+they cannot be read while an export or a mask regeneration is running. The
+files stay listed under **Not read**, and you can still open them. Click
+**Refresh** to try again.
+
+**Open file…** opens a single file from anywhere. **Close file** releases the
+open file, so you can move or delete it. Opening another file replaces the
+current one.
+
+After a run opens, the **Open run** card shows what the file records:
+
+- its folder and kind (experiment run, or a raw recording with images only);
+- its identity: the run snapshot, experiment, run number, sample, condition,
+  the rest of the planned annotation, the calibration record, and the
+  operator selected at Start;
+- the valid and invalid record counts;
+- when it started and ended;
+- the pixel-to-micron factor, and whether the file recorded it or the
+  fallback is used;
+- the processing core that analysed it;
+- how the run ended (its run accounting).
+
+A value the file does not record is shown as **Not reported**. It is never
+guessed. Files from older versions have no run accounting, and the card says
+**Not recorded · legacy file** rather than showing a complete run. Click
+**Inspect <file>** to browse the run.
+
+If a file cannot be opened, a red banner names the file and gives the reason,
+and no file is left open.
+
+You can also open a file without going through the Open page:
+
+- Double-click a `.h5` or `.hdf5` file (the installer registers YOFO Review
+  for both).
+- Drag the file onto the app icon.
+
+These open the file straight into **Inspect**.
 
 Files larger than 2 GB are fine: frames load as you browse. Recordings
 made in raw recording mode have no masks or metrics. For those, YOFO Review
@@ -44,23 +152,61 @@ shows a single frame list, and only raw image export is available.
 
 ## Browse frames and charts
 
-Browsing works as in MIB Studio's Review tab (see
-[Review & post-process](review-and-postprocess.md)):
+Browsing happens on **Inspect**, and works as in MIB Studio's Review tab
+(see [Review & post-process](review-and-postprocess.md)). The first row of
+its toolbar chooses what to show, and which set:
 
-- **Frames** — thumbnails, the metrics table and the frame viewer, with
-  mask, contour and ROI overlays. Double-click a thumbnail or a table row
-  to open the viewer, then use **←/→** to step through frames.
-- **Charts** — the deformability-vs-area scatter and the ring-width
-  histogram. Click a point to show that cell, scroll to zoom and drag to
-  pan. Right-click for **Reset zoom** and **Compute core contour from full
-  run**.
+- **Scatter** — the deformability-vs-area scatter and the ring-width
+  histogram of the valid records. Click a point to inspect that record,
+  scroll to zoom and drag to pan. Right-click for **Reset zoom** and
+  **Compute core contour from full run**.
+- **Records** — the records table, 100 rows a page (**◀ / ▶**), with
+  **Columns…** to choose the columns.
+- **Frames** — the thumbnails above the records table.
+- **Valid Frames** / **Invalid Frames** — the set to browse (a recording
+  has one set, **Frames**).
+
+Whatever you choose, the selected record stays selected, and its card on
+the right shows:
+
+- its name, **frame N · object M** (files carry no record id; a recording's
+  frames are **frame N**), and the run it belongs to;
+- its image: **Raw**, **Contour** or **Mask** show the cell cut out of its
+  frame, **Full frame** the whole frame with the overlay and ROI chosen on
+  the toolbar. A view the file cannot show is greyed out, with the reason
+  as a tooltip. The cut-out follows how the file stores its object
+  positions (relative to the ROI, or to the whole image; **Stored vs
+  reprocessed** says which, and how that was decided). When the file does
+  not say and its masks do not tell, only the full frame is shown;
+- its stored values (area, deformability, E, track, …) and **What is
+  recorded?** for it. A raw recording stores only each frame's index and
+  time, so its other values read **Not recorded**;
+- **Previous record**, **Next record** and **Record details**, which opens
+  the frame viewer (also a double-click on a thumbnail, the full frame or a
+  table row); there, **←/→** step through frames.
+
+**Linked cell records** lists the other records of the selected record's
+track when you press **Show linked records** (at most 256; the card says
+when a track has more). Click a row to select that record.
+
+**Stored vs reprocessed** names the processing core, calibration, profile
+and E-modulus LUT recorded in the file (**Not recorded** when the file does
+not say), and how its object positions are stored. **Reprocess this
+record** runs the processing core on the selected record's stored image,
+with the recorded or the default settings, and shows the stored and the
+reprocessed values side by side. It writes nothing, and runs only when you
+press it. If it cannot run (a job is running, the record has no stored
+image, or the file does not say how its positions are stored), it says why.
+Nothing in Inspect changes the file: **Reprocess into a new file…** opens
+**Regenerate masks**, which writes a new file.
 
 The status bar shows the file, its frame accounting, and the
 pixel-to-micron factor in use.
 
 ## Export
 
-The toolbar has **Export Metrics to CSV…** and **Export All…**. **More…** holds
+Exports run from **Inspect**. Its toolbar has **Export Metrics to CSV…** and
+**Export All…**, and **More…** holds
 **Batch Metrics**, **Batch Export All**, **Export Charts** and
 **Regenerate masks**.
 
@@ -143,22 +289,22 @@ Regenerate such files again from the original recording with this version.
 
 Files record the pixel-to-micron factor they were taken with, and YOFO
 Review always uses it, for metrics, charts and exports (batches included).
-Older files that recorded no factor use the fallback set under **File ▸
-Preferences…** (default 0.4886 µm per pixel); the status bar then marks
-the factor "(fallback)".
+Older files that recorded no factor use the fallback set under
+**Settings** (default 0.4886 µm per pixel). The status bar and the Open run
+card then mark the factor as the fallback.
 
 ## Updates
 
 YOFO Review checks for a new version once at launch, and the status bar
-says when one is available. **Help ▸ Check for updates…** checks on
-demand and offers **Install and restart**.
+says when one is available. **Updates…** checks on demand and offers
+**Install and restart**.
 
 Before installing, the app verifies that the update was signed by the YOFO
 Review release key and that its checksum matches the published one. If
 either check fails, nothing is installed.
 
-Under **File ▸ Preferences…**, pick the update channel: **stable** (the
-default) or **beta** (pre-release builds, for testing).
+Under **Settings**, pick the update channel: **stable** (the default) or
+**beta** (pre-release builds, for testing).
 
 ## Differences from MIB Studio's Review tab
 
@@ -184,7 +330,7 @@ contours match. The visible differences:
   opened.
 - **Sizes look wrong**: check the pixel-to-micron factor in the status
   bar. "(fallback)" means the file recorded none; set the right value under
-  **File ▸ Preferences…**.
+  **Settings**.
 - **A regenerated file's frame indices or times do not match its images**:
   the file was probably written by review-v1.1.3-beta.1 or earlier. See
   [Regenerate masks](#regenerate-masks) and regenerate it again.
@@ -195,3 +341,18 @@ contours match. The visible differences:
 - **Check for updates fails**: the computer needs internet access to
   `updates.yofo.bio`. You can always install a newer version by hand from
   the GitHub Release.
+
+## Stored-population interval analysis
+
+Open an experiment HDF5, then expand **Population analysis · stored observations**.
+Choose stored area (px²) or deformability, enter optional inclusive lower/upper
+bounds, and select **Analyze population**. Blank bounds are unbounded. Both valid
+and invalid stored observations participate; processing validity is not a
+scientific QC filter. Selected/excluded/unknown counts and selected-value
+min/max/mean/median come from the native backend. Empty results show dashes.
+
+This first slice supports at most 10,000 observations and refuses oversized or
+unreadable/incomplete sources without sampling. Absent measurement columns and nonfinite values remain unknown, never default zero. Results are local
+evaluations, not saved strategies or fingerprint-verified artifacts. Changing
+the source or gate clears the previous result. Studio offers the same controls
+in its Review tab, while acquisition and review jobs remain excluded.

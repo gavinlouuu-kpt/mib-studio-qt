@@ -504,7 +504,8 @@ windeployqt.exe --release build/Release/mib_studio_qt.exe
 Dependencies resolved via Conan 2 (`conanfile.py`; host profiles in
 `conan/profiles/`). See [[Dependencies]]. Option `review_core=True` (YOFO
 Review) resolves only spdlog, HDF5, OpenCV (four modules, no FFmpeg /
-protobuf / Eigen) and nlohmann_json, with OpenCV and HDF5 **static**; the
+protobuf / Eigen), nlohmann_json and SQLite (static; analysis workspace and
+recipe store), with OpenCV and HDF5 **static**; the
 default graph is unchanged (shared OpenCV / HDF5, Qt, SQLite, ONNX Runtime on
 Windows) — the shared/static choice moved from `default_options` to
 `configure()`. Post-build hooks call
@@ -665,3 +666,18 @@ The offscreen `experiment_fault_recovery_test` target /
 `frontend.experiment_fault_recovery` CTest checks Qt readiness and banner
 acknowledgement after failed backend runs, including ROI/background unlocking
 (#589). It uses a mock camera, isolated settings and no hardware discovery.
+
+### Isolated FlowJo analysis module (#808)
+
+The native population core and bounded real Cytoflow worker can be built without
+the application shell. See [module commands](../../tools/flowjo_acceptance/README.md)
+and [[../services/AnalysisWorker]]. Python dependency constraints live only in
+`env/analysis-worker/`; this is development qualification, not a distribution
+installer. The standalone demo does not open recordings or command hardware.
+
+With `-DMIB_ANALYSIS_HOST_TESTS=ON` the module also builds `mib_analysis_host`,
+its own source list of the backend files `analysis_host_test` links (analysis host,
+SQLite, `WorkspaceStore`, `RecipeProvider`, `NextRunPlanning`). It is not derived
+from `src/backend/CMakeLists.txt`, so a workspace source that the host test starts
+calling must be added there too; `analysis-ci.yml` (PRs into `develop`) is the only lane
+that builds it.

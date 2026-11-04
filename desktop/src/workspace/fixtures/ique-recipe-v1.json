@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "fixture-recipe-1",
+  "revision": "9007199254740993",
+  "title": "Two-condition pilot",
+  "question": "Does the treatment change the declared endpoint?",
+  "method": { "source": "registry", "id": "fixture-method", "revision": "method-rev-3" },
+  "analysis_plan": { "id": "fixture-analysis", "revision": "analysis-rev-2" },
+  "lineage": { "recipe": null, "finding": { "id": "fixture-finding", "revision": "finding-rev-1" } }
+}
