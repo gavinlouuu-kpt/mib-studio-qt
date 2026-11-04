@@ -10,10 +10,12 @@ overlay and E table") and [[frontend/ExperimentMonitoringTab]] (the Qt behaviour
   (wrapping; from a vanished selection they start at an end), Open in window… (a non-modal floating viewer
   inside the app that follows the selection) and ✕ (clears the selection; so does Clear Buffer). The pane
   pins the cell in the backend (`monitoring_cell_pin`, a control command), pulls its crop and mask by identity
-  and releases the pin when the selection moves, on close and on unmount, in strict order (a selection that
-  moves while a pin is in flight unpins the stale pin first; max 16 pins, never leaked); a viewer client does
-  not pin. PinnedWithoutImage shows the measurements and the reason, CaptureMismatch / RunMismatch / NotFound /
-  LimitReached a plain message. The picture is the backend's object-centred crop, not Qt's whole ROI frame
+  and releases the pin when the selection moves, on ✕, on Clear Buffer and when the studio unmounts, in strict
+  order (a selection that moves while a pin is in flight unpins the stale pin first; max 16 pins, never leaked).
+  The lifecycle runs in `useStudioController` (`cellView` in the studio context), not in the Monitoring panel, so
+  a sub-tab or stage switch keeps the pin and the image until ✕ or Clear Buffer (Qt keeps its copy of the
+  frame); a viewer client does not pin. PinnedWithoutImage shows the measurements and the reason,
+  CaptureMismatch / RunMismatch / NotFound / LimitReached a plain message. The picture is the backend's object-centred crop, not Qt's whole ROI frame
   (#880), with the valid strip's Show Overlay drawing the mask.
 - **Gate overlay.** `TargetGatePreview` ported to TypeScript (`areas/monitoring/gate/targetGate.ts`, with the
   C++ test cases): the draft target-group gate is drawn on the scatter (tint, dashed box, dash-dot iso-E
@@ -31,7 +33,7 @@ overlay and E table") and [[frontend/ExperimentMonitoringTab]] (the Qt behaviour
   decoder's `MetricSample` and `formatMetricSample`.
 - **Shared files touched, additively:** `bridge.ts` (`fetchProcessingStats` attaches the telemetry),
   `eventAdapter.ts` (two optional members of `ProcessingStats`), `App.css` (one `@import`),
-  `studio/useStudioController.ts` (two hook calls), `areas/shell/Sidebar.tsx`.
+  `studio/useStudioController.ts` (three hook calls: the table, the selection reset and the cell pin lifecycle, plus `cellView` in its return), `components/ViewerGate.test.tsx` (the controller joins the scanned sources), `areas/shell/Sidebar.tsx`.
 - **Tests.** `gate/targetGate.test.ts`, `gate/gateOverlay.test.ts`, `gate/gateHandles.test.ts`,
   `gate/useGateOverlay.dom.test.tsx`, `clickView/selection.test.ts`, `clickView/useCellView.dom.test.tsx`,
   `LiveMonitoringCharts.dom.test.tsx`, `useMonitoringView.dom.test.tsx`, `emodulusLut.test.ts`,

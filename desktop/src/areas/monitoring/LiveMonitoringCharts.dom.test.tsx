@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 // The Monitoring charts with the cell and the gate (PR E1) as the panel mounts them, on the real state hook: a click selects a
 // cell and the pane docked over the histogram shows it (pinned, pulled by identity), Previous / Next walk the plotted points,
-// the window follows the selection, ✕ clears it, Clear Buffer clears it, and the gate's live count sits under the scatter.
+// the window follows the selection, ✕ clears it, Clear Buffer clears it, and the gate's live count sits under the scatter. The
+// pin lifecycle runs where the studio controller runs it (always mounted), so the panel can come and go under a selection.
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +15,7 @@ import type { Studio } from "../../studio/useStudioController";
 import { recordingContext } from "./charts/recordingContext";
 import { syntheticTable } from "./gate/syntheticLut";
 import { LiveMonitoringCharts } from "./LiveMonitoringCharts";
+import { useCellView } from "./clickView/useCellView";
 import { monitoringRowKey } from "./monitoringChartModel";
 import type { TuneValues } from "./tuneDraft";
 import { useMonitoringState } from "./useMonitoring";
@@ -79,16 +81,19 @@ const running = (over: Partial<TuneValues> = {}): TuneValues => ({
 });
 
 let host: HTMLDivElement, root: Root;
-let studioNow: ReturnType<typeof useMonitoringState> & { ready: boolean; append: ReturnType<typeof vi.fn> };
+let studioNow: ReturnType<typeof useMonitoringState> & { ready: boolean; append: ReturnType<typeof vi.fn>; cellView: ReturnType<typeof useCellView> };
 const append = vi.fn();
 
-function Harness({ snap, values, table }: { snap: MonitoringSnapshot | null; values: TuneValues | null; table?: ReturnType<typeof useMonitoringState>["emodulusTable"] }) {
+/** `show` false is the Monitoring panel unmounted (another sub-tab or stage): the state and the pin hook stay, like the controller's. */
+function Harness({ snap, values, table, show = true }: { snap: MonitoringSnapshot | null; values: TuneValues | null; table?: ReturnType<typeof useMonitoringState>["emodulusTable"]; show?: boolean }) {
   const m = useMonitoringState();
   useSelectionReset(m);
+  // What useStudioController does with it (a harness line: the ViewerGate source scan must not mistake it for the controller's).
+  const pinState = useCellView({ selection: m.monSelection, ready: true, canPin: !role.viewerOnly, log: append });
   useEffect(() => { if (values) m.dispatchTune({ type: "external", values }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (table) m.setEmodulusTable(table); }, [table]); // eslint-disable-line react-hooks/exhaustive-deps
-  studioNow = { ...m, ready: true, append };
-  return <StudioContext.Provider value={studioNow as unknown as Studio}><LiveMonitoringCharts snapshot={snap} /></StudioContext.Provider>;
+  studioNow = { ...m, ready: true, append, cellView: pinState };
+  return <StudioContext.Provider value={studioNow as unknown as Studio}>{show ? <LiveMonitoringCharts snapshot={snap} /> : null}</StudioContext.Provider>;
 }
 const render = (props: Parameters<typeof Harness>[0]) => act(async () => root.render(<Harness {...props} />));
 const settle = () => act(async () => { for (let i = 0; i < 12; i++) await new Promise((r) => setTimeout(r, 0)); });
@@ -223,6 +228,52 @@ describe("click to view (MON-044, 046, 048)", () => {
     for (const t of ["monitoring-cell-pane", "monitoring-cell-pane-close", "monitoring-cell-prev", "monitoring-cell-next", "monitoring-cell-open-window"]) {
       expect(q(`[data-tour="${t}"]`), t).not.toBeNull();
     }
+  });
+});
+
+describe("the pin outlives the Monitoring view (the controller runs the lifecycle)", () => {
+  it("keeps the pin and the image when the panel unmounts and mounts again, and releases the pin once, on ✕", async () => {
+    await render({ snap: snapshot(ROWS), values: running() });
+    await clickPoint(300, 0.4);
+    expect(calls).toEqual(["pin 11", "image 11", "mask 11"]);
+    const shown = imagePuts[imagePuts.length - 1];
+    // Another sub-tab or stage: the panel unmounts, the selection stays.
+    await render({ snap: snapshot(ROWS), values: running(), show: false });
+    await settle();
+    expect(pane()).toBeNull();
+    expect(studioNow.monSelection?.frame_index).toBe(11);
+    expect(calls).toEqual(["pin 11", "image 11", "mask 11"]); // nothing unpinned, nothing pulled while hidden
+    // Back, and the row has left the monitoring ring meanwhile: a pin now would fail, so the pane must not need one.
+    bridge.monitoringCellPin.mockResolvedValue({ ok: false, outcome: O.NotFound, message: "the backend holds neither the row nor its measurements", cell: null });
+    await render({ snap: snapshot([ROWS[0], ROWS[2], ROWS[3]]), values: running(), show: true });
+    await settle();
+    expect(title()).toContain("Frame 11");
+    expect(title()).toContain("no longer on the scatter");
+    expect(pane()!.querySelector("canvas.mon-cell-canvas")).not.toBeNull(); // the same image
+    expect(Array.from(imagePuts[imagePuts.length - 1])).toEqual(Array.from(shown));
+    expect(calls).toEqual(["pin 11", "image 11", "mask 11"]); // no second pin, no second pull, no unpin
+    expect(bridge.monitoringCellPin).toHaveBeenCalledTimes(1);
+    expect(bridge.monitoringCellUnpin).not.toHaveBeenCalled();
+    // ✕: exactly one unpin.
+    await click('[data-tour="monitoring-cell-pane-close"]');
+    await settle();
+    expect(pane()).toBeNull();
+    expect(bridge.monitoringCellUnpin).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(["pin 11", "image 11", "mask 11", "unpin 11"]);
+  });
+  it("releases the pin of a selection that is cleared while the panel is hidden (Clear Buffer), and on a real unmount of the studio", async () => {
+    await render({ snap: snapshot(ROWS), values: running() });
+    await clickPoint(300, 0.4);
+    await render({ snap: snapshot(ROWS), values: running(), show: false });
+    await act(async () => studioNow.notifyMonitoringCleared());
+    await settle();
+    expect(calls.filter((c) => c.startsWith("unpin"))).toEqual(["unpin 11"]);
+    await render({ snap: snapshot(ROWS), values: running() });
+    await clickPoint(500, 0.6);
+    await act(async () => root.unmount());
+    await settle();
+    expect(calls.filter((c) => c.startsWith("unpin"))).toEqual(["unpin 11", "unpin 12"]);
+    root = createRoot(host);
   });
 });
 

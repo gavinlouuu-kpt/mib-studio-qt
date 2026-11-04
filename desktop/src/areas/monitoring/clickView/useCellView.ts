@@ -5,8 +5,15 @@
 // at most MONITORING_CELLS.max_pins pins, shared by the instrument). So the pane works like this:
 //  - selecting a row PINS it (monitoring_cell_pin, a control command), then pulls its crop and mask by
 //    identity (pins are served first); nothing is pulled per poll, only when the selection changes;
-//  - when the selection moves, on close (the selection goes to null) and on unmount, the pin this view made
-//    is released (monitoring_cell_unpin); a pin that was already held (AlreadyPinned) is not ours to release;
+//  - when the selection moves, on close (the selection goes to null, by the pane's ✕ or Clear Buffer) and when the
+//    studio unmounts, the pin this view made is released (monitoring_cell_unpin); a pin that was already held
+//    (AlreadyPinned) is not ours to release;
+//  - the hook is called by studio/useStudioController.ts, which is always mounted, NOT by the Monitoring panel: the
+//    pin and the pulled image live exactly as long as the selection, so a switch to the Preview sub-tab or to another
+//    stage and back neither unpins the cell nor pulls it again (a cell that left the monitoring ring meanwhile would
+//    fail to pin again, and Qt keeps its copy of the frame until ✕ or Clear Buffer). Nothing is sent while the
+//    Monitoring view is hidden: the effect depends on the selection, the backend's readiness and whether this client
+//    controls the instrument, and none of those is a view change;
 //  - the pin / unpin calls run strictly one after the other, so an unpin can never overtake the pin it
 //    belongs to or a later pin; a selection that moves while its pin is in flight unpins the stale pin as soon
 //    as the backend has made it, and one that moves before the pin was sent never sends it;
@@ -78,7 +85,7 @@ export function useCellView({ selection, ready, canPin, log }: CellViewInput): C
         logRef.current?.(`cell view: the pin of frame ${selection.frame_index} could not be released: ${errorText(e)}`);
       }
     };
-    /** Give back the pin this view made (once), in turn. Called when the selection moves, on close and on unmount. */
+    /** Give back the pin this view made (once), in turn. Called when the selection moves, on close and when the studio unmounts. */
     const release = () => {
       if (!job.owned || job.released) return;
       job.released = true;

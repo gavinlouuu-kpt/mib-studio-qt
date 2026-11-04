@@ -638,15 +638,21 @@ MON-043 (E readout), 044, 046..048, 064..068, 077 and the sidebar's camera telem
   the pane and clears the selection; Clear Buffer clears it too, `useSelectionReset` on `onMonitoringCleared`).
   The window is a non-modal floating panel inside the app (no backdrop, dragged by its title bar) that
   follows the selection while the charts keep updating; closing it hides it and keeps the selection.
-- **The pin lifecycle** (`clickView/useCellView.ts`). Selecting PINS the cell (`monitoring_cell_pin`, a control
-  command), then pulls its crop and mask by identity (pins are served first); nothing is pulled per poll.
-  When the selection moves, on close and on unmount the pin this view made is released
+- **The pin lifecycle** (`clickView/useCellView.ts`, called by `useStudioController`, whose state reaches the
+  pane as `cellView`). Selecting PINS the cell (`monitoring_cell_pin`, a control command), then pulls its crop
+  and mask by identity (pins are served first); nothing is pulled per poll. The hook runs at the always-mounted
+  controller level, NOT in the Monitoring panel, so the pin and the image live exactly as long as the selection:
+  a switch to the Preview sub-tab or to another stage and back neither unpins the cell nor pulls it again (a
+  cell that left the monitoring ring meanwhile could not be pinned again, and Qt keeps its copy of the frame
+  until ✕ or Clear Buffer); nothing is sent while the view is hidden. The pin this view made is released when
+  the selection moves, on ✕, on Clear Buffer and when the studio unmounts
   (`monitoring_cell_unpin`); a pin that was already held (AlreadyPinned) is not released. Pin and unpin run
   strictly one after the other, a selection that moves while its pin is in flight unpins the stale pin before
   the next is pinned, and a selection replaced before its turn never sends its pin. PinnedWithoutImage shows
   the measurements and the reason; CaptureMismatch, RunMismatch, NotFound and LimitReached show the backend's
-  plain message. A client that does not control the instrument (a viewer in a browser) does not pin: it pulls
-  the image of a cell the strips still hold and says why when the backend has let go. The picture is the
+  plain message. A client that does not control the instrument (a viewer in a browser) does not pin
+  (`canPin: !viewerOnly`, guarded by `components/ViewerGate.test.tsx`, which scans the controller too): it
+  pulls the image of a cell the strips still hold and says why when the backend has let go. The picture is the
   backend's object-centred crop with the valid strip's Show Overlay (`validOverlay` in `useMonitoringState()`,
   lifted out of `CellStrips`) drawing the mask, not Qt's whole ROI frame (the accepted difference, #880).
 - **Gate overlay.** `gate/targetGate.ts` is the pure port of `TargetGatePreview` (predicate equal to
@@ -675,7 +681,7 @@ MON-043 (E readout), 044, 046..048, 064..068, 077 and the sidebar's camera telem
   `-cell-window`, `-cell-window-close`, `-cell-window-prev`, `-cell-window-next`, `-gate-label`,
   `-gate-no-table`, `-tune-emodulus-table`. Guards: `gate/targetGate.test.ts` (the Qt cases),
   `gate/gateOverlay.test.ts`, `gate/gateHandles.test.ts`, `gate/useGateOverlay.dom.test.tsx`,
-  `clickView/selection.test.ts`, `clickView/useCellView.dom.test.tsx`, `LiveMonitoringCharts.dom.test.tsx`,
+  `clickView/selection.test.ts`, `clickView/useCellView.dom.test.tsx`, `LiveMonitoringCharts.dom.test.tsx` (incl. the pin outliving a panel unmount),
   `useMonitoringView.dom.test.tsx`, `emodulusLut.test.ts`, `statsTelemetry.test.ts`.
 
 ## Central profile registry (ABI 25, issue #398)

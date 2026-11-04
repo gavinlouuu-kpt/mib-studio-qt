@@ -1,8 +1,9 @@
 // The Monitoring charts with the cell and the gate (epic #866, PR E1): the charts MonitoringPanel shows,
 // wired to the studio state. It owns no state of its own beyond what a gesture needs:
 //  - a click on a point selects its cell (monSelection in useMonitoringState); the pane docked over the
-//    histogram shows it, pinned in the backend and pulled by identity (clickView/useCellView.ts), with Previous /
-//    Next through the plotted points, Open in window… and ✕ (MON-044, 046, 047, 048);
+//    histogram shows it (`cellView`: the cell pinned in the backend and pulled by identity, clickView/useCellView.ts, run by
+//    useStudioController so it lives as long as the selection and survives a sub-tab or stage switch), with Previous / Next
+//    through the plotted points, Open in window… and ✕ (MON-044, 046, 047, 048);
 //  - the draft target-group gate is drawn on the scatter and its handles are dragged into the tune draft
 //    (gate/useGateOverlay.ts, MON-064..066, 068); the live count sits under the scatter (MON-067);
 //  - the E-modulus table (useEmodulusTable) gives the tooltip its "E x kPa" (MON-043).
@@ -13,7 +14,6 @@ import { useViewerOnly } from "../../components/ViewerGate";
 import { useStudio } from "../../studio/StudioContext";
 import { CellPane, CellWindow } from "./clickView/CellPane";
 import { stepSelection, stillPlotted } from "./clickView/selection";
-import { useCellView } from "./clickView/useCellView";
 import { gateNotice } from "./gate/gateOverlay";
 import { useGateOverlay } from "./gate/useGateOverlay";
 import { countTargets, previewText, type GateSpec } from "./gate/targetGate";
@@ -45,11 +45,10 @@ export function GatePreview({ scatter, spec, lut, table }: { scatter: ScatterDat
 
 export function LiveMonitoringCharts({ snapshot }: { snapshot: MonitoringSnapshot | null }) {
   const {
-    tune, setTuneField, emodulusTable, monSelection, setMonSelection, cellWindowOpen, setCellWindowOpen, validOverlay, ready, append,
+    tune, setTuneField, emodulusTable, monSelection, setMonSelection, cellWindowOpen, setCellWindowOpen, validOverlay, cellView: cell,
   } = useStudio();
   const viewerOnly = useViewerOnly();
   const gate = useGateOverlay({ tune, setTuneField, table: emodulusTable, viewerOnly });
-  const cell = useCellView({ selection: monSelection, ready, canPin: !viewerOnly, log: append });
 
   const select = (row: MonitoringRow | null) => {
     if (row) setMonSelection((current) => (current && monitoringRowKey(current) === monitoringRowKey(row) ? current : row));

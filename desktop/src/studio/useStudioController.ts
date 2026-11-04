@@ -9,6 +9,7 @@ import {
   experimentModel, useExperimentLifecycle, useMonitoringConfigRange, useMonitoringPolling, useMonitoringState, useSsdStatus,
   useStartReadiness,
 } from "../areas/monitoring/useMonitoring";
+import { useCellView } from "../areas/monitoring/clickView/useCellView";
 import { useEmodulusTable, useSelectionReset } from "../areas/monitoring/useMonitoringView";
 import { useTunePanel } from "../areas/monitoring/useTune";
 import { useLiveFrames, useLivePreview, usePreviewBufferModel, usePreviewState } from "../areas/preview/usePreview";
@@ -78,6 +79,9 @@ export function useStudioController() {
   const tunePanel = useTunePanel(composed); // monitoring: the tune panel's sync, Apply and Revert (#866)
   useEmodulusTable(composed); // monitoring: the E-modulus table behind the gate overlay and the tooltip (#866 PR E1)
   useSelectionReset(composed); // monitoring: Clear Buffer clears the selected cell (#866 PR E1)
+  // monitoring: the selected cell's pin and image live exactly as long as the selection, not as long as the Monitoring sub-tab is shown
+  // (Qt keeps its copy of the frame until the pane's ✕ or Clear Buffer). Pin and unpin are control commands: a viewer does not pin (#866 PR E1).
+  const cellView = useCellView({ selection: composed.monSelection, ready: composed.ready, canPin: !viewerOnly, log: composed.append });
   // Render-time values (no hooks).
   const startExperiment = experimentModel(composed); // monitoring
   const connectView = connectModel(composed); // connect: Start Camera gate, preflight, quality gates
@@ -87,6 +91,7 @@ export function useStudioController() {
   const landing = useWorkflowLanding({ ...composed, ...connectView, ...workflow }); // shell
   return {
     ...composed, ...closeGuard, ...tunePanel, ...startExperiment, ...connectView, ...workflow, ...telemetry, ...serviceMode, ...landing,
+    cellView,
   };
 }
 

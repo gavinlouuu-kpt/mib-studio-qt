@@ -1,6 +1,6 @@
 // Effects behind the Monitoring view's click-to-view pane and gate overlay (epic #866, PR E1). The state is
 // useMonitoringState() (monSelection, cellWindowOpen, emodulusTable); the pin lifecycle of the selected cell is
-// clickView/useCellView.ts, run by the charts that show it.
+// clickView/useCellView.ts, run by useStudioController so it outlives the Monitoring view.
 import { useEffect, useRef } from "react";
 import { bridge } from "../../bridge";
 import type { ShellState } from "../shell/useShell";
