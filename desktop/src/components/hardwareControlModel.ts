@@ -34,3 +34,43 @@ export class HardwareCommandOwner {
     } finally { this.busy = false; }
   }
 }
+
+// Epic #868 (Qt parity): routine pump and autofocus controls follow the Qt panels, which gate only
+// on "connected" (SyringePumpTab.cpp:293-342, NanopositionerTab.cpp:326-332): no Service mode, no
+// arm, and usable while an experiment runs. Connecting or disconnecting a device stays locked during
+// an experiment (a recorded Tauri difference). Stop and disable need only a ready backend.
+export type DeviceAction = 'connect' | 'operate' | 'stop';
+export function deviceGate(input: {ready: boolean; experimentActive: boolean; connected: boolean}, kind: DeviceAction): string {
+  if (!input.ready) return 'Backend is not ready.';
+  if (kind === 'stop') return '';
+  if (kind === 'connect') return input.experimentActive ? 'Connecting or disconnecting a device is locked while an experiment is active.' : '';
+  return input.connected ? '' : 'Device is not connected.';
+}
+
+// Ranges of the Qt widgets (resources/ui/SyringePumpTab.ui:68-82, SyringePumpSettingsDialog.ui:93-106,
+// NanopositionerTab.ui:212-245,308-361).
+export const PUMP_FLOW_MAX = 100000;
+export const PUMP_FLOW_DECIMALS = 4;
+export const SYRINGE_VOLUME_MIN = 0.1;
+export const SYRINGE_VOLUME_MAX = 9999;
+export const RING_WIDTH_MIN = 1, RING_WIDTH_MAX = 100, RING_WIDTH_DEFAULT = 20;
+export const JOG_STEP_MIN = 1, JOG_STEP_MAX = 100, JOG_STEP_DEFAULT = 1;
+export const AUTO_APPLY_DEBOUNCE_MS = 300;
+export const STATUS_POLL_MS = 500;
+
+/** A flow-rate entry rounded to the Qt spin box's 4 decimals. */
+export function flowRateInput(value: string, name = 'Flow rate'): number {
+  const rate = numericInput(value, name, 0, PUMP_FLOW_MAX);
+  return Math.round(rate * 10 ** PUMP_FLOW_DECIMALS) / 10 ** PUMP_FLOW_DECIMALS;
+}
+
+/** The pump register holds a whole number (Qt casts to uint16 and drops decimals). A fractional
+ *  mL volume is sent as whole µL when it fits; anything else that is not whole is refused. */
+export function syringeVolumeForDevice(value: string, unit: number): {volume: number; unit: number} {
+  const volume = numericInput(value, 'Syringe volume', SYRINGE_VOLUME_MIN, SYRINGE_VOLUME_MAX);
+  const tenths = Math.round(volume * 10) / 10;
+  if (Number.isInteger(tenths)) return {volume: tenths, unit};
+  const microliters = Math.round(tenths * 1000);
+  if (unit === 103 && microliters <= SYRINGE_VOLUME_MAX) return {volume: microliters, unit: 100};
+  throw new Error(`The pump stores whole ${unit === 103 ? 'mL' : 'µL'}: enter ${Math.round(tenths)} or a whole value.`);
+}

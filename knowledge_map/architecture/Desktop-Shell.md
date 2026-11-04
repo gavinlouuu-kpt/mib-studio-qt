@@ -629,6 +629,26 @@ hardware form drafts survive navigation. Connect exposes existing numeric-COM
 pump/autofocus APIs; manual actuation requires the shared service-mode arm,
 which clears on one action. Typed endpoints remain follow-up work.
 
+**Pump and autofocus parity with Qt (epic #868, 2026-11-05).** The routine pump and
+autofocus controls no longer need Service mode or the arm: they gate on "connected"
+only, as Qt's panels do (`deviceGate` in `components/hardwareControlModel.ts`), and stay
+live during an experiment; only connecting and disconnecting are locked while a run is
+active (a recorded Tauri difference). Each connected pump is polled on the device every
+500 ms (`pump_poll_status`, #855), since start and purge do not update the cached run
+state. Stop pump, Stop purge, Disable autofocus and the target ring width skip the
+single in-flight command lock, so they never wait behind a slow command. Rate, unit and
+direction apply 300 ms after an edit, also while the pump runs; purge runs only while
+its button is held (`HoldButton`; a release that arrives before the purge start returns
+stops after it). The flow rate takes 0–100000 with 4 decimals; a syringe volume of
+0.1–9999 is sent as whole units (a fractional mL as µL). Autofocus has Qt's Enable
+Autofocus check box, a live target ring width (1–100, default 20) and a jog step (1–100 V)
+that the − / + jog writes first. Rate, unit, direction, volume, ring width and jog step
+are kept in the desktop preferences file under `hardware`
+(`components/hardwarePrefs.ts`, chained read-modify-write); the saved ring width is
+applied at start. The sheath pump defaults to Modbus address 2. `areas/hardware/HardwarePanel`
+keeps the panel mounted on every tab: in full on Connect, behind a "Hardware" toggle
+elsewhere (HW-018).
+
 `configDocument.tsx` owns a saved processing-document draft in App. Open/reload
 are explicit; changed-field patches avoid resubmitting unknown additive keys.
 Save and Apply uses a SHA256 baseline through the shared Qt-free transaction,

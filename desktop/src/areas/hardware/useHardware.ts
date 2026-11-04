@@ -63,8 +63,13 @@ export function useServiceMode({
     }
     setOperatingMode(next);
     if (next !== "service") setTriggerArmed(false);
-    // The backend refuses raw LED values outside Service mode (#501 P1).
-    if (instrumentModes) void bridge.setServiceMode(next === "service").catch(() => {});
+    // The backend refuses raw LED values outside Service mode (#501 P1). A refusal is logged, so a
+    // later LED apply that fails is not the first sign of it (#868).
+    if (instrumentModes) {
+      void bridge.setServiceMode(next === "service")
+        .then((result) => { if (!result.ok) append(`backend did not switch Service mode: ${result.message}`); })
+        .catch((failure) => append(`backend did not switch Service mode: ${String(failure)}`));
+    }
   };
 
   const actuateCheck = canActuate({

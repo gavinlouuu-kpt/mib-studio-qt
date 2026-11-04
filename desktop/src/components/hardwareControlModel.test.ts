@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { hardwareGate, HardwareCommandOwner, numericInput, validateFocusConfig } from './hardwareControlModel';
+import { deviceGate, flowRateInput, hardwareGate, HardwareCommandOwner, numericInput, syringeVolumeForDevice, validateFocusConfig } from './hardwareControlModel';
 import type { AutofocusConfig, CmdResult } from '../bridge';
 const allowed = {ready: true, experimentActive: false, connected: true, mode: 'service' as const, armed: true};
 export const focusConfig: AutofocusConfig = {valid: true, focus_setpoint: 1, focus_range: .1, voltage_step: 1, fine_voltage_step: .1, min_voltage: 0, max_voltage: 100, initial_voltage: 50, manual_voltage_step: 1, ring_ratio_stale_ms: 500, min_samples_per_step: 1, safe_shutdown_voltage: 0, require_new_sample_per_step: true, focus_direction: true};
@@ -33,5 +33,31 @@ describe('hardware command safeguards', () => {
     finish({ok: false, command: 10, operation_id: '0', message: 'Port occupied'});
     await expect(pending).rejects.toThrow('Port occupied');
     await expect(owner.run(async () => ({ok: true, command: 10, operation_id: '0', message: 'Stopped'}))).resolves.toMatchObject({ok: true});
+  });
+});
+describe('Qt-parity device gate (#868)', () => {
+  const base = {ready: true, experimentActive: false, connected: true};
+  it('lets a connected device operate during an experiment and in any mode', () => {
+    expect(deviceGate({...base, experimentActive: true}, 'operate')).toBe('');
+    expect(deviceGate({...base, connected: false}, 'operate')).toBe('Device is not connected.');
+  });
+  it('locks connecting during an experiment and always allows stop on a ready backend', () => {
+    expect(deviceGate({...base, experimentActive: true}, 'connect')).toContain('locked while an experiment is active');
+    expect(deviceGate({...base, experimentActive: true, connected: false}, 'stop')).toBe('');
+    expect(deviceGate({...base, ready: false}, 'stop')).toBe('Backend is not ready.');
+  });
+});
+describe('pump entry ranges (Qt widgets)', () => {
+  it('rounds a flow rate to 4 decimals within 0-100000', () => {
+    expect(flowRateInput('1.234567')).toBe(1.2346);
+    expect(() => flowRateInput('100001')).toThrow('between 0 and 100000');
+    expect(() => flowRateInput('')).toThrow();
+  });
+  it('sends whole syringe volumes; fractional mL become µL; other fractions are refused', () => {
+    expect(syringeVolumeForDevice('10', 100)).toEqual({volume: 10, unit: 100});
+    expect(syringeVolumeForDevice('2.5', 103)).toEqual({volume: 2500, unit: 100});
+    expect(() => syringeVolumeForDevice('12.5', 103)).toThrow('whole mL');
+    expect(() => syringeVolumeForDevice('2.5', 100)).toThrow('whole µL');
+    expect(() => syringeVolumeForDevice('0.05', 100)).toThrow();
   });
 });

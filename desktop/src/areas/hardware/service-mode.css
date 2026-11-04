@@ -57,3 +57,26 @@
   font-style: italic;
 }
 
+
+/* ---- HW-018: the hardware panel docked on every tab but Connect ---- */
+.hardware-dock {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel);
+  margin-bottom: 8px;
+}
+.hardware-dock > div {
+  max-height: 45vh;
+  overflow: auto;
+  padding: 0 8px 8px;
+}
+.hardware-dock-toggle {
+  font: inherit;
+  width: 100%;
+  text-align: left;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+}
