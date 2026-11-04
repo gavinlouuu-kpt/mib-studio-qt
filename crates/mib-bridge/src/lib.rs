@@ -667,6 +667,12 @@ pub mod ffi {
         pub invalid_masks: BridgeReviewDatasetInfo,
         pub recorded_images: BridgeReviewDatasetInfo,
         pub file_path: String,
+        /// The calibration the review charts use: the file's recorded
+        /// pixel_to_micron (`pixel_to_micron_from_file`), else the live factor.
+        pub pixel_to_micron: f64,
+        pub pixel_to_micron_from_file: bool,
+        /// Recording files: frames filtered empty at record time.
+        pub filtered_frames: u64,
     }
 
     /// One page of review frame/object metrics (schema v9, BE-6): bounded

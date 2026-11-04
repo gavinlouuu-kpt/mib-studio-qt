@@ -1376,6 +1376,9 @@ BridgeReviewMetadata BackendBridge::fetch_review_metadata() {
     out.invalid_masks = toDatasetInfo(meta.invalidMasks);
     out.recorded_images = toDatasetInfo(meta.recordedImages);
     out.file_path = rust::String(meta.filePath);
+    out.pixel_to_micron = meta.pixelToMicron;
+    out.pixel_to_micron_from_file = meta.pixelToMicronFromFile;
+    out.filtered_frames = meta.filteredFrames;
     return out;
 }
 

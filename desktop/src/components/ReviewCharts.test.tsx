@@ -32,3 +32,16 @@ it("renders missing and non-finite aggregate metric labels as em dashes",async()
   expect(host.textContent).not.toContain("NaN");
   expect(host.textContent).not.toContain("Infinity");
 });
+it("says which px→µm factor the charts use: the file's recorded one, or the live setting when the file records none",async()=>{
+  const text=async(next:ReviewChartSnapshot)=>{
+    vi.mocked(bridge.fetchReviewCharts).mockResolvedValue(next);
+    await act(async()=>root.render(<ReviewCharts sourcePath="a.h5"/>));
+    await act(async()=>host.querySelector("button")!.click());
+    return host.textContent ?? "";
+  };
+  expect(await text({...snapshot,pixel_to_micron:0.25,pixel_to_micron_source:"recorded"})).toContain("Calibration: 0.25 µm/px (recorded in the file)");
+  expect(await text({...snapshot,pixel_to_micron:0.4886,pixel_to_micron_source:"live"})).toContain("Calibration: 0.4886 µm/px (live setting; the file records none)");
+  const older=await text(snapshot); // a backend that does not say which factor it used
+  expect(older).toContain("Calibration: 0.5 µm/px (current backend setting)");
+  expect(older).not.toContain("same as Qt");
+});

@@ -468,7 +468,14 @@ namespace backend::review
             {
                 if (!reader.loadFile(filePath))
                 {
-                    if (error) *error = "File not found or not an HDF5 review file: " + filePath;
+                    // Qt's two messages (HdfReviewTab: QFile::exists decides): a missing
+                    // path is not the same failure as a file HDF5 cannot read.
+                    std::error_code ec;
+                    const bool exists = std::filesystem::exists(std::filesystem::u8path(filePath), ec);
+                    if (error)
+                        *error = (exists ? "Cannot read the HDF5 file (corrupt or not an HDF5 review file): "
+                                         : "File not found: ") +
+                                 filePath;
                     return false;
                 }
                 open = true;
@@ -867,6 +874,8 @@ namespace backend::review
         out.recordingFile = impl_->recording;
         out.metadataReadable = impl_->validMetaReadable;
         out.frames = impl_->validMeta;
+        out.pixelToMicronFromFile = impl_->meta.pixelToMicronFromFile && impl_->meta.pixelToMicron > 0.0;
+        out.pixelToMicron = impl_->meta.pixelToMicron;
         return out;
     }
 

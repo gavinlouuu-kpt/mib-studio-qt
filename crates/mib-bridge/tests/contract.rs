@@ -735,6 +735,17 @@ fn review_metadata_pages_images_and_export_job() {
     assert!(bridge.pin_mut().stop_capture().ok);
     assert!(bridge.pin_mut().load_recording(&rec_path.to_string_lossy()).ok);
 
+    // A missing path is told apart from a corrupt file in the command message (Qt parity); the
+    // failed load closes the review file, so the load below starts from nothing.
+    let missing = bridge.pin_mut().load_recording(&format!("{}.missing.h5", rec_path.to_string_lossy()));
+    assert!(!missing.ok && missing.message == "Recording load failed: file not found", "{}", missing.message);
+    let garbage = std::env::temp_dir().join(format!("mib_bridge_rev6_{}_garbage.h5", std::process::id()));
+    std::fs::write(&garbage, b"not an hdf5 file").unwrap();
+    let corrupt = bridge.pin_mut().load_recording(&garbage.to_string_lossy());
+    assert!(!corrupt.ok && corrupt.message == "Recording load failed", "{}", corrupt.message);
+    let _ = std::fs::remove_file(&garbage);
+    assert!(bridge.pin_mut().load_recording(&rec_path.to_string_lossy()).ok);
+
     // Metadata: recording mode, counts, dataset capabilities.
     let meta = bridge.pin_mut().fetch_review_metadata();
     assert!(meta.valid && meta.file_open && meta.recording_file);
@@ -743,6 +754,8 @@ fn review_metadata_pages_images_and_export_job() {
     assert_eq!(meta.recorded_images.width, 512);
     assert_eq!(meta.recorded_images.height, 96);
     assert!(meta.file_path.ends_with(".h5"));
+    // Calibration the review charts use: a recording records no factor, so the live one.
+    assert!(meta.pixel_to_micron > 0.0 && !meta.pixel_to_micron_from_file);
 
     // Paged metrics: bounded pages, stable totals, out-of-range is empty.
     let page = bridge.pin_mut().fetch_review_metrics_page(true, 0, 5);

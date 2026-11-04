@@ -953,6 +953,7 @@ namespace backend::review
             base.outputRoot = req.outputRoot;
             base.conversionFactor = fallback;
             base.series = toServiceRange(req.series);
+            base.generateReviewCharts = true; // Qt writes scatter_plot.tiff + histogram.tiff per file
             ExportRunOptions options;
             options.polling = ExportCancelPolling::AtProgress;
             options.prepare = [&](std::size_t i, recording::HdfExportRequest &request, std::string &skipped) {
@@ -965,6 +966,11 @@ namespace backend::review
                     {
                         recordingFile = probe.isRecordingFile();
                         if (const double f = ReviewSession::recordedPixelToMicron(probe); f > 0.0) request.conversionFactor = f;
+                        // The chart histogram range is the file's own recorded one (ReviewSession's rule).
+                        services::ProcessingConfig recorded;
+                        if (!probe.readRecordedProcessingConfig(recorded)) recorded = services::ProcessingConfig{};
+                        request.chartRingMin = recorded.ring_ratio_min;
+                        request.chartRingMax = recorded.ring_ratio_max;
                         probe.closeFile();
                     }
                 }

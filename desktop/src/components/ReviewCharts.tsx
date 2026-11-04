@@ -2,6 +2,13 @@ import { metricNumber } from "../metricFormat";
 import { useEffect, useId, useState } from "react";
 import { bridge, type ReviewChartSnapshot } from "../bridge";
 
+/** Which px→µm factor the charts use, as Qt: the file's recorded one, the live setting only for a file that records none. */
+export function calibrationSource(snapshot: Pick<ReviewChartSnapshot, "pixel_to_micron_source">): string {
+  if (snapshot.pixel_to_micron_source === "recorded") return "recorded in the file";
+  if (snapshot.pixel_to_micron_source === "live") return "live setting; the file records none";
+  return "current backend setting"; // a backend that does not say which factor it used
+}
+
 /** Whole-file backend aggregates. All valid objects contribute; no page sampling. */
 export function ReviewCharts({sourcePath}:{sourcePath:string}) {
   const [snapshot,setSnapshot]=useState<ReviewChartSnapshot|null>(null);
@@ -35,7 +42,7 @@ export function ReviewCharts({sourcePath}:{sourcePath:string}) {
     {loading && <p role="status">Aggregating all saved valid-object metrics…</p>}
     {error && <p role="alert">{error}</p>}
     {snapshot && <>
-      <p>All {snapshot.rows} valid-dataset rows: {snapshot.finite_points} finite scatter points; {snapshot.excluded_nonfinite} non-finite pairs omitted. Every finite point contributes to the {snapshot.resolution}×{snapshot.resolution} density grid; no sampling. Calibration: {metricNumber(snapshot.pixel_to_micron, 5, true)} µm/px (current backend setting, same as Qt).</p>
+      <p>All {snapshot.rows} valid-dataset rows: {snapshot.finite_points} finite scatter points; {snapshot.excluded_nonfinite} non-finite pairs omitted. Every finite point contributes to the {snapshot.resolution}×{snapshot.resolution} density grid; no sampling. Calibration: {metricNumber(snapshot.pixel_to_micron, 5, true)} µm/px ({calibrationSource(snapshot)}).</p>
       <svg viewBox="0 0 700 490" role="img" aria-label={`Full-file calibrated scatter density, ${snapshot.finite_points} objects`}>
         <defs><clipPath id={clipId}><rect x="55" y="50" width="600" height="380"/></clipPath></defs>
         <text x="55" y="25" fill="currentColor">Deformability vs Area (µm²)</text>

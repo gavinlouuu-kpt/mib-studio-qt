@@ -651,6 +651,79 @@ int main()
     }
     wd.mark("batch factors");
 
+    // ---- batch Export All writes the per-file charts (Qt parity, REVIEW-049) -----------
+    // Qt's batch Export All writes scatter_plot.tiff and histogram.tiff into every experiment
+    // file's folder (the backend names the histogram histogram.tiff, decision D5); a recording
+    // gets its images only, and is not a failure. The histogram range is each file's own recorded
+    // ring-ratio range (the default config's 15..25 here), not the request default 0..10.
+    {
+        const fs::path expA = td.path() / "chart_a.h5";
+        const fs::path expB = td.path() / "chart_b.h5";
+        const fs::path rec = td.path() / "chart_rec.h5";
+        writeExperiment(expA, 20, false, 0.25);
+        writeExperiment(expB, 14, false, 0.0); // records no factor: the session fallback (0.4886)
+        writeRecording(rec, 4);
+        BatchExportRequest req;
+        req.sources = {expA.string(), expB.string(), rec.string()};
+        req.outputRoot = (td.path() / "batch_charts").string();
+        req.metricsOnly = false;
+        const uint64_t id = jobs.startBatchExport(req, &err);
+        MIB_REQUIRE(id != 0, "start chart batch: " + err);
+        MIB_REQUIRE(sink.terminal(id, done), "chart batch terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Completed && done.message == "exported 3 of 3 file(s)",
+                   "chart batch exports every file, the recording too: " + done.message);
+        const fs::path root = td.path() / "batch_charts";
+        for (const fs::path &src : {expA, expB})
+        {
+            const fs::path folder = root / src.stem();
+            for (const char *name : {"scatter_plot.tiff", "histogram.tiff"})
+            {
+                const fs::path chart = folder / name;
+                MIB_EXPECT(fs::exists(chart) && fs::file_size(chart) > 0,
+                           src.filename().string() + ": " + name + " written and non-empty");
+                const cv::Mat image = cv::imread(chart.string(), cv::IMREAD_COLOR);
+                MIB_EXPECT(!image.empty() && image.cols == 1200 && image.rows == 1200,
+                           src.filename().string() + ": " + name + " is a readable image");
+            }
+        }
+        const fs::path recFolder = root / rec.stem();
+        MIB_EXPECT(fs::is_directory(recFolder) && !fs::is_empty(recFolder), "the recording's images are exported");
+        MIB_EXPECT(!fs::exists(recFolder / "scatter_plot.tiff") && !fs::exists(recFolder / "histogram.tiff"),
+                   "a recording gets no charts");
+
+        // The charts are the direct service's at the file's own factor and ring range.
+        const auto direct = [&](const fs::path &src, double factor, double ringMin, double ringMax, const std::string &tag) {
+            backend::recording::HdfExportRequest d;
+            d.sourcePath = src.string();
+            d.outputRoot = td.path().string();
+            d.format = backend::recording::HdfExportFormat::All;
+            d.conversionFactor = factor;
+            d.generateReviewCharts = true;
+            d.chartRingMin = ringMin;
+            d.chartRingMax = ringMax;
+            d.explicitDestination = (td.path() / ("direct_" + tag)).string();
+            backend::recording::HdfExportService service;
+            backend::recording::HdfExportCancelToken token;
+            MIB_REQUIRE(service.run(d, token).status == backend::recording::HdfExportStatus::Completed, "direct " + tag);
+            return fs::path(d.explicitDestination);
+        };
+        const backend::services::ProcessingConfig defaults;
+        const fs::path wantA = direct(expA, 0.25, defaults.ring_ratio_min, defaults.ring_ratio_max, "a");
+        const fs::path wantB = direct(expB, 0.4886, defaults.ring_ratio_min, defaults.ring_ratio_max, "b");
+        const fs::path wrongRing = direct(expA, 0.25, 0.0, 10.0, "a_default_ring");
+        const fs::path wrongFactor = direct(expA, 0.4886, defaults.ring_ratio_min, defaults.ring_ratio_max, "a_live_factor");
+        for (const char *name : {"scatter_plot.tiff", "histogram.tiff"})
+        {
+            MIB_EXPECT(readAll(root / "chart_a" / name) == readAll(wantA / name), std::string("chart_a ") + name + " = direct run");
+            MIB_EXPECT(readAll(root / "chart_b" / name) == readAll(wantB / name), std::string("chart_b ") + name + " = direct run");
+        }
+        MIB_EXPECT(readAll(wantA / "histogram.tiff") != readAll(wrongRing / "histogram.tiff"),
+                   "the ring range changes the histogram (test is sensitive)");
+        MIB_EXPECT(readAll(wantA / "scatter_plot.tiff") != readAll(wrongFactor / "scatter_plot.tiff"),
+                   "the factor changes the scatter (test is sensitive)");
+    }
+    wd.mark("batch charts");
+
     // ---- regenerate masks (whole file, recorded config) --------------------------
     {
         RegenerateMasksRequest req;

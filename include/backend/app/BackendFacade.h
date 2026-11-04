@@ -919,6 +919,13 @@ namespace backend::bridge
         BackendReviewDatasetInfo invalidMasks;
         BackendReviewDatasetInfo recordedImages;
         std::string filePath;
+        // The calibration the review charts and metrics use: the file's
+        // recorded pixel_to_micron (pixelToMicronFromFile), else the live
+        // backend factor. filteredFrames: frames a recording filtered empty
+        // at record time (0 for experiment files).
+        double pixelToMicron{0.0};
+        bool pixelToMicronFromFile{false};
+        std::uint64_t filteredFrames{0};
     };
 
     // Review image datasets addressable by the binary pull (contract-pinned

@@ -43,6 +43,8 @@ fn review_bridge_reads_the_fixture_file() {
     assert!(!bridge.pin_mut().fetch_review_scatter().valid);
     let missing = bridge.pin_mut().review_open(&fixture_path("missing").to_string_lossy());
     assert!(!missing.ok && !missing.message.is_empty());
+    // The session's own text reaches the shell unchanged: a missing path is not a corrupt file.
+    assert!(missing.message.starts_with("File not found: "), "{}", missing.message);
 
     // Open + info.
     bridge.pin_mut().set_fallback_pixel_to_micron(0.9);

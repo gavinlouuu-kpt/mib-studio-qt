@@ -172,6 +172,12 @@ namespace backend::review
             bool recordingFile{false};
             bool metadataReadable{false};
             std::vector<services::ProcessedFrame> frames; // metadata only, no pixels
+            // The factor the file recorded (pixelToMicronFromFile) or, when it
+            // records none, the session's fallback; read in the same snapshot
+            // as `frames`, so a host that charts the rows by the file's own
+            // factor (Qt parity) cannot pair them with another file's.
+            double pixelToMicron{0.0};
+            bool pixelToMicronFromFile{false};
         };
         ValidSet validSet() const;
         // Copy of one metadata row (no pixels).
