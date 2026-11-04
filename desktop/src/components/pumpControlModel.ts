@@ -7,7 +7,8 @@ import { HardwareCommandOwner } from './hardwareControlModel';
 /** Backend flow/volume unit codes (the dLSP register values; see SyringePumpService). */
 export const UNIT_UL = 100;
 export const UNIT_ML = 103;
-/** Qt applies a rate/unit/direction edit 300 ms after the last change (SyringePumpTab.cpp:99). */
+/** Qt applies a rate/unit/direction edit 300 ms after its trigger: the rate spin box's editingFinished (Enter or focus out), a
+ *  unit or direction change (SyringePumpTab.cpp:99-116). */
 export const AUTO_APPLY_MS = 300;
 /** Qt reads every connected pump every 500 ms (SyringePumpTab.cpp:127). */
 export const POLL_MS = 500;
@@ -74,13 +75,28 @@ export function syringeRateForDevice(rate: number, unit: number): {value: number
   return exact;
 }
 
+/** A queued command that was dropped before it reached the bridge (Stop, disconnect, the pump gone). */
+export class CommandCancelled extends Error {
+  constructor(reason: string) { super(reason); this.name = 'CommandCancelled'; }
+}
+
 /** Operator commands on one pump run one at a time (a set rate never overlaps a Start on the serial bus), each waiting for
- *  its turn instead of being refused. Stop and the purge release never go through it (#855). */
+ *  its turn instead of being refused. Stop and the purge release never go through it (#855). `invalidate()` drops every
+ *  command that is still waiting for its turn, so a Start queued behind a slow command cannot fire after the operator pressed
+ *  Stop; a command already handed to the bridge cannot be taken back. */
 export class PumpCommandQueue {
   private tail: Promise<unknown> = Promise.resolve();
   private readonly owner = new HardwareCommandOwner();
+  private generation = 0;
+  private reason = 'cancelled';
+  invalidate(reason: string): void { this.generation++; this.reason = reason; }
   run(command: () => Promise<CmdResult>): Promise<CmdResult> {
-    const result = this.tail.then(() => this.owner.run(command));
+    const generation = this.generation;
+    const result = this.tail.then(() => {
+      // Checked right before the command is handed to the bridge, in the same tick.
+      if (generation !== this.generation) throw new CommandCancelled(this.reason);
+      return this.owner.run(command);
+    });
     this.tail = result.catch(() => undefined);
     return result;
   }

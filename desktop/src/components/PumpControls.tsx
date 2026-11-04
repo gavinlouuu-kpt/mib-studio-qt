@@ -6,7 +6,7 @@ import { numericInput, operatorGate } from './hardwareControlModel';
 import { ConnectionFields, initialConnection, type Connection } from './HardwareConnectionFields';
 import {
   AUTO_APPLY_MS, BAUD_MAX, BAUD_MIN, BAUD_RATES, POLL_MS, PURGE_TOOLTIP, RATE_DECIMALS, RATE_MAX, UNIT_ML, UNIT_UL, VOLUME_DECIMALS, VOLUME_MAX,
-  VOLUME_MIN, PumpCommandQueue, PurgeHold, errorText, formatRate, parseDecimal, syringeRateForDevice, syringeVolumeForDevice,
+  VOLUME_MIN, CommandCancelled, PumpCommandQueue, PurgeHold, errorText, formatRate, parseDecimal, syringeRateForDevice, syringeVolumeForDevice,
 } from './pumpControlModel';
 import { MICROLITERS_PER_MIN_UNIT, RPM_UNIT, directionLabel, flowToRpm, rpmToMicrolitersPerMin } from '../pumpRate';
 import './HardwareControls.css';
@@ -58,7 +58,7 @@ export function PumpControls({ready, append, capabilities = DESKTOP_CAPABILITIES
   }, [ready, poll]);
   const instrumentPump = capabilities.pump;
   return <div className="hardware-pumps">
-    <p>Pump controls work as in the Qt app and need no Service mode: connect, flow rate, direction, syringe volume, Start and Stop stay available while an experiment runs. A flow rate, unit or direction change is applied {AUTO_APPLY_MS} ms after the last edit, also while a pump runs. Hold Purge to purge at full speed; letting go stops it. Stop is always available.</p>
+    <p>Pump controls work as in the Qt app and need no Service mode: connect, flow rate, direction, syringe volume, Start and Stop stay available while an experiment runs. As in Qt, a flow rate is applied {AUTO_APPLY_MS} ms after you press Enter or leave the field, a unit or direction change {AUTO_APPLY_MS} ms after the change, also while a pump runs. Hold Purge to purge at full speed; letting go stops it. Stop is always available.</p>
     {capabilities.autofocus
       ? <p>Pumps accept system serial endpoints; devices may share a bus at distinct Modbus addresses.</p>
       : instrumentPump && <p>This instrument's peristaltic pumps share {instrumentPump.port}: Sample at Modbus address {instrumentPump.sample_address}, Sheath at {instrumentPump.sheath_address}.</p>}
@@ -107,13 +107,21 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
   const pending = useRef<Pending>({rate: false, direction: false});
   const timer = useRef<number | undefined>(undefined);
   const wasConnected = useRef<boolean | null>(null);
+  /** The rate text changed since it was last committed (Enter or focus out). */
+  const rateDirty = useRef(false);
 
   const fail = (label: string, failure: unknown) => { const message = `${label}: ${errorText(failure)}`; setError(message); latest.current.append(message); };
+  /** A queued command checks, right before it is sent, that its pump is still there: a status that turned unknown or
+   *  disconnected while it waited cancels it. */
+  const needsPump = (command: () => Promise<CmdResult>) => () => {
+    if (!latest.current.ready || !latest.current.connected) throw new CommandCancelled('cancelled: the pump is not connected');
+    return command();
+  };
   /** Queued like every non-stop command, but without `busy`: typing into the rate field must not disable it. */
   async function applyQueued(label: string, command: () => Promise<CmdResult>) {
     setError('');
     try {
-      const result = await queue.current.run(command);
+      const result = await queue.current.run(needsPump(command));
       latest.current.append(`${label}: ${result.message || 'Command accepted'}`);
       latest.current.onCommandDone();
     } catch (failure) { fail(label, failure); }
@@ -135,7 +143,7 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
     });
   };
   const sendDirection = () => applyQueued('Set direction', () => bridge.pumpSetDirection(slot, latest.current.direction));
-  /** Qt's 300 ms debounce timer firing: send what the operator changed, rate before direction. */
+  /** Qt's 300 ms timer firing: send what the operator committed, rate before direction. */
   const flushNow = () => {
     window.clearTimeout(timer.current); timer.current = undefined;
     const todo = pending.current; pending.current = {rate: false, direction: false};
@@ -157,8 +165,7 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
     start: async attempt => {
       const result = await queue.current.run(async () => {
         if (attempt.cancelled()) return SKIPPED;
-        attempt.markSent();
-        return bridge.pumpPurge(latest.current.slot, latest.current.direction);
+        return needsPump(async () => { attempt.markSent(); return bridge.pumpPurge(latest.current.slot, latest.current.direction); })();
       });
       if (result !== SKIPPED) latest.current.append(`Purge pump: ${result.message || 'Command accepted'}`);
       return true;
@@ -187,6 +194,7 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
       document.removeEventListener('pointerup', release); document.removeEventListener('pointercancel', release);
       window.removeEventListener('blur', release); document.removeEventListener('visibilitychange', hidden);
       window.clearTimeout(timer.current);
+      queue.current.invalidate('cancelled: the panel was closed');
       release();
     };
   }, []);
@@ -199,20 +207,22 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
       setRateText(status.configured_flow_rate > 0 ? formatRate(status.configured_flow_rate) : '');
       if (status.flow_rate_unit === UNIT_UL || status.flow_rate_unit === UNIT_ML) setUnit(status.flow_rate_unit);
       setDirection(status.direction === 1 ? 1 : 0);
+      rateDirty.current = false;
     }
     if (!status.connected && wasConnected.current === true) {
       window.clearTimeout(timer.current); timer.current = undefined;
       pending.current = {rate: false, direction: false};
+      queue.current.invalidate('cancelled: the pump disconnected');
       purge.current!.abandon();
     }
     wasConnected.current = status.connected;
   }, [status]);
 
-  async function runButton(label: string, command: () => Promise<CmdResult>) {
+  async function runButton(label: string, command: () => Promise<CmdResult>, needsConnected = true) {
     if (busy) return;
     setBusy(true); setError('');
     try {
-      const result = await queue.current.run(command);
+      const result = await queue.current.run(needsConnected ? needsPump(command) : command);
       append(`${label}: ${result.message || 'Command accepted'}`);
       onCommandDone();
     } catch (failure) { fail(label, failure); }
@@ -227,7 +237,12 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
     return peristaltic
       ? bridge.pumpConnectModel(slot, effectiveModel, portName, baud, address, numericInput(calibration, 'Calibration', 0.001, 100000))
       : bridge.pumpConnectEndpoint(slot, portName, baud, address);
-  });
+  }, false);
+  const disconnect = () => {
+    queue.current.invalidate('cancelled by Disconnect');
+    window.clearTimeout(timer.current); timer.current = undefined; pending.current = {rate: false, direction: false};
+    return runButton('Disconnect pump', () => bridge.pumpDisconnect(slot));
+  };
   const setVolume = () => runButton('Set syringe volume', async () => {
     const exact = syringeVolumeForDevice(parseDecimal(volumeText, 'Syringe volume', VOLUME_MIN, VOLUME_MAX, VOLUME_DECIMALS), volumeUnit);
     return bridge.pumpSetSyringeVolume(slot, exact.value, exact.unit);
@@ -235,6 +250,7 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
   /** Stop never waits for the command queue, `busy` or the connection state (#855). It also clears a full-speed purge, which
    *  the dLSP keeps in its own register; a lost purge release must not leave a pump running. */
   const stop = async () => {
+    queue.current.invalidate('cancelled by Stop');   // nothing queued behind a slow command may start the pump after this Stop
     setError('');
     const problems: string[] = [];
     try {
@@ -293,10 +309,13 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
     <ConnectionFields systemPort value={connection} disabled={connected} onChange={setConnection} baud={{min: BAUD_MIN, max: BAUD_MAX, step: 1200, list: 'pump-baud-rates'}} />
     <div className="hardware-actions">
       <button data-tour={`pump-${slot}-connect`} disabled={busy || !ready || !status || connected} onClick={() => void connect()}>Connect</button>
-      <button disabled={busy || !ready || !connected} onClick={() => void runButton('Disconnect pump', () => bridge.pumpDisconnect(slot))}>Disconnect</button>
+      <button disabled={busy || !ready || !connected} onClick={() => disconnect()}>Disconnect</button>
     </div>
     <div className="hardware-fields">
-      <label>Flow rate<input data-tour={`pump-${slot}-rate`} type="number" min="0" max={RATE_MAX} step="any" value={rateText} disabled={!control} onChange={e => { setRateText(e.target.value); edited('rate'); }} /></label>
+      <label>Flow rate<input data-tour={`pump-${slot}-rate`} type="number" min="0" max={RATE_MAX} step="any" value={rateText} disabled={!control}
+        onChange={e => { setRateText(e.target.value); rateDirty.current = true; }}
+        onBlur={() => { if (rateDirty.current) { rateDirty.current = false; edited('rate'); } }}
+        onKeyDown={e => { if (e.key === 'Enter') { rateDirty.current = false; edited('rate'); } }} /></label>
       <label>Rate unit{rateUnits}</label>
       {configured !== null && peristaltic && <span className="mono">configured ≈ {configured.toFixed(2)} rpm</span>}
       <label>Direction<select data-tour={`pump-${slot}-direction`} value={direction} disabled={!control} onChange={e => { setDirection(Number(e.target.value)); edited('direction'); }}><option value={0}>{directionLabel(peristaltic, 0)}</option><option value={1}>{directionLabel(peristaltic, 1)}</option></select></label>

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CmdResult } from '../bridge';
-import { PumpCommandQueue, PurgeHold, UNIT_ML, UNIT_UL, formatRate, parseDecimal, syringeRateForDevice, syringeVolumeForDevice, type PurgeHooks } from './pumpControlModel';
+import { CommandCancelled, PumpCommandQueue, PurgeHold, UNIT_ML, UNIT_UL, formatRate, parseDecimal, syringeRateForDevice, syringeVolumeForDevice, type PurgeHooks } from './pumpControlModel';
 
 const ok = (message = 'ok'): CmdResult => ({ok: true, command: 10, message, operation_id: '0'});
 const deferred = <T,>() => { let resolve!: (value: T) => void, reject!: (reason: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return {promise, resolve, reject}; };
@@ -74,6 +74,41 @@ describe('PumpCommandQueue', () => {
     await a; await failed;
     await expect(c).resolves.toMatchObject({message: 'c done'});
     expect(log).toEqual(['a start', 'a end', 'b', 'c']);
+  });
+});
+
+describe('PumpCommandQueue.invalidate (a queued command must not fire after Stop)', () => {
+  it('drops every command still waiting, lets the one in flight finish, and serves later commands', async () => {
+    const queue = new PumpCommandQueue();
+    const first = deferred<CmdResult>();
+    const sent: string[] = [];
+    const a = queue.run(async () => { sent.push('a'); return first.promise; });
+    const b = queue.run(async () => { sent.push('b'); return ok(); });
+    const c = queue.run(async () => { sent.push('c'); return ok(); });
+    const dropped = Promise.allSettled([b, c]);
+    await settle();
+    queue.invalidate('cancelled by Stop');
+    const d = queue.run(async () => { sent.push('d'); return ok('d done'); });   // given after the Stop
+    first.resolve(ok('a done'));
+    await expect(a).resolves.toMatchObject({message: 'a done'});
+    const [rb, rc] = await dropped;
+    expect(rb).toMatchObject({status: 'rejected', reason: expect.any(CommandCancelled)});
+    expect(rc.status).toBe('rejected');
+    expect((rb as PromiseRejectedResult).reason.message).toBe('cancelled by Stop');
+    await expect(d).resolves.toMatchObject({message: 'd done'});
+    expect(sent).toEqual(['a', 'd']);
+  });
+  it('checks right before the command is handed over, not when it was queued', async () => {
+    const queue = new PumpCommandQueue();
+    const gate = deferred<CmdResult>();
+    const sent: string[] = [];
+    void queue.run(() => gate.promise);
+    const late = queue.run(async () => { sent.push('late'); return ok(); });
+    const result = expect(late).rejects.toThrow('cancelled by Stop');
+    queue.invalidate('cancelled by Stop');
+    gate.resolve(ok());
+    await result;
+    expect(sent).toEqual([]);
   });
 });
 

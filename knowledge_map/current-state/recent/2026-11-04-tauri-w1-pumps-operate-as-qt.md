@@ -11,12 +11,17 @@ hold-to-purge state machine) are in `pumpControlModel.ts`, the gate in `hardware
   connected device, also while an experiment runs. The trigger tests keep Service mode and the arm (UX-9, #313).
 - **Stop always works** (D3, #855): Stop pump, the purge release and Disable autofocus are disabled only when
   the backend is not ready and bypass the command queue and the `busy` flag. Stop pump also sends a purge stop
-  (the dLSP keeps its full-speed purge in its own register).
+  (the dLSP keeps its full-speed purge in its own register). Stop, Disconnect, a pump found disconnected and
+  closing the panel also cancel every command still waiting in the pump's queue (`PumpCommandQueue.invalidate`,
+  checked right before a command is handed to the bridge), so a Start, Purge, rate or direction queued behind a
+  slow command cannot fire after the operator pressed Stop; a command already sent is not taken back.
 - **Live device status** (HW-015): every 500 ms, each connected pump is read from the device
   (`pump_poll_status`), then its status taken. The read takes no command lock and sets no `busy`; polls never
   overlap. The "Read device status" button is gone.
 - **Rate, unit, direction** (HW-007/008/009): 0-100000, 4 decimals, pre-filled from the pump's configured values
-  when it connects, applied 300 ms after the last edit (also while running); no Apply buttons.
+  when it connects; no Apply buttons. As in Qt (`SyringePumpTab.cpp:107-116`) a 300 ms timer is started by the rate
+  field's commit (Enter, or leaving the field after a change: Qt's `editingFinished`) and by a unit or direction
+  change, also while running. Typing or pausing in the field never sends an intermediate value.
 - **Hold-to-purge** (HW-012): pointer down / Space / Enter purges in the selected direction, release, pointer
   leave or cancel, blur, hidden page, unmount or disconnect stops it; a release is never lost, even while the
   start is still in flight. The latched Purge and Stop purge button are gone.

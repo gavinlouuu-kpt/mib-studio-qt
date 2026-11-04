@@ -30,6 +30,8 @@ const type = async (input: HTMLInputElement, value: string) => act(async () => {
 const choose = async (select: HTMLSelectElement, value: string) => act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, value); select.dispatchEvent(new Event('change', {bubbles: true})); });
 const fire = async (target: Element | Window | Document, type: string, init: object = {}) => act(async () => { target.dispatchEvent(Object.assign(new Event(type, {bubbles: true, cancelable: true}), init)); });
 const key = async (target: Element, type: 'keydown' | 'keyup', k: string, repeat = false) => act(async () => { target.dispatchEvent(new KeyboardEvent(type, {key: k, repeat, bubbles: true, cancelable: true})); });
+/** Qt's editingFinished: Enter in the rate field. */
+const setRate = async (input: HTMLInputElement, value: string) => { await type(input, value); await key(input, 'keydown', 'Enter'); };
 const tick = async (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const click = async (node: HTMLElement) => act(async () => node.click());
 async function render(props: {ready?: boolean; capabilities?: PlatformCapabilities} = {}) {
@@ -115,7 +117,7 @@ describe('Stop always works (#855, D3)', () => {
     const slow = deferred<CmdResult>();
     vi.mocked(bridge.pumpSetFlowRate).mockReturnValue(slow.promise);
     await render();
-    await type(field('Flow rate'), '20'); await tick(300);
+    await setRate(field('Flow rate'), '20'); await tick(300);
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
     await click(button('Stop pump'));
     expect(bridge.pumpStop).toHaveBeenCalledWith(0);
@@ -138,6 +140,108 @@ describe('Stop always works (#855, D3)', () => {
     await click(button('Stop pump'));
     expect(alertText()).toContain('Pump stop failed: timeout');
     expect(bridge.pumpStopPurge).toHaveBeenCalledWith(0);
+  });
+});
+
+describe('Stop cancels what is still queued behind a slow command (#855)', () => {
+  /** A rate apply is in flight on a slow bus; everything else the operator does queues behind it. */
+  async function slowRateApply() {
+    const slow = deferred<CmdResult>();
+    vi.mocked(bridge.pumpSetFlowRate).mockReturnValueOnce(slow.promise);
+    await render();
+    await setRate(field('Flow rate'), '20'); await tick(300);
+    expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
+    return slow;
+  }
+  const finish = async (slow: {resolve: (value: CmdResult) => void}) => { await act(async () => slow.resolve(ok('rate set'))); await tick(1000); };
+  it('does not send a Start that was queued before Stop', async () => {
+    const slow = await slowRateApply();
+    await click(button('Run configured pump'));                   // queued behind the rate apply
+    expect(bridge.pumpStart).not.toHaveBeenCalled();
+    await click(button('Stop pump'));                             // sent at once
+    expect(bridge.pumpStop).toHaveBeenCalledTimes(1);
+    expect(bridge.pumpStopPurge).toHaveBeenCalledTimes(1);
+    await finish(slow);
+    expect(bridge.pumpStart).not.toHaveBeenCalled();
+    expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
+    expect(alertText()).toContain('Start pump: cancelled by Stop');
+    expect(button('Run configured pump').disabled).toBe(false);   // the cancelled command released its button
+    expect(append).toHaveBeenCalledWith('Set flow rate: rate set');   // the command already in flight was not taken back
+  });
+  it('does not send a purge start that was queued before Stop, and the later release adds no stop of its own', async () => {
+    const slow = await slowRateApply();
+    await fire(purgeButton(), 'pointerdown', {button: 0}); await tick(0);
+    expect(bridge.pumpPurge).not.toHaveBeenCalled();
+    await click(button('Stop pump'));
+    await finish(slow);
+    await fire(purgeButton(), 'pointerup', {button: 0}); await tick(0);
+    expect(bridge.pumpPurge).not.toHaveBeenCalled();
+    expect(bridge.pumpStopPurge).toHaveBeenCalledTimes(1);        // only Stop's own
+    expect(alertText()).toContain('Purge pump: cancelled by Stop');
+  });
+  it('does not send a rate or a direction that was queued before Stop', async () => {
+    const slow = await slowRateApply();
+    await setRate(field('Flow rate'), '30'); await tick(300);     // queued
+    await choose(field('Direction'), '1'); await tick(300);       // queued
+    await click(button('Stop pump'));
+    await finish(slow);
+    expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
+    expect(bridge.pumpSetDirection).not.toHaveBeenCalled();
+    expect(alertText()).toContain('cancelled by Stop');
+  });
+  it('sends nothing but the Stop and its purge stop after it, whatever was queued', async () => {
+    const slow = await slowRateApply();
+    await setRate(field('Flow rate'), '30'); await tick(300);
+    await click(button('Run configured pump'));
+    vi.mocked(bridge.pumpStop).mockClear(); vi.mocked(bridge.pumpStopPurge).mockClear();
+    await click(button('Stop pump'));
+    await finish(slow);
+    for (const name of ['pumpStart', 'pumpPurge', 'pumpSetDirection', 'pumpSetSyringeVolume', 'pumpDisconnect'] as const) expect(bridge[name], name).not.toHaveBeenCalled();
+    expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
+    expect(bridge.pumpStop).toHaveBeenCalledTimes(1);
+    expect(bridge.pumpStopPurge).toHaveBeenCalledTimes(1);
+  });
+  it('lets a command given after Stop through', async () => {
+    const slow = await slowRateApply();
+    await click(button('Stop pump'));
+    await finish(slow);
+    await click(button('Run configured pump'));
+    expect(bridge.pumpStart).toHaveBeenCalledWith(0);
+  });
+  it('drops queued commands when the operator disconnects, and still disconnects', async () => {
+    const slow = await slowRateApply();
+    await setRate(field('Flow rate'), '30'); await tick(300);     // queued
+    await click(button('Disconnect'));
+    await finish(slow);
+    expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
+    expect(bridge.pumpDisconnect).toHaveBeenCalledWith(0);
+  });
+  it('drops queued commands when the pump turns out to be disconnected', async () => {
+    const slow = await slowRateApply();
+    await click(button('Run configured pump'));
+    statuses = [{...base, connected: false}, {...base}];
+    await tick(500); await tick(500);                             // polls are not queued: the new status arrives
+    await finish(slow);
+    expect(bridge.pumpStart).not.toHaveBeenCalled();
+    expect(alertText()).toContain('Start pump: cancelled');
+  });
+  it('does not send a queued command while the pump status is unknown', async () => {
+    const slow = await slowRateApply();
+    await click(button('Run configured pump'));
+    vi.mocked(bridge.fetchPumpStatus).mockRejectedValue(new Error('Transport lost'));
+    await tick(500); await tick(500);
+    expect(button('Stop pump').disabled).toBe(false);
+    await finish(slow);
+    expect(bridge.pumpStart).not.toHaveBeenCalled();
+    expect(alertText()).toContain('Start pump: cancelled: the pump is not connected');
+  });
+  it('drops queued commands when the panel goes away', async () => {
+    const slow = await slowRateApply();
+    await click(button('Run configured pump'));
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await act(async () => slow.resolve(ok())); await tick(1000);
+    expect(bridge.pumpStart).not.toHaveBeenCalled();
   });
 });
 
@@ -191,12 +295,21 @@ describe('polling the devices (HW-015)', () => {
   });
 });
 
-describe('rate, unit and direction apply 300 ms after the last edit (HW-007, HW-008, HW-009)', () => {
-  it('sends the last value once, after the quiet period, also while the pump is running', async () => {
+describe('rate, unit and direction apply 300 ms after their trigger, as in Qt (HW-007, HW-008, HW-009)', () => {
+  it('sends nothing while the operator types or pauses, however long: only Enter or leaving the field commits', async () => {
     statuses = [{...base, run_status: 1}, {...base}];
     await render();
-    await type(field('Flow rate'), '1'); await tick(200);
-    await type(field('Flow rate'), '15'); await tick(200);
+    await type(field('Flow rate'), '1'); await tick(1000);       // a pause in the middle of "15" ...
+    await type(field('Flow rate'), '15'); await tick(5000);
+    expect(bridge.pumpSetFlowRate).not.toHaveBeenCalled();       // ... never reaches the running pump
+    expect(host.textContent).not.toContain('Set flow rate');
+  });
+  it('applies the committed rate once, 300 ms after Enter, also while the pump is running', async () => {
+    statuses = [{...base, run_status: 1}, {...base}];
+    await render();
+    await type(field('Flow rate'), '15');
+    await key(field('Flow rate'), 'keydown', 'Enter');
+    await tick(200);
     expect(bridge.pumpSetFlowRate).not.toHaveBeenCalled();
     await tick(100);
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
@@ -204,9 +317,37 @@ describe('rate, unit and direction apply 300 ms after the last edit (HW-007, HW-
     expect(bridge.pumpSetDirection).not.toHaveBeenCalled();
     expect(append).toHaveBeenCalledWith('Set flow rate: pumpSetFlowRate');
   });
+  it('applies the rate when the field loses focus, but not when it lost focus without a change', async () => {
+    await render();
+    await key(field('Flow rate'), 'keydown', 'Tab');
+    await fire(field('Flow rate'), 'focusout'); await tick(500);
+    expect(bridge.pumpSetFlowRate).not.toHaveBeenCalled();       // nothing was edited
+    await type(field('Flow rate'), '12');
+    await fire(field('Flow rate'), 'focusout'); await tick(300);
+    expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
+    expect(bridge.pumpSetFlowRate).toHaveBeenLastCalledWith(0, 12, 100);
+    await fire(field('Flow rate'), 'focusout'); await tick(500); // committed already
+    expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
+  });
+  it('re-applies the same rate when the operator presses Enter again (Qt: editingFinished)', async () => {
+    await render();
+    await setRate(field('Flow rate'), '12'); await tick(300);
+    await key(field('Flow rate'), 'keydown', 'Enter'); await tick(300);
+    expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(2);
+  });
+  it('applies a unit or direction change 300 ms after the change itself, with no commit', async () => {
+    await render();
+    await choose(field('Direction'), '1'); await tick(299);
+    expect(bridge.pumpSetDirection).not.toHaveBeenCalled();
+    await tick(1);
+    expect(bridge.pumpSetDirection).toHaveBeenCalledWith(0, 1);
+    await type(field('Flow rate'), '3');                          // typed, not committed
+    await choose(field('Rate unit'), '103'); await tick(300);     // the unit change takes the typed value along, as Qt's spin box does
+    expect(bridge.pumpSetFlowRate).toHaveBeenLastCalledWith(0, 3, 103);
+  });
   it('applies a unit change with the typed rate, and a direction change alone', async () => {
     await render();
-    await type(field('Flow rate'), '2'); await tick(300);
+    await setRate(field('Flow rate'), '2'); await tick(300);
     await choose(field('Rate unit'), '103'); await tick(300);
     expect(bridge.pumpSetFlowRate).toHaveBeenLastCalledWith(0, 2, 103);
     await choose(field('Direction'), '1'); await tick(300);
@@ -216,13 +357,13 @@ describe('rate, unit and direction apply 300 ms after the last edit (HW-007, HW-
   it('sends nothing for a unit change before any rate was typed, and nothing for a blank rate', async () => {
     await render();
     await choose(field('Rate unit'), '103'); await tick(300);
-    await type(field('Flow rate'), '4'); await tick(300);
-    await type(field('Flow rate'), ''); await tick(300);
+    await setRate(field('Flow rate'), '4'); await tick(300);
+    await setRate(field('Flow rate'), ''); await tick(300);
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(1);
   });
   it('keeps the two pumps apart', async () => {
     await render();
-    await type(field('Flow rate', 1), '30'); await tick(300);
+    await setRate(field('Flow rate', 1), '30'); await tick(300);
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledWith(1, 30, 100);
     expect(bridge.pumpSetFlowRate).not.toHaveBeenCalledWith(0, expect.anything(), expect.anything());
   });
@@ -248,7 +389,7 @@ describe('rate, unit and direction apply 300 ms after the last edit (HW-007, HW-
   });
   it('lets the Start button wait for the edit it follows', async () => {
     await render();
-    await type(field('Flow rate'), '40');
+    await setRate(field('Flow rate'), '40');
     await click(button('Run configured pump'));
     await tick(0);
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledWith(0, 40, 100);
@@ -257,7 +398,7 @@ describe('rate, unit and direction apply 300 ms after the last edit (HW-007, HW-
   it('refuses a rate outside 0-100000 or with more than 4 decimals and tells the operator', async () => {
     await render();
     for (const value of ['100001', '1.00001', '-1']) {
-      await type(field('Flow rate'), value); await tick(300);
+      await setRate(field('Flow rate'), value); await tick(300);
       expect(alertText(), value).toContain('Flow rate');
     }
     expect(bridge.pumpSetFlowRate).not.toHaveBeenCalled();
@@ -267,30 +408,30 @@ describe('rate, unit and direction apply 300 ms after the last edit (HW-007, HW-
   it('sends a syringe rate as an exact whole number or refuses it (the backend would clamp in silence)', async () => {
     await render();
     await choose(field('Rate unit'), '103');
-    await type(field('Flow rate'), '0.5'); await tick(300);
+    await setRate(field('Flow rate'), '0.5'); await tick(300);
     expect(bridge.pumpSetFlowRate).toHaveBeenLastCalledWith(0, 500, 100);
     expect(host.textContent).toContain('Sent to the pump as 500 µL/min');
-    await type(field('Flow rate'), '2.5'); await tick(300);
+    await setRate(field('Flow rate'), '2.5'); await tick(300);
     expect(bridge.pumpSetFlowRate).toHaveBeenLastCalledWith(0, 2500, 100);     // 2.5 mL/min is a whole 2500 µL/min
     await choose(field('Rate unit'), '100'); await tick(300);                   // 2.5 µL/min is not a whole number
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(2);
     expect(alertText()).toContain('cannot be sent exactly');
-    await type(field('Flow rate'), '0'); await tick(300);
+    await setRate(field('Flow rate'), '0'); await tick(300);
     expect(alertText()).toContain('Stop');
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledTimes(2);
   });
   it('clears a refused value\'s message once the next value goes through', async () => {
     await render();
-    await type(field('Flow rate'), '2.5'); await tick(300);
+    await setRate(field('Flow rate'), '2.5'); await tick(300);
     expect(alertText()).toContain('cannot be sent exactly');
-    await type(field('Flow rate'), '20'); await tick(300);
+    await setRate(field('Flow rate'), '20'); await tick(300);
     expect(alertText()).toBe('');
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledWith(0, 20, 100);
   });
   it('shows a command failure of an automatic apply', async () => {
     vi.mocked(bridge.pumpSetFlowRate).mockResolvedValue({...ok(), ok: false, message: 'Set flow rate failed: timeout'});
     await render();
-    await type(field('Flow rate'), '5'); await tick(300);
+    await setRate(field('Flow rate'), '5'); await tick(300);
     expect(alertText()).toContain('Set flow rate failed: timeout');
   });
 });
@@ -304,7 +445,7 @@ describe('peristaltic pump (Tushui, HW-070)', () => {
     const unit = field('Rate unit');
     expect(Array.from(unit.options).map(o => o.textContent)).toContain('rpm (head)');
     await choose(unit, '200');
-    await type(field('Flow rate'), '0.8'); await tick(300);
+    await setRate(field('Flow rate'), '0.8'); await tick(300);
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledWith(0, 20, 100); // 0.8 rpm x 25 µL/rev
     expect(host.textContent).toContain('Infuse (CCW)');
     expect(host.textContent).toContain('Withdraw (CW)');
@@ -313,14 +454,14 @@ describe('peristaltic pump (Tushui, HW-070)', () => {
     statuses = [{...peristaltic, microliters_per_rev: 0}, {...peristaltic}];
     await render();
     await choose(field('Rate unit'), '200');
-    await type(field('Flow rate'), '2'); await tick(300);
+    await setRate(field('Flow rate'), '2'); await tick(300);
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledWith(0, 50, 100); // 2 rpm x the 25 µL/rev of the calibration field
     expect(alertText()).toBe('');
   });
   it('sends a peristaltic rate as typed, without the syringe whole-number rule', async () => {
     statuses = [{...peristaltic}, {...peristaltic}];
     await render();
-    await type(field('Flow rate'), '2.5'); await tick(300);
+    await setRate(field('Flow rate'), '2.5'); await tick(300);
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledWith(0, 2.5, 100);
   });
   it('hides the syringe volume, and a syringe pump never keeps the rpm unit', async () => {
@@ -517,7 +658,7 @@ describe('hold-to-purge (HW-012)', () => {
     const slow = deferred<CmdResult>();
     vi.mocked(bridge.pumpSetFlowRate).mockReturnValue(slow.promise);
     await render();
-    await type(field('Flow rate'), '9'); await tick(300);          // an automatic apply holds the queue
+    await setRate(field('Flow rate'), '9'); await tick(300);          // an automatic apply holds the queue
     await down(); await tick(0); await up();
     await act(async () => slow.resolve(ok()));
     await tick(0);
@@ -526,7 +667,7 @@ describe('hold-to-purge (HW-012)', () => {
   });
   it('purges after a pending rate edit was applied', async () => {
     await render();
-    await type(field('Flow rate'), '9');
+    await setRate(field('Flow rate'), '9');
     await down(); await tick(0);
     expect(vi.mocked(bridge.pumpSetFlowRate).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(bridge.pumpPurge).mock.invocationCallOrder[0]);
     await up();

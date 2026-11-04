@@ -1045,14 +1045,22 @@ WebSocket server allows for the controlling client.
   stays: non-stop pump commands run one at a time through `PumpCommandQueue` (a `HardwareCommandOwner` per pump),
   waiting for their turn. Autofocus connection and the tuning editor are still locked during an experiment.
 - **Stop (D3, #855).** Stop pump, the purge release and Disable autofocus are disabled only when the backend is
-  not ready. They bypass the queue and the `busy` flag. Stop pump also sends `pump_stop_purge`: the dLSP's
+  not ready. They bypass the queue and the `busy` flag. Stop (and Disconnect, a pump found disconnected, closing
+  the panel) first calls `PumpCommandQueue.invalidate()`: every command still waiting for its turn is dropped
+  (`CommandCancelled`, shown as "Start pump: cancelled by Stop"), checked right before the command reaches the
+  bridge, so a Start/Purge/rate/direction queued behind a slow command cannot run after Stop. A queued command also
+  re-checks that its pump is still connected when its turn comes. A command already sent cannot be taken back. Stop pump also sends `pump_stop_purge`: the dLSP's
   full-speed purge is a separate register that `pump_stop` does not clear.
 - **Polling (HW-015).** Every 500 ms each connected pump gets `pump_poll_status` (a Modbus read of run state,
   stall and volume), then `fetch_pump_status`. No lock, no `busy`, no overlap. The backend still serialises the
-  serial bus and the bridge's command mutex, so a stop waits for a poll already in flight (about one
-  transaction per register on a healthy bus; up to five 1 s timeouts on a dead one).
+  serial bus and the bridge's command mutex, and the WebSocket server handles one request per client at a time
+  (`mib-bridge-server/src/lib.rs`, the `spawn_blocking` awaited in the read loop), so a stop waits for a command or
+  poll already in flight, as it does behind Qt's GUI-thread poll (a few tens of ms on a healthy bus, up to five
+  1 s transaction timeouts on a dead one). Follow-up: a fail-fast `pollStatus`.
 - **Rate, unit, direction (HW-007/008/009).** 0-100000, 4 decimals, filled from the pump's configured values when
-  it connects, applied 300 ms after the last edit also while running, in the order rate then direction.
+  it connects. Trigger as in Qt (`SyringePumpTab.cpp:107-116`): Enter in the rate field (or leaving it after a
+  change) and a unit or direction change each start a 300 ms timer, then rate before direction is sent, also while
+  running. No keystroke sends anything.
   Peristaltic pumps keep the rpm unit (head speed x µL/rev); a syringe pump never does.
 - **Exact syringe numbers (D9).** The dLSP holds flow rate and syringe volume as whole numbers 1-9999 and the
   backend clamps anything else without a message. The panel sends an exact whole number in the chosen unit or
