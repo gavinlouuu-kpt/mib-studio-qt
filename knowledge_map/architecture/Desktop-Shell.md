@@ -586,6 +586,16 @@ It sends no command, so it is outside `ViewerGate`. Anchors: `data-tour="monitor
 `monitoring-invalid-overlay`. Guard: `cellStripsModel.test.ts`, `CellStrips.dom.test.tsx`,
 `monitoringCells.test.ts`.
 
+**Density, reference contour, E-modulus table, stats telemetry (ABI 46, #866 PR E; no UI yet).**
+`monitoringDensity.ts` holds the types, strict decoders (`MONITORING_DENSITY_INVALID`) and argument
+builders for the backend's live density (`bridge.monitoringDensitySetSettings` /
+`monitoringDensityRequestUpdate` are control commands: `VIEWER_ONLY` for a viewer;
+`fetchMonitoringDensity(sinceGeneration)`, `fetchKdeReferenceFromFile(path)`, `fetchEmodulusLut(knownIdentity)`
+and `fetchProcessingTelemetry` are reads), plus `densityByRow` (a point matches a snapshot row by
+`(start_generation, capture_epoch, frame_index, object_id)`) and `formatMetricSample`. The later
+frontend PR consumes them; the `algo_avg_*` decoder of `fetch_processing_stats` is PR #877's.
+Guard: `monitoringDensity.test.ts`. Shapes: [[Rust-Bridge]] (ABI 46).
+
 ## Central profile registry (ABI 25, issue #398)
 
 **Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`:

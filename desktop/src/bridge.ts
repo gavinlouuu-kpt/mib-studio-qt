@@ -10,6 +10,15 @@ import {invoke} from "./transport";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 import { FRAME_PACKET } from "./bridgeContract";
 import { cellKeyArgs, decodeMonitoringCellPinReply, decodeMonitoringCells, type MonitoringCellKeyInput } from "./monitoringCells";
+import {
+  decodeEmodulusLut, decodeKdeReference, decodeMonitoringDensity, decodeMonitoringDensitySettingsReply, decodeProcessingTelemetry,
+  emodulusLutArgs, kdeReferenceArgs, monitoringDensityArgs, monitoringDensitySettingsArgs, type MonitoringDensitySettingsInput,
+} from "./monitoringDensity";
+export type {
+  CameraTelemetry, EmodulusGrid, EmodulusLutInfo, EmodulusLutReply, KdeReference, MetricSample, MonitoringDensityPoints,
+  MonitoringDensityReply, MonitoringDensityResult, MonitoringDensitySettings, MonitoringDensitySettingsInput,
+  MonitoringDensitySettingsReply, MonitoringDensityStats, ProcessingTelemetry,
+} from "./monitoringDensity";
 import { calibrationApplyArgs, decodeCalibrationApplyReply, decodeCalibrationRecordGet, decodeCalibrationRecordsList } from "./calibrationRecords";
 import { decodeRunQuickLookReply, runQuickLookArgs, type RunQuickLookReference } from "./runQuickLook";
 export type { RunQuickLookReference, RunQuickLookReply, RunQuickLookRun, RunStatistics, RunDelta } from "./runQuickLook";
@@ -1029,6 +1038,26 @@ export const bridge = {
     const kind = layer === "mask" ? FRAME_PACKET.pull_kinds.monitoring_cell_mask : FRAME_PACKET.pull_kinds.monitoring_cell_image;
     return decodeFramePacket(await invoke<ArrayBuffer>("fetch_monitoring_cell_packet", { ...cellKeyArgs(key), layer }), kind);
   },
+  // Live density (KDE) of the Monitoring scatter (bridge ABI 46, #866 PR E; bridge-contract.json
+  // monitoring_density, kde_reference_from_file, emodulus_lut, processing_stats). The backend's
+  // MonitoringDensityService computes on its own lowest-priority worker; a shell pushes the settings
+  // (enabled only while the Monitoring sub-tab is shown) and polls the generation. Settings and the
+  // update request need control on the WebSocket server (VIEWER_ONLY otherwise); the fetches are
+  // reads. A contour reference is read from a file only while the instrument is idle.
+  monitoringDensitySetSettings: async (settings: MonitoringDensitySettingsInput) =>
+    decodeMonitoringDensitySettingsReply(await invoke<unknown>("monitoring_density_set_settings", monitoringDensitySettingsArgs(settings))),
+  monitoringDensityRequestUpdate: () => invokeCommand("monitoring_density_request_update"),
+  /** Pass the generation last seen: `{valid, generation, unchanged: true}` comes back when nothing is newer. */
+  fetchMonitoringDensity: async (sinceGeneration?: string | number | bigint | null) =>
+    decodeMonitoringDensity(await invoke<unknown>("fetch_monitoring_density", monitoringDensityArgs(sinceGeneration))),
+  fetchKdeReferenceFromFile: async (path: string) =>
+    decodeKdeReference(await invoke<unknown>("fetch_kde_reference_from_file", kdeReferenceArgs(path))),
+  /** Pass the identity of the table you hold: the grid comes back only when it differs. */
+  fetchEmodulusLut: async (knownIdentity?: string | null) =>
+    decodeEmodulusLut(await invoke<unknown>("fetch_emodulus_lut", emodulusLutArgs(knownIdentity))),
+  /** The ABI 46 additions to `fetch_processing_stats` (algorithm time, realtime mode, camera telemetry):
+   *  the same command as `fetchProcessingStats`, decoded for those members. */
+  fetchProcessingTelemetry: async () => decodeProcessingTelemetry(await invoke<unknown>("fetch_processing_stats")),
   // Calibration records (bridge ABI 42, #716 A4a; bridge-contract.json calibration_records). The
   // list and get are reads (they never apply anything); apply is the explicit compare-and-set of
   // pixel-to-micron against the factor the client saw, refused unless the experiment is idle, and

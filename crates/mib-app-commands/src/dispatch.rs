@@ -30,6 +30,11 @@ fn args<T: DeserializeOwned>(value: Value) -> Result<T, String> {
         .map_err(|e| format!("INVALID_ARGUMENTS: {e}"))
 }
 
+// The density settings' defaults (MonitoringDensitySettings{}): what an omitted field means.
+fn density_default_interval_ms() -> i32 { 2000 }
+fn density_default_bandwidth() -> f64 { 1.0 }
+fn density_default_core_fraction() -> f64 { 0.9 }
+
 fn json<T: Serialize>(value: T) -> Result<Reply, String> {
     serde_json::to_value(value).map(Reply::Json).map_err(|e| e.to_string())
 }
@@ -146,6 +151,11 @@ pub const COMMANDS: &[&str] = &[
     "calibration_record_get",
     "calibration_apply",
     "run_quick_look",
+    "monitoring_density_set_settings",
+    "monitoring_density_request_update",
+    "fetch_monitoring_density",
+    "fetch_kde_reference_from_file",
+    "fetch_emodulus_lut",
     "trigger_set_pulse_duration",
     "trigger_manual_pulse",
     "trigger_periodic_start",
@@ -793,6 +803,57 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             }
             let a: A = args(value)?;
             crate::run_quick_look(state, a.paths, a.reference).and_then(json)
+        }
+        // ABI 46 (#866 PR E): the live Monitoring density, the reference contour from a file and the
+        // E-modulus table. Settings and the update request are control commands on the WebSocket
+        // server; the fetches are reads. A malformed argument is an error reply and nothing reaches
+        // the backend.
+        "monitoring_density_set_settings" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A {
+                enabled: bool,
+                #[serde(rename = "intervalMs", default = "density_default_interval_ms")] interval_ms: i32,
+                #[serde(rename = "bandwidthFactor", default = "density_default_bandwidth")] bandwidth_factor: f64,
+                #[serde(rename = "coreFraction", default = "density_default_core_fraction")] core_fraction: f64,
+                #[serde(default)] x0: f64,
+                #[serde(default)] x1: f64,
+                #[serde(default)] y0: f64,
+                #[serde(default)] y1: f64,
+            }
+            let a: A = args(value)?;
+            crate::monitoring_density_set_settings(
+                state, a.enabled, a.interval_ms, a.bandwidth_factor, a.core_fraction, a.x0, a.x1, a.y0, a.y1,
+            )
+            .and_then(json)
+        }
+        "monitoring_density_request_update" => crate::monitoring_density_request_update(state).and_then(json),
+        "fetch_monitoring_density" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A {
+                #[serde(rename = "sinceGeneration", default)] since_generation: Option<String>,
+            }
+            let a: A = args(value)?;
+            crate::fetch_monitoring_density(state, a.since_generation).and_then(json)
+        }
+        "fetch_kde_reference_from_file" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A {
+                path: String,
+            }
+            let a: A = args(value)?;
+            crate::fetch_kde_reference_from_file(state, a.path).and_then(json)
+        }
+        "fetch_emodulus_lut" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A {
+                #[serde(rename = "knownIdentity", default)] known_identity: Option<String>,
+            }
+            let a: A = args(value)?;
+            crate::fetch_emodulus_lut(state, a.known_identity).and_then(json)
         }
         "monitoring_cell_unpin" => {
             #[derive(Deserialize)]
@@ -1519,6 +1580,156 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
+    // ABI 46 (#866 PR E): the live Monitoring density, the reference contour from a file, the
+    // E-modulus table and the stats telemetry through dispatch (the WebSocket's path) and the Tauri
+    // functions: strict arguments refused before the backend, the settings echoed as the service
+    // clamps them, a result whose points are named by the snapshot rows' whole identity, a poll with
+    // the generation seen answered with three members, a refused reference read in the plain form.
+    #[test]
+    #[serial]
+    fn monitoring_density_through_dispatch() {
+        use mib_bridge::review_ffi;
+        let data = std::env::temp_dir().join(format!("mib_dispatch_density_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(&data).unwrap();
+        let frames = blob_frames("density");
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        let reply = |name: &str, args: Value| match dispatch(&state, &host, name, args) {
+            Ok(Reply::Json(r)) => r,
+            other => panic!("{name}: {other:?}"),
+        };
+        // Before init: each read answers in its own not-initialized form.
+        assert_eq!(reply("fetch_monitoring_density", Value::Null), json!({ "valid": false }));
+        assert_eq!(reply("fetch_emodulus_lut", json!({})), json!({ "valid": false }));
+        let before = reply("monitoring_density_set_settings", json!({ "enabled": true }));
+        assert_eq!((before["ok"].clone(), before["settings"].clone()), (json!(false), Value::Null), "{before}");
+        assert_eq!(reply("monitoring_density_request_update", Value::Null)["ok"], json!(false));
+        let refused = reply("fetch_kde_reference_from_file", json!({ "path": "/x.h5" }));
+        assert_eq!(refused["ok"], json!(false));
+        assert!(refused["error"].as_str().unwrap().starts_with("No reference contour loaded from /x.h5: "), "{refused}");
+        let camera = reply("fetch_processing_stats", Value::Null);
+        assert_eq!((camera["valid"].clone(), camera["camera"].clone(), camera["realtime_mode"].clone(),
+                    camera["algo_avg_us"].clone()), (json!(false), Value::Null, Value::Null, Value::Null), "{camera}");
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+
+        // Strict arguments: nothing reaches the backend.
+        let too_long = "x".repeat(crate::frame_packet::KDE_REFERENCE_PATH_MAX_BYTES + 1);
+        let long_identity = "x".repeat(crate::frame_packet::EMODULUS_LUT_KNOWN_IDENTITY_MAX_BYTES + 1);
+        for (name, bad, needle) in [
+            ("monitoring_density_set_settings", json!({}), "INVALID_ARGUMENTS"),
+            ("monitoring_density_set_settings", json!({ "enabled": "yes" }), "INVALID_ARGUMENTS"),
+            ("monitoring_density_set_settings", json!({ "enabled": true, "intervalMs": 1500.5 }), "INVALID_ARGUMENTS"),
+            ("monitoring_density_set_settings", json!({ "enabled": true, "bandwidthFactor": "1" }), "INVALID_ARGUMENTS"),
+            ("monitoring_density_set_settings", json!({ "enabled": true, "extra": 1 }), "INVALID_ARGUMENTS"),
+            ("fetch_monitoring_density", json!({ "sinceGeneration": 5 }), "INVALID_ARGUMENTS"),
+            ("fetch_monitoring_density", json!({ "sinceGeneration": "05" }), "Invalid sinceGeneration"),
+            ("fetch_monitoring_density", json!({ "sinceGeneration": "18446744073709551616" }), "Invalid sinceGeneration"),
+            ("fetch_monitoring_density", json!({ "extra": 1 }), "INVALID_ARGUMENTS"),
+            ("fetch_kde_reference_from_file", json!({}), "INVALID_ARGUMENTS"),
+            ("fetch_kde_reference_from_file", json!({ "path": "" }), "Invalid path"),
+            ("fetch_kde_reference_from_file", json!({ "path": too_long }), "Invalid path"),
+            ("fetch_emodulus_lut", json!({ "knownIdentity": long_identity }), "Invalid knownIdentity"),
+            ("fetch_emodulus_lut", json!({ "knownIdentity": 7 }), "INVALID_ARGUMENTS"),
+        ] {
+            let e = dispatch(&state, &host, name, bad.clone()).unwrap_err();
+            assert!(e.contains(needle), "{name} {bad} -> {e}");
+        }
+
+        // Settings: echoed as the service applies them; the omitted ones take the defaults.
+        let set = reply("monitoring_density_set_settings", json!({ "enabled": false, "intervalMs": 1, "bandwidthFactor": 99.0, "coreFraction": 0.01 }));
+        assert_eq!(set["ok"], json!(true), "{set}");
+        assert_eq!(set["settings"], json!({ "enabled": false, "interval_ms": 500, "bandwidth_factor": 5.0, "core_fraction": 0.05,
+                                            "x0": 0.0, "x1": 0.0, "y0": 0.0, "y1": 0.0 }), "clamped: {set}");
+        let tauri = crate::monitoring_density_set_settings(&state, true, 60000, 1.0, 0.9, 0.0, 1000.0, 0.0, 1.0).unwrap();
+        assert_eq!(tauri["settings"]["enabled"], json!(true), "{tauri}");
+        assert_eq!(tauri["settings"]["x1"], json!(1000.0));
+        let e = crate::monitoring_density_set_settings(&state, true, 60000, f64::NAN, 0.9, 0.0, 0.0, 0.0, 0.0).unwrap_err();
+        assert!(e.contains("Invalid bandwidthFactor"), "{e}");
+
+        // Real cells: mock camera -> realtime path -> monitoring ring -> the density worker.
+        assert_eq!(reply("apply_processing_config_json", json!({ "json": LENIENT }))["ok"], json!(true));
+        assert_eq!(reply("apply_processing", json!({ "realtimeEnabled": true, "pixelToMicron": 0.5 }))["ok"], json!(true));
+        let r = reply("configure_mock", json!({ "frameDir": frames.to_string_lossy(), "frameIntervalMs": 5, "loopFiles": true }));
+        assert_eq!(r["ok"], json!(true), "{r}");
+        assert_eq!(reply("monitoring_set_active", json!({ "active": true }))["ok"], json!(true));
+        assert_eq!(reply("start_capture", Value::Null)["ok"], json!(true));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let result = loop {
+            let snap = reply("fetch_monitoring_snapshot", json!({ "maxRows": 2000 }));
+            if snap["rows"].as_array().unwrap().iter().filter(|r| r["valid"] == json!(true)).count() >= 12 {
+                assert_eq!(reply("monitoring_density_request_update", Value::Null)["ok"], json!(true));
+                let d = reply("fetch_monitoring_density", json!({ "sinceGeneration": "0" }));
+                if d["unchanged"] == json!(false) && d["result"].is_object() { break d; }
+            }
+            assert!(std::time::Instant::now() < deadline, "no density estimate");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        let points = &result["result"]["points"];
+        let n = points["count"].as_u64().unwrap() as usize;
+        assert!(n >= 3 && points["frame_index"].as_array().unwrap().len() == n && points["density"].as_array().unwrap().len() == n, "{result}");
+        assert!(result["generation"].as_str().is_some_and(|g| g != "0"), "{result}");
+        assert_eq!(result["stats"]["refresh_ms"], json!(60000));
+        assert_eq!(result["result"]["grid"]["nx"], json!(128));
+        // Every point is named by a row of the snapshot (the frontend's match): run, capture, frame index, object id.
+        let snap = reply("fetch_monitoring_snapshot", json!({ "maxRows": 2000 }));
+        let rows: std::collections::HashSet<(String, String, String, i64)> = snap["rows"].as_array().unwrap().iter()
+            .filter(|r| r["valid"] == json!(true))
+            .map(|r| (r["start_generation"].as_str().unwrap().to_string(), r["capture_epoch"].as_str().unwrap().to_string(),
+                      r["frame_index"].to_string(), r["object_id"].as_i64().unwrap()))
+            .collect();
+        for i in 0..n {
+            let ctx = &points["contexts"][points["context"][i].as_u64().unwrap() as usize];
+            let key = (ctx["start_generation"].as_str().unwrap().to_string(), ctx["capture_epoch"].as_str().unwrap().to_string(),
+                       points["frame_index"][i].as_str().unwrap().to_string(), points["object_id"][i].as_i64().unwrap());
+            assert!(rows.contains(&key), "point {key:?} is no snapshot row");
+        }
+        // The generation seen: three members. The Tauri function answers alike.
+        let generation = result["generation"].as_str().unwrap().to_string();
+        let same = crate::fetch_monitoring_density(&state, Some(generation.clone())).unwrap();
+        if same["unchanged"] == json!(true) {
+            assert_eq!(same, json!({ "valid": true, "generation": generation, "unchanged": true }));
+        }
+
+        // The reference: a path the storage rule refuses, a missing file and a real HDF5 file without a record.
+        let missing = reply("fetch_kde_reference_from_file", json!({ "path": data.join("nope.h5").to_string_lossy() }));
+        assert_eq!((missing["ok"].clone(), missing["reason"].clone()), (json!(false), json!("file not found")), "{missing}");
+        let none = data.join("no_record.h5").to_string_lossy().into_owned();
+        assert!(review_ffi::review_fixture_write_quick_look(&none, 0));
+        let r = crate::fetch_kde_reference_from_file(&state, none.clone()).unwrap();
+        assert_eq!((r["ok"].clone(), r["reason"].clone(), r["loops"].clone(), r["contours"].clone()),
+                   (json!(false), json!("the experiment has no stored core contour"), json!(0), json!([])), "{r}");
+        assert_eq!(r["error"], json!(format!("No reference contour loaded from {none}: the experiment has no stored core contour")));
+
+        // The E-modulus table: a table loaded or not, and the same answer by identity.
+        let lut = reply("fetch_emodulus_lut", json!({}));
+        assert_eq!(lut["valid"], json!(true), "{lut}");
+        if lut["loaded"] == json!(true) {
+            let identity = lut["identity"].as_str().unwrap().to_string();
+            assert_eq!(lut["lut"]["values"].as_array().unwrap().len(), 200 * 200, "the bundled table is 200 x 200");
+            let same = crate::fetch_emodulus_lut(&state, Some(identity.clone())).unwrap();
+            assert_eq!((same["unchanged"].clone(), same["lut"].clone(), same["identity"].clone()), (json!(true), Value::Null, json!(identity)));
+        } else {
+            assert_eq!((lut["identity"].clone(), lut["lut"].clone()), (json!(""), Value::Null), "{lut}");
+        }
+
+        // The stats telemetry: the camera session as the Statistics panel reads it.
+        let stats = reply("fetch_processing_stats", Value::Null);
+        assert_eq!(stats["valid"], json!(true));
+        assert_eq!(stats["realtime_mode"], json!("inline"), "{stats}");
+        assert_eq!(stats["camera"]["running"], json!(true), "{stats}");
+        for key in ["frame_rate", "data_rate_mbps"] {
+            let sample = &stats["camera"][key];
+            let state = sample["state"].as_str().unwrap();
+            assert!(["valid", "stale", "unavailable", "unsupported", "error"].contains(&state), "{sample}");
+            assert_eq!(sample["value"].is_number(), state == "valid" || state == "stale", "a value exactly for a valid or stale sample: {sample}");
+        }
+        assert!(stats["algo_avg_us"].is_null() == stats["algo_avg_age_ms"].is_null(), "published together: {stats}");
+        assert_eq!(reply("stop_capture", Value::Null)["ok"], json!(true));
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
     // ABI 44 (#716 A7a): the run quick look through dispatch (the WebSocket's path) and the Tauri
     // function: strict arguments refused before the backend, the parity fixture computed, the
     // reference confirmed with deltas, a second read from the cache, and nothing written.
@@ -1534,7 +1745,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(46)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

@@ -128,7 +128,11 @@ fn abi_version_is_stable() {
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
     // v45 (#866 MON-052/053) monitoring_cells: the invalid strip (invalid_strip) and per-cell
     // rejection reasons from the shared classifier; the strip cap 24 -> 25.
-    assert_eq!(ffi::bridge_abi_version(), 45);
+    // v46 (#866 PR E) the live Monitoring density (monitoring_density_set_settings,
+    // monitoring_density_request_update, fetch_monitoring_density), a reference contour from a file
+    // (fetch_kde_reference_from_file), the E-modulus table (fetch_emodulus_lut) and the processing
+    // stats' algorithm time, realtime mode and camera telemetry.
+    assert_eq!(ffi::bridge_abi_version(), 46);
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.
@@ -1280,6 +1284,174 @@ fn monitoring_cells_end_to_end() {
                (serde_json::json!("the processing ROI changed"), serde_json::json!(1), serde_json::json!(0)), "{changed}");
     let unpin = bridge.pin_mut().monitoring_cell_unpin(0, epoch, newest.frame_index, newest.object_id);
     assert!(unpin.ok && unpin.message == "unpinned", "the ended pin is unpinned: {unpin:?}");
+
+    assert!(bridge.pin_mut().stop_capture().ok);
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&frame_dir);
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+// ABI 46 (#866 PR E): the contract describes the live Monitoring density, the reference contour
+// from a file, the E-modulus table and the processing-stats additions.
+#[test]
+fn monitoring_density_is_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let density = &contract["monitoring_density"];
+    for (key, value) in [("interval_ms_min", serde_json::json!(500)), ("interval_ms_max", serde_json::json!(60000)),
+                         ("interval_ms_default", serde_json::json!(2000)), ("bandwidth_factor_min", serde_json::json!(0.2)),
+                         ("bandwidth_factor_max", serde_json::json!(5.0)), ("bandwidth_factor_default", serde_json::json!(1.0)),
+                         ("core_fraction_min", serde_json::json!(0.05)), ("core_fraction_max", serde_json::json!(1.0)),
+                         ("core_fraction_default", serde_json::json!(0.9)), ("grid_nx", serde_json::json!(128)),
+                         ("grid_ny", serde_json::json!(64)), ("compute_budget_factor", serde_json::json!(20)),
+                         ("max_points", serde_json::json!(1000))] {
+        assert_eq!(density[key], value, "monitoring_density.{key} (pinned in shim.cpp)");
+    }
+    for (key, needle) in [("commands", "monitoring_density_set_settings"), ("commands", "monitoring_density_request_update"),
+                          ("commands", "VIEWER_ONLY"), ("fetch", "sinceGeneration"), ("fetch", "unchanged"),
+                          ("result", "contexts"), ("result", "frame_index"), ("result", "object_id"),
+                          ("identity", "frame index"), ("identity", "capture_epoch"), ("identity", "start_generation"),
+                          ("threading", "lowest OS priority"), ("threading", "acquisition")] {
+        assert!(density[key].as_str().is_some_and(|d| d.contains(needle)), "monitoring_density.{key} mentions {needle}");
+    }
+    let reference = &contract["kde_reference_from_file"];
+    assert_eq!((reference["path_max_bytes"].clone(), reference["max_vertices"].clone()),
+               (serde_json::json!(4096), serde_json::json!(20000)));
+    for (key, needle) in [("command", "fetch_kde_reference_from_file"), ("command", "never opens the file in Review"),
+                          ("reply", "No reference contour loaded from"), ("reply", "full-run"),
+                          ("rules", "idle transaction"), ("rules", "refused while an experiment runs")] {
+        assert!(reference[key].as_str().is_some_and(|d| d.contains(needle)), "kde_reference_from_file.{key} mentions {needle}");
+    }
+    let lut = &contract["emodulus_lut"];
+    assert_eq!(lut["known_identity_max_bytes"], serde_json::json!(8192));
+    for (key, needle) in [("command", "fetch_emodulus_lut"), ("command", "knownIdentity"), ("encoding", "JSON"),
+                          ("threading", "bootstrap")] {
+        assert!(lut[key].as_str().is_some_and(|d| d.contains(needle)), "emodulus_lut.{key} mentions {needle}");
+    }
+    let stats = &contract["processing_stats"];
+    assert_eq!(stats["metric_states"], serde_json::json!(["valid", "stale", "unavailable", "unsupported", "error"]));
+    assert_eq!(stats["realtime_modes"], serde_json::json!(["inline", "async_batch"]));
+    for needle in ["algo_avg_us", "algo_avg_age_ms", "realtime_mode", "camera"] {
+        assert!(stats["fields"].as_str().is_some_and(|d| d.contains(needle)), "processing_stats.fields mentions {needle}");
+    }
+}
+
+// ABI 46 (#866 PR E): the density, the reference contour, the E-modulus table and the stats
+// telemetry end to end through the cxx bridge: the mock camera's blob frames, the real realtime
+// path into the monitoring ring, the service worker's estimate, and the replies in their JSON shapes.
+#[test]
+#[serial]
+fn monitoring_density_end_to_end() {
+    let frame_dir = make_blob_frame_dir("density");
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_density_data_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let json = |s: String| -> serde_json::Value { serde_json::from_str(&s).unwrap() };
+
+    // Before init: every command answers in its own plain form and nothing is computed.
+    assert_eq!(json(bridge.pin_mut().fetch_monitoring_density(0)), serde_json::json!({ "valid": false }));
+    assert_eq!(json(bridge.pin_mut().fetch_emodulus_lut("")), serde_json::json!({ "valid": false }));
+    let before = json(bridge.pin_mut().monitoring_density_set_settings(true, 2000, 1.0, 0.9, 0.0, 0.0, 0.0, 0.0));
+    assert!(before["ok"] == false && before["settings"].is_null(), "{before}");
+    assert!(!bridge.pin_mut().monitoring_density_request_update().ok);
+    let refused = json(bridge.pin_mut().fetch_kde_reference_from_file("/nope.h5"));
+    assert!(refused["ok"] == false && refused["error"].as_str().unwrap().starts_with("No reference contour loaded from /nope.h5: "),
+            "{refused}");
+    let stats = bridge.pin_mut().fetch_processing_stats();
+    assert!(!stats.valid && !stats.algo_avg_published && !stats.camera_running, "{stats:?}");
+
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    // Settings: clamped by the service, the clamped values echoed; axes that are not all finite become 0.
+    let set = json(bridge.pin_mut().monitoring_density_set_settings(false, 1, 99.0, 0.01, f64::NAN, 5.0, f64::INFINITY, 2.0));
+    assert!(set["ok"] == true, "{set}");
+    assert_eq!(set["settings"], serde_json::json!({ "enabled": false, "interval_ms": 500, "bandwidth_factor": 5.0,
+                "core_fraction": 0.05, "x0": 0.0, "x1": 0.0, "y0": 0.0, "y1": 0.0 }), "{set}");
+    let axes = json(bridge.pin_mut().monitoring_density_set_settings(false, 90000, f64::NAN, f64::NAN, 100.0, 900.0, 0.0, 1.0));
+    assert_eq!(axes["settings"], serde_json::json!({ "enabled": false, "interval_ms": 60000, "bandwidth_factor": 1.0,
+                "core_fraction": 0.9, "x0": 100.0, "x1": 900.0, "y0": 0.0, "y1": 1.0 }), "{axes}");
+    // Disabled: an update request is a plain no-op, and the poll answers the same state.
+    assert!(bridge.pin_mut().monitoring_density_request_update().ok);
+    let idle = json(bridge.pin_mut().fetch_monitoring_density(0));
+    assert_eq!((idle["valid"].clone(), idle["result"].clone()), (serde_json::json!(true), serde_json::Value::Null), "{idle}");
+
+    assert!(bridge.pin_mut().apply_processing_config_json(LENIENT_CONFIG).ok);
+    assert!(bridge.pin_mut().apply_processing(true, 0.5).ok);
+    assert!(bridge.pin_mut().configure_mock_camera(&frame_dir.to_string_lossy(), 5, true).ok);
+    assert!(bridge.pin_mut().monitoring_set_active(true).ok);
+    let on = json(bridge.pin_mut().monitoring_density_set_settings(true, 60000, 1.0, 0.9, 0.0, 0.0, 0.0, 0.0));
+    assert!(on["ok"] == true && on["settings"]["enabled"] == true && on["settings"]["interval_ms"] == 60000, "{on}");
+    assert!(bridge.pin_mut().start_capture().ok);
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let result = loop {
+        let snap = bridge.pin_mut().fetch_monitoring_snapshot(2000);
+        if snap.rows.iter().filter(|r| r.valid).count() >= 12 {
+            assert!(bridge.pin_mut().monitoring_density_request_update().ok);
+            let d = json(bridge.pin_mut().fetch_monitoring_density(0));
+            if d["unchanged"] == false && d["result"].is_object() { break d; }
+        }
+        assert!(Instant::now() < deadline, "no density estimate from the blob frames");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    // The shape: a generation (decimal string), the settings in force, the points and the grid.
+    let generation = result["generation"].as_str().unwrap().to_string();
+    assert!(generation.parse::<u64>().is_ok() && generation != "0", "{result}");
+    assert_eq!(result["settings"]["enabled"], true);
+    let points = &result["result"]["points"];
+    let n = points["count"].as_u64().unwrap() as usize;
+    assert!((3..=1000).contains(&n), "the bounded point set: {n}");
+    for key in ["frame_index", "object_id", "context", "density"] {
+        assert_eq!(points[key].as_array().unwrap().len(), n, "points.{key} runs parallel to the points");
+    }
+    let contexts = points["contexts"].as_array().unwrap();
+    assert!(!contexts.is_empty() && contexts.iter().all(|c| c["start_generation"].is_string() && c["capture_epoch"].is_string()), "{points}");
+    assert!(points["context"].as_array().unwrap().iter().all(|i| (i.as_u64().unwrap() as usize) < contexts.len()));
+    assert!(points["density"].as_array().unwrap().iter().all(|d| d.as_f64().is_some_and(f64::is_finite)));
+    assert_eq!((result["result"]["grid"]["nx"].clone(), result["result"]["grid"]["ny"].clone()),
+               (serde_json::json!(128), serde_json::json!(64)));
+    // Every point is a row of the monitoring snapshot, by (run, capture, frame index, object id).
+    let snap = bridge.pin_mut().fetch_monitoring_snapshot(2000);
+    let rows: std::collections::HashSet<(u64, u64, u64, i32)> = snap.rows.iter().filter(|r| r.valid)
+        .map(|r| (r.start_generation, r.capture_epoch, r.frame_index, r.object_id)).collect();
+    for i in 0..n {
+        let ctx = &contexts[points["context"][i].as_u64().unwrap() as usize];
+        let key = (ctx["start_generation"].as_str().unwrap().parse().unwrap(), ctx["capture_epoch"].as_str().unwrap().parse().unwrap(),
+                   points["frame_index"][i].as_str().unwrap().parse().unwrap(), points["object_id"][i].as_i64().unwrap() as i32);
+        assert!(rows.contains(&key), "point {key:?} is no monitoring row");
+    }
+    // Nothing newer: three members only.
+    let same = json(bridge.pin_mut().fetch_monitoring_density(generation.parse().unwrap()));
+    if same["unchanged"] == true {
+        assert_eq!(same, serde_json::json!({ "valid": true, "generation": generation, "unchanged": true }));
+    }
+
+    // The stats telemetry while the camera runs.
+    let stats = bridge.pin_mut().fetch_processing_stats();
+    assert!(stats.valid && stats.camera_running && stats.realtime_mode == "inline", "{stats:?}");
+    for (state, has, value) in [(&stats.camera_frame_rate_state, stats.camera_frame_rate_has_value, stats.camera_frame_rate),
+                                (&stats.camera_data_rate_state, stats.camera_data_rate_has_value, stats.camera_data_rate_mbps)] {
+        assert!(["valid", "stale", "unavailable", "unsupported", "error"].contains(&state.as_str()), "{state}");
+        assert_eq!(has, state == "valid" || state == "stale", "a value exactly for a valid or stale sample");
+        assert!(value.is_finite());
+    }
+    assert!(!stats.algo_avg_published || (stats.algo_avg_us.is_finite() && stats.algo_avg_age_ms >= 0.0), "{stats:?}");
+
+    // The reference contour: a missing file, and refused while a run would be reading the instrument.
+    let missing = json(bridge.pin_mut().fetch_kde_reference_from_file(&data_dir.join("missing.h5").to_string_lossy()));
+    assert!(missing["ok"] == false && missing["reason"] == "file not found" && missing["file_name"] == "missing.h5", "{missing}");
+    assert_eq!((missing["source"].clone(), missing["core_fraction"].clone(), missing["loops"].clone(), missing["contours"].clone()),
+               (serde_json::Value::Null, serde_json::Value::Null, serde_json::json!(0), serde_json::json!([])));
+
+    // The E-modulus table: loaded or not; the same identity answers unchanged.
+    let lut = json(bridge.pin_mut().fetch_emodulus_lut(""));
+    assert_eq!(lut["valid"], true, "{lut}");
+    if lut["loaded"] == true {
+        let identity = lut["identity"].as_str().unwrap().to_string();
+        assert!(!identity.is_empty() && lut["lut"]["values"].as_array().unwrap().len() == 200 * 200, "{}", lut["lut"]["values"].is_array());
+        let again = json(bridge.pin_mut().fetch_emodulus_lut(&identity));
+        assert!(again["unchanged"] == true && again["lut"].is_null() && again["identity"] == identity.as_str(), "{again}");
+    } else {
+        assert!(lut["identity"] == "" && lut["lut"].is_null(), "{lut}");
+    }
 
     assert!(bridge.pin_mut().stop_capture().ok);
     bridge.pin_mut().shutdown();
