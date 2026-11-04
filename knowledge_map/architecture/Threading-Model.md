@@ -121,6 +121,11 @@ the cache mutex. Guards: `review.run_statistics` (the LRU under threads, the TSa
   mutex; the store mutex is never held while the ring lock is taken. Store
   copies never leave the store (image pulls copy under the store mutex) and
   have one owner inside it (a pin of a strip cell copies it, #789).
+  The invalid strip (ABI 45) follows the same rules: one hold of the ring's lock
+  reads both halves (an invalid row also copies six scalars for the classifier),
+  and the rejection reasons are derived outside every lock, on the caller's thread,
+  from the processing config read once per refresh (its own mutex, never under
+  the ring's or the store's lock); nothing runs on the acquisition path.
   Both rules make "freed after the last reader" a lock order, which
   ThreadSanitizer can check; cv::Mat's refcount (uninstrumented OpenCV) it cannot.
   A capture change (review rounds 2-3 of #749) is one critical section of the

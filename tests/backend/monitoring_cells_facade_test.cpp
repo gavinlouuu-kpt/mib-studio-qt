@@ -25,7 +25,13 @@
 //      identities are refused for pin (CaptureMismatch) and image (with the
 //      reason), the strip is empty, the pin is listed with its measurements
 //      only ("capture E ended (reason)"), the listing says why, and unpin
-//      removes the ended pin.
+//      removes the ended pin;
+//   7. the invalid strip and the reasons (ABI 45, #866 MON-052/053): an invalid
+//      row is a cell of invalid_strip (never of strip) with its crop, served as
+//      a packet like a strip cell, and its reasons (code, measured value,
+//      configured range) are the shared classifier's under the processing
+//      config in force; the caps are reported; a capture change and
+//      monitoring_clear empty it.
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
@@ -52,6 +58,8 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 namespace {
 namespace bridge = backend::bridge;
@@ -126,6 +134,33 @@ void injectBatch(backend::services::ProcessingService& proc, std::uint64_t frame
     f.validation.centroidY = 40 + roiOrigin.y;
     f.validation.area = 480.0;
     proc.appendMonitoringFrameForTests(f, roiOrigin);
+}
+
+// An invalid row as the realtime path appends it: the classifier's inputs set as given.
+void injectInvalid(backend::services::ProcessingService& proc, std::uint64_t frameIndex, std::uint8_t value,
+                   int innerContours, double area, bool touchesBorder = false)
+{
+    ProcessedFrame f;
+    f.index = frameIndex;
+    f.timestampNs = frameIndex * 10;
+    f.originalImage = cv::Mat(96, 512, CV_8UC1, cv::Scalar(value));
+    f.processedImage = cv::Mat(96, 512, CV_8UC1, cv::Scalar(0));
+    f.processedImage(cv::Rect(200, 30, 24, 20)).setTo(255);
+    f.validation.isValid = false;
+    f.validation.objectId = 0;
+    f.validation.objectCount = 1;
+    f.validation.innerContourCount = innerContours;
+    f.validation.touchesBorder = touchesBorder;
+    f.validation.bboxX = 200;
+    f.validation.bboxY = 30;
+    f.validation.bboxWidth = 24;
+    f.validation.bboxHeight = 20;
+    f.validation.centroidX = 212;
+    f.validation.centroidY = 40;
+    f.validation.area = area;
+    f.validation.ringRatio = 20.0;
+    f.validation.deformability = 0.04;
+    proc.appendMonitoringFrameForTests(f);
 }
 
 json cells(bridge::BackendFacade& facade)
@@ -273,6 +308,9 @@ int main()
         auto l = cells(facade);
         MIB_EXPECT(l["valid"] == true && l["scope_start_generation"] == "0" && l["ring_start_generation"] == "0",
                    l.dump());
+        MIB_EXPECT(l["caps"]["strip_max_cells"] == 25 && l["caps"]["invalid_strip_max_cells"] == 25 &&
+                       l["caps"]["invalid_strip_max_bytes"] == MonitoringCellStore::kInvalidStripMaxBytes,
+                   "ABI 45 caps: " + l["caps"].dump());
         MIB_EXPECT(l["caps"]["strip_max_cells"] == MonitoringCellStore::kStripMaxCells &&
                        l["caps"]["max_pins"] == MonitoringCellStore::kMaxPins &&
                        l["caps"]["crop_max_side"] == MonitoringCellStore::kCropMaxSide,
@@ -300,7 +338,7 @@ int main()
         MIB_EXPECT(marked == 24u * 20, "the mask crop marks the object");
         bool mismatch = true;
         std::string why;
-        MIB_EXPECT(!facade.fetchMonitoringCellImage(0, e1, kBase + 4, 0, false, frame, &mismatch, &why) && !mismatch &&
+        MIB_EXPECT(!facade.fetchMonitoringCellImage(0, e1, kBase + 90, 0, false, frame, &mismatch, &why) && !mismatch &&
                        contains(why, "not held"),
                    "not held: no packet, " + why);
         MIB_EXPECT(!facade.fetchMonitoringCellImage(0, e1 + 1, kBase + 2, 0, false, frame, &mismatch, &why) && mismatch,
@@ -539,6 +577,94 @@ int main()
                            !proc.isRealtimeRunning(),
                        "a new frame buffer, nothing running");
             expectEnded(facade, proc, kBase + 320, before, "switched to Overview", "Overview switch");
+        }
+        // ---- 7. the invalid strip and its reasons (ABI 45) --------------------------------------
+        wd.mark("invalid strip");
+        {
+            // The config in force decides the reasons: read it, never assume the defaults.
+            const auto cfg = proc.getEffectiveProcessingConfig();
+            proc.setPixelToMicronFactor(1.0);
+            MIB_REQUIRE(cfg.require_single_inner_contour && cfg.enable_area_range_check && cfg.enable_border_check &&
+                            cfg.area_threshold_min > 5 && cfg.area_threshold_max >= cfg.area_threshold_min,
+                        "the default config gates the area, the border and the contour");
+            const auto eNow = proc.monitoringCaptureEpoch();
+            injectInvalid(proc, kBase + 404, 44, /*innerContours*/ 0, /*area*/ 5.0); // no inner contour
+            injectInvalid(proc, kBase + 407, 77, 1, 5.0);                            // the area gate only
+            injectInvalid(proc, kBase + 408, 88, 1, 5.0, /*touchesBorder*/ true);    // border (early exit)
+            inject(proc, kBase + 401, true, 11);
+            // The ring read with a budget per ring: the newest valid row, then the newest two invalid ones,
+            // each oldest -> newest (the invalid ring holds the three rows just injected, 404 older than the two).
+            std::vector<std::pair<bool, std::uint64_t>> seen;
+            const auto view = proc.visitMonitoringNewestPerRing(
+                1, 2,
+                [&](const ProcessedFrame& f, const backend::services::ProcessingService::MonitoringRowTag&, bool valid) {
+                    seen.push_back({valid, f.index});
+                });
+            const std::vector<std::pair<bool, std::uint64_t>> wanted{{true, kBase + 401}, {false, kBase + 407},
+                                                                     {false, kBase + 408}};
+            MIB_EXPECT(seen == wanted, "a budget of its own per ring");
+            MIB_EXPECT(view.invalidHeld == 3 && view.validHeld >= 1, "the counters are read under the same lock");
+            auto li = cells(facade);
+            MIB_REQUIRE(li["invalid_strip"].is_array() && li["invalid_strip"].size() == 3,
+                        "the three invalid rows are invalid cells: " + li.dump());
+            MIB_EXPECT(li["strip"].size() == 1 && inList(li["strip"], kBase + 401), "and never valid ones: " + li["strip"].dump());
+            const auto* area = inList(li["invalid_strip"], kBase + 407);
+            const auto* border = inList(li["invalid_strip"], kBase + 408);
+            const auto* noContour = inList(li["invalid_strip"], kBase + 404);
+            MIB_REQUIRE(area && border && noContour, li.dump());
+            MIB_EXPECT((*area)["valid"] == false && (*area)["image"]["has_mask"] == true &&
+                           (*area)["image"]["width"] == 48 && (*area)["capture_epoch"] == std::to_string(eNow) &&
+                           (*area)["no_image_reason"].is_null(),
+                       "an invalid cell has its crop: " + area->dump());
+            MIB_REQUIRE((*area)["reasons"].size() == 1, "area only: " + area->dump());
+            const auto& reason = (*area)["reasons"][0];
+            MIB_EXPECT(reason["code"] == "area" && reason["value"] == 5.0 && reason["min"] == cfg.area_threshold_min &&
+                           reason["max"] == cfg.area_threshold_max,
+                       "the measured value and the configured range: " + reason.dump());
+            MIB_REQUIRE((*border)["reasons"].size() == 1 && (*border)["reasons"][0]["code"] == "border" &&
+                            (*border)["reasons"][0]["value"].is_null() && (*border)["reasons"][0]["min"].is_null(),
+                        "border is an early exit, no numbers: " + border->dump());
+            MIB_REQUIRE((*noContour)["reasons"].size() == 1 && (*noContour)["reasons"][0]["code"] == "no_contour",
+                        "no inner contour: " + noContour->dump());
+            MIB_EXPECT((*inList(li["strip"], kBase + 401))["reasons"].empty(), "a valid cell lists no reasons");
+            MIB_EXPECT(li["stats"]["invalid_strip_cells"] == 3 &&
+                           std::stoull(li["stats"]["invalid_strip_admitted"].get<std::string>()) >= 3 &&
+                           li["stats"]["invalid_strip_bytes"].is_string(),
+                       "the invalid strip's stats: " + li["stats"].dump());
+            // Its pixels are pulled like a strip cell's.
+            bridge::BackendFrame invalidFrame;
+            MIB_REQUIRE(facade.fetchMonitoringCellImage(0, eNow, kBase + 407, 0, false, invalidFrame),
+                        "the invalid cell's image");
+            MIB_EXPECT(invalidFrame.width == 48 && invalidFrame.height == 44 && invalidFrame.data[0] == 77,
+                       "the row's pixels");
+            MIB_REQUIRE(facade.fetchMonitoringCellImage(0, eNow, kBase + 407, 0, true, invalidFrame),
+                        "the invalid cell's mask");
+            std::size_t markedPixels = 0;
+            for (auto b : invalidFrame.data) markedPixels += b == 255;
+            MIB_EXPECT(markedPixels == 24u * 20, "its mask crop marks the object");
+            // A pin of an invalid cell carries its reasons.
+            r = pin(facade, 0, eNow, kBase + 407);
+            MIB_EXPECT(outcome(r) == 0 && r["cell"]["reasons"].size() == 1 && r["cell"]["reasons"][0]["code"] == "area",
+                       r.dump());
+            MIB_REQUIRE(facade.clearMonitoringCellPins().ok, "clear the pin");
+            // monitoring_clear empties both strips with the ring.
+            MIB_REQUIRE(facade.dispatch(clear).ok, "monitoring_clear");
+            li = cells(facade);
+            MIB_EXPECT(li["invalid_strip"].empty() && li["strip"].empty() && li["stats"]["invalid_strip_cells"] == 0,
+                       "clear empties both strips: " + li.dump());
+            // A capture change drops what the invalid strip holds, and says how many.
+            injectInvalid(proc, kBase + 410, 99, 1, 5.0);
+            injectInvalid(proc, kBase + 411, 99, 1, 5.0);
+            MIB_REQUIRE(cells(facade)["invalid_strip"].size() == 2, "two invalid cells again");
+            auto roi = proc.getRealtimeRoi();
+            roi.w = roi.w > 300 ? 300 : 400;
+            proc.setRealtimeRoi(roi);
+            const auto changed = cells(facade);
+            MIB_EXPECT(changed["invalid_strip"].empty() && changed["last_capture_change"]["invalid_strip_dropped"] == 2 &&
+                           changed["ring_capture_epoch"] != std::to_string(eNow),
+                       "another processing ROI drops the invalid strip: " + changed.dump());
+            const auto gone = facade.fetchMonitoringCellImage(0, eNow, kBase + 410, 0, false, invalidFrame, &mismatch, &why);
+            MIB_EXPECT(!gone && mismatch, "the old capture's invalid cell is refused: " + why);
         }
         facade.shutdown();
     }

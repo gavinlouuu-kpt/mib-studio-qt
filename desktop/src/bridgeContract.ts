@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 44;
+export const BRIDGE_ABI_VERSION = 45;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -470,8 +470,10 @@ export const EXPERIMENT_START_REQUEST = {
 } as const;
 
 export const MONITORING_CELLS = {
-  "strip_max_cells": 24,
+  "strip_max_cells": 25,
   "strip_max_bytes": 4194304,
+  "invalid_strip_max_cells": 25,
+  "invalid_strip_max_bytes": 4194304,
   "max_pins": 16,
   "pin_max_bytes": 4194304,
   "crop_max_side": 256,
@@ -482,6 +484,17 @@ export const MONITORING_CELLS = {
 export const MONITORING_CELL_ERROR_CODES = {
   "capture_mismatch": "CAPTURE_MISMATCH"
 } as const;
+
+export const MONITORING_CELL_REASON_CODES = [
+  "no_contour",
+  "border",
+  "area",
+  "ring",
+  "deform",
+  "area_ratio",
+  "focus",
+  "wall"
+] as const;
 
 export const CALIBRATION_RECORDS = {
   "record_id_max_bytes": 128,

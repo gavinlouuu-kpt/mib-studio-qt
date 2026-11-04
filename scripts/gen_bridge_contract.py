@@ -114,6 +114,11 @@ def render(contract: dict) -> str:
     lines.append("export const MONITORING_CELL_ERROR_CODES = "
                  + json.dumps(contract["monitoring_cells"]["error_codes"], indent=2) + " as const;")
     lines.append("")
+    # ABI 45 (#866 MON-053): the rejection reason codes of an invalid cell, in the classifier's
+    # InvalidReasonCode order (index = enum value).
+    lines.append("export const MONITORING_CELL_REASON_CODES = "
+                 + json.dumps(contract["monitoring_cells"]["reason_codes"], indent=2) + " as const;")
+    lines.append("")
     # ABI 42 (#716 A4a): the calibration records' bounds and defaults (numbers only).
     calib = {k: v for k, v in contract["calibration_records"].items() if isinstance(v, int)}
     lines.append("export const CALIBRATION_RECORDS = " + json.dumps(calib, indent=2) + " as const;")
