@@ -21,6 +21,7 @@
 #pragma once
 
 #include "backend/recording/HdfExportService.h"
+#include "backend/review/KdeReference.h"
 #include "backend/review/ReviewTypes.h"
 #include "backend/review/RunStatistics.h"
 
@@ -333,6 +334,11 @@ namespace backend::review
         // claimed the file is Deferred (kRunStatisticsDeferredMessage), never
         // an error and nothing is read. Synchronous; never writes.
         RunStatisticsResult runStatistics(const std::string &path, const std::string &computedAt);
+        // #866 PR E: one file's stored KDE core record (ReviewSession::readKdeReference), gated on
+        // the lanes like the probe: it holds the lanes' lock for the read, and while either lane
+        // is claimed nothing is read and the result says so (a review job's readers work outside
+        // the session's mutex; HDF5 is not thread-safe, #722). Synchronous; never writes.
+        KdeReferenceResult readKdeReference(const std::string &path);
         // #717 B3b: one record reprocessed with the processing kernel, next
         // to its stored values (ReprocessResult). Never writes. The inputs
         // (stored row, image, recorded config / ROI / background) are read by

@@ -30,6 +30,8 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cmath>
 #include <thread>
@@ -45,6 +47,9 @@
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/services/StageService.h"
 #include "backend/services/MonitoringCellStore.h"
+#include "backend/services/MonitoringDensityService.h"
+#include "backend/services/TelemetrySample.h"
+#include "backend/review/KdeReference.h"
 
 #include <algorithm>
 #include "backend/pz/PzPlatformMonitor.h"
@@ -698,6 +703,39 @@ namespace backend::bridge
         out.validFps1s = processing.getValidFps1s();
         out.invalidFps1s = processing.getInvalidFps1s();
         out.pixelToMicronFactor = processing.getPixelToMicronFactor();
+        // ABI 46 (#866 PR E): plain atomic reads (the algorithm time, the realtime mode) and one
+        // short snapshot of the capture session's telemetry (the same read Qt's Statistics panel makes).
+        const std::uint64_t updatedUs = processing.getAlgoAvgUs1sUpdatedUs();
+        out.algoAvgPublished = updatedUs != 0;
+        if (out.algoAvgPublished)
+        {
+            const std::uint64_t nowUs = Tools::getTimestamp();
+            out.algoAvgUs = processing.getAlgoAvgUs1s();
+            out.algoAvgAgeMs = nowUs > updatedUs ? static_cast<double>(nowUs - updatedUs) / 1000.0 : 0.0;
+        }
+        out.realtimeMode = processing.getRealtimeProcessingMode() ==
+                                   services::ProcessingService::RealtimeProcessingMode::AsyncBatch
+                               ? "async_batch"
+                               : "inline";
+        auto &capture = backend_.capture();
+        out.cameraRunning = capture.isRunning();
+        if (out.cameraRunning)
+        {
+            const auto telemetry = capture.telemetrySnapshot();
+            const auto sample = [](const services::MetricSample &m) {
+                BackendMetricSample r;
+                r.state = services::toString(m.validity);
+                r.hasValue = m.hasValue();
+                if (r.hasValue)
+                {
+                    r.value = static_cast<double>(m.value);
+                    r.ageMs = static_cast<double>(m.ageUs) / 1000.0;
+                }
+                return r;
+            };
+            out.cameraFrameRate = sample(telemetry.captureFrameRate);
+            out.cameraDataRateMBps = sample(telemetry.captureDataRateMBps);
+        }
         return true;
     }
 
@@ -1827,6 +1865,258 @@ namespace backend::bridge
                         static_cast<std::size_t>(image.cols));
         }
         return true;
+    }
+
+    namespace
+    {
+        // #866 PR E: numbers a webview draws, rounded to `digits` significant digits so a 1000-point density or
+        // a 200 x 200 table stays a bounded, readable payload (a longer figure is false precision there).
+        double roundedSig(double v, int digits)
+        {
+            if (!std::isfinite(v) || v == 0.0) return v;
+            char buf[48];
+            std::snprintf(buf, sizeof buf, "%.*g", digits, v);
+            return std::strtod(buf, nullptr);
+        }
+
+        nlohmann::json roundedOrNull(double v, int digits)
+        {
+            return std::isfinite(v) ? nlohmann::json(roundedSig(v, digits)) : nlohmann::json(nullptr);
+        }
+
+        nlohmann::json densitySettingsJson(const services::MonitoringDensitySettings &s)
+        {
+            return {{"enabled", s.enabled},
+                    {"interval_ms", s.intervalMs},
+                    {"bandwidth_factor", s.bandwidthFactor},
+                    {"core_fraction", s.coreFraction},
+                    {"x0", s.x0},
+                    {"x1", s.x1},
+                    {"y0", s.y0},
+                    {"y1", s.y1}};
+        }
+
+        // The most density points one reply carries: the monitoring ring's capacity (ProcessingService keeps
+        // the last 1000 valid rows, so the service never has more).
+        constexpr std::size_t kDensityMaxPoints = 1000;
+    } // namespace
+
+    std::string BackendFacade::setMonitoringDensitySettingsJson(bool enabled, int intervalMs, double bandwidthFactor,
+                                                                double coreFraction, double x0, double x1, double y0,
+                                                                double y1)
+    {
+        if (!initialized_)
+        {
+            return nlohmann::json{{"ok", false}, {"message", "Backend not initialized"}, {"settings", nullptr}}.dump();
+        }
+        services::MonitoringDensitySettings requested;
+        requested.enabled = enabled;
+        requested.intervalMs = intervalMs;
+        requested.bandwidthFactor = bandwidthFactor;
+        requested.coreFraction = coreFraction;
+        requested.x0 = x0;
+        requested.x1 = x1;
+        requested.y0 = y0;
+        requested.y1 = y1;
+        auto &density = backend_.monitoringDensity();
+        density.setSettings(requested); // clamps; a change wakes the worker, which does the work
+        return nlohmann::json{{"ok", true},
+                              {"message", enabled ? "Monitoring density enabled" : "Monitoring density disabled"},
+                              {"settings", densitySettingsJson(density.settings())}}
+            .dump();
+    }
+
+    BackendCommandResult BackendFacade::requestMonitoringDensityUpdate()
+    {
+        if (!initialized_) return {false, BackendCommandType::Monitoring, "Backend not initialized"};
+        auto &density = backend_.monitoringDensity();
+        if (!density.settings().enabled)
+            return {true, BackendCommandType::Monitoring, "Monitoring density is disabled: nothing to update"};
+        density.requestUpdate();
+        return {true, BackendCommandType::Monitoring, "Monitoring density update requested"};
+    }
+
+    bool BackendFacade::fetchMonitoringDensityJson(std::uint64_t sinceGeneration, std::string &out) const
+    {
+        if (!initialized_) return false;
+        const auto &density = backend_.monitoringDensity();
+        const std::uint64_t seen = density.generation();
+        if (seen == sinceGeneration)
+        {
+            out = nlohmann::json{{"valid", true}, {"generation", dec(seen)}, {"unchanged", true}}.dump();
+            return true;
+        }
+        const auto result = density.latest();
+        const auto stats = density.stats();
+        const auto settings = density.settings();
+        nlohmann::json doc{
+            {"valid", true},
+            // The generation of the content below (a result that landed after `seen` was read is newer).
+            {"generation", dec(result ? std::max(seen, result->generation) : density.generation())},
+            {"unchanged", false},
+            {"settings", densitySettingsJson(settings)},
+            {"stats",
+             {{"next_interval_ms", stats.nextIntervalMs},
+              // What the Qt tooltip calls "refreshed every": the configured interval, stretched by the
+              // service's compute budget.
+              {"refresh_ms", std::max(settings.intervalMs, stats.nextIntervalMs)},
+              {"estimates", dec(stats.estimates)},
+              {"skipped_unchanged", dec(stats.skippedUnchanged)},
+              {"skipped_under_load", dec(stats.skippedUnderLoad)},
+              {"busy", density.busy()},
+              {"priority_lowered", stats.priorityLowered}}},
+            {"result", nullptr},
+        };
+        if (result)
+        {
+            // The rows' identities are (start generation, capture epoch, frame index, object id); the run
+            // and capture are shared by long runs of rows, so they are listed once and each point names
+            // one: the payload stays small and a frame index is never read without its capture.
+            const std::size_t total = std::min(result->frameIndices.size(), result->density.size());
+            const std::size_t first = total > kDensityMaxPoints ? total - kDensityMaxPoints : 0; // keep the newest
+            const bool keyed = result->keys.size() == result->frameIndices.size();
+            nlohmann::json contexts = nlohmann::json::array();
+            nlohmann::json context = nlohmann::json::array();
+            nlohmann::json frames = nlohmann::json::array();
+            nlohmann::json objects = nlohmann::json::array();
+            nlohmann::json densities = nlohmann::json::array();
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> known;
+            for (std::size_t i = first; i < total; ++i)
+            {
+                const services::MonitoringDensityKey key =
+                    keyed ? result->keys[i] : services::MonitoringDensityKey{0, 0, result->frameIndices[i], -1};
+                const std::pair<std::uint64_t, std::uint64_t> ctx{key.startGeneration, key.captureEpoch};
+                std::size_t at = 0;
+                while (at < known.size() && known[at] != ctx) ++at;
+                if (at == known.size())
+                {
+                    known.push_back(ctx);
+                    contexts.push_back({{"start_generation", dec(ctx.first)}, {"capture_epoch", dec(ctx.second)}});
+                }
+                context.push_back(at);
+                frames.push_back(dec(key.frameIndex));
+                objects.push_back(key.objectId);
+                densities.push_back(roundedOrNull(result->density[i], 6));
+            }
+            nlohmann::json loops = nlohmann::json::array();
+            for (const auto &loop : result->contours)
+            {
+                nlohmann::json pts = nlohmann::json::array();
+                for (const auto &p : loop) pts.push_back({roundedSig(p.x, 7), roundedSig(p.y, 7)});
+                loops.push_back(std::move(pts));
+            }
+            doc["result"] = {
+                {"points",
+                 {{"count", total - first},
+                  {"contexts", std::move(contexts)},
+                  {"context", std::move(context)},
+                  {"frame_index", std::move(frames)},
+                  {"object_id", std::move(objects)},
+                  {"density", std::move(densities)}}},
+                {"bandwidth", {{"x", finiteOrNull(result->bandwidth.x)}, {"y", finiteOrNull(result->bandwidth.y)}}},
+                {"bandwidth_factor", result->bandwidthFactor},
+                {"core_fraction", result->coreFraction},
+                {"core_level", finiteOrNull(result->coreLevel)},
+                {"core_count", result->coreCount},
+                {"contours", std::move(loops)},
+                {"pixel_to_micron", finiteOrNull(result->pixelToMicron)},
+                {"grid", {{"x0", result->x0}, {"x1", result->x1}, {"y0", result->y0}, {"y1", result->y1},
+                          {"nx", result->gridNx}, {"ny", result->gridNy}}},
+                {"compute_ms", result->computeMs},
+                {"compute_us", result->computeUs},
+                {"wall_ms", result->wallMs},
+                {"computed_at_ns", dec(result->computedAtNs)},
+            };
+        }
+        out = doc.dump();
+        return true;
+    }
+
+    std::string BackendFacade::fetchKdeReferenceFromFileJson(const std::string &requested)
+    {
+        if (!initialized_) return review::kdeReferenceRefusedJson(requested, "the backend is not initialized");
+        if (requested.empty() || requested.size() > 4096)
+            return review::kdeReferenceRefusedJson(requested.substr(0, 256), "a file path of 1 to 4096 bytes is required");
+        const auto resolved = backend_.resolveClientPath(requested);
+        if (!resolved.ok) return review::kdeReferenceRefusedJson(requested, "path refused: " + resolved.reason);
+        // HDF5 is built without thread safety (#722): an arbitrary file is read only inside the idle
+        // transaction (no run can start meanwhile) with no raw recording writing HDF5, and through the
+        // review lanes' lock and the session's mutex, as the run quick look does. The transaction does not
+        // wait (the command stays short): a busy coordinator is a retryable refusal.
+        review::KdeReferenceResult result;
+        bool ran = false;
+        bool recording = false;
+        const bool idle = backend_.experiment().withIdleConfiguration(
+            [&] {
+                if (backend_.isFrameRecording())
+                {
+                    recording = true;
+                    return;
+                }
+                result = reviewJobs_->readKdeReference(resolved.path);
+                ran = true;
+            },
+            /*wait*/ false);
+        if (!ran)
+        {
+            return review::kdeReferenceRefusedJson(
+                requested, recording ? "a raw recording is writing an HDF5 file; the file can be read when it stops"
+                           : idle    ? "the file could not be read"
+                                     : "an experiment is running or starting, or the instrument is busy (HDF5 files "
+                                       "are read only while it is idle); try again when it is idle");
+        }
+        return review::kdeReferenceReplyJson(requested, result);
+    }
+
+    std::string BackendFacade::fetchEModulusLutJson(const std::string &knownIdentity) const
+    {
+        if (!initialized_) return nlohmann::json{{"valid", false}}.dump();
+        auto &processing = backend_.processing();
+        const auto keyOf = [](const services::ProcessingService::EModulusLutIdentity &id) {
+            return id.loaded ? id.sha256 + "|" + id.path : std::string();
+        };
+        // The table is loaded once at backend bootstrap and never mutated afterwards (a reload would
+        // change the locked identity), so the copy below is a plain read; the identity is read before and
+        // after it and the copy is used only when they agree, as the Qt tab's private copy is.
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            const auto identity = processing.eModulusLutIdentity();
+            if (!identity.loaded || !processing.eModulusLut().isLoaded())
+            {
+                return nlohmann::json{{"valid", true}, {"loaded", false}, {"identity", ""}, {"unchanged", false},
+                                      {"info", nullptr}, {"lut", nullptr}}
+                    .dump();
+            }
+            const std::string key = keyOf(identity);
+            nlohmann::json info{{"path", identity.path},
+                                {"sha256", identity.sha256},
+                                {"lut_id", identity.lutId},
+                                {"revision", identity.revision},
+                                {"source", identity.source},
+                                {"catalog_sha256", identity.catalogSha256},
+                                {"checksum_status", identity.checksumStatus}};
+            if (key == knownIdentity)
+            {
+                return nlohmann::json{{"valid", true}, {"loaded", true}, {"identity", key}, {"unchanged", true},
+                                      {"info", std::move(info)}, {"lut", nullptr}}
+                    .dump();
+            }
+            const EModulusLut copy = processing.eModulusLut();
+            if (keyOf(processing.eModulusLutIdentity()) != key || !copy.isLoaded()) continue;
+            nlohmann::json values = nlohmann::json::array();
+            for (const double v : copy.grid()) values.push_back(roundedOrNull(v, 6)); // NaN (no value) -> null
+            nlohmann::json lut{{"area_min", copy.gridAreaMin()},
+                               {"area_step", copy.gridAreaStep()},
+                               {"area_bins", copy.gridAreaBins()},
+                               {"deform_min", copy.gridDeformMin()},
+                               {"deform_step", copy.gridDeformStep()},
+                               {"deform_bins", copy.gridDeformBins()},
+                               {"values", std::move(values)}};
+            return nlohmann::json{{"valid", true}, {"loaded", true}, {"identity", key}, {"unchanged", false},
+                                  {"info", std::move(info)}, {"lut", std::move(lut)}}
+                .dump();
+        }
+        return nlohmann::json{{"valid", false}, {"message", "the E-modulus table changed while it was read; try again"}}.dump();
     }
 
     bool BackendFacade::fetchTriggerStatus(BackendTriggerStatus &out) const

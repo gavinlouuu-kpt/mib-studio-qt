@@ -369,9 +369,10 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   (`getMonitoringValidAppended`/`getMonitoringInvalidAppended`, reset by
   `clearMonitoringFrames` under the rings' lock) make ring evictions
   observable (appended − held) for the bridge snapshot.
-  `getMonitoringValidPoints()` copies only (index, area, deformability) of
-  the valid ring under its lock — no image or contour references — for
-  [[MonitoringDensityService]]; `appendMonitoringFrameForTests` is the test
+  `getMonitoringValidPoints()` copies only (index, area, deformability and,
+  since ABI 46, the row's identity: `startGeneration`, `captureEpoch` from
+  the slot's tag and the object id) of the valid ring under its lock — no
+  image or contour references — for [[MonitoringDensityService]]; `appendMonitoringFrameForTests` is the test
   seam that fills the ring without the activity gate. `BatchPipelineStats`
   carries `queueCapacity` (configured `maxQueuedFrames`) so the density
   service can treat a quarter-full queue as load.
