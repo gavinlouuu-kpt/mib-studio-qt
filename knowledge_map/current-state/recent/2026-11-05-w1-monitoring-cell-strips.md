@@ -21,7 +21,7 @@ cropped at the image centre, not in a corner. Memory budget: `monitoring.cellSto
 25 + 25 + 16 cells, 3 x 4 MiB.
 
 **Frontend.** `areas/monitoring/CellStrips.tsx`, `useMonitoringCells.ts` (the first consumer of
-`bridge.fetchMonitoringCells` / `fetchMonitoringCellImage`), `cellStrips.ts` (labels, tooltips,
+`bridge.fetchMonitoringCells` / `fetchMonitoringCellImage`), `cellStripsModel.ts` (labels, tooltips,
 overlay and thumbnail pixels, the bounded cache). Visibility-gated polling, pulls only for cells the
 cache lacks, four at a time, no per-frame work (the Qt bug #857 pattern is not ported).
 
@@ -29,4 +29,4 @@ cache lacks, four at a time, no per-frame work (the Qt bug #857 pattern is not p
 classifier over 3 contracts x 64 configs x 32 rows), `e2e.monitoring_cells_facade`,
 `processing.monitoring_cell_concurrency` (a config switcher fills the invalid half); Rust
 `contract.rs` `monitoring_invalid_cells_end_to_end`, `monitoring_cells_are_described`;
-`monitoringCells.test.ts`, `cellStrips.test.ts`, `CellStrips.dom.test.tsx`.
+`monitoringCells.test.ts`, `cellStripsModel.test.ts`, `CellStrips.dom.test.tsx`.

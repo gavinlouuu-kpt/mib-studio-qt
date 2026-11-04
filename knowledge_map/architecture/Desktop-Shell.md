@@ -581,7 +581,7 @@ the strips (below). Guard: `monitoringCells.test.ts`, `framePacket.test.ts` (the
 **Monitoring cell strips (ABI 45, #866 MON-052 .. MON-055).** `areas/monitoring/CellStrips.tsx`, below
 the charts of the Monitoring sub-tab, shows the Qt tab's two strips: the last 25 **valid** and the last
 25 **invalid** cells as 100 px thumbnails, five per row in a scrollable box
-(`cellStrips.ts` `THUMBNAIL_SIZE` / `GRID_COLUMNS` / `STRIP_CELLS`). Thumbnails are the backend's
+(`cellStripsModel.ts` `THUMBNAIL_SIZE` / `GRID_COLUMNS` / `STRIP_CELLS`). Thumbnails are the backend's
 object-centred crops of the processing ROI (not the whole ROI scaled down as Qt draws it: a crop
 is at most 256 px, so a wide ROI would be unreadable at 100 px). Each invalid cell carries the red
 9 px short reasons joined by " | " (No contour, Border, Area, Ring, Deform, Ratio, Focus, Wall) and a
@@ -602,7 +602,7 @@ strips) and retries a failed pull once: no per-frame or per-row work between rev
 #857 pattern is not ported), and a thumbnail redraws only when its own pixels or overlay flag change.
 It sends no command, so it is outside `ViewerGate`. Anchors: `data-tour="monitoring-cell-strips"`,
 `monitoring-valid-cells`, `monitoring-invalid-cells`, `monitoring-valid-overlay`,
-`monitoring-invalid-overlay`. Guard: `cellStrips.test.ts`, `CellStrips.dom.test.tsx`,
+`monitoring-invalid-overlay`. Guard: `cellStripsModel.test.ts`, `CellStrips.dom.test.tsx`,
 `monitoringCells.test.ts`.
 
 ## Central profile registry (ABI 25, issue #398)
