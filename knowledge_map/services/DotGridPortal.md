@@ -23,3 +23,16 @@ Realistic demo: original 12 × 8 mm microfluidic concept, actual exported dot ge
 before/after toggle and sample-loading controls. Provenance and generation steps:
 `tools/dot_grid_portal/demo/README.md`. Review seed 11 generated 87,907 dots; no fabricated
 camera result or fabrication claim. Tailnet example has a separate four-step Driver.js tour.
+
+## Import recovery (2026-11-04)
+
+`generator/cad_import.py` checks ACIS payload preservation and strictly extracts
+planar straight-edge REGIONs; optional ODA executable selection is operator-owned.
+The real Wafer_soRT fixture preserves 88/88 REGIONs through the configured route.
+`generator/domains.py` derives unclassified closed-area candidates for user selection;
+open boundary fragments are reported, not guessed. Annotations stay in delivered CAD.
+The area-selection Driver.js tour resets confirmation on edits and includes feedback.
+`src/inspection.ts` stores large geometry in private object storage, not large D1 rows;
+only server-validated selection IDs enter the confirmation record. Helper exclusion
+polygons are removed before device export. Full-wafer inspection now works, but the
+one-million-node generation cap remains: wafer mask acceptance is still open.

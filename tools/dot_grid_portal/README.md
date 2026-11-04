@@ -149,3 +149,56 @@ whole-dot radius and 50 µm edge clearance are excluded; declared coverage must 
 in the shaded preview. Missing/open/self-intersecting regions fail closed. Region semantics
 are explicit, not inferred from layer-0 wall lines. See the current report for the actual
 Wafer_soRT conversion/REGION blocker and the corrected illustrative sample.
+
+### Geometry-preserving import and in-app no-dot review (2026-11-04)
+
+The review import accepts ordinary unlabelled closed geometry; a pre-authored
+`NO_DOT` layer is optional. When absent, closed LINE/ARC/polyline topology and
+circles become **unselected candidates**, not inferred fluid domains. The user
+selects interiors in the zoomable preview and confirms coverage. Open fragments
+are counted, not healed automatically. Candidate holes are conservatively filled.
+Selection changes clear confirmation; the API validates IDs against server-owned
+geometry and refuses empty selections. Review-only polygons are never added to
+the delivered device DXF. Existing explicit `NO_DOT` geometry remains supported.
+
+`generator/cad_import.py` supports an operator-provisioned converter executable via
+`CAD_ODA_EXECUTABLE`. It receives fixed arguments to convert an isolated directory
+containing only `device.dwg` to ACAD2000 DXF, without audit/automatic repair. A Linux
+headless wrapper can use `xvfb-run -a /path/to/ODAFileConverter "$@"`. Never accept
+converter commands or executable paths from upload metadata. Provision and license
+the external converter for the intended runtime separately; it is not downloaded
+or redistributed by the repository's default Dockerfile. Without it, LibreDWG is
+still used, but empty ACIS bodies are explicitly rejected as geometry loss.
+
+The tailnet review uses ODA File Converter 27.10 in a private, non-root image with
+offline tests with networking disabled and loopback-only live ingress. All 88 REGION bodies in the private Wafer_soRT DWG
+were recovered as planar straight-edge polygons. Curved or holed ACIS regions,
+non-XY bodies, missing payloads and disconnected boundaries still fail closed;
+this is not general ACIS-kernel support. TEXT/MTEXT are preserved but excluded from
+device bounds. Units remain explicit; conflicting header units produce a warning.
+
+Full-wafer **inspection** is now independent of the one-million-node generation
+limit. Large inspection geometry is in tenant-private R2, with only its marker
+and validated selection IDs in D1. The real wafer imports as a 110000 × 110000 µm
+layout (outer circle; inner wafer circle has 50000 µm radius), with 3210 candidate
+areas and 20 unresolved open fragments. **Full-wafer dot generation remains blocked**;
+this change does not raise generation resource limits or qualify the wafer mask.
+
+Before: DWG → incomplete converter output → generic unsupported-entity error.
+After: isolated conversion → payload/topology checks → preserved device preview →
+explicit no-dot choices → capacity/coverage gate → existing verified generator.
+The in-app “Guide me through no-dot areas” tour demonstrates the review controls,
+with restart/skip, selection-gated progress and a feedback checkpoint.
+
+Private actual-source regression (never commit the CAD):
+
+```sh
+CAD_ODA_EXECUTABLE=/path/to/headless-converter \
+CAD_WAFER_FIXTURE=/private/path/wafer.dwg \
+.venv/bin/python -m pytest tests/test_pipeline.py -q
+```
+
+Synthetic fixtures cover empty ACIS payloads, planar/non-planar REGIONs, preserved
+annotations, explicit selection, geometry-only output, and an independent channel
+clearance calculation on exported dots. Import success does not validate the
+choice of fluid domains, fabrication dimensions or manufacturing readiness.

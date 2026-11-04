@@ -1,6 +1,7 @@
 """Explicit filled no-dot regions. Never infer fluid interiors from open walls."""
 import numpy as np
 import gdstk
+from shapely.geometry import Polygon
 
 
 def regions(doc):
@@ -12,28 +13,16 @@ def regions(doc):
             result.append(('circle', (e.dxf.center.x, e.dxf.center.y, e.dxf.radius)))
         elif e.dxftype() == 'LWPOLYLINE' and e.closed and not e.has_arc:
             p = np.asarray(e.get_points('xy'), dtype=float)
-            if len(p) > 2000 or len(p) < 3 or not np.isfinite(p).all():
-                raise ValueError('No-dot polygons require 3–2000 finite vertices')
+            if len(p) > 20000 or len(p) < 3 or not np.isfinite(p).all():
+                raise ValueError('No-dot polygons require 3–20000 finite vertices')
             if np.array_equal(p[0], p[-1]):
                 p = p[:-1]
-            # Reject zero-length edges and non-adjacent segment intersections.
-            q = np.roll(p, -1, axis=0)
-            v = q - p
-            if (np.linalg.norm(v, axis=1) < 1e-9).any():
+            if (np.linalg.norm(np.roll(p,-1,axis=0)-p,axis=1)<1e-9).any():
                 raise ValueError('No-dot polygon has duplicate vertices')
-            for i in range(len(p)):
-                js = np.arange(i + 2, len(p))
-                if i == 0:
-                    js = js[js != len(p) - 1]
-                a, b = p[js], q[js]
-                def cross(u, w):
-                    return u[..., 0] * w[..., 1] - u[..., 1] * w[..., 0]
-                c1, c2 = cross(v[i], a-p[i]), cross(v[i], b-p[i])
-                c3, c4 = cross(b-a, p[i]-a), cross(b-a, q[i]-a)
-                bbox = (np.maximum(np.minimum(p[i], q[i]), np.minimum(a,b)) <= np.minimum(np.maximum(p[i],q[i]), np.maximum(a,b)) + 1e-9).all(axis=1)
-                if (bbox & (c1*c2 <= 0) & (c3*c4 <= 0)).any():
-                    raise ValueError('No-dot polygon must not self-intersect')
-            if abs(np.sum(p[:,0]*q[:,1]-q[:,0]*p[:,1])) < 1e-9:
+            poly = Polygon(p)
+            if not poly.is_valid:
+                raise ValueError('No-dot polygon must not self-intersect')
+            if poly.area < 1e-9:
                 raise ValueError('No-dot polygon has no area')
             result.append(('polygon', p))
         else:

@@ -8,7 +8,18 @@ function say(message: string, error = false) {
   el("message").classList.toggle("error", error);
 }
 type Row = { id: string; name: string; status: string; error?: string };
+type Candidate = {
+  id: number;
+  kind: string;
+  points?: number[][];
+  center?: number[];
+  radius?: number;
+};
 type Inspection = {
+  region_candidates?: Candidate[];
+  selected_regions?: number[];
+  no_dot_regions?: number;
+  generation_supported?: boolean;
   extent_um: number[];
   entity_count: number;
   source_units: string;
@@ -44,6 +55,20 @@ async function safely(f: () => Promise<void>) {
 let selected: string | null = null;
 let uploaded = false;
 let ready = false;
+let selectedRegions = new Set<number>();
+let activeInspection: Inspection | null = null;
+let canConfirm = false;
+function updateSelection() {
+  el("selection-count").textContent =
+    `${selectedRegions.size} additional no-dot areas selected`;
+  const hasAreas =
+    (activeInspection?.no_dot_regions ??
+      activeInspection?.no_dot_paths?.length ??
+      0) > 0 || selectedRegions.size > 0;
+  el<HTMLButtonElement>("generate").disabled =
+    !canConfirm || !hasAreas || !el<HTMLInputElement>("confirmed").checked;
+}
+
 async function list() {
   const designs = await api<Row[]>("/designs");
   el("designs").replaceChildren();
@@ -62,6 +87,9 @@ async function list() {
 }
 async function open(id: string) {
   selected = null;
+  canConfirm = false;
+  activeInspection = null;
+  selectedRegions.clear();
   uploaded = false;
   ready = false;
   el("review").hidden = true;
@@ -88,6 +116,12 @@ async function open(id: string) {
     uploaded = true;
     el("review").hidden = false;
     const i = d.inspection;
+    activeInspection = i;
+    selectedRegions = new Set(i.selected_regions ?? []);
+    canConfirm =
+      d.status === "awaiting_confirmation" && i.generation_supported !== false;
+    el("region-controls").hidden = !i.region_candidates?.length;
+    updateSelection();
     el("summary").textContent =
       `${d.name} · ${i.extent_um.map((v: number) => v.toFixed(1)).join(" × ")} µm · ${i.entity_count} entities · source ${i.source_units}${i.converter ? " · DWG converted" : ""}`;
     const svg = el("preview");
@@ -113,7 +147,99 @@ async function open(id: string) {
       p.setAttribute("vector-effect", "non-scaling-stroke");
       svg.append(p);
     }
-    el("warnings").textContent = i.warnings.join(" ");
+    el("reset-view").onclick = () =>
+      svg.setAttribute("viewBox", `0 0 ${i.extent_um[0]} ${i.extent_um[1]}`);
+    svg.onwheel = (event) => {
+      event.preventDefault();
+      const box = svg.getAttribute("viewBox")!.split(" ").map(Number);
+      const rect = svg.getBoundingClientRect();
+      const width = Math.min(
+        i.extent_um[0] * 2,
+        Math.max(50, box[2] * (event.deltaY < 0 ? 0.7 : 1.4)),
+      );
+      const height = (width * box[3]) / box[2];
+      const fx = (event.clientX - rect.left) / rect.width,
+        fy = (event.clientY - rect.top) / rect.height;
+      svg.setAttribute(
+        "viewBox",
+        `${box[0] + fx * (box[2] - width)} ${box[1] + fy * (box[3] - height)} ${width} ${height}`,
+      );
+    };
+    const area = (r: Candidate) =>
+      r.kind === "circle"
+        ? Math.PI * r.radius! ** 2
+        : Math.abs(
+            r.points!.reduce((a, p, n, ps) => {
+              const q = ps[(n + 1) % ps.length];
+              return a + p[0] * q[1] - q[0] * p[1];
+            }, 0) / 2,
+          );
+    const shapes = new Map<number, SVGElement>();
+    const toggle = (id: number) => {
+      if (d.status !== "awaiting_confirmation") return;
+      selectedRegions.has(id)
+        ? selectedRegions.delete(id)
+        : selectedRegions.add(id);
+      shapes
+        .get(id)
+        ?.setAttribute(
+          "fill",
+          selectedRegions.has(id) ? "#44aa8880" : "transparent",
+        );
+      el<HTMLInputElement>("confirmed").checked = false;
+      updateSelection();
+    };
+    const select = el<HTMLSelectElement>("region-choice");
+    select.replaceChildren();
+    for (const r of [...(i.region_candidates ?? [])].sort(
+      (a, b) => area(b) - area(a),
+    )) {
+      const shape = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        r.kind === "circle" ? "circle" : "polygon",
+      );
+      if (r.kind === "circle") {
+        shape.setAttribute("cx", String(r.center![0]));
+        shape.setAttribute("cy", String(i.extent_um[1] - r.center![1]));
+        shape.setAttribute("r", String(r.radius));
+      } else
+        shape.setAttribute(
+          "points",
+          r.points!.map(([x, y]) => `${x},${i.extent_um[1] - y}`).join(" "),
+        );
+      shape.setAttribute(
+        "fill",
+        selectedRegions.has(r.id) ? "#44aa8880" : "transparent",
+      );
+      shape.setAttribute("stroke", "#64748b");
+      shape.setAttribute("stroke-width", "0.5");
+      shape.setAttribute("vector-effect", "non-scaling-stroke");
+      shape.setAttribute("data-region", String(r.id));
+      const title = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "title",
+      );
+      title.textContent = `Area ${r.id + 1}: click to toggle no-dot exclusion`;
+      shape.append(title);
+      shape.onclick = () => toggle(r.id);
+      shapes.set(r.id, shape);
+      svg.append(shape);
+      const option = document.createElement("option");
+      option.value = String(r.id);
+      option.textContent = `Area ${r.id + 1} · ${area(r).toFixed(0)} µm²`;
+      select.append(option);
+    }
+    el("toggle-region").onclick = () => toggle(Number(select.value));
+    el("clear-regions").onclick = () => {
+      for (const id of [...selectedRegions]) toggle(id);
+    };
+    const warnings = document.createElement("ul");
+    for (const message of i.warnings) {
+      const item = document.createElement("li");
+      item.textContent = message;
+      warnings.append(item);
+    }
+    el("warnings").replaceChildren(warnings);
     el<HTMLInputElement>("confirmed").checked = false;
     el<HTMLInputElement>("confirmed").disabled =
       d.status !== "awaiting_confirmation";
@@ -175,10 +301,7 @@ el("refresh").onclick = () =>
     await list();
     if (selected) await open(selected);
   });
-el("confirmed").onchange = () => {
-  el<HTMLButtonElement>("generate").disabled =
-    !el<HTMLInputElement>("confirmed").checked;
-};
+el("confirmed").onchange = updateSelection;
 el("generate").onclick = () =>
   void safely(async () => {
     if (!selected) return;
@@ -186,12 +309,12 @@ el("generate").onclick = () =>
     try {
       await post(`/designs/${selected}/confirm`, {
         confirmed: el<HTMLInputElement>("confirmed").checked,
+        selected_regions: [...selectedRegions],
       });
       await list();
       await open(selected);
     } catch (e) {
-      el<HTMLButtonElement>("generate").disabled =
-        !el<HTMLInputElement>("confirmed").checked;
+      updateSelection();
       throw e;
     }
   });
@@ -232,6 +355,59 @@ el("feedback-form").onsubmit = (e) => {
     say("Feedback saved. Thank you.");
     el<HTMLTextAreaElement>("feedback-text").value = "";
   });
+};
+el("region-tour").onclick = () => {
+  if (!activeInspection?.region_candidates?.length || el("review").hidden) {
+    say("Open an imported drawing with closed areas first.");
+    return;
+  }
+  const tour = driver({
+    showProgress: true,
+    allowClose: true,
+    doneBtnText: "Finish",
+    steps: [
+      {
+        element: "#preview",
+        popover: {
+          title: "Inspect your actual drawing",
+          description:
+            "Scroll to zoom; Fit drawing resets the view. The imported device geometry is preserved. Closed areas are not automatically classified as channels.",
+        },
+      },
+      {
+        element: "#region-controls",
+        popover: {
+          title: "Choose no-dot interiors",
+          description:
+            "Close the tour to select channel, chamber and port areas on the drawing, or use the area selector. Shade every required interior, then restart this guide.",
+          onNextClick: () => {
+            if (!selectedRegions.size) {
+              say("Select a no-dot interior before continuing.");
+              return;
+            }
+            tour.moveNext();
+          },
+        },
+      },
+      {
+        element: "#confirmed",
+        popover: {
+          title: "Verify complete coverage",
+          description:
+            "Check physical units and all shaded interiors. Open fragments need review. Changing a selection clears confirmation. Full-wafer generation remains unavailable while the capacity warning is shown.",
+        },
+      },
+      {
+        element: "#feedback-form",
+        popover: {
+          title: "Feedback checkpoint",
+          description:
+            "Report missing geometry or unclear area selection here. Do not confirm a drawing whose channel coverage you cannot verify.",
+        },
+      },
+    ],
+  });
+  tour.drive();
 };
 el("tour").onclick = () => {
   const tour = driver({

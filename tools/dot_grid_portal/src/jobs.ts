@@ -1,3 +1,4 @@
+import { loadInspection } from "./inspection";
 import { type Job, type Design, FILES } from "./api";
 async function checked(r: Response) {
   if (!r.ok) {
@@ -52,7 +53,17 @@ export async function execute(job: Job, attempt: number, env: Env) {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    const inspection = await r.json();
+    const inspection = await r.json<any>();
+    const serialized = JSON.stringify(inspection);
+    let record = serialized;
+    if (serialized.length > 256000) {
+      await env.FILES.put(`${prefix}/inspection.json`, serialized);
+      record = JSON.stringify({
+        geometry_object: true,
+        no_dot_contract: inspection.no_dot_contract,
+        selected_regions: [],
+      });
+    }
     const normalized = await checked(
       await c.fetch("http://cad/files/normalized.dxf"),
     );
@@ -60,7 +71,7 @@ export async function execute(job: Job, attempt: number, env: Env) {
     await env.DB.prepare(
       "UPDATE designs SET status='awaiting_confirmation',inspection=?,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",
     )
-      .bind(JSON.stringify(inspection), d.id)
+      .bind(record, d.id)
       .run();
   } else {
     // One queue consumer serializes registration, including cross-design validation.
@@ -74,7 +85,7 @@ export async function execute(job: Job, attempt: number, env: Env) {
           id: d.id,
           name: d.name,
           seed: d.seed,
-          inspection: JSON.parse(d.inspection ?? "null"),
+          inspection: await loadInspection(env, d),
           designs: registered.results.map((x) => JSON.parse(x.registry_entry)),
         }),
         headers: { "Content-Type": "application/json" },

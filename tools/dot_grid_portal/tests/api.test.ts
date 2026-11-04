@@ -98,6 +98,9 @@ describe("authorization and registration boundaries", () => {
       )
         .bind(id)
         .run();
+    await env.DB.prepare("UPDATE designs SET inspection=?")
+      .bind(JSON.stringify({ no_dot_contract: 1, no_dot_regions: 1 }))
+      .run();
     expect((await owned(env, "dg-aaaa", admin)).seed).toBe(8);
     expect((await owned(env, "dg-bbbb", admin)).seed).toBe(9);
     await expect(
@@ -127,6 +130,9 @@ describe("authorization and registration boundaries", () => {
     await env.DB.prepare(
       "INSERT INTO designs(id,tenant_id,name,extension,units,status) VALUES('dg-aaaa','a','Test','dxf','um','awaiting_confirmation')",
     ).run();
+    await env.DB.prepare("UPDATE designs SET inspection=?")
+      .bind(JSON.stringify({ no_dot_contract: 1, no_dot_regions: 1 }))
+      .run();
     env.JOBS.send = async () => {
       throw new Error("offline");
     };
@@ -232,4 +238,124 @@ it("never exposes proprietary maps or seeds and blocks unverified legacy exports
   expect(
     (await (await api(req("/designs/dg-cccc"), env, admin)).json()).status,
   ).toBe("needs_review");
+});
+
+it("validates no-dot selections and capacity server-side", async () => {
+  const i = {
+    no_dot_contract: 1,
+    no_dot_regions: 0,
+    region_candidates: [{ id: 0 }],
+    generation_supported: true,
+  };
+  await env.DB.prepare(
+    "INSERT INTO designs(id,tenant_id,name,extension,units,status,inspection) VALUES('dg-cccc','a','Plain','dxf','um','awaiting_confirmation',?)",
+  )
+    .bind(JSON.stringify(i))
+    .run();
+  for (const selection of [[], [-1], [1], [0.5], ["0"]]) {
+    await expect(
+      api(
+        req("/designs/dg-cccc/confirm", "POST", {
+          confirmed: true,
+          selected_regions: selection,
+        }),
+        env,
+        admin,
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+  }
+  await env.DB.prepare("UPDATE designs SET inspection=? WHERE id='dg-cccc'")
+    .bind(JSON.stringify({ ...i, generation_supported: false }))
+    .run();
+  await expect(
+    api(
+      req("/designs/dg-cccc/confirm", "POST", {
+        confirmed: true,
+        selected_regions: [0],
+      }),
+      env,
+      admin,
+    ),
+  ).rejects.toMatchObject({ status: 422 });
+  await env.DB.prepare("UPDATE designs SET inspection=? WHERE id='dg-cccc'")
+    .bind(JSON.stringify(i))
+    .run();
+  await api(
+    req("/designs/dg-cccc/confirm", "POST", {
+      confirmed: true,
+      selected_regions: [0],
+    }),
+    env,
+    admin,
+  );
+  expect(
+    JSON.parse((await owned(env, "dg-cccc", admin)).inspection!)
+      .selected_regions,
+  ).toEqual([0]);
+});
+
+it("keeps large geometry in private storage and persists only validated choices in SQL", async () => {
+  const geometry = {
+    no_dot_contract: 1,
+    no_dot_regions: 0,
+    generation_supported: true,
+    region_candidates: [
+      {
+        id: 0,
+        kind: "polygon",
+        points: [
+          [0, 0],
+          [1, 0],
+          [0, 1],
+        ],
+      },
+    ],
+  };
+  const requested: string[] = [];
+  env.FILES.get = async (key: string) => {
+    requested.push(key);
+    return { body: JSON.stringify(geometry) } as any;
+  };
+  await env.DB.prepare(
+    "INSERT INTO designs(id,tenant_id,name,extension,units,status,inspection) VALUES('dg-dddd','a','Large','dxf','um','awaiting_confirmation',?)",
+  )
+    .bind(JSON.stringify({ geometry_object: true, no_dot_contract: 1 }))
+    .run();
+  const d: any = await (await api(req("/designs/dg-dddd"), env, admin)).json();
+  expect(d.inspection.region_candidates).toEqual(geometry.region_candidates);
+  await expect(api(req("/designs/dg-dddd"), env, other)).rejects.toMatchObject({
+    status: 404,
+  });
+  await api(
+    req("/designs/dg-dddd/confirm", "POST", {
+      confirmed: true,
+      selected_regions: [0],
+    }),
+    env,
+    admin,
+  );
+  const stored = JSON.parse((await owned(env, "dg-dddd", admin)).inspection!);
+  expect(stored).toEqual({
+    geometry_object: true,
+    no_dot_contract: 1,
+    selected_regions: [0],
+  });
+  expect(requested).toEqual([
+    "a/dg-dddd/inspection.json",
+    "a/dg-dddd/inspection.json",
+  ]);
+});
+
+it("exposes actionable import diagnostics without leaking worker internals", async () => {
+  await env.DB.prepare(
+    "INSERT INTO designs(id,tenant_id,name,extension,units,status,error) VALUES('dg-eeee','a','Failed','dwg','um','failed',?)",
+  )
+    .bind("CAD_GEOMETRY_LOSS: /private/source.dwg seed=99")
+    .run();
+  const response: any = await (
+    await api(req("/designs/dg-eeee"), env, admin)
+  ).json();
+  expect(response.error).toContain("original drawing is retained");
+  expect(JSON.stringify(response)).not.toContain("/private");
+  expect(JSON.stringify(response)).not.toContain("seed");
 });

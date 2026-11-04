@@ -75,13 +75,14 @@ def test_units_and_negative_origin(tmp_path):
     assert ezdxf.readfile(tmp_path / "out/normalized.dxf").units == 13
 
 
-def test_unsupported_geometry_rejected(tmp_path):
+def test_annotations_preserved_but_not_device_bounds(tmp_path):
     p = drawing(tmp_path / "bad.dxf")
     d = ezdxf.readfile(p)
     d.modelspace().add_text("not geometry")
     d.saveas(p)
-    with pytest.raises(ValueError, match="TEXT"):
-        inspect(p, "um", tmp_path / "out")
+    i = inspect(p, "um", tmp_path / "out")
+    assert i["annotation_count"] == 1
+    assert len(ezdxf.readfile(tmp_path / "out/normalized.dxf").modelspace().query("TEXT")) == 1
 
 
 def test_excess_extent_rejected(tmp_path):
@@ -91,9 +92,10 @@ def test_excess_extent_rejected(tmp_path):
 
 
 def test_missing_dwg_converter_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.delenv("CAD_ODA_EXECUTABLE", raising=False)
     p = tmp_path / "input.dwg"
     p.write_bytes(b"AC1032")
-    monkeypatch.setattr("pipeline.shutil.which", lambda _: None)
+    monkeypatch.setattr("cad_import.shutil.which", lambda _: None)
     with pytest.raises(ValueError, match="conversion unavailable"):
         inspect(p, "um", tmp_path / "out")
 
@@ -135,8 +137,9 @@ def test_real_dwg_conversion(tmp_path):
     if not shutil.which("dwg2dxf") or not dwg.exists():
         pytest.skip("Run this test inside the LibreDWG-enabled image")
     out = tmp_path / "dwg-out"
-    with pytest.raises(ValueError, match="NO_DOT"):
-        inspect(dwg, "mm", out)
+    i = inspect(dwg, "mm", out)
+    assert i["no_dot_regions"] == 0
+    assert i["open_fragments"] > 0
 
 
 def test_explicit_regions_exclude_interior_whole_dot_and_clearance():
@@ -162,3 +165,81 @@ def test_ambiguous_and_self_crossing_regions_fail_closed():
     e.closed = True
     with pytest.raises(ValueError, match='self-intersect'):
         regions(d)
+
+
+def test_empty_region_payload_rejected_before_preview(tmp_path):
+    p = drawing(tmp_path / "empty-region.dxf")
+    d = ezdxf.readfile(p)
+    d.modelspace().add_region()
+    # ezdxf itself drops an empty REGION on write; exercise the imported
+    # entity directly (LibreDWG emits these empty records in real output).
+    from cad_import import flatten_regions
+    with pytest.raises(ValueError, match="CAD_GEOMETRY_LOSS"):
+        flatten_regions(d)
+
+
+
+def test_planar_region_preserved_as_closed_polygon(tmp_path):
+    from ezdxf.acis import api as acis
+    from ezdxf.render import MeshBuilder
+    p = drawing(tmp_path / "region.dxf")
+    d = ezdxf.readfile(p)
+    mesh = MeshBuilder()
+    mesh.add_face([(200,200,0),(400,200,0),(400,400,0),(200,400,0)])
+    acis.export_dxf(d.modelspace().add_region(), [acis.body_from_mesh(mesh)])
+    d.saveas(p)
+    i = inspect(p, "um", tmp_path / "out")
+    assert i["converted_regions"] == 1
+    result = ezdxf.readfile(tmp_path / "out/normalized.dxf")
+    assert len(result.modelspace().query("REGION")) == 0
+    assert len(result.modelspace().query("LWPOLYLINE")) == 3
+
+
+def test_unlabelled_closed_channel_selection_roundtrip(tmp_path):
+    import numpy as np
+    p = drawing(tmp_path / "plain.dxf")
+    d = ezdxf.readfile(p)
+    for e in d.modelspace(): e.dxf.layer = "0"
+    d.saveas(p)
+    out = tmp_path / "out"
+    i = inspect(p, "um", out)
+    assert i["no_dot_regions"] == 0
+    meta = {"inspection":i,"id":"selected-channel","name":"Selected channel","seed":9,"designs":[]}
+    with pytest.raises(ValueError,match="NO_DOT"):
+        generate(out / "normalized.dxf",meta,out)
+    # The central LINE splits the channel into two closed faces: select both.
+    i["selected_regions"] = [r["id"] for r in i["region_candidates"] if r["kind"]=="polygon" and all(1000<=p[0]<=5000 and 2900<=p[1]<=3100 for p in r["points"])]
+    assert len(i["selected_regions"])==2
+    generate(out / "normalized.dxf",meta,out)
+    result=ezdxf.readfile(out / "design_with_dotgrid.dxf")
+    assert len(result.modelspace().query('LWPOLYLINE')) == 2  # no review-only polygons exported
+    # Independent rectangle-vs-circle clearance calculation on exported dots.
+    for e in result.modelspace().query('CIRCLE[layer=="DOTGRID"]'):
+        x,y=e.dxf.center.x,e.dxf.center.y
+        distance=np.hypot(max(1000-x,0,x-5000), max(2900-y,0,y-3100))
+        assert distance > 56
+
+
+def test_nonplanar_region_is_not_partially_imported(tmp_path):
+    from ezdxf.acis import api as acis
+    from ezdxf.render.forms import cube
+    p = drawing(tmp_path / "solid-region.dxf")
+    d=ezdxf.readfile(p)
+    acis.export_dxf(d.modelspace().add_region(),[acis.body_from_mesh(cube())])
+    d.saveas(p)
+    with pytest.raises(ValueError,match="CAD_REGION_UNSUPPORTED"):
+        inspect(p,"um",tmp_path / "out")
+
+
+def test_actual_wafer_opt_in(tmp_path):
+    import os
+    source = os.environ.get("CAD_WAFER_FIXTURE")
+    if not source or not os.environ.get("CAD_ODA_EXECUTABLE"):
+        pytest.skip("Private wafer source and preservation converter required")
+    i=inspect(Path(source),"um",tmp_path / "wafer")
+    assert i["converted_regions"]==88
+    assert i["extent_um"]==[110000,110000]
+    assert i["open_fragments"]==20
+    assert len(i["region_candidates"])==3210
+    assert i["generation_supported"] is False
+    assert any("header says mm" in w for w in i["warnings"])

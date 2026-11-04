@@ -30,6 +30,7 @@ test("guided click-through gates actions and exposes only device and dot exports
         inspection: {
           extent_um: [6000, 6000],
           entity_count: 2,
+          no_dot_regions: 1,
           source_units: "um",
           converter: null,
           paths: [
@@ -130,4 +131,87 @@ test("realistic example compares exported geometry and loads source units", asyn
       .evaluate((e: HTMLInputElement) => e.files?.[0].name),
   ).toBe("sorter-concept.dxf");
   await expect(page.locator("#message")).toContainText("Sample loaded");
+});
+
+test("unlabelled CAD requires explicit area selection and resets confirmation", async ({
+  page,
+}) => {
+  let selected: unknown;
+  const inspection = {
+    extent_um: [6000, 6000],
+    entity_count: 2,
+    source_units: "um",
+    converter: null,
+    paths: [],
+    warnings: [],
+    no_dot_regions: 0,
+    generation_supported: true,
+    region_candidates: [
+      {
+        id: 0,
+        kind: "polygon",
+        points: [
+          [1000, 1000],
+          [5000, 1000],
+          [5000, 2000],
+          [1000, 2000],
+        ],
+      },
+    ],
+  };
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/confirm")) {
+      selected = route.request().postDataJSON().selected_regions;
+      await route.fulfill({ json: { status: "queued_generate" } });
+      return;
+    }
+    await route.fulfill({
+      json: path.endsWith("/me")
+        ? { email: "test@test.test", role: "member" }
+        : path.endsWith("/designs")
+          ? [
+              {
+                id: "dg-aaaa",
+                name: "Plain CAD",
+                status: "awaiting_confirmation",
+              },
+            ]
+          : {
+              id: "dg-aaaa",
+              name: "Plain CAD",
+              status: "awaiting_confirmation",
+              inspection,
+            },
+    });
+  });
+  await page.goto("http://127.0.0.1:4178");
+  await page.getByRole("button", { name: /Plain CAD/ }).click();
+  await page.locator("#confirmed").check();
+  await expect(page.locator("#generate")).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Guide me through no-dot areas" })
+    .click();
+  await page.locator(".driver-popover-next-btn").click();
+  await page.locator(".driver-popover-next-btn").click();
+  await expect(page.locator(".driver-popover-title")).toHaveText(
+    "Choose no-dot interiors",
+  );
+  await page.locator(".driver-popover-close-btn").click();
+  await page.locator('[data-region="0"]').click();
+  await expect(page.locator("#confirmed")).not.toBeChecked();
+  await expect(page.locator("#generate")).toBeDisabled();
+  await page.locator("#confirmed").check();
+  await expect(page.locator("#generate")).toBeEnabled();
+  await page
+    .getByRole("button", { name: "Guide me through no-dot areas" })
+    .click();
+  for (let n = 0; n < 3; n++)
+    await page.locator(".driver-popover-next-btn").click();
+  await expect(page.locator(".driver-popover-title")).toHaveText(
+    "Feedback checkpoint",
+  );
+  await page.locator(".driver-popover-next-btn").click();
+  await page.locator("#generate").click();
+  expect(selected).toEqual([0]);
 });

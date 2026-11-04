@@ -115,3 +115,43 @@ updated generator code, preserving the old stopped container for rollback. No ro
 other services changed. Source customer DWG and debug artifacts remain local, not public assets.
 
 Container-only real DWG fixture check: 1 passed (rejects missing explicit no-dot domain after conversion). This is not the customer DWG acceptance test.
+
+## Actual-wafer import recovery — follow-up, 2026-11-04
+
+User requested support for ordinary uploads rather than asking customers to repair
+or re-export this wafer. The local review now uses an operator-provisioned ODA
+27.10 converter to ACAD2000 DXF, preserving 88/88 REGION payloads. All 88 extract
+as complete planar straight-edge polygons. Unsupported/empty/holed/nonplanar bodies
+still fail closed, with sanitized actionable customer diagnostics. Converter timeout
+kills its whole process group; converter inputs use a fixed name in a fresh private
+directory. No customer executable or shell arguments are accepted.
+
+Unlabelled closed geometry is offered as unselected no-dot candidates. A closed
+shape is not automatically a fluid channel. The UI supports zoom, fit, click/select,
+clear, explicit coverage confirmation, and a four-step state-gated Driver.js tour.
+Annotations are preserved; temporary exclusion geometry does not enter device exports.
+Large geometry is in private object storage; only validated choices/metadata stay in D1.
+
+Live original-DWG upload `dg-ef30fe8b-e683-4b51-960d-b22116ef59cc` reached
+`awaiting_confirmation` through the real HTTPS service and container. It reports
+88 recovered REGIONs, 9170 device entities, 3210 candidate closed areas and 20 open
+fragments. Selected µm interpretation gives 110000 × 110000 µm bounds; the mm header
+conflict is surfaced. Source SHA-256:
+`4fbbea1a29ab82b7852dbcfa5b77de6fa538b8b96251ff989095a3944832a7fb`.
+
+Verification: 15/15 offline container Python tests passed (including actual private
+wafer and genuine DWG fixture); 13/13 API/runtime/job tests; 3/3 browser fixture tests;
+TypeScript checks, frontend build and repository documentation check passed. The live
+wafer browser rendered all 3210 candidates, toggled an area, exercised the four-step
+tour, kept Add dots disabled at the wafer capacity gate and cleared the temporary
+selection afterward. Screenshot inspected. Private evidence remains under ignored
+`data/wafer-import-v2/`. An additional real-wafer test passed after the final large-circle
+preview refinement. Existing stopped review containers remain available for rollback;
+no routing or other services changed.
+
+**Still open:** full-wafer dot generation exceeds the existing node cap; the actual
+fluid-domain selection, 20 open fragments and physical dimensions need confirmation.
+No actual-wafer mask was generated, and no fabrication approval is implied. Production
+converter provisioning/licensing and cloud deployment remain separate from this private
+review deployment. This supersedes the earlier “manual CAD re-export required” conclusion
+for this particular file, not all possible DWG or ACIS entities.

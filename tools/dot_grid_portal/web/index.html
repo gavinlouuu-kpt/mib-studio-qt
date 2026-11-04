@@ -135,6 +135,37 @@
             role="img"
             aria-label="Converted CAD geometry"
           ></svg>
+          <button id="reset-view" type="button">Fit drawing</button>
+          <div id="region-controls" hidden>
+            <button id="region-tour" type="button">
+              Guide me through no-dot areas
+            </button>
+            <div aria-label="Before area review" class="flow">
+              Before: uploaded drawing → unclassified closed areas → no
+              generation
+            </div>
+            <div aria-label="After area review" class="flow">
+              After: shaded exclusions + dimension check → confirmation → device
+              + dots
+            </div>
+            <p>
+              Scroll to zoom. Click closed areas to shade channels, chambers and
+              ports where dots must not go. Closed shapes are candidates, not
+              automatically identified channels. Selecting a shape also excludes
+              any holes inside it.
+            </p>
+            <label
+              >Closed area
+              <select id="region-choice"></select
+            ></label>
+            <button id="toggle-region" type="button">
+              Toggle selected area
+            </button>
+            <button id="clear-regions" type="button">
+              Clear added exclusions
+            </button>
+          </div>
+          <div id="selection-count"></div>
           <div id="warnings"></div>
           <label class="check"
             ><input id="confirmed" type="checkbox" />I checked units,

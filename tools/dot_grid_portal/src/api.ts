@@ -1,3 +1,4 @@
+import { loadInspection, inspectionRecord } from "./inspection";
 import { type Member, HttpError, checkMutation } from "./auth";
 export type Design = {
   id: string;
@@ -22,6 +23,24 @@ const CUSTOMER_FILES = [
   "dotgrid_layer.gds",
 ] as const;
 const MAX_UPLOAD = 10 * 1024 * 1024;
+export function importError(error: string | null) {
+  if (!error) return null;
+  for (const [code, message] of Object.entries({
+    CAD_GEOMETRY_LOSS:
+      "Some filled geometry could not be preserved during import. Your original drawing is retained; no dots were generated. Contact support with this design selected so its converter can be upgraded.",
+    CAD_REGION_UNSUPPORTED:
+      "This drawing includes a filled shape our importer cannot yet preserve. Your original drawing is retained; no dots were generated. Contact support with this design selected.",
+    CAD_CONVERTER_UNAVAILABLE:
+      "DWG import is temporarily unavailable. Your original drawing is retained. Retry when support restores the converter.",
+    CAD_CONVERSION_FAILED:
+      "Drawing conversion did not complete. Your original drawing is retained. Retry or contact support with this design selected.",
+    CAD_TOPOLOGY_LIMIT:
+      "This drawing exceeds the current geometry-review capacity. Your original is retained; contact support with this design selected.",
+  }))
+    if (error.includes(code)) return message;
+  return "Processing failed. Review the drawing and retry inspection.";
+}
+
 async function body(req: Request) {
   const reader = req.body?.getReader();
   if (!reader) throw new HttpError(400, "Request body required");
@@ -31,7 +50,7 @@ async function body(req: Request) {
     const r = await reader.read();
     if (r.done) break;
     size += r.value.length;
-    if (size > 16384) {
+    if (size > 65536) {
       await reader.cancel();
       throw new HttpError(413, "Request too large");
     }
@@ -83,9 +102,7 @@ export async function api(
           row.status === "ready" && row.no_dot_contract !== 1
             ? "needs_review"
             : row.status,
-        error: row.error
-          ? "Processing failed. Check closed no-dot areas and supported geometry, then retry inspection."
-          : null,
+        error: importError(row.error),
         created_at: row.created_at,
       })),
     );
@@ -232,19 +249,43 @@ export async function api(
           JSON.parse(d.inspection || "null")?.no_dot_contract !== 1
             ? "needs_review"
             : d.status,
-        error: d.error
-          ? "Processing failed. Review the drawing and retry inspection."
-          : null,
-        inspection: d.inspection ? JSON.parse(d.inspection) : null,
+        error: importError(d.error),
+        inspection: await loadInspection(env, d),
       });
     if (match[2] === "confirm" && req.method === "POST") {
       const b = await body(req);
       if (b.confirmed !== true)
         throw new HttpError(400, "Confirm the converted preview and units");
-      const changed = await env.DB.prepare(
-        "UPDATE designs SET status='queued_generate',error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=? AND status='awaiting_confirmation' RETURNING id",
+      const inspection = await loadInspection(env, d);
+      if (!inspection || inspection.no_dot_contract !== 1)
+        throw new HttpError(409, "Inspect this drawing before generation");
+      if (inspection.generation_supported === false)
+        throw new HttpError(
+          422,
+          "Drawing imported; full-wafer generation is not yet available",
+        );
+      const selection = b.selected_regions ?? [];
+      const count = inspection.region_candidates?.length ?? 0;
+      if (
+        !Array.isArray(selection) ||
+        selection.length > 5000 ||
+        selection.some((n) => !Number.isInteger(n) || n < 0 || n >= count)
       )
-        .bind(d.id, member.tenant_id)
+        throw new HttpError(400, "Invalid no-dot area selection");
+      if (!(inspection.no_dot_regions > 0) && !selection.length)
+        throw new HttpError(
+          400,
+          "Select the channel, chamber and port interiors before adding dots",
+        );
+      inspection.selected_regions = [...new Set(selection)];
+      const changed = await env.DB.prepare(
+        "UPDATE designs SET status='queued_generate',inspection=?,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND tenant_id=? AND status='awaiting_confirmation' RETURNING id",
+      )
+        .bind(
+          inspectionRecord(d.inspection, inspection),
+          d.id,
+          member.tenant_id,
+        )
         .first();
       if (!changed)
         throw new HttpError(409, "Design is not awaiting confirmation");

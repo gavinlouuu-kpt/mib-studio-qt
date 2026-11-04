@@ -16,8 +16,12 @@ from ezdxf.math import Matrix44
 import numpy as np
 try:
     from .regions import regions, outside_regions
+    from .cad_import import convert, flatten_regions
+    from .domains import candidates, apply_selection
 except ImportError:
     from regions import regions, outside_regions
+    from cad_import import convert, flatten_regions
+    from domains import candidates, apply_selection
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts/dot_grid"))
@@ -58,26 +62,16 @@ def inspect(source: Path, units: str, out: Path) -> dict:
     converted = source
     converter = None
     if source.suffix.lower() == ".dwg":
-        exe = shutil.which("dwg2dxf")
-        if not exe:
-            raise ValueError(
-                "DWG conversion unavailable: deploy the LibreDWG-enabled generator image"
-            )
-        converted = out / "converted.dxf"
-        result = subprocess.run(
-            [exe, "-o", str(converted), str(source)], capture_output=True, timeout=90
-        )
-        if result.returncode != 0 or not converted.is_file():
-            raise ValueError(
-                "DWG conversion failed or this DWG version is unsupported; export DXF in your CAD application"
-            )
-        converter = "GNU LibreDWG dwg2dxf"
+        converted, converter = convert(source, out)
     doc = ezdxf.readfile(converted)
     if doc.audit().has_errors:
         raise ValueError(
             "CAD contains structural errors; repair in the authoring application"
         )
-    entities = list(doc.modelspace())
+    converted_regions = flatten_regions(doc)
+    all_entities = list(doc.modelspace())
+    annotations = [e for e in all_entities if e.dxftype() in {"TEXT", "MTEXT"} and e.dxf.layer.upper() != "NO_DOT"]
+    entities = [e for e in all_entities if e not in annotations]
     if not entities or len(entities) > MAX_ENTITIES:
         raise ValueError(f"Drawing must contain 1–{MAX_ENTITIES} model-space entities")
     allowed = {"LINE", "ARC", "CIRCLE", "LWPOLYLINE"}
@@ -109,7 +103,7 @@ def inspect(source: Path, units: str, out: Path) -> dict:
         if e.dxf.hasattr("thickness") and float(e.dxf.thickness) != 0:
             raise ValueError("3D thickness is unsupported")
         for attr in ("start", "end", "center"):
-            if e.dxf.hasattr(attr) and e.dxf.get(attr).z != 0:
+            if e.dxf.hasattr(attr) and abs(e.dxf.get(attr).z) > 1e-7:
                 raise ValueError("Only planar XY drawings are supported")
     ext = bbox.extents(entities)
     vals = [ext.extmin.x, ext.extmin.y, ext.extmax.x, ext.extmax.y]
@@ -120,26 +114,23 @@ def inspect(source: Path, units: str, out: Path) -> dict:
     if min(width, height) < 300 or max(width, height) > MAX_EXTENT_UM:
         raise ValueError("Drawing extent must be 300–150000 um on each axis")
     columns, rows = math.ceil(width / 30) + 1, math.ceil(height / 30) + 1
-    if columns * rows > MAX_NODES:
-        raise ValueError(
-            "Drawing exceeds the current 1,000,000-node job limit; split the design before upload"
-        )
     # Translate only negative coordinates, explicitly recorded in the map transform.
     # Use a tight zero-based mask domain for all drawings; camera results use this frame.
     offset = [-vals[0] * factor, -vals[1] * factor]
     transform = Matrix44.scale(factor) @ Matrix44.translate(*offset, 0)
-    for e in entities:
+    for e in all_entities:
         e.transform(transform)
     doc.header["$INSUNITS"] = 13
     doc.header["$EXTMIN"] = (0, 0, 0)
     doc.header["$EXTMAX"] = (width, height, 0)
-    areas = regions(doc)
+    areas = regions(doc) if any(e.dxf.layer.upper() == "NO_DOT" for e in entities) else []
+    choices, open_fragments = candidates(doc) if not areas else ([], 0)
     target = out / "normalized.dxf"
     doc.saveas(target)
     # Numeric preview paths only: never expose embedded CAD XML, scripts or URLs.
     paths = []
     no_dot_paths = []
-    for e in doc.modelspace():
+    for e in entities:
         typ = e.dxftype()
         if typ == "LINE":
             p = [(e.dxf.start.x, e.dxf.start.y), (e.dxf.end.x, e.dxf.end.y)]
@@ -153,7 +144,7 @@ def inspect(source: Path, units: str, out: Path) -> dict:
             )
             if end <= start:
                 end += 360
-            angles = np.linspace(math.radians(start), math.radians(end), 65)
+            angles = np.linspace(math.radians(start), math.radians(end), 129 if typ == "CIRCLE" and e.dxf.radius > 1000 else 17)
             p = [
                 (
                     e.dxf.center.x + e.dxf.radius * math.cos(a),
@@ -166,8 +157,8 @@ def inspect(source: Path, units: str, out: Path) -> dict:
         if e.dxf.layer.upper() == "NO_DOT":
             no_dot_paths.append(path)
     # Preview bounded separately from parser and source limits.
-    if sum(len(p) for p in paths) > 20000:
-        raise ValueError("Preview exceeds 20,000 vertices; simplify drawing")
+    if sum(len(p) for p in paths) > 200000:
+        raise ValueError("Preview exceeds 200,000 vertices; simplify drawing")
     result = {
         "source_sha256": source_hash,
         "normalized_sha256": digest(target),
@@ -176,6 +167,12 @@ def inspect(source: Path, units: str, out: Path) -> dict:
         "extent_um": [width, height],
         "entity_count": len(entities),
         "no_dot_regions": len(areas),
+        "region_candidates": choices,
+        "selected_regions": [],
+        "open_fragments": open_fragments,
+        "converted_regions": converted_regions,
+        "annotation_count": len(annotations),
+        "generation_supported": columns * rows <= MAX_NODES,
         "no_dot_contract": 1,
         "converter": converter,
         "paths": paths,
@@ -185,7 +182,16 @@ def inspect(source: Path, units: str, out: Path) -> dict:
             "Filled NO_DOT areas exclude entire dots with 50 µm edge clearance. Confirm every channel, chamber and port is included; this is not fabrication approval.",
         ],
     }
-    if len(json.dumps(result)) > 512000:
+    if open_fragments:
+        result["warnings"].append(f"{open_fragments} open boundary fragments: no interiors were guessed. Check these before confirming coverage.")
+    if choices:
+        result["warnings"].append("Select closed no-dot areas in the preview. These are geometry candidates, not automatically identified fluid channels.")
+    if columns * rows > MAX_NODES:
+        result["warnings"].append("Full drawing imported for review; generation exceeds the current capacity. No mask is generated from this full wafer yet.")
+    header_units = {13: "um", 4: "mm", 1: "inch"}.get(ezdxf.readfile(converted).units)
+    if header_units and header_units != units:
+        result["warnings"].append(f"Drawing header says {header_units}; you selected {units}. Verify a known physical dimension.")
+    if len(json.dumps(result)) > 7 * 1024**2:
         raise ValueError("Preview metadata exceeds job limit; simplify drawing")
     json_write(out / "inspection.json", result)
     return result
@@ -223,9 +229,10 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
     ko = KeepOut(
         channel_um=50, dicing_um=200, wafer_edge_um=3000, existing_marks_um=300
     )
+    review_shapes = apply_selection(doc, inspection)
     areas = regions(doc)
     dots = build_pattern(cb, pts, chips, marks, wafer, ko)
-    dots = dots[outside_regions(dots[:, 2:4], areas, ko.channel_um + cb.dot_diameter_um / 2)]
+    dots = dots[outside_regions(dots[:, 2:4], areas, ko.channel_um + cb.dot_diameter_um / 2 + (0.1 if inspection.get("selected_regions") else 0))]
     # Keep whole displaced dots within the confirmed rectangular extent as well.
     dots = dots[
         (dots[:, 2] >= 6)
@@ -255,6 +262,9 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
             "Cross-design discrimination failed; this allocated pattern cannot be registered"
         )
     out.mkdir(parents=True, exist_ok=True)
+    # Review-only exclusion geometry must not become device fabrication geometry.
+    for shape in review_shapes:
+        doc.modelspace().delete_entity(shape)
     write_dxf(doc, dots, cb, str(out / "design_with_dotgrid.dxf"))
     if not write_gds(dots, cb, str(out / "dotgrid_layer.gds")):
         raise ValueError("GDS exporter unavailable")

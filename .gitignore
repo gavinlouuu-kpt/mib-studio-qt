@@ -52,3 +52,6 @@ site/
 # (evidence bundles under docs/evidence/ keep their logs deliberately)
 /*.log
 data/logs/
+
+# Private CAD import verification artifacts
+data/wafer-import-v2/
