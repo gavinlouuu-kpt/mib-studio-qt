@@ -11,6 +11,9 @@ FlowJo [#808](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/808).
 Execution and status:
 [`../exec-plans/active/2026-11-02-fold-in-mechanism-realignment.md`](../exec-plans/active/2026-11-02-fold-in-mechanism-realignment.md).
 
+Evidence and remaining proof for every goal: [acceptance evidence index](../evidence/fold-in-acceptance-index.md)
+(MIBQT-16; commit-scoped, not a project task database).
+
 ## Rules for every agent on E, I or F work
 
 1. **Name the goal.** Every PR states which goal IDs below it advances and

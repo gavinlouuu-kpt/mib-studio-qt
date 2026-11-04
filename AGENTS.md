@@ -1,9 +1,6 @@
 # Agent Guide — MIB Studio Qt
 
-C++17 / Qt 6.7.3 microscopy app: OpenCV imaging, Euresys EGrabber and
-MindVision cameras, HDF5 storage. This file is a map, not
-a manual: start with [`knowledge_map/Agent-Onboarding.md`](knowledge_map/Agent-Onboarding.md),
-then [`docs/golden-principles.md`](docs/golden-principles.md) (mechanical rules).
+C++17 / Qt 6.7.3 microscopy app: OpenCV imaging, Euresys EGrabber and MindVision cameras, HDF5 storage. This file is a map, not a manual: start with [`knowledge_map/Agent-Onboarding.md`](knowledge_map/Agent-Onboarding.md), then [`docs/golden-principles.md`](docs/golden-principles.md) (mechanical rules).
 
 ## Architecture (top → bottom; dependencies point down only)
 
@@ -16,8 +13,7 @@ then [`docs/golden-principles.md`](docs/golden-principles.md) (mechanical rules)
 | Portable core | `mib_processing` static lib: `src/backend/processing/`, `FrameStore`, `Hdf5Service`, `Tools` | **Qt-free** (OpenCV + HDF5 + spdlog); ABI-stable signed plugin `mib_processing_core`; pybind11 wheel in `bindings/python/` |
 | Cameras | `src/camera/` behind `ICamera` | EGrabber (Windows), MindVision (all desktops), Mock (folder playback) |
 
-Capture, processing, trigger, autofocus and discovery each own a thread; UI
-work stays on the main thread; handoff is ring buffer, callbacks, atomics.
+Capture, processing, trigger, autofocus and discovery each own a thread; UI work stays on the main thread; handoff is ring buffer, callbacks, atomics.
 Details: [`Overview`](knowledge_map/architecture/Overview.md), [`Threading-Model`](knowledge_map/architecture/Threading-Model.md),
 [`backend-boundaries`](docs/architecture/backend-boundaries.md), [`project-structure`](docs/architecture/project-structure.md).
 
@@ -51,6 +47,14 @@ lives once under `env/` + `conan/profiles/` (see Build.md). Fresh container:
 `MIB_MOCK_CAMERA_DIR`, see [`Run-Modes`](knowledge_map/build-and-run/Run-Modes.md));
 `screenshot_tour` (regenerates the user-manual screenshots, [`docs/manual/README.md`](docs/manual/README.md)).
 
+## Build delivery: Driver.js onboarding
+- Every build delivering new or changed user-facing work must include an actual in-app **Driver.js onboarding tour** showing that work; update/reuse the existing integration rather than creating a detached demo.
+- Highlight real production controls and explain the workflow and observable result. Advance action-dependent steps only after verified success; provide skip, restart, missing-target recovery and a feedback checkpoint.
+- Tours must ship in the delivered build and be discoverable/restartable from the app. Keep them independent of agent-only APIs; use explicit UUID/geometry adapters for canvas targets, never guessed selectors.
+- For backend work, include before/after flowcharts and a Driver.js walkthrough of the relevant verification surface. For Qt-only surfaces Driver.js cannot attach to, document the concrete integration gap; never claim a detached web mock demonstrates the native app.
+- Verify the tour on the exact delivered build and record its entry point, covered goal IDs, steps, evidence class and results in the PR and repository docs. Distinguish mock/synthetic demonstrations from physical hardware proof; tours never replace backend tests or authorize acquisition/actuation.
+- Documentation-only changes need no new tour. A blocked or unverified tour is an explicit delivery gap, not a completed walkthrough.
+
 ## Test data and models (Hugging Face)
 
 Every dataset and model weight is pinned in [`env/assets.json`](env/assets.json)
@@ -83,15 +87,11 @@ CI: Linux lanes install via [`setup-linux-env`](.github/actions/setup-linux-env/
 
 ## Testing framework (safeguards)
 
-Tests are bare `main()` executables linked to `mib_backend`, registered with
-CTest and organized by failure mode. Recipes, support library and the
-mandatory rules (regression-first, watchdog + `_Exit(99)` instead of naked
-joins, ratio-based timing gates, conserved frame accounting):
+Tests are bare `main()` executables linked to `mib_backend`, registered with CTest and organized by failure mode. Recipes, support library and the mandatory rules (regression-first, watchdog + `_Exit(99)` instead of naked joins, ratio-based timing gates, conserved frame accounting):
 [`docs/howto/writing-tests.md`](docs/howto/writing-tests.md); taxonomy and CI
 lanes: [`docs/architecture/testing-strategy.md`](docs/architecture/testing-strategy.md).
 
-**Coverage matrix — a change to a capability lands with its required tests
-(create the category if it does not exist yet):**
+**Coverage matrix — a change to a capability lands with its required tests (create the category if it does not exist yet):**
 
 | Capability / area | Required test categories |
 |------|------|
