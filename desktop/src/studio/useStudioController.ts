@@ -6,7 +6,7 @@ import {
 } from "../areas/connect/useConnect";
 import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
 import {
-  experimentModel, useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useSsdStatus,
+  experimentModel, useExperimentLifecycle, useMonitoringConfigRange, useMonitoringPolling, useMonitoringState, useSsdStatus,
 } from "../areas/monitoring/useMonitoring";
 import { useTunePanel } from "../areas/monitoring/useTune";
 import { useLiveFrames, useLivePreview, usePreviewBufferModel, usePreviewState } from "../areas/preview/usePreview";
@@ -45,6 +45,7 @@ export function useStudioController() {
   const liveFrames = useLiveFrames(states); // preview
   const polling = useStatePolling(states); // shell
   const monitoringPolling = useMonitoringPolling(states); // monitoring
+  useMonitoringConfigRange({ ...states, ...monitoringPolling }); // monitoring: histogram X range from the config
   const preferences = useShellPreferences(states); // shell
   const configSync = useConfigSync(states); // config
   const connection = useCameraConnection({ ...states, ...liveFrames, ...polling }); // connect

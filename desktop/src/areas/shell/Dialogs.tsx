@@ -7,6 +7,7 @@ import { OfflineHelp } from "../../OfflineHelp";
 import { stripView } from "../../ssdView";
 import { isRemote } from "../../transport";
 import { useStudio } from "../../studio/StudioContext";
+import { MonitoringSettingsDialog } from "../monitoring/MonitoringSettingsDialog";
 
 export function ShellDialogs() {
   const {
@@ -19,6 +20,9 @@ export function ShellDialogs() {
       {showCentralMethods && (
         <CentralMethodsPanel onClose={() => setShowCentralMethods(false)} onError={append} />
       )}
+
+      {/* ---- Monitoring Settings (monitoring area, MON-082) ---- */}
+      <MonitoringSettingsDialog />
 
       {offlineHelp && <OfflineHelp kind={offlineHelp} version={helpVersion} close={() => setOfflineHelp(null)} />}
       {/* ---- About modal ---- */}

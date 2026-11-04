@@ -646,11 +646,55 @@ fabricated UI fallback value is sent. Chart images/series range controls remain
 unexposed. Config and export controls have interaction tests, not just codec tests.
 
 
-Monitoring placeholders are now bounded SVG plots over existing snapshot rows:
-deformability vs raw pixel area and dimensionless ring-ratio histogram. They
-cap at 200 rows, discard non-finite values, retain negative/range extrema, and
-label ring ratio separately from physical ring width. No calibration, new metric
-computation, or identity-matched overlay is implied.
+**Monitoring charts and settings (epic #866, MON-036..043, 049..051, 082, 087..091).**
+The Monitoring sub-tab's charts are canvas charts in `areas/monitoring/charts/`
+(`components/MonitoringCharts.tsx` keeps the `<MonitoringCharts snapshot>` call and
+reads the settings from the studio state when mounted in the classic view):
+
+- *Window.* `useMonitoringPolling` fetches `MONITORING_FETCH_ROWS` = 1015 rows every
+  500 ms while the Monitoring sub-tab is shown: the backend's monitoring ring is
+  1000 valid + 1000 invalid frames (`MonitoringSnapshot.capacity`) and the snapshot
+  returns the valid tail first, so 1000 rows are Qt's plotted window (MAX_RECENT_FRAMES)
+  and 15 more carry the newest invalid rows for the latest-rows table (no chart plots
+  invalid rows; the invalid cells strip has its own listing). Asking for both whole rings
+  (2000 rows) would double the JSON to ~713 KiB per poll for nothing on screen.
+  `monitoringChartData` plots the newest 1000 valid rows. A poll that finds nothing new
+  (`sameSnapshot`: appended and held counters, newest timestamp) keeps the previous
+  snapshot object, so nothing re-renders or redraws; the canvases draw only when data,
+  view, selection or overlay change, never on hover. No per-row work beyond what is drawn
+  (the Qt #857 pattern is not ported).
+- *Scatter* (`MonitoringScatter`, `drawMonitoringScatter`): deformability vs area (µm²),
+  Qt colours (valid green, target group blue), each point with its own analysis-time
+  calibration, uncalibrated valid rows omitted and counted. Fixed default axes from the
+  settings (X 0-1000 µm², Y 0-1) that hold between polls. The isoelastic curves
+  (`fetch_monitoring_chart_reference`) are always drawn with a legend on the right
+  ("Valid Frames", "Target Group", each "x.xx kPa", highest first) and the curve-source
+  text underneath. Gestures are Qt's `ZoomableChartView` (`useChartView`, sharing the
+  Review charts' `chartMath` / `scatterGestures` / `scatterHitTest`): wheel zoom about
+  the pointer ~10 % a notch (Ctrl X only, Shift Y only, over an axis that axis only), drag
+  or middle-drag pans after 10 px, double-click on empty space resets (never on a point),
+  plus a Reset zoom button. Tooltips: "Area X µm² · deformability Y" anywhere in the plot
+  (plus " · E Z kPa" once the `emodulusAt` prop is given; the bridge does not expose the E
+  table yet), "Frame N · ... · click to view" and a hand cursor over a point.
+- *Seams for later work:* `onSelectPoint(row)` and `selectedKey` (`monitoringRowKey`:
+  run:capture:frame:object, the orange 13 px marker; hidden for exports via
+  `drawMonitoringScatter(..., {selection: false})`) for click-to-view; the `overlay` prop
+  (`draw(g, vp)` with the live axis transform, a press `interceptor`, `hover`, `version`)
+  for the target-group gate.
+- *Ring histogram* (`MonitoringHistogram`): valid cells with ring ratio > 0, bins =
+  round((X max - X min) / bin width), out-of-range values in the end bins, fixed Y 0..max,
+  same zoom/pan/reset. Still labelled ring ratio, not ring width. The Young's-modulus
+  histogram (MON-051, Tauri only) is unchanged (ten bins over the data extent).
+- *Monitoring Settings dialog* (`MonitoringSettingsDialog`; Settings > Monitoring Settings...
+  opens it, mounted in `ShellDialogs`): modal, OK / Cancel / Apply, fields from
+  `MONITORING_SETTINGS_GROUPS` in `monitoringSettings.ts` (scatter X 0-100000 µm² and Y
+  0-10, histogram X 0-100, Y max 1-1,000,000, bin width 0.01-10; Qt defaults and decimals);
+  a range whose minimum is not below its maximum is not applied. In-memory view preference
+  (`monSettings` in `useMonitoringState`), not persisted, like Qt. The histogram X range
+  follows the runtime config's `image_processing.ring_ratio_min/max`
+  (`useMonitoringConfigRange`, from `liveDraft.baseline`): when the sub-tab is shown and
+  whenever the config's range changes. The Density (KDE) fields (MON-083..086) are one more
+  group in that list.
 
 ## Software replacement follow-up (2026-09-23)
 
@@ -1081,11 +1125,11 @@ never reapplies saved profile/core selections over current native state. Existin
 and reanalysis jobs are polled by App-owned hooks; unknown initial status is busy, not idle.
 
 Monitoring scientific scope: `MonitoringRow.area` is raw px²; `youngs_modulus` is the
-stored kernel/LUT kPa result (zero means unavailable). Tauri renders a bounded raw-area
-scatter plus valid-object ring-ratio and modulus histograms. It does not apply current
-calibration to retained historical rows. Live calibrated scatter/isoelastic parity needs
-per-row calibration provenance captured by every inline and batch processing path; the
-current Qt live scatter's use of the current factor is not authoritative for mixed epochs.
+stored kernel/LUT kPa result (zero means unavailable). Tauri renders a calibrated scatter
+(each row's own analysis-time factor, uncalibrated rows omitted; ABI 19) with the isoelastic
+reference curves, plus valid-object ring-ratio and modulus histograms. It does not apply
+current calibration to retained historical rows; the current Qt live scatter's use of the
+current factor is not authoritative for mixed epochs.
 ## Windows nonpublishing candidate lane
 
 `.github/workflows/desktop-windows-candidate.yml` builds a Windows x64 SDK-free Tauri candidate on `dev/react-tauri` pushes or manual dispatch. This is separate from the existing Qt Windows release workflow and never creates tags, releases, update feeds or signed installers. It uses the repository VS2022/MSVC194 Conan profile, VS CMake backend-only build and existing bridge link-manifest generator, then release-mode Rust tests/build.

@@ -2,7 +2,7 @@
 // last run's outcome, the Monitoring snapshot polling and the SATA SSD record store status.
 // Moved from App.tsx without change (#869 wave 0); studio/useStudioController.ts calls these
 // hooks in App.tsx's original effect order.
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { bridge, type ExperimentStatus, type MonitoringSnapshot, type RunAccounting } from "../../bridge";
 import { EXPERIMENT_STATES } from "../../bridgeContract";
 import { startExperiment } from "../../experimentStart";
@@ -12,10 +12,14 @@ import { isRemote } from "../../transport";
 import { confirm, save } from "../../transport/dialogs";
 import { H5_FILTER } from "../../studio/constants";
 import { initialTuneState, tuneReducer, type TuneFieldId } from "./tuneDraft";
-import type { CoresModel } from "../config/useConfig";
+import type { ConfigState, CoresModel } from "../config/useConfig";
 import type { ConnectState } from "../connect/useConnect";
 import type { HardwareState } from "../hardware/useHardware";
 import type { ShellState } from "../shell/useShell";
+import { MONITORING_FETCH_ROWS, sameSnapshot } from "./monitoringChartModel";
+import {
+  DEFAULT_MONITORING_SETTINGS, ringRatioRangeOfConfig, withHistogramXRange, type MonitoringSettings,
+} from "./monitoringSettings";
 
 export const EXPERIMENT_STATE_NAMES: Record<number, string> = {
   [EXPERIMENT_STATES.Idle]: "Inactive",
@@ -33,6 +37,10 @@ export function useMonitoringState() {
 
   // Monitoring + trigger (bridge schema v6, BE-5).
   const [monSnapshot, setMonSnapshot] = useState<MonitoringSnapshot | null>(null);
+  // Monitoring Settings (MON-082): the fixed chart axes and the histogram bin width. A view preference
+  // kept in memory, like Qt's; the dialog is areas/monitoring/MonitoringSettingsDialog.tsx.
+  const [monSettings, setMonSettings] = useState<MonitoringSettings>(DEFAULT_MONITORING_SETTINGS);
+  const [showMonitoringSettings, setShowMonitoringSettings] = useState(false);
   const experimentPending = useRef(false);
   const [experimentRequestBusy, setExperimentRequestBusy] = useState(false);
   const [readinessMessage, setReadinessMessage] = useState("");
@@ -57,7 +65,8 @@ export function useMonitoringState() {
   const setTuneField = useCallback((field: TuneFieldId, value: unknown) => dispatchTune({ type: "edit", field, value }), []);
   return {
     tune, dispatchTune, tuneDraft, setTuneField,
-    expTab, setExpTab, expStatus, setExpStatus, monSnapshot, setMonSnapshot,
+    expTab, setExpTab, expStatus, setExpStatus, monSnapshot, setMonSnapshot, monSettings, setMonSettings,
+    showMonitoringSettings, setShowMonitoringSettings,
     experimentPending, experimentRequestBusy, setExperimentRequestBusy, readinessMessage, setReadinessMessage,
     startNotice, setStartNotice, expState, runAccounting, setRunAccounting, runOutcome, finishedRun, loggedRun,
     elapsedWallSeconds, expActive,
@@ -80,9 +89,11 @@ export function useMonitoringPolling({ ready, tab, expTab, setMonSnapshot, setTr
     const id = window.setInterval(async () => {
       if (polling) return; polling = true;
       try {
-        const snapshot = await bridge.fetchMonitoringSnapshot(200);
+        // The plotted window (1000 valid rows, MON-036) plus the latest-rows table, not a fixed 200 rows.
+        const snapshot = await bridge.fetchMonitoringSnapshot(MONITORING_FETCH_ROWS);
         const trigger = await bridge.fetchTriggerStatus();
-        if (!disposed) { setMonSnapshot(snapshot); setTrigStatus(trigger); }
+        // A poll that finds nothing new keeps the previous snapshot: no re-render, no redraw.
+        if (!disposed) { setMonSnapshot((previous) => (sameSnapshot(previous, snapshot) ? previous : snapshot)); setTrigStatus(trigger); }
       } catch {
         /* backend gone — next tick will surface it */
       } finally { polling = false; }
@@ -90,6 +101,22 @@ export function useMonitoringPolling({ ready, tab, expTab, setMonSnapshot, setTr
     return () => { disposed = true; window.clearInterval(id); };
   }, [monitoringVisible, ready]);
   return { monitoringVisible };
+}
+
+type MonitoringConfigRangeDeps = Pick<MonitoringState, "setMonSettings"> & Pick<ConfigState, "liveDraft">
+  & { monitoringVisible: boolean };
+
+// MON-050: the histogram's X range is the runtime config's ring_ratio_min/max, taken when the Monitoring
+// sub-tab is shown (overwriting a range set in the dialog, as Qt's showEvent does) and again whenever
+// the config's range changes, which is what an Apply or a Revert of the processing configuration does.
+// The baseline is the last config the backend gave (liveConfigDraft), not an unapplied edit.
+export function useMonitoringConfigRange({ monitoringVisible, liveDraft, setMonSettings }: MonitoringConfigRangeDeps) {
+  const range = useMemo(() => ringRatioRangeOfConfig(liveDraft.baseline), [liveDraft.baseline]);
+  const min = range?.min, max = range?.max;
+  useEffect(() => {
+    if (!monitoringVisible || min === undefined || max === undefined) return;
+    setMonSettings((current) => withHistogramXRange(current, min, max));
+  }, [monitoringVisible, min, max]);
 }
 
 export function useSsdStatus({ ready }: Pick<ShellState, "ready">) {
