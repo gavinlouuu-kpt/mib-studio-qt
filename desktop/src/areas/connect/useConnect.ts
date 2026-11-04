@@ -34,6 +34,8 @@ export function useConnectState() {
   const [intervalMs, setIntervalMs] = useState("33");
   const [loopFiles, setLoopFiles] = useState(true);
   const liveCanvasRef = useRef<HTMLCanvasElement>(null);
+  // Wafer Grid (CONNECT-054, useWaferGrid.ts): drawn on the live canvas after the frame and the window box.
+  const waferGridOverlayRef = useRef<((ctx: CanvasRenderingContext2D) => void) | null>(null);
   // ---- Camera & Alignment (ABI 20): the whole sensor and the experiment window on it ----
   // PZ7035 Align (#501): the live frame's focus and brightness in the Run window, with the best
   // focus seen since the window last moved. draw() measures every displayed frame (about 50 k
@@ -55,7 +57,7 @@ export function useConnectState() {
     running, setRunning, camStatus, setCamStatus, connectTab, setConnectTab,
     discovery, setDiscovery, camSelection, setCamSelection, pickedDevice, setPickedDevice,
     showMockConfig, setShowMockConfig, frameDir, setFrameDir, intervalMs, setIntervalMs, loopFiles, setLoopFiles,
-    liveCanvasRef, alignImage, setAlignImage, alignBestRef, alignImageMs,
+    liveCanvasRef, waferGridOverlayRef, alignImage, setAlignImage, alignBestRef, alignImageMs,
     cameraGeometry, setCameraGeometry, cameraGeometryRef, cameraWindowRef, refreshCameraGeometryRef,
     modeError, setModeError, modeRetry, setModeRetry, runFpsStatus, setRunFpsStatus,
   };

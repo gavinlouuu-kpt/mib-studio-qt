@@ -4,6 +4,7 @@ import { useCameraSetup, useConfigDocuments, useConfigState, useConfigSync, useC
 import {
   connectModel, useAlignPeakReset, useCameraConnection, useCameraModeSwitch, useCameraWindowing, useConnectState,
 } from "../areas/connect/useConnect";
+import { useWaferGrid } from "../areas/connect/useWaferGrid";
 import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
 import {
   experimentModel, useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useSsdStatus,
@@ -62,12 +63,13 @@ export function useStudioController() {
   // #763 F19: a browser that does not control the instrument gets its control commands refused
   // (VIEWER_ONLY); the controls that send them are disabled (ViewerGate) instead of failing in the log.
   const viewerOnly = useViewerOnly();
+  const waferGrid = useWaferGrid({ ...states, viewerOnly }); // connect: Overview Wafer Grid (CONNECT-054)
   const documents = useConfigDocuments({ ...states, ...configSync, ...cores }); // config
   const reviewJobs = useReviewJobs(states); // review
   const composed = {
     ...states, ...liveFrames, ...polling, ...monitoringPolling, ...preferences, ...configSync, ...connection,
     ...livePreview, ...ssd, ...reviewSource, ...experiment, ...windowing, ...modeSwitch, ...cameraSetup,
-    ...previewBuffer, ...cores, viewerOnly, ...documents, ...reviewJobs,
+    ...previewBuffer, ...cores, viewerOnly, ...documents, ...reviewJobs, ...waferGrid,
   };
   const closeGuard = useShellCloseGuard(composed); // shell
   // Render-time values (no hooks).

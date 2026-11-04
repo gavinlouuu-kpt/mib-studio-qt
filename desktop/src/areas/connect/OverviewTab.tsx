@@ -6,6 +6,7 @@ import { RunWindowNotice } from "../../components/RunWindowNotice";
 import { ViewerGate, viewerReason } from "../../components/ViewerGate";
 import { GATE_STATUS_LABEL } from "../../quality";
 import { useStudio } from "../../studio/StudioContext";
+import { WaferGridNotice, WaferGridToggle } from "./WaferGridControls";
 
 export function OverviewTab() {
   const {
@@ -73,7 +74,9 @@ export function OverviewTab() {
           </button>
           </>
         ) : null}</ViewerGate>
+        <WaferGridToggle />
       </div>
+      <WaferGridNotice />
       {cameraGeometry?.supported && (
         <div className="camera-alignment-status" aria-label="Camera mode">
           <strong>

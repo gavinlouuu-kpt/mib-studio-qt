@@ -71,14 +71,14 @@ type LiveFramesDeps = Pick<ShellState, "tab" | "tabRef" | "instrumentModesRef" |
   & Pick<PreviewState, "previewCanvasRef" | "framePulls" | "lastMetadataRenderMs" | "setLastMeta" | "ratesRef" | "setRatesTick"
     | "previewLoopRef">
   & Pick<ConnectState, "liveCanvasRef" | "cameraGeometryRef" | "cameraWindowRef" | "alignBestRef" | "alignImageMs" | "setAlignImage"
-    | "camStatus">
+    | "camStatus" | "waferGridOverlayRef">
   & Pick<ReviewState, "reviewCanvasRef" | "reviewPath">;
 
 // Frame pulls: draw each pull response on its canvas, measure the display rates, retire stale replies.
 export function useLiveFrames({
   tab, tabRef, instrumentModesRef, append, previewCanvasRef, framePulls, lastMetadataRenderMs, setLastMeta, ratesRef,
   setRatesTick, previewLoopRef, liveCanvasRef, cameraGeometryRef, cameraWindowRef, alignBestRef, alignImageMs, setAlignImage,
-  camStatus, reviewCanvasRef, reviewPath,
+  camStatus, reviewCanvasRef, reviewPath, waferGridOverlayRef,
 }: LiveFramesDeps) {
   const activeLiveCanvas = useCallback((): HTMLCanvasElement | null => {
     if (tabRef.current === "experiment") return previewCanvasRef.current;
@@ -103,6 +103,8 @@ export function useLiveFrames({
         ctx.lineWidth = 2;
         ctx.strokeRect(experimentWindow.x + 1, experimentWindow.y + 1, experimentWindow.width - 2, experimentWindow.height - 2);
       }
+      // Wafer Grid (CONNECT-054): the Overview's dots, centre cross and pose text, drawn last (connect/useWaferGrid.ts).
+      if (canvas === liveCanvasRef.current) waferGridOverlayRef.current?.(ctx);
       // PZ7035 Align: focus number and brightness of the whole frame's Run window.
       if (instrumentModesRef.current && canvas === liveCanvasRef.current && cameraWindowRef.current &&
           meta.width === RUN_WINDOW.sensorWidth && meta.height === RUN_WINDOW.sensorHeight) {
