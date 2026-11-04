@@ -3,6 +3,7 @@
 import { SEG_STATUS_LABEL } from "../../contextBar";
 import { metricNumber } from "../../metricFormat";
 import { useStudio } from "../../studio/StudioContext";
+import { SortTriggerStats } from "../hardware/SortTriggerStats";
 import { EXPERIMENT_STATE_NAMES } from "../monitoring/useMonitoring";
 
 export function ContextBar() {
@@ -56,6 +57,7 @@ export function StatusBar() {
             : <>Science=PL</>} | Camera={running ? "running" : camStatus}, {metricNumber(dataRate, 1)} MB/s | Experiment:{" "}
           {(EXPERIMENT_STATE_NAMES[expState] ?? "Inactive").toLowerCase()}
           {expActive ? ` (buffered ${String(BigInt(expStatus?.valid_buffered ?? "0") + BigInt(expStatus?.invalid_buffered ?? "0"))})` : ""}
+          <SortTriggerStats />
         </span>
       </footer>
       {showLog && (

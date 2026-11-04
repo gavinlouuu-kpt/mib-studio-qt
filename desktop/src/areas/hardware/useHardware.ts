@@ -37,13 +37,25 @@ export function useHardwareState() {
 }
 export type HardwareState = ReturnType<typeof useHardwareState>;
 
-type ServiceModeDeps = Pick<ShellState, "append" | "instrumentModes">
-  & Pick<HardwareState, "operatingMode" | "setOperatingMode" | "triggerArmed" | "setTriggerArmed" | "trigStatus">
-  & Pick<MonitoringState, "expActive">;
+type ServiceModeDeps = Pick<ShellState, "append" | "instrumentModes" | "ready">
+  & Pick<HardwareState, "operatingMode" | "setOperatingMode" | "triggerArmed" | "setTriggerArmed" | "trigStatus" | "setTrigStatus">
+  & Pick<MonitoringState, "expActive"> & { monitoringVisible: boolean; viewerOnly: boolean };
+
+/** Tell the backend about the mode (the PZ7035 refuses raw LED values outside Service mode, #501 P1). Resolves to
+ *  the refusal text, or '' when the backend accepted it: a refusal must reach the operator, never be swallowed. */
+export async function setBackendServiceMode(on: boolean): Promise<string> {
+  try {
+    const result = await bridge.setServiceMode(on);
+    return result.ok ? "" : result.message || "the instrument refused";
+  } catch (failure) {
+    return failure instanceof Error ? failure.message : String(failure);
+  }
+}
 
 // UX-9 Operator vs Service/Commissioning mode and the actuation gates of the trigger tests.
 export function useServiceMode({
-  append, instrumentModes, operatingMode, setOperatingMode, triggerArmed, setTriggerArmed, trigStatus, expActive,
+  append, instrumentModes, ready, operatingMode, setOperatingMode, triggerArmed, setTriggerArmed, trigStatus, setTrigStatus,
+  expActive, monitoringVisible, viewerOnly,
 }: ServiceModeDeps) {
   // ---- UX-9 Operator vs Service/Commissioning mode (issue #313) ----
   // Leaving Service mode, or an experiment going active, disarms actuation.
@@ -57,15 +69,38 @@ export function useServiceMode({
         "Enter Service / Commissioning mode?\n\nThis exposes hardware-actuating controls (trigger tests). Use only for bring-up and diagnostics.",
       );
       if (!ok) return;
+      // The backend decides first on an instrument: a refused request leaves the app in Operator mode, with the reason in the log.
+      if (instrumentModes) {
+        const refusal = await setBackendServiceMode(true);
+        if (refusal) { append(`Service / Commissioning mode refused: ${refusal}`); return; }
+      }
       append("entered Service / Commissioning mode");
-    } else {
-      append("returned to Operator mode");
+      setOperatingMode(next);
+      return;
     }
+    append("returned to Operator mode");
+    // Leaving is never blocked: the app shows Operator mode and disarms at once; a refusal from the backend is reported.
     setOperatingMode(next);
-    if (next !== "service") setTriggerArmed(false);
-    // The backend refuses raw LED values outside Service mode (#501 P1).
-    if (instrumentModes) void bridge.setServiceMode(next === "service").catch(() => {});
+    setTriggerArmed(false);
+    if (instrumentModes) {
+      const refusal = await setBackendServiceMode(false);
+      if (refusal) append(`the instrument did not leave Service mode: ${refusal}; raw LED values may still be accepted until it does`);
+    }
   };
+
+  // A running periodic test stops when the Monitoring view is hidden (Qt ExperimentMonitoringTab::hideEvent unchecks the
+  // Periodic Test button, so no test pulses unseen in the background; HW-045). The status is last polled while the view
+  // was visible, so the flag is current at the moment it hides. A viewer cannot stop another client's test.
+  const periodicActive = trigStatus?.periodic_active ?? false;
+  useEffect(() => {
+    if (monitoringVisible || !ready || viewerOnly || !periodicActive) return;
+    void bridge.triggerPeriodicStop()
+      .then(async (res) => {
+        append(res.ok ? "periodic test stopped (the Monitoring view was hidden)" : `periodic test stop failed: ${res.message}`);
+        setTrigStatus(await bridge.fetchTriggerStatus());
+      })
+      .catch((failure) => append(`periodic test stop failed: ${failure}`));
+  }, [monitoringVisible, periodicActive, ready, viewerOnly]);
 
   const actuateCheck = canActuate({
     mode: operatingMode,
