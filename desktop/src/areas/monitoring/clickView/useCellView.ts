@@ -70,17 +70,19 @@ export function useCellView({ selection, ready, canPin, log }: CellViewInput): C
       queue.current = run.catch(() => undefined);
       return run;
     };
-    /** Give back the pin this view made (once). Called when the selection moves, on close and on unmount. */
+    /** Give the pin back to the backend (never throws; ok:false is "not pinned any more", a capture change ended it). */
+    const unpin = async () => {
+      try {
+        await bridge.monitoringCellUnpin(identity);
+      } catch (e) {
+        logRef.current?.(`cell view: the pin of frame ${selection.frame_index} could not be released: ${errorText(e)}`);
+      }
+    };
+    /** Give back the pin this view made (once), in turn. Called when the selection moves, on close and on unmount. */
     const release = () => {
       if (!job.owned || job.released) return;
       job.released = true;
-      void enqueue(async () => {
-        try {
-          await bridge.monitoringCellUnpin(identity); // ok:false is "not pinned any more" (a capture change ended it): nothing to do
-        } catch (e) {
-          logRef.current?.(`cell view: the pin of frame ${selection.frame_index} could not be released: ${errorText(e)}`);
-        }
-      });
+      void enqueue(unpin);
     };
 
     setState(LOADING);
@@ -99,7 +101,11 @@ export function useCellView({ selection, ready, canPin, log }: CellViewInput): C
         try {
           const reply = await bridge.monitoringCellPin(identity);
           if (pinCreated(reply)) job.owned = true;
-          if (job.cancelled) { release(); return null; } // moved on while the backend pinned: give the stale pin back
+          if (job.cancelled) {
+            // Moved on while the backend pinned: give the stale pin back now, in this turn, so it is gone before the next pin is asked for.
+            if (job.owned && !job.released) { job.released = true; await unpin(); }
+            return null;
+          }
           if (!reply.ok) { settle({ phase: "refused", message: pinRefusal(reply) }); return null; }
           const withoutImage = reply.outcome === MONITORING_CELL_PIN_OUTCOMES.PinnedWithoutImage || !reply.cell || reply.cell.image === null;
           return { viewOnly: false as const, cell: reply.cell, keptImage: !withoutImage, reason: reply.message || reply.cell?.no_image_reason || "the backend kept no image for this cell" };

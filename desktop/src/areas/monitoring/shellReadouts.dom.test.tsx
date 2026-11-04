@@ -52,6 +52,24 @@ describe("the side panel (MON-095, 098, 100)", () => {
     await render(studio({ stats: { valid: true, algo_fps1s: 120, valid_fps1s: 1, invalid_fps1s: 2, pixel_to_micron: 1, algo_avg_us: 85.04, algo_avg_age_ms: 1500 } }), <TelemetrySidebar />);
     expect(rowValue("Algo Time:")).toMatchObject({ text: "85.0 µs", cls: expect.stringContaining("dim"), title: "Stale: last update 1500 ms ago" });
   });
+  it("shows the backend's capture rate and data rate as text with their validity, not the rates measured here (MON-098)", async () => {
+    const camera = { running: true, frame_rate: { state: "valid", value: 500, age_ms: 40 }, data_rate_mbps: { state: "stale", value: 31, age_ms: 3000 } };
+    await render(studio({ stats: { valid: true, algo_fps1s: 1, valid_fps1s: 1, invalid_fps1s: 1, pixel_to_micron: 1, telemetry: { realtime_mode: "inline", camera } } }), <TelemetrySidebar />);
+    expect(rowValue("FPS:")).toMatchObject({ text: "29.6" }); // the Display group's own FPS is the first "FPS:" row
+    const fps = Array.from(host.querySelectorAll<HTMLElement>(".side-row")).filter((r) => r.querySelector(".k")!.textContent === "FPS:");
+    expect(fps.map((r) => r.querySelector(".v")!.textContent)).toEqual(["29.6", "500"]);
+    expect(rowValue("Data Rate:")).toMatchObject({ text: "31 (stale 3.0 s) MB/s", title: "" });
+    await render(studio({ stats: { valid: true, algo_fps1s: 1, valid_fps1s: 1, invalid_fps1s: 1, pixel_to_micron: 1, telemetry: { realtime_mode: null, camera: { ...camera, frame_rate: { state: "unsupported", value: null, age_ms: null }, data_rate_mbps: { state: "unavailable", value: null, age_ms: null } } } } }), <TelemetrySidebar />);
+    expect(rowValue("Data Rate:")!.text).toBe("n/a MB/s");
+    expect(Array.from(host.querySelectorAll<HTMLElement>(".side-row")).filter((r) => r.querySelector(".k")!.textContent === "FPS:")[1].querySelector(".v")!.textContent).toBe("unsupported");
+  });
+  it("falls back to the rate measured here, and says so, only when the backend sends no camera telemetry", async () => {
+    await render(studio(), <TelemetrySidebar />);
+    expect(rowValue("Data Rate:")).toMatchObject({ text: "4.6 MB/s" });
+    expect(rowValue("Data Rate:")!.title).toContain("sent no capture rate");
+    await render(studio({ stats: { valid: true, algo_fps1s: 1, valid_fps1s: 1, invalid_fps1s: 1, pixel_to_micron: 1, telemetry_error: "camera.frame_rate.state is not a contract metric state" } }), <TelemetrySidebar />);
+    expect(rowValue("Data Rate:")!.title).toContain("could not be read (camera.frame_rate.state is not a contract metric state)");
+  });
   it("has no Algo Time row while the backend does not report one", async () => {
     await render(studio(), <TelemetrySidebar />);
     expect(rowValue("Algo Time:")).toBeNull();

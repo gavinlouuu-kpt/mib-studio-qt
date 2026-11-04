@@ -405,6 +405,55 @@ describe("overlay seam for the gate (later)", () => {
   });
 });
 
+describe("an overlay's hover with a cursor and a tooltip (PR E1: a gate handle)", () => {
+  const handle: [number, number] = pxOf(500, 0.6); // a cell lies under it
+  const tipText = () => host.querySelector('[role="tooltip"]')?.textContent ?? null;
+  it("shows the overlay's cursor and tooltip instead of the cell's, and the plain readout away from it", async () => {
+    const probe = viewportProbe();
+    const overlay: ScatterOverlay = {
+      ...probe.overlay,
+      hover: (px, py) => (Math.abs(px - handle[0]) < 8 && Math.abs(py - handle[1]) < 8 ? { cursor: "ew-resize", tooltip: "Edge: 500 — drag to change" } : false),
+    };
+    const { scatter } = await mount({ overlay });
+    await fire(scatter, "pointermove", { ...at(handle), buttons: 0 });
+    expect(tipText()).toBe("Edge: 500 — drag to change");
+    expect(scatter.style.cursor).toBe("ew-resize");
+    await fire(scatter, "pointermove", { ...at([VP.left + VP.width / 2, VP.top + 20]), buttons: 0 });
+    expect(tipText()).toBe("Area 500.0 µm² · deformability 0.925");
+    expect(scatter.style.cursor).toBe("default");
+  });
+  it("can claim the cursor without a tooltip, and a plain true still claims everything", async () => {
+    const probe = viewportProbe();
+    const { scatter } = await mount({ overlay: { ...probe.overlay, hover: () => ({ cursor: "move" }) } });
+    await fire(scatter, "pointermove", { ...at(handle), buttons: 0 });
+    expect(tipText()).toBeNull();
+    expect(scatter.style.cursor).toBe("move");
+    await mount({ overlay: { ...probe.overlay, hover: () => true } });
+    await fire(scatter, "pointermove", { ...at(handle), buttons: 0 });
+    expect(tipText()).toBeNull();
+    expect(scatter.style.cursor).toBe("default");
+  });
+  it("tells the overlay when the pointer leaves, and drops the tooltip when a press is taken (a drag shows none)", async () => {
+    const onLeave = vi.fn();
+    const probe = viewportProbe();
+    const overlay: ScatterOverlay = {
+      ...probe.overlay, onLeave,
+      hover: () => ({ cursor: "ew-resize", tooltip: "Edge: 500" }),
+      interceptor: { press: () => true, move: vi.fn(), end: vi.fn() },
+    };
+    const { scatter } = await mount({ overlay });
+    await fire(scatter, "pointermove", { ...at(handle), buttons: 0 });
+    expect(tipText()).toBe("Edge: 500");
+    await fire(scatter, "pointerdown", { ...at(handle), button: 0, buttons: 1 });
+    expect(tipText()).toBeNull();
+    expect(scatter.style.cursor).toBe("ew-resize");
+    await fire(scatter, "pointerup", { ...at(handle), button: 0, buttons: 0 });
+    await fire(scatter, "pointerout", { relatedTarget: null });
+    expect(onLeave).toHaveBeenCalled();
+    expect(tipText()).toBeNull();
+  });
+});
+
 describe("the ring histogram's settings (MON-049..051, MON-089..091)", () => {
   const rect = (c: HTMLCanvasElement) => lastDraw(c).of("fillRect").filter((x) => x.fillStyle === "#209fdf");
   it("bins by the bin width over the X range and holds Y at its maximum", async () => {

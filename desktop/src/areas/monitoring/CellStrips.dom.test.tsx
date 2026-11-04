@@ -284,3 +284,26 @@ it("stops polling when it goes away and while it is hidden again", async () => {
   await tick(3000);
   expect(fetchCells.mock.calls.length).toBe(calls);
 });
+
+it("hands the valid strip's Show Overlay to the caller, who keeps the flag (the selected cell's pane follows it)", async () => {
+  fetchCells.mockResolvedValue(listing({ strip: [cell(1)], invalid_strip: [bad(11, [reason("no_contour", null, null, null)])] }));
+  fetchImage.mockImplementation(async (_k: MonitoringCell, layer: string) => packet(layer === "mask"));
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  const seen: boolean[] = [];
+  const view = (on: boolean) => <CellStrips ready visible validOverlay={on} onValidOverlay={(v) => seen.push(v)} />;
+  await act(async () => { root!.render(view(false)); });
+  await tick(0);
+  const box = (kind: string) => host.querySelector<HTMLInputElement>(`[data-tour="monitoring-${kind}-overlay"]`)!;
+  expect(box("valid").checked).toBe(false);
+  await act(async () => box("valid").click());
+  expect(seen).toEqual([true]);
+  expect(box("valid").checked).toBe(false); // controlled: it shows what the caller says
+  await act(async () => { root!.render(view(true)); });
+  expect(box("valid").checked).toBe(true);
+  expect(box("invalid").checked).toBe(false); // the invalid strip keeps its own flag
+  await act(async () => box("invalid").click());
+  expect(box("invalid").checked).toBe(true);
+  expect(seen).toEqual([true]);
+});

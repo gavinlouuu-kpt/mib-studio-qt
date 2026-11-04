@@ -605,15 +605,78 @@ It sends no command, so it is outside `ViewerGate`. Anchors: `data-tour="monitor
 `monitoring-invalid-overlay`. Guard: `cellStripsModel.test.ts`, `CellStrips.dom.test.tsx`,
 `monitoringCells.test.ts`.
 
-**Density, reference contour, E-modulus table, stats telemetry (ABI 46, #866 PR E; no UI yet).**
+**Density, reference contour, E-modulus table, stats telemetry (ABI 46, #866 PR E).**
 `monitoringDensity.ts` holds the types, strict decoders (`MONITORING_DENSITY_INVALID`) and argument
 builders for the backend's live density (`bridge.monitoringDensitySetSettings` /
 `monitoringDensityRequestUpdate` are control commands: `VIEWER_ONLY` for a viewer;
 `fetchMonitoringDensity(sinceGeneration)`, `fetchKdeReferenceFromFile(path)`, `fetchEmodulusLut(knownIdentity)`
 and `fetchProcessingTelemetry` are reads), plus `densityByRow` (a point matches a snapshot row by
-`(start_generation, capture_epoch, frame_index, object_id)`) and `formatMetricSample`. The later
-frontend PR consumes them; the `algo_avg_*` decoder of `fetch_processing_stats` is PR #877's.
-Guard: `monitoringDensity.test.ts`. Shapes: [[Rust-Bridge]] (ABI 46).
+`(start_generation, capture_epoch, frame_index, object_id)`) and `formatMetricSample`. The E-modulus table
+and the telemetry are consumed by PR E1 (below); the density by PR E2. Guard: `monitoringDensity.test.ts`.
+Shapes: [[Rust-Bridge]] (ABI 46).
+
+## Monitoring click to view, gate overlay and E table (#866 PR E1)
+
+MON-043 (E readout), 044, 046..048, 064..068, 077 and the sidebar's camera telemetry (MON-095, 098).
+`areas/monitoring/LiveMonitoringCharts.tsx` is what `MonitoringPanel` mounts (it wraps
+`components/MonitoringCharts`); the new modules sit in `clickView/`, `gate/`, `emodulusLut.ts`,
+`useMonitoringView.ts` and `click-view.css`.
+
+- **E-modulus table.** `useEmodulusTable` (a hook call in `useStudioController`) asks
+  `fetchEmodulusLut(knownIdentity)` when the Monitoring sub-tab becomes visible and the backend is ready, with
+  the identity it holds, so the 200 x 200 grid comes back only when the identity differs (the backend loads its
+  table once at bootstrap: in practice once per session). Never on the 500 ms snapshot poll. The state is
+  `emodulusTable` in `useMonitoringState()` (`unknown` / `none` / `error` / `loaded`). `emodulusLut.ts` ports
+  `EModulusLut::lookup` (bilinear, NaN outside the table or when a corner has no value) over a prepared
+  `Float64Array` grid; `emodulusAt` gives the empty-plot tooltip its "· E 1.52 kPa" (only with a table and a
+  finite value).
+- **Click to view.** A left click on a point selects the cell (`monSelection`, a copy of the snapshot row, so it
+  outlives its place in the ring). The pane is docked at the top of the histogram's card, hidden until the
+  first click, with Qt's title ("Frame N · A µm² · deformability D", " · target group", " · no longer on the
+  scatter (left the monitoring buffer)"), Previous / Next through the plotted points in buffer order (wrapping;
+  from a vanished selection Next starts at the oldest, Previous at the newest), "Open in window…" and ✕ (hides
+  the pane and clears the selection; Clear Buffer clears it too, `useSelectionReset` on `onMonitoringCleared`).
+  The window is a non-modal floating panel inside the app (no backdrop, dragged by its title bar) that
+  follows the selection while the charts keep updating; closing it hides it and keeps the selection.
+- **The pin lifecycle** (`clickView/useCellView.ts`). Selecting PINS the cell (`monitoring_cell_pin`, a control
+  command), then pulls its crop and mask by identity (pins are served first); nothing is pulled per poll.
+  When the selection moves, on close and on unmount the pin this view made is released
+  (`monitoring_cell_unpin`); a pin that was already held (AlreadyPinned) is not released. Pin and unpin run
+  strictly one after the other, a selection that moves while its pin is in flight unpins the stale pin before
+  the next is pinned, and a selection replaced before its turn never sends its pin. PinnedWithoutImage shows
+  the measurements and the reason; CaptureMismatch, RunMismatch, NotFound and LimitReached show the backend's
+  plain message. A client that does not control the instrument (a viewer in a browser) does not pin: it pulls
+  the image of a cell the strips still hold and says why when the backend has let go. The picture is the
+  backend's object-centred crop with the valid strip's Show Overlay (`validOverlay` in `useMonitoringState()`,
+  lifted out of `CellStrips`) drawing the mask, not Qt's whole ROI frame (the accepted difference, #880).
+- **Gate overlay.** `gate/targetGate.ts` is the pure port of `TargetGatePreview` (predicate equal to
+  ProcessingScience's target-group rule, sampled mask, iso-E marching squares, handle hit test at 6 px, drag
+  maths relative to the press with clamp / round / min <= max, the count); `gate/gateOverlay.ts` draws it on
+  the scatter's `overlay.draw` from the DRAFT (`tuneDraft`), only while the draft's target group is on: the tint
+  (exact rectangle when the E layer does not filter, else the sampled predicate in 3 px cells, cached by gate /
+  table / viewport), the dashed box, dash-dot contours labelled "E ≥ x kPa" / "E ≤ x kPa" (cached by level,
+  at most 8, cleared with the table), the pill "Target group" / "Target group (unapplied)" and, with the E gate
+  on and no table, the red pill "No E-modulus table loaded: the target group uses the box only" (box tinted, no
+  contours, no E handles; the same words as a line under the scatter for assistive technology). Nothing relies
+  on colour alone. `gate/useGateOverlay.ts` turns it into the scatter's overlay: hover over a handle shows a
+  resize cursor and "Target group area maximum (µm²): 400 µm² — drag to change"; a press within 6 px of an edge
+  or contour, past the drag threshold, writes the draft through `setTuneField` (the panel's own edit path: `*`
+  markers, "N unapplied changes", Apply still required); a handle is editable exactly when its input would be
+  (`gateHandles.ts`: no apply in flight, the gate and for an E contour the E range on, not a viewer); a click
+  without travel still selects the cell, a drag elsewhere pans. The live count "Target group preview: N of M
+  plotted valid cells (P%)" sits under the scatter (E from each plotted row's stored modulus, not read without a
+  table).
+- **Statistics.** `bridge.fetchProcessingStats` decodes the algorithm time and the camera telemetry from ONE
+  `fetch_processing_stats` reply (`stats.telemetry`, or `stats.telemetry_error` when the reply broke the
+  contract); the sidebar's Camera FPS and Data Rate rows show the backend's samples as Qt's `formatMetric` writes
+  them (whole numbers, "n/a", "unsupported", "error", "<n> (stale 3.0 s)") and fall back to the rate measured
+  from the frames this window received, with a tooltip saying so, only when the backend sends none.
+- Anchors: `monitoring-cell-pane`, `-cell-pane-close`, `-cell-prev`, `-cell-next`, `-cell-open-window`,
+  `-cell-window`, `-cell-window-close`, `-cell-window-prev`, `-cell-window-next`, `-gate-label`,
+  `-gate-no-table`, `-tune-emodulus-table`. Guards: `gate/targetGate.test.ts` (the Qt cases),
+  `gate/gateOverlay.test.ts`, `gate/gateHandles.test.ts`, `gate/useGateOverlay.dom.test.tsx`,
+  `clickView/selection.test.ts`, `clickView/useCellView.dom.test.tsx`, `LiveMonitoringCharts.dom.test.tsx`,
+  `useMonitoringView.dom.test.tsx`, `emodulusLut.test.ts`, `statsTelemetry.test.ts`.
 
 ## Central profile registry (ABI 25, issue #398)
 
@@ -730,13 +793,15 @@ reads the settings from the studio state when mounted in the classic view):
   the pointer ~10 % a notch (Ctrl X only, Shift Y only, over an axis that axis only), drag
   or middle-drag pans after 10 px, double-click on empty space resets (never on a point),
   plus a Reset zoom button. Tooltips: "Area X µm² · deformability Y" anywhere in the plot
-  (plus " · E Z kPa" once the `emodulusAt` prop is given; the bridge does not expose the E
-  table yet), "Frame N · ... · click to view" and a hand cursor over a point.
-- *Seams for later work:* `onSelectPoint(row)` and `selectedKey` (`monitoringRowKey`:
-  run:capture:frame:object, the orange 13 px marker; hidden for exports via
-  `drawMonitoringScatter(..., {selection: false})`) for click-to-view; the `overlay` prop
-  (`draw(g, vp)` with the live axis transform, a press `interceptor`, `hover`, `version`)
-  for the target-group gate.
+  (plus " · E Z kPa" from the loaded E-modulus table, see below), "Frame N · ... · click to view"
+  and a hand cursor over a point.
+- *Seams:* `onSelectPoint(row)` and `selectedKey` (`monitoringRowKey`: run:capture:frame:object, the
+  orange 13 px marker; hidden for exports via `drawMonitoringScatter(..., {selection: false})`) are
+  click to view; the `overlay` prop (`draw(g, vp)` with the live axis transform, a press `interceptor`,
+  `hover` returning true or `{cursor, tooltip}`, `onLeave`, `version`) is the target-group gate. Both
+  are used by "Monitoring click to view, gate overlay and E table" below; the view takes two
+  render slots for them, `histogramPane(scatter)` (top of the histogram's card) and
+  `scatterFooter(scatter)` (under the scatter).
 - *Ring histogram* (`MonitoringHistogram`): valid cells with ring ratio > 0, bins =
   round((X max - X min) / bin width), out-of-range values in the end bins, fixed Y 0..max,
   same zoom/pan/reset. Still labelled ring ratio, not ring width. The Young's-modulus
@@ -1095,8 +1160,10 @@ writes the same draft.
   the criteria during a run"); multi-image stays locked (its controls are disabled with the reason, and a
   multi-image change made before the run waits for its end); Starting, Stopping, Failed and a PL instrument
   hold Apply back and say why. Editing and Revert always work.
-- **Not available.** Whether an E-modulus table is loaded is not exposed over the bridge, so the panel keeps
-  Qt's tooltip and a fixed hint ("Skipped when no E-modulus table is loaded") instead of Qt's state.
+- **E-modulus table.** The Young's-modulus range shows whether a table is loaded (ABI 46,
+  `emodulusLut.ts` `emodulusTableHint`): "E-modulus table loaded (<id>): this range filters the target
+  group." or Qt's tooltip text as a line, "No E-modulus table is loaded: this range is skipped and the target
+  group is the area and deformability box alone."; the tooltip stays.
 - Tests: `tuneDraft.test.ts` (model), `TunePanel.dom.test.tsx` (panel and hook, mocked bridge),
   `components/ViewerGate.test.tsx`; backend `backend.experiment_tune_apply`.
 

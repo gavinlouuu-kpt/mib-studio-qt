@@ -128,6 +128,18 @@ describe("the panel", () => {
     expect(state()).toBe("Applied");
   });
 
+  it("says whether the E-modulus table is loaded under the Young's modulus range (MON-077)", async () => {
+    const hint = () => q('[data-testid="tune-emodulus-hint"]').textContent;
+    expect(hint()).toBe("No E-modulus table is loaded: this range is skipped and the target group is the area and deformability box alone.");
+    emodulusTable = { status: "loaded", table: { identity: "ab|/x", info: { path: "/data/lut.txt", sha256: "ab", lut_id: "lut-6.16", revision: "", source: "", catalog_sha256: "", checksum_status: "" }, lut: {} as never } };
+    await render();
+    expect(hint()).toBe("E-modulus table loaded (lut-6.16): this range filters the target group.");
+    emodulusTable = { status: "unknown" };
+    await render();
+    expect(hint()).toBe("Checking for the E-modulus table…");
+    expect(q('[data-tour="monitoring-tune-emodulus-table"]')).toBe(q('[data-testid="tune-emodulus-hint"]'));
+  });
+
   it("gives number inputs the Qt range, step and decimals", () => {
     const area = input("Area maximum (µm²)");
     expect([area.min, area.max, area.step]).toEqual(["0", "100000", "10"]);
