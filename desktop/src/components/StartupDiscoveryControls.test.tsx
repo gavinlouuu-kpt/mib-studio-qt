@@ -10,7 +10,18 @@ const status = {valid: true, camera_running: false, nanopositioner_running: fals
 beforeEach(() => {Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT: true}); const saved = new Map<string, string>(); vi.stubGlobal('localStorage', {getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value)}); vi.clearAllMocks(); vi.mocked(bridge.startupDiscoverySetPreference).mockImplementation(async preference => ({accepted: true, message: 'Applied', preference})); vi.mocked(bridge.startupDiscoveryStatus).mockResolvedValue(status); vi.mocked(bridge.startupDiscoveryRun).mockResolvedValue({accepted: true, message: 'Scheduled'}); host = document.createElement('div'); document.body.append(host); root = createRoot(host);});
 afterEach(async () => {await act(async () => root.unmount()); host.remove();});
 async function render(active = false) {await act(async () => root.render(<StartupDiscoveryControls ready experimentActive={active} append={() => {}} />));}
-it('does not auto-select on first mount without saved opt-in', async () => {await render(); expect(bridge.startupDiscoveryRun).not.toHaveBeenCalled(); await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Auto-select hardware now')!.click()); expect(bridge.startupDiscoveryRun).toHaveBeenCalledWith('start');});
+it('auto-selects on first mount by default, as Qt does (#852)', async () => {await render(); expect(bridge.startupDiscoveryRun).toHaveBeenCalledWith('start'); expect(bridge.startupDiscoveryRun).toHaveBeenCalledOnce(); expect((host.querySelector('input[type=checkbox]') as HTMLInputElement).checked).toBe(true);});
+it('stays off after the operator opted out, and the opt-out is stored', async () => {
+  localStorage.setItem('mib.startup.auto-select-hardware', 'false');
+  await render();
+  expect(bridge.startupDiscoveryRun).not.toHaveBeenCalled();
+  expect((host.querySelector('input[type=checkbox]') as HTMLInputElement).checked).toBe(false);
+  await act(async () => (host.querySelector('input[type=checkbox]') as HTMLInputElement).click());
+  expect(localStorage.getItem('mib.startup.auto-select-hardware')).toBe('true');
+  await act(async () => (host.querySelector('input[type=checkbox]') as HTMLInputElement).click());
+  expect(localStorage.getItem('mib.startup.auto-select-hardware')).toBe('false');
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Auto-select hardware now')!.click()); expect(bridge.startupDiscoveryRun).toHaveBeenCalledWith('start');
+});
 it('runs saved startup preference only once per ready session', async () => {localStorage.setItem('mib.startup.auto-select-hardware', 'true'); await render(); await render(); expect(bridge.startupDiscoveryRun).toHaveBeenCalledOnce();});
 it('blocks startup changes while experiment active', async () => {localStorage.setItem('mib.startup.auto-select-hardware', 'true'); await render(true); expect(bridge.startupDiscoveryRun).not.toHaveBeenCalled(); expect([...host.querySelectorAll('button')].every(button => button.disabled)).toBe(true);});
 it('keeps scheduling distinct from actual connection', async () => {await render(); await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Auto-select hardware now')!.click()); expect(host.textContent).toContain('Scheduled'); expect(host.textContent).toContain('Nanopositioner: manual selection needed');});
