@@ -260,6 +260,14 @@ void CaptureService::resetSessionTelemetryLocked() {
     timestampDescriptor_.validity = ::camera::common::TimestampValidity::Unavailable;
 }
 
+bool CaptureService::acquisitionReport(::camera::common::CameraAcquisitionReport& out, uint64_t* generation) const {
+    std::lock_guard<std::mutex> lk(lifecycleMutex_);
+    if (!acquisitionReportValid_ || acquisitionReportGeneration_ != snapshot_.generation) return false;
+    out = acquisitionReport_;
+    if (generation) *generation = acquisitionReportGeneration_;
+    return true;
+}
+
 ::camera::common::TimestampDescriptor CaptureService::timestampDescriptor() const {
     std::lock_guard<std::mutex> lk(lifecycleMutex_);
     return timestampDescriptor_;
@@ -344,6 +352,7 @@ void CaptureService::run(uint64_t generation) {
                 snapshot_.cameraReady = false;
             }
             timestampDescriptor_.validity = ::camera::common::TimestampValidity::Unavailable;
+            if (acquisitionReportGeneration_ == generation) acquisitionReportValid_ = false;
         }
         // Consumers release their camera reference while it is still valid.
         if (cameraReadyCallback_) {
@@ -472,6 +481,10 @@ void CaptureService::run(uint64_t generation) {
         {
             std::lock_guard<std::mutex> lk(lifecycleMutex_);
             timestampDescriptor_ = camera->timestampDescriptor();
+            ::camera::common::CameraAcquisitionReport report;
+            acquisitionReportValid_ = camera->acquisitionReport(report);
+            acquisitionReport_ = report;
+            acquisitionReportGeneration_ = generation;
             timestampDescriptor_.sessionGeneration = generation;
             if (generation == snapshot_.generation &&
                 snapshot_.state == CaptureLifecycleState::Starting) {

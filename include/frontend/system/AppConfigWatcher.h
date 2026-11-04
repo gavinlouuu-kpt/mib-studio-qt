@@ -10,7 +10,7 @@
 #include <QRect>
 
 namespace backend { class AppBackend; }
-namespace camera::common { enum class FrameDeliveryMode; }
+namespace camera::common { enum class FrameDeliveryMode; struct CameraWindow; }
 class PlaybackPanel;
 class QTimer;
 
@@ -40,6 +40,13 @@ public:
 	// Persist camera.frame_delivery_mode into the watched config.json file,
 	// preserving all unrelated keys.
 	void writeBackCameraConfig(camera::common::FrameDeliveryMode mode);
+	// #833: persist the camera window into the watched config.json's
+	// camera.window (sensor pixels), preserving every other key and the
+	// recorded camera_vendor/camera_model, then apply it to the backend's
+	// acquisition profile. Without `createSection` a document that has no
+	// camera.window is left alone (the camera script keeps the window).
+	// Returns true when the document was written.
+	bool writeBackCameraWindow(const camera::common::CameraWindow& window, bool createSection = false);
 	// Delivery mode most recently loaded from (or written to) the config file.
 	camera::common::FrameDeliveryMode loadedDeliveryMode() const { return lastDeliveryMode_; }
 	// Fingerprint (sha256) of the document content this watcher last loaded
@@ -64,6 +71,9 @@ signals:
 	// Emitted after camera.frame_delivery_mode has been parsed and applied to
 	// CaptureService (a missing key deterministically maps to EveryFrame).
 	void deliveryModeLoaded(camera::common::FrameDeliveryMode mode);
+	// #833: the camera.window applied to the backend changed (target_fps
+	// alone does not emit).
+	void acquisitionProfileLoaded();
 
 private slots:
 	void onFileChanged(const QString& path);
@@ -73,6 +83,7 @@ private:
 	void ensureDefaultConfigExists(const QString& path) const;
 	void mergeNewDefaultsIntoConfig(const QString& path) const;
 	void loadAndApplyFromPath(const QString& path);
+	void applyAcquisitionProfile(const QJsonObject& root);
 	void applyFromPathWhenIdle(const QString& path);
 	static int toOddKernelSize(int v);
 

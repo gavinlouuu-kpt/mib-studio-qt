@@ -13,6 +13,7 @@
 #pragma once
 
 #include "backend/app/CalibrationMethodSpec.h"
+#include "backend/processing/ExperimentBufferSizing.h"
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/recording/RunProvenanceRecord.h"
@@ -207,6 +208,12 @@ struct ExperimentReadinessSnapshot {
     // methodCalibrationError (the gate then fails closed).
     CalibrationMethodSpec methodCalibration;
     std::string methodCalibrationError;
+    // The experiment buffer this evaluation sized from the camera window and
+    // the rate (#833, processing/ExperimentBufferSizing.h). Start applies it
+    // to the processing service before the run begins. Valid on a host with a
+    // known frame geometry.
+    processing::ExperimentBufferPlan bufferPlan;
+    bool bufferPlanValid{false};
 
     const ReadinessGate* gate(const std::string& id) const
     {

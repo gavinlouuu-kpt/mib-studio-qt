@@ -173,7 +173,7 @@ int main() {
         MIB_EXPECT(c.multi_image_enabled && c.multi_image_count == 1, "multi-image count clamped to 1");
         MIB_EXPECT(c.processing_contract_version == 1, "contract version");
         MIB_EXPECT(proc.getFlushInterval() == 250, "flush interval");
-        MIB_EXPECT(proc.getMaxBufferedBytes() == 2ull * 1024 * 1024, "buffer bytes");
+        MIB_EXPECT(proc.experimentBufferOverrideBytes() == 2ull * 1024 * 1024, "buffer override bytes (#833)");
         const auto batch = proc.getRealtimeBatchSettings();
         MIB_EXPECT(batch.batchSize == 7 && batch.maxQueuedFrames == 33 && batch.workerCount == 2 &&
                        batch.maxBatchDelayMs == 9,

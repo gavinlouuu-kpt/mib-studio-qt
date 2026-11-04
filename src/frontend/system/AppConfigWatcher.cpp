@@ -21,6 +21,7 @@
 #endif
 
 #include "backend/app/AppBackend.h"
+#include "backend/app/CameraWindowProfile.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/processing/ProcessingContract.h"
 #include "backend/camera/common/ICamera.h"
@@ -494,11 +495,13 @@ namespace frontend
 			const int flushEvery = std::max(1, root.value("buffer_threshold").toInt(1000));
 			backend_.processing().setFlushInterval(static_cast<size_t>(flushEvery));
 		}
-		// Issue #370: byte budget for the experiment buffer (MB; 0 = count-only).
-		if (root.contains("experiment_buffer_max_mb"))
+		// #833: experiment_buffer_max_mb is an explicit override of the buffer the
+		// coordinator sizes from the camera window and rate; absent or 0 = automatic.
 		{
-			const double mb = std::max(0.0, root.value("experiment_buffer_max_mb").toDouble(0.0));
-			backend_.processing().setMaxBufferedBytes(static_cast<uint64_t>(mb * 1024.0 * 1024.0));
+			const double mb = root.contains("experiment_buffer_max_mb")
+								  ? std::max(0.0, root.value("experiment_buffer_max_mb").toDouble(0.0))
+								  : 0.0;
+			backend_.processing().setExperimentBufferOverrideBytes(static_cast<uint64_t>(mb * 1024.0 * 1024.0));
 		}
 
 		// 2.25) Realtime processing mode
@@ -551,6 +554,11 @@ namespace frontend
 						camera::common::toString(ccfg.deliveryMode));
 			emit deliveryModeLoaded(ccfg.deliveryMode);
 		}
+
+		// 2.4) #833: the camera window (camera.window) and target_fps. The window
+		// reaches the camera with the next Experiment script; absent = the script
+		// decides the window (as before).
+		applyAcquisitionProfile(root);
 
 		// 2.5) Pixel to micron conversion factor
 		if (root.contains("pixel_to_micron_factor"))
@@ -883,6 +891,93 @@ namespace frontend
 	void AppConfigWatcher::onApplyProcessingDraft(const frontend::ApplyProcessingDraftRequest& request)
 	{
 		emit processingDraftApplied(applyProcessingDraft(request));
+	}
+
+	void AppConfigWatcher::applyAcquisitionProfile(const QJsonObject& root)
+	{
+		backend::app::AcquisitionProfile profile;
+		try
+		{
+			profile = backend::app::parseAcquisitionProfile(
+				QJsonDocument(root).toJson(QJsonDocument::Compact).toStdString());
+		}
+		catch (const std::exception& e)
+		{
+			SPDLOG_ERROR("AppConfigWatcher: camera.window/target_fps not applied: {}", e.what());
+			profile = {};
+			// The window is refused; a valid target_fps still applies.
+			QJsonObject withoutWindow = root;
+			QJsonObject camera = withoutWindow.value("camera").toObject();
+			camera.remove("window");
+			withoutWindow.insert("camera", camera);
+			try
+			{
+				profile.targetFps = backend::app::parseAcquisitionProfile(
+										QJsonDocument(withoutWindow).toJson(QJsonDocument::Compact).toStdString())
+										.targetFps;
+			}
+			catch (const std::exception&)
+			{
+			}
+		}
+		const auto previous = backend_.acquisitionProfile();
+		backend_.setAcquisitionProfile(profile);
+		const bool windowChanged =
+			previous.window.has_value() != profile.window.has_value() ||
+			(profile.window && (previous.window->window != profile.window->window ||
+								previous.window->cameraModel != profile.window->cameraModel ||
+								previous.window->cameraVendor != profile.window->cameraVendor));
+		if (!windowChanged) return;
+		if (profile.window)
+			SPDLOG_INFO("AppConfigWatcher: camera.window {} for {}, target_fps {}",
+						backend::app::describeWindow(profile.window->window),
+						backend::app::describeCamera(profile.window->cameraVendor, profile.window->cameraModel),
+						profile.targetFps);
+		emit acquisitionProfileLoaded();
+	}
+
+	bool AppConfigWatcher::writeBackCameraWindow(const camera::common::CameraWindow& window, bool createSection)
+	{
+		if (watchedPath_.isEmpty() || !window.valid()) return false;
+		QFile file(watchedPath_);
+		if (!file.exists() || !file.open(QIODevice::ReadOnly)) return false;
+		const QByteArray data = file.readAll();
+		file.close();
+		QJsonParseError parseError;
+		QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+		if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+		{
+			SPDLOG_WARN("AppConfigWatcher: failed to parse config for camera window write-back");
+			return false;
+		}
+		QJsonObject root = doc.object();
+		QJsonObject cam = root.value("camera").toObject();
+		if (!cam.contains("window") && !createSection) return false;
+		QJsonObject section = cam.value("window").toObject();
+		if (section.value("width").toInt(-1) == window.width && section.value("height").toInt(-1) == window.height &&
+			section.value("offset_x").toInt(-1) == window.offsetX && section.value("offset_y").toInt(-1) == window.offsetY)
+			return false; // already the document's window
+		section.insert("width", window.width);
+		section.insert("height", window.height);
+		section.insert("offset_x", window.offsetX);
+		section.insert("offset_y", window.offsetY);
+		cam.insert("window", section);
+		root.insert("camera", cam);
+		doc.setObject(root);
+		const QByteArray serialized = doc.toJson(QJsonDocument::Indented);
+		const ConfigWriteResult wr = ConfigDocumentStore::writeText(watchedPath_, QString::fromUtf8(serialized));
+		if (!wr.ok)
+		{
+			SPDLOG_WARN("AppConfigWatcher: camera window write-back failed: {}", wr.error.toStdString());
+			return false;
+		}
+		documentFingerprint_ = wr.fingerprint;
+		backend_.setLastConfigJson(serialized.toStdString());
+		applyAcquisitionProfile(root);
+		SPDLOG_INFO("AppConfigWatcher: wrote camera.window {} to {}", backend::app::describeWindow(window),
+					watchedPath_.toStdString());
+		emit configFileChanged(watchedPath_);
+		return true;
 	}
 
 	void AppConfigWatcher::writeBackCameraConfig(camera::common::FrameDeliveryMode mode)

@@ -36,6 +36,7 @@
 #include "backend/playback/PlaybackService.h"
 #include "backend/playback/FrameStore.h"
 #include "frontend/utils/ConfigPathManager.h"
+#include "frontend/widgets/RecordingCapacityPanel.h"
 #include "frontend/utils/FileIOUtils.h"
 #include "frontend/utils/SimpleImageCanvas.h"
 #include "frontend/utils/EgrabberConfigParser.h"
@@ -117,6 +118,10 @@ namespace frontend
         modeLabel_->setObjectName("mindVisionOverviewStatus");
         modeLabel_->setWordWrap(true);
         ui->canvasLayout->addWidget(modeLabel_);
+
+        // #833: what the camera window means for a recording (buffer, rate, disk).
+        capacityPanel_ = new RecordingCapacityPanel(this);
+        ui->canvasLayout->addWidget(capacityPanel_);
 
         // Set initial proportions (50/50 ratio)
         ui->splitter->setStretchFactor(0, 1);
@@ -346,7 +351,9 @@ namespace frontend
         }
 
         std::string backendErr;
-        if (!backend_.applyCameraScriptFromFile(path.toStdString(), &backendErr))
+        // The Overview script (full sensor): no profile camera window after it (#833).
+        if (!backend_.applyCameraScriptFromFile(path.toStdString(), &backendErr,
+                                                backend::AppBackend::CameraScriptRole::Overview))
         {
             QMessageBox::warning(this,
                                  tr("Apply Camera Script"),
@@ -499,6 +506,12 @@ namespace frontend
                         roiWidth_, roiHeight_);
     }
 
+    void OverviewTab::reloadCameraWindow() {
+        if (backend_.isMindVisionCameraSelected()) return;
+        initializeRoiFromConfig();
+        canvas_->update();
+    }
+
     void OverviewTab::updateMindVisionBounds() {
         const auto cap = backend_.mindVisionSensor();
         const QSignalBlocker bw(roiWidthSpin_), bh(roiHeightSpin_);
@@ -595,6 +608,16 @@ namespace frontend
             roiWidth_ = w;
             roiHeight_ = h;
             SPDLOG_DEBUG("Initialized ROI size from egrabberConfig.js: Width={}, Height={}", w, h);
+        }
+        // #833: a profile's camera.window wins over the script (it is applied
+        // after the Experiment script), so the rectangle shows it.
+        if (const auto profile = backend_.acquisitionProfile().window; profile && profile->window.valid())
+        {
+            roiPosition_ = QPointF(profile->window.offsetX, profile->window.offsetY);
+            roiWidth_ = profile->window.width;
+            roiHeight_ = profile->window.height;
+            SPDLOG_DEBUG("Initialized ROI from the profile's camera.window: {}",
+                         backend::app::describeWindow(profile->window));
         }
 
         // Update spinboxes

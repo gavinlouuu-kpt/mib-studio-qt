@@ -28,6 +28,56 @@ backend's reason in the status bar and offers **Start Live View** again.
 - Advanced: the tab hosts the camera-side GenICam script editor. **Apply to
   Camera** stops capture while the script is applied — restart the camera
   afterwards.
+- The **Recording capacity** box under the image says what the current
+  camera window means for a recording: the window and bytes per saved
+  frame, the requested and the camera's maximum frame rate, the save stream,
+  the recording buffer (frames, size, seconds) and the destination's write
+  rate, followed by the four checks Start applies (see
+  [Camera window and recording capacity](#camera-window-and-recording-capacity)).
+  The same summary is shown next to **Start Experiment**.
+
+### Camera window and recording capacity
+
+The **camera window** is the part of the sensor the camera reads out (its
+Width, Height and offsets). It decides how many bytes every saved frame
+takes: an original image and its mask, so a 1216 x 208 window saves
+505,856 bytes per frame. It is not the processing ROI you draw on the
+preview.
+
+- **The window belongs to the profile.** **Save as profile…** writes it into
+  the profile's `config.json` as `camera.window` (width, height, offset_x,
+  offset_y and the camera model it was made for), and writes the same values
+  into the profile's camera script. Moving or resizing the red rectangle on
+  the Overview tab updates the active profile's `camera.window` too.
+- **The profile wins over the camera script.** When the Experiment script is
+  applied (switching to the Experiment tab, or **Apply**), the profile's
+  window is written to the camera right after it. If the script set another
+  window, the `camera.window` check warns and names both. A profile made for
+  another camera model is not applied: Start is blocked until you load a
+  profile made for this camera, or set the window and save the profile again.
+  A profile without `camera.window` leaves the window to the script, as
+  before.
+- **The recording buffer is sized from the window and the rate.** It holds
+  2 seconds at the requested frame rate if every frame were saved, at least
+  twice `buffer_threshold` frames, and at most what fits in 75% of the
+  available memory together with the frames waiting to be written. It is
+  sized again at every Start. `experiment_buffer_max_mb` in a profile
+  replaces the computed size with a fixed one (absent or 0 = automatic); the
+  memory limit and the checks below still apply.
+- **Start is blocked outside the supported range.** The readiness check
+  refuses to start when the requested frame rate is above what the camera
+  allows for this window, when the buffer this window needs does not fit in
+  memory, or when the destination's measured write rate is below what even a
+  run with no cells saves (every sampled empty frame). It warns, without
+  blocking, when the camera does not report its maximum rate, when the
+  destination's rate is unknown, or when the buffer holds less than one
+  second. The message names the numbers and the fix: a smaller window, a
+  lower rate, or a faster destination such as an NVMe drive.
+- The requested rate is the one the frame grabber drives the camera at
+  (`CycleMinimumPeriod`); for a camera that does not report it, the profile's
+  `target_fps`. The destination's write rate is measured once when you choose
+  it at Start: a short write of frame-sized data (at most 32 MiB or 0.75 s)
+  beside the file, then removed.
 
 ### Wafer Grid — locate the chip
 
@@ -324,9 +374,12 @@ density estimates.
    readiness check first: if anything blocks it — camera not running, a
    requested hardware camera that fell back to the simulated one, the
    pinned processing core not active, no free space at the destination, an
-   unacknowledged save fault from the previous run — a dialog lists each
-   blocked check with what to do about it. Warnings (no background image,
-   simulated camera, Latest Frame delivery) do not block.
+   unacknowledged save fault from the previous run, a camera window or frame
+   rate the camera, the memory or the destination cannot sustain (see
+   [Camera window and recording capacity](#camera-window-and-recording-capacity))
+   — a dialog lists each blocked check with what to do about it. Warnings
+   (no background image, simulated camera, Latest Frame delivery, an unknown
+   destination write rate) do not block.
 2. Click **Start Experiment** (Experiment tab-bar corner). A Save dialog
    asks where to write the HDF5 file (`.h5` is appended if you omit it).
    The app freezes the run's configuration (camera, ROI, processing core,
@@ -397,5 +450,7 @@ items the bound evicted. An owner marked **OVER** has exceeded its declared
 budget. The last line separates **display** counters (frames the preview
 rendered or skipped because it draws at a capped rate) from real losses:
 skipping a frame on screen never affects what was processed or recorded.
-The experiment buffer's byte budget can be set per profile with the
-`experiment_buffer_max_mb` key (default 512 MB).
+The experiment buffer is sized from the camera window and the frame rate at
+every Start (see
+[Camera window and recording capacity](#camera-window-and-recording-capacity));
+a profile can fix it with the `experiment_buffer_max_mb` key.

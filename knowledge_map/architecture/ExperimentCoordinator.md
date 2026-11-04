@@ -463,7 +463,8 @@ lock are restored. Fatal accounting is reconciled before writing the file,
 aligned with #589's failed-outcome persistence.
 
 Readiness includes `storage.roundtrip`: a small HDF5 write/close/reopen and
-pixel comparison. It verifies access and format, not sustained throughput.
+pixel comparison. It verifies access and format; sustained throughput is
+`storage.throughput` (below).
 The destination probes that write to the disk (this round trip and the
 `.mib_write_probe_*` temp file of `storage.output`) run once per (output
 path, readiness generation), not on every evaluation, so a UI polling
@@ -474,11 +475,57 @@ runs again at the next evaluation, so a destination the operator fixes
 failing destination blocks Start anyway. The metadata checks of
 `storage.output` (parent a directory, path not a directory, 64 MiB free)
 write nothing and run on every evaluation. Test:
-`backend.readiness_probe_cache`. `storage.buffer` rejects a host
-image/mask series larger than the byte budget and warns when byte pressure
-will precede the count threshold. Geometry/format, budget and flush interval
-changes invalidate preflight. Metadata-only provider recordings do not use
-the host image payload gate.
+`backend.readiness_probe_cache`.
+
+**Recording capacity (#833).** Four host gates decide whether the camera
+window and rate can be recorded; the rules are pure
+(`app/RecordingCapacity.h`, test `backend.recording_capacity_gate`) and the
+coordinator only collects inputs (`windowGateInputsLocked`,
+`capacityInputsLocked`):
+- `camera.window` (after `camera.geometry`): the profile's `camera.window`
+  ([[../camera/EGrabberCamera]], `app/CameraWindowProfile.h`) is the window the
+  camera runs. Fail when the last Experiment-script apply refused it (made for
+  another camera model) or the camera rejected it, or when the camera runs
+  another window; Warn when the script's window was overridden (both named),
+  the window names no camera, or the camera cannot apply windows (mock).
+- `camera.rate`: Fail when the requested rate (camera report: eGrabber
+  `CycleMinimumPeriod`; else the profile's `target_fps`) exceeds the camera's
+  `AcquisitionFrameRateMax` for the window; Warn when either is unknown.
+- `storage.buffer`: the buffer plan (`processing::planExperimentBuffer`,
+  [[../services/ProcessingService]]). Fail when one series does not fit an
+  `experiment_buffer_max_mb` override or the minimum hold (2 x the flush
+  interval, with the write queue) does not fit 75% of the available RAM; Warn
+  below 1 s if every frame were saved, or an override below the flush
+  interval.
+- `storage.throughput`: Fail when the destination's measured sustained write
+  rate is below the floor stream (requested rate / invalid sampling x bytes
+  per frame: an empty run); Warn when unknown. The rate comes from
+  `measureDestinationWriteRate` (`app/DestinationWriteRate.h`): frame-size
+  chunks fsynced in the destination's directory, at most 32 MiB / 0.75 s, the
+  file removed; cached per (directory, frame size) for the coordinator's
+  lifetime, a failed measurement too (the rate stays unknown, so it is not
+  repeated on every evaluation), and taken only once `storage.output` passed.
+  It runs on the calling thread under the coordinator lock, like the other
+  destination probes. Tests install a fake with `setWriteRateProbe`.
+- An Overview session (eGrabber after a `CameraScriptRole::Overview` script,
+  or `isCameraOverview()`) shows the full sensor: its rates are not used
+  (`experimentSessionLocked`), so the rate falls back to `target_fps` and the
+  camera maximum is unknown until the Experiment script runs.
+
+The plan is in the snapshot (`bufferPlan`, `bufferPlanValid`) and Start
+applies it before `startExperiment`. The invalidation key carries the
+camera report (window, requested and maximum rate), the profile window and
+`target_fps`, the window-apply sequence, the override and the invalid
+sampling rate; the available RAM is not in it (it moves every poll), so a
+stable state keeps its generation. `recordingCapacity(path, planned)` is the
+UI view: the same gates with no disk write, no generation change and a
+`try_lock`, read by the Qt Overview panel and run-bar label once per second.
+With `planned` (the Overview rectangle) it describes that window; the
+session's rates apply only when the session runs that window size outside an
+Overview, and `camera.window` says the window is planned. Test:
+`backend.recording_capacity_readiness`. Geometry/format, budget and flush
+interval changes invalidate preflight. Metadata-only provider recordings do
+not use the host image payload gate.
 
 ### Save failure accounting and recovery (#589)
 

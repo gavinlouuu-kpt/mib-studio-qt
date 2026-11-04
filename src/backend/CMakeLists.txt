@@ -68,6 +68,7 @@ add_library(mib_processing STATIC
     # consults it, so processing-only binaries link.
     ${PROJECT_SOURCE_DIR}/src/backend/app/SciencePlacement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentFrameBuffer.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/ExperimentBufferSizing.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/BatchMaskSources.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodebook.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridDecoder.cpp
@@ -511,6 +512,9 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/CalibrationRecord.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/CalibrationStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/CameraWindowProfile.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/RecordingCapacity.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/DestinationWriteRate.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/MethodProvenance.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/MethodApply.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ConfigDocumentApply.cpp

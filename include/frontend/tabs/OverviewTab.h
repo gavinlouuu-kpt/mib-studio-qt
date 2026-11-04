@@ -26,6 +26,7 @@ namespace Ui { class OverviewTab; }
 
 namespace frontend
 {
+    class RecordingCapacityPanel;
 
     class OverviewTab : public QWidget
     {
@@ -42,6 +43,10 @@ namespace frontend
 
         QString currentJsPath() const;
         void refreshCameraMode();
+        // #833: redraw the window rectangle and size boxes from the profile's
+        // camera.window (or the script). Emits nothing: roiChanged would also
+        // move the processing ROI (MainWindow).
+        void reloadCameraWindow();
 
         // Controls whether the ROI overlay is shown on the canvas.
         void setRoiOverlayVisible(bool visible);
@@ -62,6 +67,9 @@ namespace frontend
         int roiWidth() const { return roiWidth_; }
         int roiHeight() const { return roiHeight_; }
         QPointF roiPosition() const { return roiPosition_; }
+
+        // #833: recording capacity for the camera window (MainWindow feeds it).
+        RecordingCapacityPanel *capacityPanel() const { return capacityPanel_; }
 
     signals:
         void roiChanged(int offsetX, int offsetY, int width, int height);
@@ -115,6 +123,7 @@ namespace frontend
 
         QString loadedCameraKey_;
         QLabel* modeLabel_ = nullptr;
+        RecordingCapacityPanel* capacityPanel_ = nullptr;
         QPointF savedRoiPosition_;
         int savedRoiWidth_ = 512, savedRoiHeight_ = 96;
         bool saveMindVisionRoi();

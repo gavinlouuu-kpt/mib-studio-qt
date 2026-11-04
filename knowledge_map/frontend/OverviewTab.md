@@ -42,6 +42,22 @@ position. ROI drag events emit `roiPositionChanged(QPointF)`, which
 `MainWindow` connects to `ProcessingService::setRealtimeRoi` and
 `AppBackend`'s recording thread.
 
+### Camera window in the profile and recording capacity (#833)
+
+The eGrabber rectangle is the camera window (cROI). When the active profile
+has `camera.window`, `initializeRoiFromConfig` shows it instead of the
+script's lines (the profile wins after the Experiment script);
+`reloadCameraWindow()` redraws it when the watcher reports a new window and
+emits nothing (`roiChanged` would also move the processing ROI in
+[[MainWindow]]). An operator edit still writes the script and, through
+`MainWindow`, `AppConfigWatcher::writeBackCameraWindow` into an existing
+`camera.window`. `capacityPanel()` (`frontend/widgets/RecordingCapacityPanel`,
+under the image) shows the window, requested and maximum fps, save stream,
+buffer (frames, size, seconds), destination rate and the four capacity gates
+as text (never colour alone); MainWindow feeds it once per second from
+`ExperimentCoordinator::recordingCapacity()` with the rectangle as the
+planned window, so resizing it updates the buffer at once.
+
 ## Wafer Grid (dot-grid localization, Overview only)
 
 The **Wafer Grid** toolbar button (`overviewWaferGridBtn`, after the ROI

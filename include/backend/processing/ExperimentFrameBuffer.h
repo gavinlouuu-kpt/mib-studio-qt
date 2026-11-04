@@ -43,6 +43,9 @@ public:
         size_t droppedInvalid{0};
         size_t bufferedAfter{0};
         uint64_t bytesAfter{0};
+        // Which bound this admission met (#833: the backlog log names the cap).
+        bool frameCapReached{false};
+        bool byteCapReached{false};
         size_t dropped() const { return droppedValid + droppedInvalid; }
     };
 

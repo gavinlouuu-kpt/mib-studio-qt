@@ -15,6 +15,8 @@
 #pragma once
 
 #include "backend/app/CalibrationRecord.h"
+#include "backend/app/DestinationWriteRate.h"
+#include "backend/app/RecordingCapacity.h"
 #include "backend/app/WallClock.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/recording/RecordingAccounting.h"
@@ -24,6 +26,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -68,6 +71,37 @@ public:
     // The Start transaction. Serialized; TOCTOU-free with respect to the
     // presented readiness generation.
     ExperimentStartResult start(const ExperimentStartRequest& request);
+
+    // Recording capacity for the operator's run setup (#833): the camera
+    // window, rate and buffer plan with the camera.window, camera.rate,
+    // storage.buffer and storage.throughput gates, as the next evaluation
+    // would give them. Cheap, no generation change, no disk write: the
+    // destination rate is the cached measurement (the destination's, or the
+    // last one measured) and is measured only by evaluateReadiness/start
+    // with an output path. `known` is false while no frame geometry is known
+    // (camera not running) or on a PL-science instrument.
+    //
+    // `planned` (the Overview tab, where the camera shows the full sensor):
+    // the window being placed instead of the running session's frames. The
+    // session's rates are used only when it runs that window size outside an
+    // Overview; otherwise the rate is the profile's target_fps and the
+    // camera maximum is unknown until the Experiment script applies it.
+    struct RecordingCapacityView {
+        bool busy{false};    // a Start or finalization held the coordinator: nothing evaluated
+        bool known{false};
+        bool planned{false}; // describes `planned`, not the running session
+        RecordingCapacityInputs inputs;
+        RecordingCapacity capacity;
+        ReadinessGate window;
+    };
+    RecordingCapacityView recordingCapacity(const std::string& outputPath = {},
+                                            std::optional<::camera::common::CameraWindow> planned = std::nullopt);
+
+    // The destination write-rate measurement (storage.throughput); tests
+    // install a fake. nullptr restores measureDestinationWriteRate. Results
+    // are cached per (destination directory, saved frame size).
+    using WriteRateProbe = std::function<WriteRateMeasurement(const std::string& outputPath, uint64_t bytesPerFrame)>;
+    void setWriteRateProbe(WriteRateProbe probe);
 
     // Ask the worker to finalize the active run. Returns immediately;
     // completion is observed through status()/the status callback
@@ -191,6 +225,15 @@ private:
         bool frameGeometryKnown{false};
         uint64_t bufferBytes{0};
         size_t flushInterval{0};
+        // #833: what the capacity gates read (the available RAM is not part of
+        // the key: it changes all the time and only moves the plan's size).
+        uint64_t bufferOverrideBytes{0};
+        size_t invalidSampling{0};
+        bool acquisitionKnown{false};
+        int acqWidth{0}, acqHeight{0}, acqOffsetX{0}, acqOffsetY{0};
+        double requestedFps{0.0}, maxFps{0.0}, targetFps{0.0};
+        std::string profileWindow;
+        uint64_t windowApplySequence{0};
         bool operator==(const InvalidationKey& o) const;
         bool operator!=(const InvalidationKey& o) const { return !(*this == o); }
     };
@@ -218,6 +261,16 @@ private:
     // calibration members (memoized by the config hash), invalidates the applied record when the
     // known identity changed (a store append, once per change), and evaluates the method's policy.
     CalibrationGateResult calibrationGateLocked(const RunConfigurationSnapshot& candidate);
+    // #833 capacity inputs. `measure`: run the destination write-rate probe
+    // for `outputPath` when no measurement is cached (else cached only).
+    CameraWindowGateInputs windowGateInputsLocked(const RunConfigurationSnapshot& candidate) const;
+    // `useSessionRates`: take the requested and maximum rate from the running
+    // session's camera report (false for an Overview session or another window).
+    RecordingCapacityInputs capacityInputsLocked(const RunConfigurationSnapshot& candidate,
+                                                 const std::string& outputPath, bool measure,
+                                                 bool useSessionRates);
+    // The running session acquires the experiment window (not an Overview).
+    bool experimentSessionLocked(const RunConfigurationSnapshot& candidate) const;
     // A closed run of a calibration method (#716 A4a): derive its record from the run's own file
     // and append it to the store. Called by the finalization with the coordinator lock released
     // and the state still Stopping/Failed, so no review reader can open meanwhile (HDF5 is not
@@ -252,6 +305,11 @@ private:
     bool storageWriteVerified_{false}; // the temp file of storage.output
     bool storageProbeOk_{false};       // the HDF5 round trip of storage.roundtrip
     std::string storageProbeReason_;
+    // Destination write rates (#833, storage.throughput), per (directory,
+    // saved frame size); under mutex_.
+    WriteRateProbe writeRateProbe_;
+    std::map<std::string, WriteRateMeasurement> writeRates_;
+    std::string lastWriteRateKey_;
 
     // Written under mutex_; atomic so start() can answer AlreadyActive without the lock (#595).
     std::atomic<ExperimentRunState> state_{ExperimentRunState::Idle};

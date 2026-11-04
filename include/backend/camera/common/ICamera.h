@@ -88,6 +88,43 @@ namespace camera::common
         FrameDeliveryMode deliveryMode = FrameDeliveryMode::EveryFrame;
     };
 
+    /**
+     * A camera acquisition window (cROI, #833): the sensor region the camera
+     * reads out, in sensor pixels. It decides the size of every frame and
+     * therefore what a recording saves; it is not the processing ROI drawn on
+     * the preview.
+     */
+    struct CameraWindow
+    {
+        int width = 0;
+        int height = 0;
+        int offsetX = 0;
+        int offsetY = 0;
+        bool valid() const { return width > 0 && height > 0 && offsetX >= 0 && offsetY >= 0; }
+        bool operator==(const CameraWindow &o) const
+        {
+            return width == o.width && height == o.height && offsetX == o.offsetX && offsetY == o.offsetY;
+        }
+        bool operator!=(const CameraWindow &o) const { return !(*this == o); }
+    };
+
+    /**
+     * What a running camera reports about its acquisition (#833), read at
+     * start(): the connected camera, the window in effect, the rate it is
+     * driven at and the highest rate the camera allows for that window.
+     * Unknown values stay empty/0; consumers must not substitute a default.
+     */
+    struct CameraAcquisitionReport
+    {
+        std::string vendor;            // connected camera (remote device), empty = unknown
+        std::string model;
+        CameraWindow window;           // read back from the camera
+        bool windowKnown = false;
+        double requestedFps = 0.0;     // the rate the camera is driven at; 0 = unknown
+        std::string requestedFpsSource; // e.g. "CycleMinimumPeriod 200 us (RC)"
+        double maxFps = 0.0;           // camera maximum for this window (AcquisitionFrameRateMax); 0 = unknown
+    };
+
     struct CameraStats
     {
         uint64_t frameRate = 0;    // Frames per second as reported by the device.
@@ -221,6 +258,18 @@ namespace camera::common
          * Default: undeclared/unsupported — consumers must not assume a unit.
          */
         virtual TimestampDescriptor timestampDescriptor() const { return {}; }
+
+        /**
+         * Acquisition facts read at the last successful start() (#833): the
+         * window, the driven rate and the camera's maximum rate for that
+         * window. Returns false when the backend reports none (the readiness
+         * gates then say the values are unavailable).
+         */
+        virtual bool acquisitionReport(CameraAcquisitionReport &out) const
+        {
+            (void)out;
+            return false;
+        }
     };
 
 } // namespace camera::common

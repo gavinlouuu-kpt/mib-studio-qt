@@ -279,6 +279,21 @@ both baselines after synchronous watcher default creation/merging.
 `frontend.config_tabs_state` replaces the default with complete bundled CRLF
 content before deletion and restores the original file after the save check.
 
+## Camera window on Save Profile (#833)
+
+`onSaveProfile` records the camera window in the saved `config.json`
+(`ProfileManager::cameraWindowForSave` + `withCameraWindow`): the editor
+document's own `camera.window` (an edit included), else the window the active
+config applies, else the Experiment script's Width/Height/Offset lines, with
+the connected camera's vendor/model (capture acquisition report, else the
+last window apply), else the camera the document already names.
+With Include JS the saved script's Width/Height/Offset lines are rewritten
+to the same values (`EgrabberConfigParser`), so script and section agree.
+Skipped for MindVision (its window lives in `mindvisionConfig.json`).
+`camera.window.*`, `roi`/`roi.*` and `experiment_buffer_max_mb` are High risk
+in the profile diff (`isHighRiskPath`). Guard:
+`frontend.profile_camera_window`.
+
 ## PZ7035 camera document (bridge ABI 38)
 
 On a PZ7035 (`run_mode`) the Config -> **Camera document** sub-tab shows the camera-document editor (`desktop/src/cameraDocument.tsx`, kind `pz7035`) in place of the EGrabber/MindVision ones: the same Load Bundled Default / Browse / Reload / Save / Save As / Apply buttons, a checked `.json` file in the instrument's `<data>/camera/` folder, apply only for a saved, unchanged, valid document. The backend checks the text as it is edited (`check_pz_camera_document`) and the editor shows the timing it gives (rate, exposure, SHS, the exposure and LED-strobe windows after XVS) or the first problem; the qualification note stays until the setting is 5,000 fps with the auto exposure. Apply (`apply_pz_camera_document`) re-enters Run when the instrument is in Run and asks first (`confirm`, then `acknowledgeDiscardRing`) when a stopped Run's buffered frames would be discarded. The experiment page shows the setting read only (`RunRateControl`). The LED strobe is Service-only and not part of the document.

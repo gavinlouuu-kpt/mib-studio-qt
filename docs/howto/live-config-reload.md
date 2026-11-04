@@ -4,7 +4,8 @@ This app reloads `config.json` at runtime whenever it is modified and saved, and
 
 - Processing parameters (`image_processing`) are applied to `ProcessingService` so realtime processing and classification reflect the new pipeline.
 - Flush interval (`buffer_threshold`) updates the round‑robin flush cadence.
-- Experiment buffer byte budget (`experiment_buffer_max_mb`, optional; default 512 MB, `0` = frame-count bound only) updates `ProcessingService::setMaxBufferedBytes` (issue #370).
+- Experiment buffer size override (`experiment_buffer_max_mb`, optional; absent or `0` = sized automatically from the camera window and rate at every Start, #833) updates `ProcessingService::setExperimentBufferOverrideBytes`.
+- Camera window (`camera.window`) and `target_fps` update AppBackend's acquisition profile (#833): the window reaches the camera with the next Experiment script; the rate is the fallback when the camera does not report its driven rate.
 - Display refresh (`display_fps`) updates the `PlaybackPanel` timer without restarting the app.
 - Autofocus parameters are applied to `AutofocusService::Config`.
 

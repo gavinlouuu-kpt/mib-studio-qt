@@ -137,6 +137,11 @@ public:
     // Describes Frame::timestamp for the current/last session (from
     // ICamera::timestampDescriptor, tagged with the session generation).
     ::camera::common::TimestampDescriptor timestampDescriptor() const;
+    // #833: what the running session's camera reported at start (window,
+    // driven rate, maximum rate for the window, model). False while no session
+    // runs or when the backend reports none; `generation` receives the
+    // session it belongs to.
+    bool acquisitionReport(::camera::common::CameraAcquisitionReport& out, uint64_t* generation = nullptr) const;
 
     // Backend-confirmed active mode (falls back to the requested mode until a
     // camera has confirmed one). Prefer this over Config::deliveryMode when
@@ -186,6 +191,10 @@ private:
     // Session timestamp descriptor (set when the camera opens, cleared on
     // release). Guarded by lifecycleMutex_.
     ::camera::common::TimestampDescriptor timestampDescriptor_{};
+    // Under lifecycleMutex_; valid only for acquisitionReportGeneration_.
+    ::camera::common::CameraAcquisitionReport acquisitionReport_{};
+    bool acquisitionReportValid_{false};
+    uint64_t acquisitionReportGeneration_{0};
 };
 
 } // namespace backend::services

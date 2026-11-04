@@ -263,8 +263,10 @@ int main()
         MIB_EXPECT(r.candidate.frameWidth == 96 && r.candidate.frameHeight == 96, "candidate geometry from frames");
         MIB_EXPECT(r.candidate.captureGeneration == backend.capture().lifecycleSnapshot().generation,
                    "candidate carries capture generation");
-        const auto originalBudget = proc.getMaxBufferedBytes();
-        proc.setMaxBufferedBytes(1);
+        // #833: the byte budget the operator sets is the experiment_buffer_max_mb
+        // override; the coordinator sizes the service caps from it at Start.
+        const auto originalBudget = proc.experimentBufferOverrideBytes();
+        proc.setExperimentBufferOverrideBytes(1);
         const auto impossible = coord.evaluateReadiness(out1);
         MIB_EXPECT(!impossible.ready && statusOf(impossible, "storage.buffer") == GateStatus::Fail,
                    "oversized payload blocks readiness");
@@ -274,13 +276,13 @@ int main()
         series.multi_image_enabled = true;
         series.multi_image_count = 10;
         proc.setProcessingConfig(series);
-        proc.setMaxBufferedBytes(4 * 96 * 96);
+        proc.setExperimentBufferOverrideBytes(4 * 96 * 96);
         const auto oversizedSeries = coord.evaluateReadiness(out1);
         MIB_EXPECT(!oversizedSeries.ready &&
                        statusOf(oversizedSeries, "storage.buffer") == GateStatus::Fail,
                    "oversized series blocks readiness");
         proc.setProcessingConfig(beforeSeries);
-        proc.setMaxBufferedBytes(originalBudget);
+        proc.setExperimentBufferOverrideBytes(originalBudget);
         genReady = coord.evaluateReadiness(out1).generation;
         MIB_EXPECT(coord.evaluateReadiness(out1).generation == genReady, "generation stable while nothing changes");
 
@@ -342,8 +344,8 @@ int main()
         MIB_EXPECT(!stopped.ready && stopped.generation != before.generation, "stop invalidates");
         // Geometry can change independently of the capture lifecycle (SDK ROI /
         // format renegotiation). Its payload gate must invalidate prior preflight.
-        const auto budget = proc.getMaxBufferedBytes();
-        proc.setMaxBufferedBytes(2 * 96 * 96);
+        const auto budget = proc.experimentBufferOverrideBytes();
+        proc.setExperimentBufferOverrideBytes(2 * 96 * 96);
         auto store = backend.getFrameStore();
         pushMat(*store, cv::Mat(96, 96, CV_8UC1, cv::Scalar(0)), 9000);
         const auto small = coord.evaluateReadiness(out1);
@@ -356,7 +358,7 @@ int main()
                    "frame geometry invalidates readiness without a lifecycle change");
         MIB_EXPECT(coord.evaluateReadiness(out1).generation == large.generation,
                    "unchanged frame geometry keeps readiness stable");
-        proc.setMaxBufferedBytes(budget);
+        proc.setExperimentBufferOverrideBytes(budget);
         MIB_REQUIRE(startCapture(backend), "restart capture");
         const auto restarted = coord.evaluateReadiness(out1);
         MIB_EXPECT(restarted.ready && restarted.generation != before.generation && restarted.generation != stopped.generation,
@@ -1037,7 +1039,11 @@ int main()
         wd.mark("fatal save error");
         auto& coordinator = backend.experiment();
         const auto out = (td.path() / "fatal_run.h5").string();
-        proc.setFlushInterval(1000000);
+        // No automatic flush while the test drives them (the mock delivers far
+        // fewer frames in this section). #833: a flush interval the minimum hold
+        // (2 x the interval, plus the write queue) can hold in RAM on a CI runner;
+        // a million frames would fail storage.buffer.
+        proc.setFlushInterval(20000);
 
         auto r = coordinator.evaluateReadiness(out);
         MIB_REQUIRE(r.ready, "ready for fatal test");

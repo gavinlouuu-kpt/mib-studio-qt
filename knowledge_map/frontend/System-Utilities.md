@@ -66,8 +66,16 @@
   `writeBackProcessingConfig` (rewrite the whole section from runtime) is
   gone. Guard: `frontend.config_apply`.
   Config loads also read the optional top-level `experiment_buffer_max_mb`
-  (issue #370) into `ProcessingService::setMaxBufferedBytes` (0 = count-only
-  backlog bound; default 512 MiB when the key is absent).
+  into `ProcessingService::setExperimentBufferOverrideBytes` (#833: an
+  explicit override of the buffer the coordinator sizes from the camera
+  window; absent or 0 = automatic), and `camera.window` / `target_fps` into
+  `AppBackend::setAcquisitionProfile` (`applyAcquisitionProfile`, parsed by
+  the backend's `parseAcquisitionProfile`; a malformed window is logged and
+  not applied; emits `acquisitionProfileLoaded`). `writeBackCameraWindow`
+  (same checked store) writes an Overview window edit into an existing
+  `camera.window`, keeping its camera_vendor/camera_model; it creates no
+  section and skips an unchanged window. Guard:
+  `frontend.profile_camera_window`.
   On startup, when the app-managed `config.json` already exists,
   `mergeNewDefaultsIntoConfig` deep-merges any keys added to the bundled
   `:/defaults/config.json` by a newer build into the existing file

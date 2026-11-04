@@ -58,15 +58,10 @@ std::string previewRecipeSha256(const ProcessingConfig& config, const Processing
         reinterpret_cast<const uint8_t*>(recipe.data()), recipe.size());
 }
 
+// The frame cap until a plan is applied (#833 keeps the rule in
+// ExperimentBufferSizing, where the unknown-rate plan uses it too).
 size_t defaultMaxBufferedFrames(size_t flushInterval) {
-    constexpr size_t kMinBufferedFrames = 1000;
-    constexpr size_t kSoftMaxBufferedFrames = 5000;
-
-    const size_t scaled = flushInterval > (std::numeric_limits<size_t>::max() / 4)
-                              ? std::numeric_limits<size_t>::max()
-                              : flushInterval * 4;
-    const size_t preferred = std::max(kMinBufferedFrames, scaled);
-    return std::max(flushInterval, std::min(preferred, kSoftMaxBufferedFrames));
+    return backend::processing::unknownRateFrameCap(flushInterval);
 }
 
 void applyTrackState(ProcessedFrame& frame, const BatchTrack& track) {
@@ -773,6 +768,29 @@ void ProcessingService::setMaxBufferedBytes(uint64_t bytes) {
 
 uint64_t ProcessingService::getMaxBufferedBytes() const {
     return maxBufferedBytes_.load(std::memory_order_relaxed);
+}
+
+void ProcessingService::setExperimentBufferOverrideBytes(uint64_t bytes) {
+    experimentBufferOverrideBytes_.store(bytes, std::memory_order_relaxed);
+    if (bytes > 0)
+        SPDLOG_INFO("Experiment buffer override set to {} (experiment_buffer_max_mb)",
+                    backend::processing::formatBufferBytes(bytes));
+}
+
+uint64_t ProcessingService::experimentBufferOverrideBytes() const {
+    return experimentBufferOverrideBytes_.load(std::memory_order_relaxed);
+}
+
+void ProcessingService::applyExperimentBufferPlan(const backend::processing::ExperimentBufferPlan& plan) {
+    const size_t frames = std::max<size_t>(1, plan.maxFrames);
+    maxBufferedFrames_.store(frames, std::memory_order_relaxed);
+    maxBufferedBytes_.store(plan.maxBytes, std::memory_order_relaxed);
+    experimentBuffer_.setPolicy({frames, plan.maxBytes});
+    SPDLOG_INFO("Experiment buffer sized ({}): {}; {} B/frame, floor {} frames, save-path peak {}, RAM ceiling {}{}",
+                backend::processing::toString(plan.source), plan.summary(), plan.bytesPerFrame, plan.floorFrames,
+                backend::processing::formatBufferBytes(plan.peakBytes),
+                plan.ramKnown ? backend::processing::formatBufferBytes(plan.ramCeilingBytes) : std::string("unknown"),
+                plan.clampedByRam ? " (cut to the RAM ceiling)" : "");
 }
 
 ProcessingService::MemoryStats ProcessingService::memoryStats() const {
@@ -2409,7 +2427,9 @@ ProcessingService::Roi ProcessingService::getChannelBand() const {
 }
 
 void ProcessingService::logDroppedExperimentFrames(const DroppedFrameCounts& dropped,
-                                                   size_t bufferedTotal, size_t maxBufferedFrames) {
+                                                   size_t bufferedTotal, size_t maxBufferedFrames,
+                                                   uint64_t bufferedBytes, bool frameCapReached,
+                                                   bool byteCapReached) {
     if (dropped.valid == 0 && dropped.invalid == 0) {
         return;
     }
@@ -2421,9 +2441,19 @@ void ProcessingService::logDroppedExperimentFrames(const DroppedFrameCounts& dro
         return;
     }
 
-    SPDLOG_WARN("Experiment frame backlog capped: dropped valid={}, invalid={} "
-                "(buffered={}, max={}, total_dropped_valid={}, total_dropped_invalid={})",
-                dropped.valid, dropped.invalid, bufferedTotal, maxBufferedFrames,
+    // #833 / #828: name the cap that bound, so a log says whether the frame
+    // count or the byte budget ran out.
+    const uint64_t maxBytes = maxBufferedBytes_.load(std::memory_order_relaxed);
+    const char* binding = frameCapReached && byteCapReached ? "frame cap and byte cap"
+                          : byteCapReached                  ? "byte cap"
+                          : frameCapReached                 ? "frame cap"
+                                                            : "cap";
+    SPDLOG_WARN("Experiment frame backlog capped by the {}: dropped valid={}, invalid={} "
+                "(buffered={} frames / {}, frame cap={}, byte cap={}, total_dropped_valid={}, "
+                "total_dropped_invalid={})",
+                binding, dropped.valid, dropped.invalid, bufferedTotal,
+                backend::processing::formatBufferBytes(bufferedBytes), maxBufferedFrames,
+                maxBytes ? backend::processing::formatBufferBytes(maxBytes) : std::string("none"),
                 droppedValidFrames_.load(std::memory_order_relaxed),
                 droppedInvalidFrames_.load(std::memory_order_relaxed));
 }
@@ -2454,7 +2484,7 @@ bool ProcessingService::appendExperimentFrame(ProcessedFrame&& frame, bool isVal
         experimentAccounting_.persistenceCancelledByPolicy.fetch_add(evicted, std::memory_order_relaxed);
     }
     logDroppedExperimentFrames(DroppedFrameCounts{r.droppedValid, r.droppedInvalid}, r.bufferedAfter,
-                               maxBufferedFrames);
+                               maxBufferedFrames, r.bytesAfter, r.frameCapReached, r.byteCapReached);
     settle.unlock();
     if (needsFlush() && flushRequestCb_) flushRequestCb_();
     if (r.dropped() && flushErrorCb_ && !capacityErrorReported_.exchange(true, std::memory_order_relaxed))

@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <stdexcept>
 #include <vector>
 #include <thread>
@@ -43,6 +44,10 @@ bool EGrabberCamera::start() {
     
     if (running_) {
         return true;
+    }
+    {
+        std::lock_guard<std::mutex> reportLock(reportMutex_);
+        reportValid_ = false;
     }
 
     try {
@@ -93,6 +98,86 @@ bool EGrabberCamera::start() {
             // Graceful degradation: If AcquisitionStop fails, it may already be stopped
             // Log but continue - this is not a fatal error
             SPDLOG_DEBUG("EGrabberCamera AcquisitionStop before start (expected if not running): {}", ex.what());
+        }
+
+        // #833: what the camera acquires with (window, driven rate, maximum
+        // rate for the window, model), for the recording capacity gates. Each
+        // feature is optional; a camera without it leaves the value unknown.
+        {
+            CameraAcquisitionReport report;
+            auto remoteString = [&](const char* feature, const std::string& fallback) {
+                try {
+                    return grabber_->getString<RemoteModule>(feature);
+                } catch (const std::exception&) {
+                    return fallback == "Unknown" ? std::string() : fallback;
+                }
+            };
+            auto number = [&](auto module, const char* feature, double& out) {
+                using M = decltype(module);
+                try {
+                    out = grabber_->getFloat<M>(feature);
+                    return true;
+                } catch (const std::exception&) {
+                }
+                try {
+                    out = static_cast<double>(grabber_->getInteger<M>(feature));
+                    return true;
+                } catch (const std::exception&) {
+                }
+                return false;
+            };
+            // The Coaxlink device module mirrors the camera's identity (read-only
+            // dump 2026-11-04: both report SVS-Vistek GmbH / MC2066), so it is
+            // the fallback when the remote read fails.
+            report.vendor = remoteString("DeviceVendorName", deviceVendor);
+            report.model = remoteString("DeviceModelName", deviceModel);
+            try {
+                report.window.width = static_cast<int>(grabber_->getInteger<RemoteModule>("Width"));
+                report.window.height = static_cast<int>(grabber_->getInteger<RemoteModule>("Height"));
+                report.window.offsetX = static_cast<int>(grabber_->getInteger<RemoteModule>("OffsetX"));
+                report.window.offsetY = static_cast<int>(grabber_->getInteger<RemoteModule>("OffsetY"));
+                report.windowKnown = true;
+            } catch (const std::exception& ex) {
+                SPDLOG_DEBUG("EGrabberCamera: camera window read failed: {}", ex.what());
+            }
+            std::string method;
+            try {
+                method = grabber_->getString<DeviceModule>("CameraControlMethod");
+            } catch (const std::exception&) {
+            }
+            double value = 0.0;
+            if (method == "RC" || method == "RG" || method == "EXPOSE") {
+                // The grabber starts a cycle at most every CycleMinimumPeriod (us).
+                // With a triggered cycle source the rate is at most this; it is
+                // still the rate the grabber lets the camera be driven at.
+                if (number(DeviceModule{}, "CycleMinimumPeriod", value) && value > 0) {
+                    report.requestedFps = 1e6 / value;
+                    std::string trigger;
+                    try {
+                        trigger = grabber_->getString<DeviceModule>("CycleTriggerSource");
+                    } catch (const std::exception&) {
+                    }
+                    char source[160];
+                    std::snprintf(source, sizeof source, "CycleMinimumPeriod %.0f us (%s%s%s)", value, method.c_str(),
+                                  trigger.empty() ? "" : ", cycle trigger ", trigger.c_str());
+                    report.requestedFpsSource = source;
+                }
+            } else if (method == "NC") {
+                if (number(RemoteModule{}, "AcquisitionFrameRate", value) && value > 0) {
+                    report.requestedFps = value;
+                    report.requestedFpsSource = "AcquisitionFrameRate (NC)";
+                }
+            }
+            if (number(RemoteModule{}, "AcquisitionFrameRateMax", value) && value > 0) report.maxFps = value;
+            SPDLOG_INFO("EGrabberCamera: camera {} {}, window {}x{}+{}+{}, driven at {:.0f} fps ({}), "
+                        "camera max {:.0f} fps",
+                        report.vendor, report.model, report.window.width, report.window.height,
+                        report.window.offsetX, report.window.offsetY, report.requestedFps,
+                        report.requestedFpsSource.empty() ? "unknown" : report.requestedFpsSource,
+                        report.maxFps);
+            std::lock_guard<std::mutex> reportLock(reportMutex_);
+            report_ = report;
+            reportValid_ = true;
         }
 
         // Follow SDK sample 310-high-frame-rate.cpp: probe resolution, then configure buffers.
@@ -549,6 +634,14 @@ bool EGrabberCamera::setTriggerOutput(bool high) {
 }
 
 #endif
+
+// Both builds: the report read at the last start() (none on the stub).
+bool EGrabberCamera::acquisitionReport(CameraAcquisitionReport& out) const {
+    std::lock_guard<std::mutex> reportLock(reportMutex_);
+    if (!reportValid_) return false;
+    out = report_;
+    return true;
+}
 
 } // namespace camera::common
 

@@ -322,8 +322,18 @@ StoreOverwritten, HDF5 reopen round-trip, legacy file → Unknown).
 - `setMindVisionCameraSelection(cameraIndex, label)` — choose a MindVision
   device (no start)
 - `configureMockCamera(options)` — choose mock folder instead
-- `applyCameraScriptFromFile(path)` — push a GenICam JS config to the selected
-  device (stops capture first, does not restart)
+- `applyCameraScriptFromFile(path, errorOut, role)` — push a GenICam JS config
+  to the selected device (stops capture first, does not restart). #833: with
+  `CameraScriptRole::Experiment` (the default) the profile's camera window
+  (`acquisitionProfile().window`) follows through the same handle, so the
+  profile wins over the script; `Overview` (the full-sensor script) applies
+  the script alone. `lastCameraWindowApply()` keeps what happened (sequence,
+  script window, applied window, model refusal, SDK error) for the
+  `camera.window` gate ([[ExperimentCoordinator]]).
+- `setAcquisitionProfile` / `acquisitionProfile()` (#833) — config.json's
+  `camera.window` and `target_fps`, set by the Qt `AppConfigWatcher` and
+  `ConfigDocumentApply`; read by the coordinator's capacity gates and the
+  Experiment script apply.
 - `resetSelectedHardwareCamera()` — issue GenICam `DeviceReset`
 - `applyMindVisionConfigFromFile(path)` — apply the selected MindVision JSON
   config and refresh the capture factory path

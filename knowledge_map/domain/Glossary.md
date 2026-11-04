@@ -29,6 +29,11 @@
   ([[../services/TriggerService]]).
 - **ROI** — rectangular region of interest; applied pre-analysis by
   [[../services/ProcessingService]] and by display in [[../frontend/PreviewPage]].
+  This is the **processing ROI (pROI)**, drawn on the preview (config `roi`).
+- **Camera window (cROI)** — the sensor region the camera reads out (GenICam
+  Width/Height/OffsetX/OffsetY; config `camera.window`, #833). It decides the
+  size of every frame and so the bytes per saved frame (W x H x 2 with the
+  mask), the experiment buffer and the save rate; the pROI must fit inside it.
 - **Channel wall** — the high-contrast top/bottom edges of the microfluidic
   channel. Inside the processing ROI they produce spurious contours (noise) and
   keep the empty-frame fast path awake; cells flow in the central band between

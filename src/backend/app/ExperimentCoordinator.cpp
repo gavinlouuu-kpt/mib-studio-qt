@@ -218,7 +218,7 @@ bool probeHdf5Destination(const std::string& output, std::string& reason) {
                      cv::norm(frames[i].processedImage, readback[i].processedImage, cv::NORM_INF) ==
                          0;
         hdf.closeFile();
-        reason = ok ? "HDF5 write/close/reopen verified; sustained throughput unverified"
+        reason = ok ? "HDF5 write/close/reopen verified (sustained throughput: storage.throughput)"
                     : "destination HDF5 write/read verification failed";
         return ok;
     } catch (const std::exception& e) {
@@ -528,7 +528,12 @@ bool ExperimentCoordinator::InvalidationKey::operator==(const InvalidationKey& o
            outputPath == o.outputPath && profileId == o.profileId && method == o.method && calibration == o.calibration &&
            faulted == o.faulted && frameWidth == o.frameWidth && frameHeight == o.frameHeight &&
            pixelFormat == o.pixelFormat && frameGeometryKnown == o.frameGeometryKnown &&
-           bufferBytes == o.bufferBytes && flushInterval == o.flushInterval;
+           bufferBytes == o.bufferBytes && flushInterval == o.flushInterval &&
+           bufferOverrideBytes == o.bufferOverrideBytes && invalidSampling == o.invalidSampling &&
+           acquisitionKnown == o.acquisitionKnown && acqWidth == o.acqWidth && acqHeight == o.acqHeight &&
+           acqOffsetX == o.acqOffsetX && acqOffsetY == o.acqOffsetY && requestedFps == o.requestedFps &&
+           maxFps == o.maxFps && targetFps == o.targetFps && profileWindow == o.profileWindow &&
+           windowApplySequence == o.windowApplySequence;
 }
 
 ExperimentCoordinator::ExperimentCoordinator(AppBackend& backend) : backend_(backend) {}
@@ -766,7 +771,173 @@ ExperimentCoordinator::currentKeyLocked(const std::string& outputPath, const std
     k.frameGeometryKnown = c.frameGeometryKnown;
     k.bufferBytes = backend_.processing().getMaxBufferedBytes();
     k.flushInterval = backend_.processing().getFlushInterval();
+    k.bufferOverrideBytes = backend_.processing().experimentBufferOverrideBytes();
+    k.invalidSampling = backend_.processing().getInvalidFrameSamplingRate();
+    ::camera::common::CameraAcquisitionReport report;
+    k.acquisitionKnown = backend_.capture().acquisitionReport(report);
+    if (k.acquisitionKnown) {
+        k.acqWidth = report.window.width;
+        k.acqHeight = report.window.height;
+        k.acqOffsetX = report.window.offsetX;
+        k.acqOffsetY = report.window.offsetY;
+        k.requestedFps = report.requestedFps;
+        k.maxFps = report.maxFps;
+    }
+    const auto profile = backend_.acquisitionProfile();
+    k.targetFps = profile.targetFps;
+    if (profile.window)
+        k.profileWindow = describeWindow(profile.window->window) + "|" + profile.window->cameraVendor + "|" +
+                          profile.window->cameraModel;
+    k.windowApplySequence = backend_.lastCameraWindowApply().sequence;
     return k;
+}
+
+CameraWindowGateInputs ExperimentCoordinator::windowGateInputsLocked(const RunConfigurationSnapshot& c) const
+{
+    CameraWindowGateInputs in;
+    in.profile = backend_.acquisitionProfile().window;
+    in.cameraName = c.camera.effective;
+    in.cameraAppliesWindows = c.camera.effective == "egrabber";
+    const auto apply = backend_.lastCameraWindowApply();
+    if (apply.sequence > 0) in.apply = apply;
+    ::camera::common::CameraAcquisitionReport report;
+    if (backend_.capture().acquisitionReport(report) && report.windowKnown) {
+        in.sessionWindowKnown = true;
+        in.sessionWindow = report.window;
+    }
+    in.frameKnown = c.frameGeometryKnown;
+    in.frameWidth = c.frameWidth;
+    in.frameHeight = c.frameHeight;
+    return in;
+}
+
+bool ExperimentCoordinator::experimentSessionLocked(const RunConfigurationSnapshot& c) const
+{
+    if (backend_.isCameraOverview()) return false;
+    const auto role = backend_.lastCameraScriptRole();
+    return !(c.camera.effective == "egrabber" && role && *role == AppBackend::CameraScriptRole::Overview);
+}
+
+RecordingCapacityInputs ExperimentCoordinator::capacityInputsLocked(const RunConfigurationSnapshot& c,
+                                                                    const std::string& outputPath, bool measure,
+                                                                    bool useSessionRates)
+{
+    RecordingCapacityInputs in;
+    auto& proc = backend_.processing();
+    const auto cfg = proc.getProcessingConfig();
+    in.windowWidth = c.frameGeometryKnown ? c.frameWidth : 0;
+    in.windowHeight = c.frameGeometryKnown ? c.frameHeight : 0;
+    in.imagesPerFrame = processing::savedImagesPerFrame(cfg.multi_image_enabled, cfg.multi_image_count);
+    const uint64_t bytesPerFrame =
+        processing::savedBytesPerFrame(in.windowWidth, in.windowHeight, cfg.multi_image_enabled, cfg.multi_image_count);
+    // The rate the camera is driven at when it reports it, else the profile's target_fps.
+    ::camera::common::CameraAcquisitionReport report;
+    const bool reported = useSessionRates && backend_.capture().acquisitionReport(report);
+    if (reported && report.requestedFps > 0) {
+        in.requestedFps = report.requestedFps;
+        in.requestedFpsSource = "camera " + report.requestedFpsSource;
+    } else if (const double target = backend_.acquisitionProfile().targetFps; target > 0) {
+        in.requestedFps = target;
+        in.requestedFpsSource = "profile target_fps";
+    }
+    if (reported) in.maxFps = report.maxFps;
+    in.overrideBytes = proc.experimentBufferOverrideBytes();
+    processing::ExperimentBufferSizingInputs sizing;
+    sizing.bytesPerFrame = bytesPerFrame;
+    sizing.requestedFps = in.requestedFps;
+    sizing.flushInterval = proc.getFlushInterval();
+    sizing.availableRamBytes = Tools::getAvailableSystemRAMBytes();
+    sizing.overrideBytes = in.overrideBytes;
+    in.plan = processing::planExperimentBuffer(sizing);
+    in.invalidSamplingRate = std::max<size_t>(1, proc.getInvalidFrameSamplingRate());
+
+    // The destination's sustained write rate: measured once per (directory,
+    // frame size), bounded (DestinationWriteRate.h).
+    if (bytesPerFrame > 0 && !outputPath.empty()) {
+        const std::string key = writeRateDirectory(outputPath) + "|" + std::to_string(bytesPerFrame);
+        auto it = writeRates_.find(key);
+        if (it == writeRates_.end() && measure) {
+            // A failure is kept too (the rate stays unknown, a warning), so a
+            // destination that cannot be measured does not delay every evaluation.
+            it = writeRates_.emplace(key, writeRateProbe_ ? writeRateProbe_(outputPath, bytesPerFrame)
+                                                          : measureDestinationWriteRate(outputPath, bytesPerFrame))
+                     .first;
+        }
+        if (it != writeRates_.end() && it->second.ok) {
+            lastWriteRateKey_ = key;
+            in.diskBytesPerSecond = it->second.bytesPerSecond;
+            in.diskRateNote = it->second.note + " at " + it->second.directory;
+        } else if (it != writeRates_.end()) {
+            in.diskRateNote = it->second.note;
+        } else {
+            in.diskRateNote = "measured when the destination is checked at Start";
+        }
+    } else if (const auto last = writeRates_.find(lastWriteRateKey_); last != writeRates_.end()) {
+        in.diskBytesPerSecond = last->second.bytesPerSecond;
+        in.diskRateNote = "last destination, " + last->second.directory + ", " + last->second.note;
+    } else {
+        in.diskRateNote = "measured when the destination is chosen at Start";
+    }
+    return in;
+}
+
+void ExperimentCoordinator::setWriteRateProbe(WriteRateProbe probe)
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    writeRateProbe_ = std::move(probe);
+    writeRates_.clear();
+    lastWriteRateKey_.clear();
+}
+
+ExperimentCoordinator::RecordingCapacityView ExperimentCoordinator::recordingCapacity(
+    const std::string& outputPath, std::optional<::camera::common::CameraWindow> planned)
+{
+    const auto output = acceptOutputPath(outputPath);
+    RecordingCapacityView view;
+    // A UI timer calls this: never wait behind a Start or a finalization.
+    std::unique_lock<std::mutex> lk(mutex_, std::try_to_lock);
+    if (!lk.owns_lock()) {
+        view.busy = true;
+        return view;
+    }
+    // Only what the capacity gates read (candidateLocked also polls the RF
+    // generator and resolves the method, which a 1 s UI poll must not do).
+    RunConfigurationSnapshot c;
+    const auto lifecycle = backend_.capture().lifecycleSnapshot();
+    c.cameraReady = lifecycle.cameraReady && lifecycle.state == services::CaptureLifecycleState::Running;
+    c.camera = backend_.cameraSourceInfo();
+    if (auto store = backend_.getFrameStore()) {
+        playback::Frame f;
+        if (store->getLatest(f)) {
+            c.frameWidth = f.width;
+            c.frameHeight = f.height;
+            c.pixelFormat = f.pixelFormat;
+            c.frameGeometryKnown = true;
+        }
+    }
+    if (!app::hostProcessingAvailable()) return view; // the PL records; no host capacity gates
+    bool useSessionRates = experimentSessionLocked(c);
+    if (planned && planned->valid()) {
+        view.planned = true;
+        ::camera::common::CameraAcquisitionReport report;
+        const bool sameWindow = c.frameGeometryKnown && c.frameWidth == static_cast<uint64_t>(planned->width) &&
+                                c.frameHeight == static_cast<uint64_t>(planned->height);
+        useSessionRates = useSessionRates && sameWindow && backend_.capture().acquisitionReport(report);
+        c.frameWidth = static_cast<uint64_t>(planned->width);
+        c.frameHeight = static_cast<uint64_t>(planned->height);
+        c.frameGeometryKnown = true;
+        view.window = gate("camera.window", GateStatus::Pass, {}, {},
+                           "planned window " + describeWindow(*planned) +
+                               ": the camera applies it with the Experiment script");
+    } else {
+        view.window = cameraWindowGate(windowGateInputsLocked(c));
+    }
+    if (!c.frameGeometryKnown) return view;
+    view.known = true;
+    view.inputs = capacityInputsLocked(c, output.refusal.empty() ? output.path : std::string(), /*measure=*/false,
+                                       useSessionRates);
+    view.capacity = evaluateRecordingCapacity(view.inputs);
+    return view;
 }
 
 ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::string& outputPath,
@@ -897,6 +1068,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         r.gates.push_back(gate("camera.geometry", GateStatus::Unavailable, "no frame has been received yet",
                                "wait for the first frame"));
     }
+    // #833: the profile's camera window is the one the camera runs.
+    if (!instrumentModes && app::hostProcessingAvailable() && c.cameraReady)
+        r.gates.push_back(cameraWindowGate(windowGateInputsLocked(c)));
     if (!app::hostProcessingAvailable()) {
         // The PL processes every frame; the host pipeline's gates do not apply. Its
         // results reach the PS through an execution provider (YOFO S1).
@@ -1122,29 +1296,19 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
             }
         }
     }
+    // #833: rate, buffer and destination throughput for the camera window. The
+    // destination is measured only once storage.output passed.
     if (app::hostProcessingAvailable() && c.frameGeometryKnown) {
-        const auto cfg = backend_.processing().getProcessingConfig();
-        const uint64_t images = cfg.multi_image_enabled
-                                    ? static_cast<uint64_t>(std::max(1, cfg.multi_image_count)) + 1
-                                    : 2;
-        const uint64_t cap = backend_.processing().getMaxBufferedBytes();
-        const uint64_t limit = std::numeric_limits<uint64_t>::max();
-        const bool overflow = c.frameHeight == 0 || c.frameWidth == 0 ||
-                              c.frameWidth > limit / c.frameHeight ||
-                              c.frameWidth * c.frameHeight > limit / images;
-        const uint64_t payload = overflow ? limit : c.frameWidth * c.frameHeight * images;
-        if (overflow || (cap && payload > cap))
-            r.gates.push_back(
-                gate("storage.buffer", GateStatus::Fail,
-                     "one full-frame image/mask series cannot fit the recording byte budget",
-                     "reduce frame size/series length or increase the recording budget"));
-        else if (cap && cap / payload < backend_.processing().getFlushInterval())
-            r.gates.push_back(gate(
-                "storage.buffer", GateStatus::Warn,
-                "byte-pressure flushing will run before the configured frame threshold",
-                "leave capacity headroom; runtime overflow will fail the experiment explicitly"));
-        else
-            r.gates.push_back(gate("storage.buffer", GateStatus::Pass));
+        const bool destinationOk = !outputPath.empty() && outputRefusal.empty() && r.gate("storage.output") &&
+                                   r.gate("storage.output")->status == GateStatus::Pass;
+        const auto inputs = capacityInputsLocked(c, destinationOk ? outputPath : std::string(), destinationOk,
+                                                 experimentSessionLocked(c));
+        const auto capacity = evaluateRecordingCapacity(inputs);
+        r.gates.push_back(capacity.rate);
+        r.gates.push_back(capacity.buffer);
+        r.gates.push_back(capacity.throughput);
+        r.bufferPlan = inputs.plan;
+        r.bufferPlanValid = true;
     }
 
     // A file open for review in the facade's own reader fails the same gate
@@ -1513,6 +1677,8 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     }
 
     // 6-7. Acquire processing ownership and enter Active.
+    // #833: the buffer sized for this run's camera window and rate (both caps together).
+    if (result.readiness.bufferPlanValid) proc.applyExperimentBufferPlan(result.readiness.bufferPlan);
     proc.setExperimentAccountingContext(run.captureGeneration, run.deliveryModeActive == "latestFrame");
     // Pulse records from before the run (manual/periodic test pulses, a
     // previous run's tail) are not this experiment's: discard them.

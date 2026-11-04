@@ -115,6 +115,8 @@ set(FRONTEND_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/include/frontend/models/TargetGatePreview.h
     ${PROJECT_SOURCE_DIR}/src/frontend/widgets/RunStatusWidget.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/widgets/RunStatusWidget.h
+    ${PROJECT_SOURCE_DIR}/src/frontend/widgets/RecordingCapacityPanel.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/widgets/RecordingCapacityPanel.h
     ${PROJECT_SOURCE_DIR}/src/frontend/widgets/AlertBanner.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/widgets/AlertBanner.h
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/WindowGeometryPolicy.cpp
@@ -337,6 +339,12 @@ if(BUILD_TESTING)
     add_test(NAME frontend.config_apply COMMAND $<TARGET_FILE:mib_frontend_tests> app_config_apply_test
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.config_apply PROPERTIES LABELS "frontend;safety" TIMEOUT 240)
+
+    # #833: camera.window in the Qt profile (risk, save capture, watcher apply/write-back).
+    mib_test_runner_add(mib_frontend_tests profile_camera_window_test ${PROJECT_SOURCE_DIR}/tests/frontend/profile_camera_window_test.cpp)
+    add_test(NAME frontend.profile_camera_window COMMAND $<TARGET_FILE:mib_frontend_tests> profile_camera_window_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.profile_camera_window PROPERTIES LABELS "frontend;profiles;safety" TIMEOUT 120)
 
     # The eight widget tests above share one executable (cmake/MIBTestRunner.cmake):
     # it compiles resources/defaults.qrc itself like the app does (ConfigTabs

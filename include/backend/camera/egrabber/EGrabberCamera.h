@@ -42,6 +42,10 @@ public:
     FrameDeliveryCapabilities deliveryCapabilities() const override;
     FrameDeliveryMode activeDeliveryMode() const override;
     bool pollAcquisitionQueueStats(AcquisitionQueueStats& out) const override;
+    // Window (remote Width/Height/OffsetX/OffsetY), driven rate (grabber
+    // CycleMinimumPeriod in RC/RG/EXPOSE control, camera AcquisitionFrameRate
+    // in NC), camera AcquisitionFrameRateMax and model, read at start() (#833).
+    bool acquisitionReport(CameraAcquisitionReport& out) const override;
     bool checkDeviceHealth() const;
 
     void configureTriggerOutput(const std::string& lineSelector) override;
@@ -67,6 +71,10 @@ private:
     int selectedDeviceIndex_ = -1;
 
     mutable CameraStats lastStats_{};
+    // Read at start(); copied out by acquisitionReport() (any thread).
+    mutable std::mutex reportMutex_;
+    CameraAcquisitionReport report_{};
+    bool reportValid_{false};
     std::deque<Frame> pendingFrames_;
     // Mode confirmed at the most recent successful start(); before any start
     // activeDeliveryMode() falls back to config_.deliveryMode.

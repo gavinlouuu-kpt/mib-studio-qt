@@ -14,6 +14,7 @@
 
 #include "backend/app/BackgroundFrame.h"
 #include "backend/app/CalibrationStore.h"
+#include "backend/app/CameraWindowProfile.h"
 #include "backend/review/RunStatistics.h"
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
@@ -348,7 +349,27 @@ namespace backend
 
         // Apply a JS camera script to currently selected hardware device.
         // If capture is running, it will be stopped first. Capture remains stopped.
-        bool applyCameraScriptFromFile(const std::string &path, std::string *errorOut = nullptr);
+        // #833: an Experiment script is followed by the profile's camera window
+        // (acquisitionProfile().window) through the same handle, so the profile
+        // wins over the script's Width/Height/Offset lines; the Overview script
+        // (full sensor) is applied as is. lastCameraWindowApply() says what
+        // happened (script window, applied window, model refusal, SDK error).
+        enum class CameraScriptRole { Experiment, Overview };
+        bool applyCameraScriptFromFile(const std::string &path, std::string *errorOut = nullptr,
+                                       CameraScriptRole role = CameraScriptRole::Experiment);
+        app::CameraWindowApplyReport lastCameraWindowApply() const;
+        // The role of the last script applied successfully (nullopt: none yet).
+        // With Overview the running session shows the full sensor, so its rates
+        // are not the experiment's.
+        std::optional<CameraScriptRole> lastCameraScriptRole() const;
+
+        // #833: the profile values the recording capacity depends on
+        // (config.json camera.window and target_fps), set by every config
+        // applier (Qt AppConfigWatcher, ConfigDocumentApply). The window is
+        // written to the camera with the next Experiment script; the rate is
+        // the fallback when the camera does not report its driven rate.
+        void setAcquisitionProfile(const app::AcquisitionProfile& profile);
+        app::AcquisitionProfile acquisitionProfile() const;
 
         // Apply a JSON config file to the currently selected MindVision camera.
         // If capture is running, it will be stopped first. Capture remains stopped.
@@ -643,6 +664,10 @@ namespace backend
         // Selection-snapshot extras (BE-2): last applied camera script and the
         // active mock parameters.
         std::string lastCameraScriptPath_;
+        mutable std::mutex acquisitionProfileMutex_; // guards the two members below
+        app::AcquisitionProfile acquisitionProfile_;
+        app::CameraWindowApplyReport lastCameraWindowApply_;
+        std::optional<CameraScriptRole> lastCameraScriptRole_;
         std::string mockFrameDir_;
         int mockIntervalMs_{0};
         bool mockLoop_{true};
