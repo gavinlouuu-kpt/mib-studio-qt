@@ -2,6 +2,7 @@
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/services/CaptureService.h"
 
 #include <opencv2/core.hpp>
 #include <nlohmann/json.hpp>
