@@ -192,3 +192,11 @@ OS scheduling in a 500 fps mock run).
   need the Coaxlink I/O toolbox to shape the pulse.
 
 The #595 trigger timing harness retains zero missed pulses (500 ms per-request deadline), and fails if p99 exceeds 50 ms or more than two of 500 pulses exceed 50 ms. This permits isolated scheduler preemption while rejecting recurring variable-delay stalls; commit 2ba62ccc documents the original predicate/notify lost-wakeup race.
+
+## Status for the desktop status bar (2026-11-04, #868)
+
+Since ABI 45 `fetch_trigger_status` also reports the sort-trigger funnel Qt's status bar shows: the processing
+service's identification counters (`valid_objects`, `target_group_objects`, `unserved_target_group_objects`), this
+service's `getDroppedRequestCount()` and `getDroppedPulseCount()`, `getDroppedValidFrames()` and the
+`PipelineTimingRecorder` acquisition-to-pulse latency (average and maximum). The desktop app derives conversion,
+served and lost percentages from them ([[architecture/Desktop-Shell]]).

@@ -43,6 +43,7 @@
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/TriggerService.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/diagnostics/PipelineTimingRecorder.h"
 #include "backend/services/StageService.h"
 #include "backend/services/MonitoringCellStore.h"
 
@@ -1823,6 +1824,18 @@ namespace backend::bridge
         out.lastTrackId = trigger.getLastTriggerTrackId();
         out.periodicActive = trigger.isPeriodicTestActive();
         out.periodicIntervalMs = trigger.getPeriodicTestIntervalMs();
+        // The Qt status bar's sort-trigger funnel (StatsDisplayManager.cpp): the counters are
+        // the processing and trigger services' own, read without a lock.
+        const auto ident = backend_.processing().getIdentificationCounters();
+        out.validObjects = ident.validObjects;
+        out.targetGroupObjects = ident.targetGroupObjects;
+        out.unservedTargetGroupObjects = ident.unservedTargetGroupObjects;
+        out.droppedRequests = trigger.getDroppedRequestCount();
+        out.droppedPulses = trigger.getDroppedPulseCount();
+        out.droppedValidFrames = backend_.processing().getDroppedValidFrames();
+        auto &timing = backend::diagnostics::PipelineTimingRecorder::instance();
+        out.avgTargetLatencyUs = timing.avgTargetLatencyUs();
+        out.maxTargetLatencyUs = timing.maxTargetLatencyUs();
         return true;
     }
 
@@ -4122,13 +4135,27 @@ BackendCommandResult BackendFacade::pulseGeneratorCommandJson(const std::string&
                 }
                 if (action == "frequency" || action == "duty") {
                     const double value = json.at("value").get<double>();
-                    const double minimum = action == "frequency" ? 400.0 : 0.0;
-                    const double maximum = action == "frequency" ? 40000.0 : 100.0;
+                    const double minimum = action == "frequency" ? services::PulseGeneratorService::MIN_FREQUENCY_HZ : 0.0;
+                    const double maximum = action == "frequency" ? services::PulseGeneratorService::MAX_FREQUENCY_HZ : 100.0;
                     if (!std::isfinite(value) || value < minimum || value > maximum) {
                         result.message = "Pulse value is outside the supported range"; return;
                     }
                     ok = action == "frequency" ? pulse.setFrequency(channel, value) : pulse.setDutyCycle(channel, value);
-                } else if (action == "enable") ok = pulse.setOutputEnabled(channel, json.at("enabled").get<bool>());
+                } else if (action == "set" || action == "start") {
+                    // Qt's Set / Start (ConfigTabs.cpp onPulseGenApplySettings / onPulseGenStart, HW-054): the
+                    // frequency, then the duty (Start: then the output) as ONE command under the idle lock, so
+                    // a failed write stops the sequence and an experiment cannot start between the writes.
+                    const double hz = json.at("frequency_hz").get<double>();
+                    const double duty = json.at("duty_percent").get<double>();
+                    if (!std::isfinite(hz) || hz < services::PulseGeneratorService::MIN_FREQUENCY_HZ ||
+                        hz > services::PulseGeneratorService::MAX_FREQUENCY_HZ || !std::isfinite(duty) || duty < 0.0 ||
+                        duty > 100.0) {
+                        result.message = "Pulse value is outside the supported range"; return;
+                    }
+                    ok = pulse.setFrequency(channel, hz) && pulse.setDutyCycle(channel, duty) &&
+                         (action == "set" || pulse.setOutputEnabled(channel, true));
+                }
+                else if (action == "enable") ok = pulse.setOutputEnabled(channel, json.at("enabled").get<bool>());
                 else { result.message = "Unknown pulse action"; return; }
             }
             result.ok = ok;
@@ -4149,9 +4176,24 @@ std::string BackendFacade::fetchPulseGeneratorStatusJson() const {
     const auto config = pulse.getConfig();
     nlohmann::json channels = nlohmann::json::array();
     for (const auto& channel : status.channels) channels.push_back({{"frequency_hz", channel.frequencyHz}, {"duty_percent", channel.dutyPercent}, {"output_enabled", channel.outputEnabled}});
+    // The module's limits come from the service, so the desktop panel never carries its own copy (HW-055).
     return nlohmann::json{{"valid", true}, {"connected", status.connected}, {"owned", pulse.liveViewOwned()},
         {"error", services::PulseGeneratorService::toString(status.lastError)}, {"port", config.portName},
-        {"baud", config.serial.baudRate}, {"address", config.modbusAddress}, {"channels", channels}}.dump();
+        {"baud", config.serial.baudRate}, {"data_bits", config.serial.dataBits}, {"parity", std::string(1, config.serial.parity)},
+        {"stop_bits", config.serial.stopBits}, {"address", config.modbusAddress}, {"channels", channels},
+        {"channel_count", services::PulseGeneratorService::CHANNEL_COUNT},
+        {"min_frequency_hz", services::PulseGeneratorService::MIN_FREQUENCY_HZ},
+        {"max_frequency_hz", services::PulseGeneratorService::MAX_FREQUENCY_HZ}}.dump();
+}
+std::string BackendFacade::listSerialPortsJson() const {
+    // Read-only: enumeration opens no port. Under MIB_SERIAL_MODE=sim this is the simulated rig's list.
+    nlohmann::json ports = nlohmann::json::array();
+    for (const auto& port : services::enumerateSerialPorts())
+        ports.push_back({{"system_name", port.systemName}, {"system_location", port.systemLocation},
+                         {"description", port.description}, {"manufacturer", port.manufacturer},
+                         {"serial_number", port.serialNumber}, {"vendor_id", port.vendorId},
+                         {"product_id", port.productId}});
+    return nlohmann::json{{"ports", ports}}.dump();
 }
 
 std::string BackendFacade::fetchProfileCatalogUrl(const std::string& url) { return app::fetchProfileUrl(url); }

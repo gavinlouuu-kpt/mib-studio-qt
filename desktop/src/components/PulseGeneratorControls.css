@@ -1,0 +1,9 @@
+/* Pulse generator panel (epic #868, HW-049..HW-057): Qt's bus row, channel row, scan result and preset. */
+.pulse-generator .pulse-row { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 6px 0; }
+.pulse-generator .pulse-row label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.pulse-generator .pulse-row input[type="number"] { width: 90px; }
+.pulse-generator .pulse-row select { max-width: 280px; }
+.pulse-generator .pulse-status { font-weight: 600; margin: 4px 0; }
+.pulse-generator .pulse-scan ul { margin: 4px 0 0 18px; padding: 0; }
+.pulse-generator .pulse-preset { margin-top: 8px; }
+.pulse-generator .pulse-help { font-size: 12px; opacity: 0.8; }
