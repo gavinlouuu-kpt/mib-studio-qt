@@ -1,30 +1,40 @@
 // Experiment start/stop and Monitoring (epic #866): the Monitoring sub-tab: buffer counts, the charts
 // beside the tune panel (TunePanel.tsx), the live valid / invalid cell strips (CellStrips.tsx) and the latest
 // result rows. The trigger tests in its toolbar are areas/hardware. Moved from App.tsx (#869 wave 0); the tune
-// panel replaced its processing-settings link.
+// panel replaced its processing-settings link; Clear Buffer's question and the polling failure notices are
+// #866 additions.
 import { bridge } from "../../bridge";
 import { MonitoringCharts } from "../../components/MonitoringCharts";
 import { ResultMetricCells } from "../../components/ResultMetricCells";
 import { ViewerGate } from "../../components/ViewerGate";
 import { useStudio } from "../../studio/StudioContext";
+import { ask } from "../../transport/dialogs";
 import { TriggerTestControls } from "../hardware/TriggerTestControls";
 import { CellStrips } from "./CellStrips";
+import { clearMonitoringBuffer } from "./clearBuffer";
 import { TunePanel } from "./TunePanel";
 import { latestRows, MONITORING_TABLE_ROWS } from "./monitoringChartModel";
 import { isMonitoringVisible } from "./useMonitoring";
 
 export function MonitoringPanel() {
-  const { append, ready, caps, trigStatus, monSnapshot, tab, expTab } = useStudio();
+  const {
+    append, ready, caps, trigStatus, monSnapshot, tab, expTab, setMonSnapshot, notifyMonitoringCleared, monitoringNotices,
+  } = useStudio();
   return (
     <>
       <div className="toolbar">
         <ViewerGate>
         <button
-          onClick={async () => {
-            const res = await bridge.monitoringClear();
-            append(res.ok ? "monitoring buffers cleared" : `clear failed: ${res.message}`);
-          }}
+          onClick={() => void clearMonitoringBuffer({
+            ask,
+            clear: () => bridge.monitoringClear(),
+            // The charts and the table empty at once instead of at the next poll; the listeners are where a later PR clears
+            // the KDE state and the selection (MON-029).
+            onCleared: () => { setMonSnapshot(null); notifyMonitoringCleared(); },
+            append,
+          })}
           disabled={!ready}
+          data-tour="monitoring-clear-buffer"
         >
           Clear Buffer
         </button>
@@ -42,6 +52,7 @@ export function MonitoringPanel() {
           )}
         </span>
       </div>
+      {monitoringNotices.map((notice) => <p key={notice} role="alert" className="monitoring-notice" data-tour="monitoring-notice">{notice}</p>)}
       <div className="monitoring-split">
         <div className="config-grid monitoring-charts">
           <MonitoringCharts snapshot={monSnapshot} />

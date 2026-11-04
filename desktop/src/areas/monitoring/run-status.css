@@ -1,6 +1,6 @@
 /* Experiment start/stop and Monitoring (#866). Part of the App.css cascade. */
 /* Non-blocking readiness warnings at run start (#501: recording to RAM) */
-.start-notice { margin: 4px 0; color: var(--warn); }
+.start-notice { margin: 4px 0; color: var(--warn); white-space: pre-line; }
 
 /* Outcome of the last finished run (#549, components/RunOutcomeNotice.tsx) */
 .run-outcome { margin: 4px 0; padding: 4px 8px; border-left: 3px solid var(--border); }
@@ -10,3 +10,36 @@
 .run-outcome.attention { border-left-color: var(--warn); color: var(--warn); }
 .run-outcome.loss, .run-outcome.unknown { border-left-color: var(--warn); color: var(--warn); }
 .run-outcome.failed { border-left-color: var(--err); color: var(--err); }
+
+/* Run state widget (components in areas/monitoring/RunStatusBadge.tsx; Qt RunStatusWidget: glyph + text, colour is a secondary cue) */
+.run-status { display: inline-flex; align-items: center; gap: 4px; max-width: 260px; padding: 0 6px; font-weight: 600; }
+.run-status-glyph { font-weight: 700; }
+.run-status-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 8ch; }
+.run-status.tone-ok .run-status-glyph { color: var(--ok); }
+.run-status.tone-warn .run-status-glyph { color: var(--warn); }
+.run-status.tone-err { color: var(--err); }
+.run-status.tone-err .run-status-glyph { color: var(--err); }
+.run-progress { margin: 4px 0; color: var(--muted); }
+.run-outcome-warning { margin: 4px 0; color: var(--warn); }
+
+/* Standing Start readiness (MON-028) */
+.start-readiness { margin: 4px 0; padding: 2px 8px; border-left: 3px solid var(--border); }
+.start-readiness.ok { border-left-color: var(--ok); }
+.start-readiness.warn { border-left-color: var(--warn); }
+.start-readiness.blocked { border-left-color: var(--err); }
+.start-readiness-line { margin: 2px 0; }
+.start-readiness-error { margin: 2px 0; color: var(--err); }
+.start-readiness-gates { margin: 2px 0 4px; padding-left: 18px; font-size: 12px; }
+.start-readiness-gates li.blocked strong { color: var(--err); }
+.start-readiness-gates li.warning strong { color: var(--warn); }
+.start-readiness-gates .remedy { color: var(--muted); }
+
+/* Monitoring failures the polls used to swallow */
+.monitoring-notice { margin: 4px 0; padding: 4px 8px; border-left: 3px solid var(--err); color: var(--err); }
+
+/* Side panel: background thumbnail (MON-102) and the elided status line (MON-104) */
+.bg-thumbnail { height: auto; min-height: 70px; flex-direction: column; gap: 2px; padding: 2px; }
+.bg-thumbnail-label { font-size: 11px; }
+.bg-thumbnail-canvas { max-width: 100%; max-height: 120px; width: auto; height: auto; image-rendering: auto; }
+.bg-thumbnail-problem { font-size: 11px; color: var(--warn); text-align: center; }
+.statusbar .metrics { min-width: 0; }

@@ -175,8 +175,9 @@ def main():
         recovered = invoke('fetch_experiment_status')
         assert recovered['state'] == 2 and recovered['output_path'] == active_before['output_path'], recovered
         evidence['reload_recovered_active_run'] = True
-        # Navigation must not stop backend work or lose operation ownership.
-        stage('Camera & Alignment')
+        # Navigation must not stop backend work or lose operation ownership. Overview and Review are locked for the
+        # whole run (#585, epic #866 MON-013, as in the Qt app), so the stage left and re-entered is Connect.
+        stage('Hardware Preflight')
         time.sleep(4)
         stage('Experiment')
         click('Stop Experiment')

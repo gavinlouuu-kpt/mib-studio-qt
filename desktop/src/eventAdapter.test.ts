@@ -93,3 +93,13 @@ it("does not invent zero or freshness for unavailable/invalid processing samples
   expect(formatMetric(decoded.valid_fps1s)).toBe("Unavailable");
   expect(decodeProcessingStats({...s,valid:false}).algo_fps1s).toBeNull();
 });
+
+it("carries the algorithm time and its age only when the backend reports them (epic #866 MON-095)",()=>{
+  const s={transport_version:1,valid:true,algo_fps1s:120,valid_fps1s:1,invalid_fps1s:2,pixel_to_micron:1};
+  expect(decodeProcessingStats(s)).not.toHaveProperty("algo_avg_us");
+  expect(decodeProcessingStats({...s,algo_avg_us:85.5,algo_avg_age_ms:1500})).toMatchObject({algo_avg_us:85.5,algo_avg_age_ms:1500});
+  expect(decodeProcessingStats({...s,algo_avg_us:85.5})).toMatchObject({algo_avg_us:85.5,algo_avg_age_ms:null});
+  expect(decodeProcessingStats({...s,algo_avg_us:null})).toMatchObject({algo_avg_us:null});
+  expect(decodeProcessingStats({...s,valid:false,algo_avg_us:85.5}).algo_avg_us).toBeNull();
+  expect(()=>decodeProcessingStats({...s,algo_avg_us:"fast"})).toThrow("TRANSPORT_INVALID_METRIC");
+});

@@ -1,9 +1,9 @@
 // Shell (epic #862): the UX-8 active-context bar, the status bar and the log drawer.
-// Moved from App.tsx without change (#869 wave 0).
+// Moved from App.tsx without change (#869 wave 0). Epic #866 (monitoring) replaced the metrics text with Qt's
+// one-line status (areas/monitoring/statsReadouts: compactStatusLine) and the stop/save progress sentence.
 import { SEG_STATUS_LABEL } from "../../contextBar";
-import { metricNumber } from "../../metricFormat";
 import { useStudio } from "../../studio/StudioContext";
-import { EXPERIMENT_STATE_NAMES } from "../monitoring/useMonitoring";
+import { compactStatusLine } from "../monitoring/statsReadouts";
 
 export function ContextBar() {
   const { contextBar, setTab } = useStudio();
@@ -37,8 +37,14 @@ export function ContextBar() {
 export function StatusBar() {
   const {
     abi, ready, reviewing, recording, setShowLog, showLog, log, displayFps, hostProcessing, algoFps, validFps, invalidFps,
-    running, camStatus, dataRate, expState, expActive, expStatus,
+    running, expActive, expStatus, stats, elapsedWallSeconds, runLocked, runProgress,
   } = useStudio();
+  // Qt shows the stop/save sentence instead of the statistics line while a run is being stopped and saved (MON-025, MON-104).
+  const line = runLocked && runProgress ? runProgress : compactStatusLine({
+    running, cameraFps: displayFps, hostProcessing, validFps, invalidFps, algoAvgUs: stats?.algo_avg_us, algoFps, runActive: expActive,
+    runSeconds: elapsedWallSeconds, buffered: BigInt(expStatus?.valid_buffered ?? "0") + BigInt(expStatus?.invalid_buffered ?? "0"),
+    flushing: !!expStatus?.flushing,
+  });
   return (
     <>
       <footer className="statusbar">
@@ -50,13 +56,7 @@ export function StatusBar() {
         <button className="log-toggle" onClick={() => setShowLog((s) => !s)}>
           Log {showLog ? "▾" : "▸"} ({log.length})
         </button>
-        <span className="metrics">
-          Display={metricNumber(displayFps, 1)} fps | {hostProcessing
-            ? <>Algo={metricNumber(algoFps)}/s | Valid={metricNumber(validFps)}/s | Invalid={metricNumber(invalidFps)}/s</>
-            : <>Science=PL</>} | Camera={running ? "running" : camStatus}, {metricNumber(dataRate, 1)} MB/s | Experiment:{" "}
-          {(EXPERIMENT_STATE_NAMES[expState] ?? "Inactive").toLowerCase()}
-          {expActive ? ` (buffered ${String(BigInt(expStatus?.valid_buffered ?? "0") + BigInt(expStatus?.invalid_buffered ?? "0"))})` : ""}
-        </span>
+        <span className="metrics" title={line} data-tour="monitoring-status-line">{line}</span>
       </footer>
       {showLog && (
         <div className="log-drawer" role="log">
