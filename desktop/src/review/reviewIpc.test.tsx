@@ -14,6 +14,13 @@
 // probe (`review_probe_runs`); no existing flow changed. #717 B3b (review ABI
 // 3) added two: the linked records of a track (`fetch_review_track_rows`)
 // and one record reprocessed (`review_reprocess_record`).
+// #867 (Qt parity, YOFO Review minors) changed the golden on purpose: the
+// viewer's Up / Down keys step frames (series is Shift+Up / Shift+Down, and its
+// position 0 is the trigger image, so a series image is fetched raw and at
+// position >= 1); Compute core contour sends the Preferences core share (0.9
+// by default) instead of the stored record's fraction; a new flow exports the
+// viewer's frame as a TIFF (the PNG staged as `frame_N_series_K.tiff`, then
+// Export Charts into the chosen folder).
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -258,6 +265,7 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
     case "plugin:dialog|save": {
       const o = args.options as { title?: string; defaultPath?: string };
       // Regenerate: the operator takes the proposed name unless told otherwise.
+      if (o.title === "Export Frame as TIFF") return o.defaultPath; // the operator takes the proposed name
       return o.title === "Save regenerated masks" ? (regenerateSaveAnswers.shift() ?? o.defaultPath) : "/data/out/run_metrics_2.csv";
     }
     case "plugin:dialog|message":
@@ -434,8 +442,9 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
       const preview = host.querySelector(".canvas-wrap.preview")!;
       await act(async () => void preview.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
       await settle();
-      for (const key of ["ArrowDown", "ArrowDown", "ArrowRight", "Escape"]) {
-        await act(async () => void window.dispatchEvent(new KeyboardEvent("keydown", { key })));
+      // Shift+Down steps the series (Qt has no key for it); Right is the next frame.
+      for (const [key, shiftKey] of [["ArrowDown", true], ["ArrowDown", true], ["ArrowRight", false], ["Escape", false]] as const) {
+        await act(async () => void window.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey })));
         await settle();
       }
     }),
@@ -536,6 +545,35 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
       expect(refused.querySelector('[role="alert"]')).toBeNull();
       await click(button("Regenerate", refused));
       await finishJob("Regenerate masks");
+    }),
+  );
+
+  flows.push(
+    await flow("viewer overlay, ROI and export as TIFF", async () => {
+      const preview = host.querySelector(".canvas-wrap.preview")!;
+      await act(async () => void preview.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+      await settle();
+      // The viewer's own combo and check change what the toolbar shows too.
+      const select = modal("Frame viewer").querySelector('select[aria-label="Viewer overlay mode"]') as HTMLSelectElement;
+      await act(async () => {
+        select.value = "1";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await settle();
+      expect((host.querySelector('select[aria-label="Overlay mode"]') as HTMLSelectElement).value).toBe("1");
+      const roi = Array.from(modal("Frame viewer").querySelectorAll("label")).find((l) => l.textContent?.includes("ROI Overlay"))!.querySelector("input")!;
+      await click(roi); // the earlier flow left it on: now off
+      await click(button("Export as TIFF...", modal("Frame viewer")));
+      await finishJob("Export Frame as TIFF");
+      // Back to what the next flows start from (Outer/Inner, ROI on).
+      await click(roi);
+      await act(async () => {
+        select.value = "2";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await settle();
+      await act(async () => void window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+      await settle();
     }),
   );
 

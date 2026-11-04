@@ -50,8 +50,18 @@ export function outcomeText(job: TrackedJob): string {
   }
 }
 
-export function JobDialog(props: { job: TrackedJob; onCancel: () => void; onClose: () => void; extraAction?: { label: string; onClick: () => void } }) {
-  const { job, onCancel, onClose, extraAction } = props;
+export function JobDialog(props: { job: TrackedJob; onCancel: () => void; onClose: () => void; extraAction?: { label: string; onClick: () => void }; log?: (line: string) => void }) {
+  const { job, onCancel, onClose, extraAction, log } = props;
+  // "Show in folder" can fail (no file manager, a folder that is gone): say so here and in the log.
+  const [revealError, setRevealError] = useState("");
+  const reveal = (path: string) => {
+    setRevealError("");
+    revealItemInDir(path).catch((e) => {
+      const message = String(e instanceof Error ? e.message : e);
+      setRevealError(message);
+      log?.(`show in folder failed: ${message}`);
+    });
+  };
   const running = job.phase === "running";
   const pct = job.total > 0 ? Math.min(100, Math.round((job.progress / job.total) * 100)) : null;
   const batch = job.kind === REVIEW_OPERATION_KINDS.BatchExport && job.phase === "completed" ? parseBatchSummary(job.message) : null;
@@ -75,6 +85,11 @@ export function JobDialog(props: { job: TrackedJob; onCancel: () => void; onClos
             ))}
           </ul>
         )}
+        {revealError && (
+          <p className="form-error" role="alert">
+            Could not open the folder: {revealError}
+          </p>
+        )}
         <div className="actions">
           {running ? (
             <button className="btn" onClick={onCancel} disabled={job.cancelling}>
@@ -88,7 +103,7 @@ export function JobDialog(props: { job: TrackedJob; onCancel: () => void; onClos
                     Show in folder
                   </button>
                 ) : (
-                  <button className="btn" onClick={() => void revealItemInDir(path).catch(() => {})}>
+                  <button className="btn" onClick={() => reveal(path)}>
                     Show in folder
                   </button>
                 ))}

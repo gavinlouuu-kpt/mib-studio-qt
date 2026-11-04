@@ -12,16 +12,36 @@ import { metricNumber } from "./metricFormat";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
+// Props FrameViewer needs besides the row (never reached by a static render).
+const viewerProps = {
+  scheduler: {} as never,
+  valid: false,
+  index: 0,
+  total: 1,
+  overlay: 0 as never,
+  roiOverlay: false,
+  recording: false,
+  onIndexChange: () => {},
+  onOverlayChange: () => {},
+  onRoiOverlayChange: () => {},
+  onExportFrame: () => {},
+  onClose: () => {},
+  log: () => {},
+};
+
 describe("missing result metrics", () => {
   for (const value of [null, undefined, NaN, Infinity]) {
     it(`renders ${String(value)} in both result tables, review columns and frame viewer`, () => {
       const row = { area: value, area_um2: value, deformability: value, ring_ratio: value, youngs_modulus: value };
       const cells = renderToStaticMarkup(<table><tbody><tr><ResultMetricCells row={row} /></tr></tbody></table>);
       expect(cells.match(/—/g)).toHaveLength(4);
-      const viewer = renderToStaticMarkup(<FrameViewer row={row as never} scheduler={{} as never} valid={false} index={0} total={1} overlay={0 as never} roiOverlay={false} onIndexChange={() => {}} onClose={() => {}} log={() => {}} />);
-      expect(viewer.match(/—/g)).toHaveLength(5);
-      for (const id of ["area", "area_um2", "deformability", "ring_ratio", "youngs_modulus"])
+      const viewer = renderToStaticMarkup(<FrameViewer row={row as never} {...viewerProps} />);
+      // Area, area (µm²), deformability, ring ratio, E, and the area ratio this row lacks.
+      expect(viewer.match(/—/g)).toHaveLength(6);
+      for (const id of ["area", "area_um2", "deformability", "ring_ratio"])
         expect(METRIC_COLUMNS.find(c => c.id === id)!.format(row as never)).toBe("—");
+      // Qt leaves E blank when it is NaN (HdfMetricsModel).
+      expect(METRIC_COLUMNS.find(c => c.id === "youngs_modulus")!.format(row as never)).toBe("");
       expect(renderToStaticMarkup(<MonitoringCharts snapshot={{ valid: true, rows: [{ ...row, valid: true, pixel_to_micron: null }] } as never} />)).toContain("No calibrated finite");
       expect(metricNumber(value, 4, true)).toBe("—");
     });
@@ -52,7 +72,7 @@ it("contains a thrown child and reloads the view while siblings remain mounted",
 it("renders a PL-science row with only ring ratio absent", () => {
   const row = { area: 100, area_um2: 25, deformability: 0.2, ring_ratio: null, youngs_modulus: 2 };
   expect(renderToStaticMarkup(<table><tbody><tr><ResultMetricCells row={row} /></tr></tbody></table>)).toContain("<td>—</td>");
-  expect(renderToStaticMarkup(<FrameViewer row={row as never} scheduler={{} as never} valid={false} index={0} total={1} overlay={0 as never} roiOverlay={false} onIndexChange={() => {}} onClose={() => {}} log={() => {}} />)).toContain("ratio —");
+  expect(renderToStaticMarkup(<FrameViewer row={row as never} {...viewerProps} />)).toContain("Ring Ratio:</b> —");
 });
 
 it("catches errors while evaluating panel markup", async () => {

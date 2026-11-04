@@ -17,7 +17,27 @@ import {
 } from "./chartMath";
 import { doubleClickResets, DRAG_THRESHOLD_PX, GestureTracker } from "./scatterGestures";
 import { nearestPoint } from "./scatterHitTest";
-import { contourFamilies, unsavedRecordJson } from "./chartData";
+import {
+  clampCoreFraction,
+  contourFamilies,
+  CORE_FRACTION_DEFAULT,
+  CORE_FRACTION_KEY,
+  framePaneTitle,
+  loadCoreFraction,
+  loadCurves,
+  saveCoreFraction,
+  unsavedRecordJson,
+} from "./chartData";
+import {
+  CHARTS_RIGHT_SPLIT_DEFAULT,
+  CHARTS_SPLIT_DEFAULT,
+  clampShare,
+  dragShare,
+  loadSplit,
+  saveSplit,
+} from "./splitter";
+import { reviewBridge } from "../reviewBridge";
+import { vi } from "vitest";
 import { scatterModel, type ChartExportInputs } from "./chartExport";
 
 describe("scatter hit test (shared fixture with the Qt tab)", () => {
@@ -185,5 +205,121 @@ describe("chart export inputs", () => {
     expect(m.highlight).toBe(2);
     expect(m.colourByDensity).toBe(false); // no density result
     expect(scatterModel({ ...inp, selected: 3 }).highlight).toBe(-1); // position without a point
+  });
+});
+
+describe("REVIEW-036/037 KDE core share (Monitoring/KdeCoreFraction)", () => {
+  const store = (initial?: string) => {
+    const m = new Map<string, string>(initial === undefined ? [] : [[CORE_FRACTION_KEY, initial]]);
+    return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), m };
+  };
+
+  it("defaults to 0.9 when nothing is stored or the value is unreadable", () => {
+    expect(CORE_FRACTION_DEFAULT).toBe(0.9);
+    expect(loadCoreFraction(store())).toBe(0.9);
+    expect(loadCoreFraction(store("nonsense"))).toBe(0.9);
+    expect(loadCoreFraction(store(""))).toBe(0.9);
+    expect(loadCoreFraction(store("NaN"))).toBe(0.9);
+    expect(loadCoreFraction(null)).toBe(0.9);
+  });
+
+  it("clamps to 0.05 – 1", () => {
+    expect(clampCoreFraction(0.7)).toBe(0.7);
+    expect(clampCoreFraction(0.01)).toBe(0.05);
+    expect(clampCoreFraction(0)).toBe(0.05);
+    expect(clampCoreFraction(-3)).toBe(0.05);
+    expect(clampCoreFraction(7)).toBe(1);
+    expect(clampCoreFraction(Infinity)).toBe(0.9);
+    expect(loadCoreFraction(store("9"))).toBe(1);
+    expect(loadCoreFraction(store("0.01"))).toBe(0.05);
+  });
+
+  it("saves the clamped share and reads it back", () => {
+    const s = store();
+    expect(saveCoreFraction(0.55, s)).toBe(0.55);
+    expect(s.m.get(CORE_FRACTION_KEY)).toBe("0.55");
+    expect(loadCoreFraction(s)).toBe(0.55);
+    expect(saveCoreFraction(2, s)).toBe(1);
+    expect(s.m.get(CORE_FRACTION_KEY)).toBe("1");
+    expect(saveCoreFraction(NaN, s)).toBe(0.9);
+  });
+
+  it("survives storage that throws", () => {
+    const broken = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+    expect(loadCoreFraction(broken)).toBe(0.9);
+    expect(saveCoreFraction(0.6, broken)).toBe(0.6);
+  });
+});
+
+describe("REVIEW-039 Charts splits", () => {
+  it("default to Qt's sizes", () => {
+    expect(CHARTS_SPLIT_DEFAULT).toBeCloseTo(0.6, 12); // {600, 400}
+    expect(CHARTS_RIGHT_SPLIT_DEFAULT).toBeCloseTo(550 / 850, 12); // {550, 300}
+  });
+
+  it("keep both panes above their minimum sizes", () => {
+    expect(clampShare(0.5, 1000, 420, 320)).toBe(0.5);
+    expect(clampShare(0.1, 1000, 420, 320)).toBeCloseTo(0.42, 12);
+    expect(clampShare(0.99, 1000, 420, 320)).toBeCloseTo(0.68, 12);
+    // Too small for both minimums: share them out as they are.
+    expect(clampShare(0.5, 500, 420, 320)).toBeCloseTo(420 / 740, 12);
+    // Not measured yet: only the sanity range.
+    expect(clampShare(0.99, 0, 420, 320)).toBe(0.95);
+    expect(clampShare(NaN, 1000, 0, 0)).toBe(0.5);
+  });
+
+  it("turn a pointer position into the first pane's share (the handle is 8 px)", () => {
+    expect(dragShare(504, 1000, 420, 320)).toBeCloseTo(0.5, 12);
+    expect(dragShare(0, 1000, 420, 320)).toBeCloseTo(0.42, 12);
+  });
+
+  it("are stored under the module's keys and only usable numbers are read back", () => {
+    const m = new Map<string, string>();
+    const s = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) };
+    expect(loadSplit("k", 0.6, s)).toBe(0.6);
+    saveSplit("k", 0.123456, s);
+    expect(m.get("k")).toBe("0.1235");
+    expect(loadSplit("k", 0.6, s)).toBe(0.1235);
+    for (const bad of ["", "x", "0", "1", "0.01", "-1"]) {
+      m.set("k", bad);
+      expect(loadSplit("k", 0.6, s), bad).toBe(0.6);
+    }
+    expect(loadSplit("k", 0.6, null)).toBe(0.6);
+  });
+});
+
+describe("REVIEW-032 frame pane title (HdfReviewTab::refreshFramePane)", () => {
+  it("reads Frame N · valid row k of n", () => {
+    expect(framePaneTitle("42", 6, 250, true)).toBe("Frame 42 · valid row 7 of 250");
+  });
+  it("adds the failed-validation note for a cell with no scatter point", () => {
+    expect(framePaneTitle("42", 6, 250, false)).toBe("Frame 42 · valid row 7 of 250 · failed validation, not on the scatter");
+  });
+  it("is the empty-state text with no cell selected, and waits for the frame index", () => {
+    expect(framePaneTitle(undefined, -1, 250, true)).toBe("Click a point on the scatter to view the cell");
+    expect(framePaneTitle(undefined, 0, 250, true)).toBe("Frame … · valid row 1 of 250");
+  });
+});
+
+describe("isoelastic curves that cannot be fetched", () => {
+  it("say so through the log instead of silently drawing none, and are fetched again next time", async () => {
+    const fetch = vi.spyOn(reviewBridge, "isoelasticCurves");
+    fetch.mockRejectedValueOnce(new Error("resource missing"));
+    const log: string[] = [];
+    expect(await loadCurves((l) => void log.push(l))).toEqual([]);
+    expect(log).toEqual(["isoelastic curves unavailable: Error: resource missing"]);
+    fetch.mockResolvedValueOnce({ source: "embedded", curves: [{ emodulus_kpa: 1, points: [[10, 0.01]] }] });
+    expect(await loadCurves((l) => void log.push(l))).toHaveLength(1);
+    expect(log).toHaveLength(1);
+    fetch.mockRestore();
+  });
+
+  it("still return [] when no log is given", async () => {
+    // The previous call cached its success; a fresh failure needs a fresh module state.
+    vi.resetModules();
+    const { reviewBridge: bridge } = await import("../reviewBridge");
+    const { loadCurves: load } = await import("./chartData");
+    vi.spyOn(bridge, "isoelasticCurves").mockRejectedValueOnce(new Error("x"));
+    expect(await load()).toEqual([]);
   });
 });

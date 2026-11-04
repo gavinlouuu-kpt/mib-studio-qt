@@ -3,18 +3,31 @@
 // pane over the ring-width histogram on the right. Data comes from the
 // review bridge: the columnar scatter, the density job's per-point levels
 // (started on open, polled until ready), stored KDE core records from the
-// file info, embedded isoelastic curves, and the compute-core job.
+// file info, embedded isoelastic curves, and the compute-core job. The two
+// splits are draggable and remembered (Qt QSplitters, #867 REVIEW-039); the
+// frame pane has the Qt title and Prev / Next / Fit / Open in window… row
+// (REVIEW-032); the core share follows the Preferences setting (REVIEW-036/037).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ask } from "../../transport/dialogs";
 import { reviewBridge, type ReviewDensity, type ReviewInfo, type ReviewScatter as ScatterData } from "../reviewBridge";
 import { recordContours } from "./chartMath";
-import { contourFamilies, loadChartPrefs, loadCurves, saveChartPrefs, unsavedRecordJson } from "./chartData";
+import { contourFamilies, framePaneTitle, loadChartPrefs, loadCoreFraction, loadCurves, saveChartPrefs, unsavedRecordJson } from "./chartData";
 import type { ChartViewState } from "./chartExport";
 import { Histogram } from "./Histogram";
 import { ReviewScatter, type IsoCurve, type MenuItem } from "./ReviewScatter";
+import { SplitPane } from "./SplitPane";
+import {
+  CHARTS_RIGHT_SPLIT_DEFAULT,
+  CHARTS_RIGHT_SPLITTER_KEY,
+  CHARTS_SPLIT_DEFAULT,
+  CHARTS_SPLITTER_KEY,
+  HISTOGRAM_MIN_HEIGHT,
+  PANE_MIN_HEIGHT,
+  PANE_MIN_WIDTH,
+  SCATTER_MIN_WIDTH,
+} from "./splitter";
 
 const POLL_MS = 300;
-const DEFAULT_CORE_FRACTION = 0.9;
 
 const pct = (f: number) => Math.round(f * 100);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -27,8 +40,14 @@ export interface ChartsViewProps {
   /** Size of the valid set (arrow-key stepping wraps over it). */
   validTotal: number;
   onSelect: (validPosition: number) => void;
-  /** The frame pane (preview canvas + caption), owned by the panel. */
+  /** The frame pane (preview canvas), owned by the panel. */
   framePane: ReactNode;
+  /** Recorded frame index of the selected cell (its metrics row), when loaded. */
+  selectedFrameIndex?: string;
+  /** Fit to Window: the pane's own sizing again after a Ctrl+wheel zoom. */
+  onFitPane: () => void;
+  /** Open in window…: the frame viewer on the selected cell. */
+  onOpenViewer: () => void;
   /** Re-read the file info (after a core record is saved). */
   refreshInfo: () => Promise<void>;
   /** What the view shows (zoom, toggles, unsaved record) for chart exports. */
@@ -37,7 +56,7 @@ export interface ChartsViewProps {
 }
 
 export function ChartsView(props: ChartsViewProps) {
-  const { info, fileKey, selected, validTotal, onSelect, framePane, refreshInfo, onViewChange, log } = props;
+  const { info, fileKey, selected, validTotal, onSelect, framePane, selectedFrameIndex, onFitPane, onOpenViewer, refreshInfo, onViewChange, log } = props;
   const [scatter, setScatter] = useState<ScatterData | null>(null);
   const [density, setDensity] = useState<ReviewDensity | null>(null);
   const [curves, setCurves] = useState<IsoCurve[]>([]);
@@ -63,8 +82,8 @@ export function ChartsView(props: ChartsViewProps) {
   }, [onViewChange, colourByDensity, showCurves, computedJson]);
 
   useEffect(() => {
-    void loadCurves().then((c) => alive.current && setCurves(c));
-  }, []);
+    void loadCurves(log).then((c) => alive.current && setCurves(c));
+  }, [log]);
 
   // Per file: scatter, then the density job (single-flight; retried while
   // another job runs), polled until its levels are ready.
@@ -82,7 +101,7 @@ export function ChartsView(props: ChartsViewProps) {
         if (!s.valid || s.area_um2.length === 0) return;
         setStatus("Estimating density…");
         for (let tries = 0; !cancelled; tries++) {
-          const r = await reviewBridge.requestDensity(1.0, DEFAULT_CORE_FRACTION, 8, true);
+          const r = await reviewBridge.requestDensity(1.0, loadCoreFraction(), 8, true);
           if (r.ok) break;
           if (tries > 200) {
             setStatus(`Density not available: ${r.message}`);
@@ -156,7 +175,8 @@ export function ChartsView(props: ChartsViewProps) {
     const n = scatter?.area_um2.length ?? 0;
     setStatus(`Computing core contour from ${n} cells…`);
     try {
-      const r = await reviewBridge.computeCore(stored?.coreFraction ?? DEFAULT_CORE_FRACTION);
+      // The Preferences core share, as the Qt tab reads Monitoring/KdeCoreFraction.
+      const r = await reviewBridge.computeCore(loadCoreFraction());
       if (!r.ok) {
         setStatus(`Core contour: ${r.message}`);
         return;
@@ -179,7 +199,7 @@ export function ChartsView(props: ChartsViewProps) {
     } finally {
       if (alive.current) setBusy(false);
     }
-  }, [log, saveRecord, scatter, stored]);
+  }, [log, saveRecord, scatter]);
 
   const hasPoints = (scatter?.area_um2.length ?? 0) > 0;
   const menu: MenuItem[] = [
@@ -189,51 +209,100 @@ export function ChartsView(props: ChartsViewProps) {
     { label: "Isoelastic curves", onClick: () => setShowCurves((v) => !v), checked: showCurves },
   ];
 
+  // Prev / Next and the arrow keys: the valid set in order, wrapping (Qt stepScatterSelection).
+  const step = useCallback(
+    (delta: number) => {
+      if (validTotal <= 0) return;
+      const from = selected >= 0 ? selected : delta > 0 ? -1 : 0;
+      onSelect((((from + delta) % validTotal) + validTotal) % validTotal);
+    },
+    [onSelect, selected, validTotal],
+  );
   const onKey = (e: React.KeyboardEvent) => {
-    if (validTotal <= 0) return;
     const delta = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
-    if (!delta) return;
+    if (!delta || validTotal <= 0) return;
     e.preventDefault();
-    const from = selected >= 0 ? selected : delta > 0 ? -1 : 0;
-    onSelect((((from + delta) % validTotal) + validTotal) % validTotal);
+    step(delta);
   };
+
+  // A valid-set frame that failed validation has no point on the scatter.
+  const onScatterPositions = useMemo(() => new Set((scatter?.valid_position ?? []).map(Number)), [scatter]);
+  const title = framePaneTitle(selectedFrameIndex, selected, validTotal, !scatter || !scatter.valid || onScatterPositions.has(selected));
+
+  const left = (
+    <div className="charts-left">
+      <div className="table-toolbar charts-toolbar">
+        <label title="Colour each cell by the backend density estimate">
+          <input type="checkbox" checked={colourByDensity} disabled={!density} onChange={(e) => setColourByDensity(e.target.checked)} /> Density colours
+        </label>
+        <label>
+          <input type="checkbox" checked={showCurves} onChange={(e) => setShowCurves(e.target.checked)} /> Isoelastic curves
+        </label>
+        <button onClick={() => void computeCore()} disabled={busy || !hasPoints} data-tour="review-compute-core" title="KDE core contour over every valid cell in this file">
+          Compute core contour…
+        </button>
+        <button onClick={() => resetRef.current?.()} title="Back to the data extent (or double-click empty plot space)">
+          Reset zoom
+        </button>
+        <span className="right mono charts-status">{status}</span>
+      </div>
+      <ReviewScatter
+        data={scatter}
+        levels={density?.levels ?? null}
+        levelCount={density?.level_count ?? 8}
+        colourByDensity={colourByDensity && !!density}
+        curves={showCurves ? curves : []}
+        contours={contours}
+        selected={selected}
+        fileKey={fileKey}
+        onSelect={onSelect}
+        menu={menu}
+        resetRef={resetRef}
+      />
+    </div>
+  );
+
+  const pane = (
+    <div className="charts-frame" data-tour="review-frame-pane">
+      <div className={`frame-pane-title mono${selected < 0 ? " empty" : ""}`} data-tour="review-frame-pane-title">
+        {title}
+      </div>
+      {framePane}
+      <div className="toolbar frame-pane-bar">
+        <button onClick={() => step(-1)} disabled={validTotal <= 0} title="Previous valid cell (←)">◀ Previous</button>
+        <button onClick={() => step(1)} disabled={validTotal <= 0} title="Next valid cell (→)">Next ▶</button>
+        <button onClick={onFitPane} disabled={selected < 0} title="Back to the pane's own sizing (Ctrl+wheel zooms)">Fit to Window</button>
+        <span className="right" />
+        <button onClick={onOpenViewer} disabled={selected < 0} title="Open this cell in the frame viewer">Open in window…</button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="review-charts" tabIndex={0} onKeyDown={onKey}>
-      <div className="charts-left">
-        <div className="table-toolbar charts-toolbar">
-          <label title="Colour each cell by the backend density estimate">
-            <input type="checkbox" checked={colourByDensity} disabled={!density} onChange={(e) => setColourByDensity(e.target.checked)} /> Density colours
-          </label>
-          <label>
-            <input type="checkbox" checked={showCurves} onChange={(e) => setShowCurves(e.target.checked)} /> Isoelastic curves
-          </label>
-          <button onClick={() => void computeCore()} disabled={busy || !hasPoints} title="KDE core contour over every valid cell in this file">
-            Compute core contour…
-          </button>
-          <button onClick={() => resetRef.current?.()} title="Back to the data extent (or double-click empty plot space)">
-            Reset zoom
-          </button>
-          <span className="right mono charts-status">{status}</span>
-        </div>
-        <ReviewScatter
-          data={scatter}
-          levels={density?.levels ?? null}
-          levelCount={density?.level_count ?? 8}
-          colourByDensity={colourByDensity && !!density}
-          curves={showCurves ? curves : []}
-          contours={contours}
-          selected={selected}
-          fileKey={fileKey}
-          onSelect={onSelect}
-          menu={menu}
-          resetRef={resetRef}
-        />
-      </div>
-      <div className="charts-right">
-        <div className="charts-frame">{framePane}</div>
-        <Histogram values={scatter?.ring_ratio ?? []} min={info.ring_ratio_min} max={info.ring_ratio_max} />
-      </div>
+      <SplitPane
+        direction="row"
+        storageKey={CHARTS_SPLITTER_KEY}
+        defaultShare={CHARTS_SPLIT_DEFAULT}
+        minFirst={SCATTER_MIN_WIDTH}
+        minSecond={PANE_MIN_WIDTH}
+        label="Resize the scatter and the frame pane"
+        tour="review-charts-splitter"
+        first={left}
+        second={
+          <SplitPane
+            direction="column"
+            storageKey={CHARTS_RIGHT_SPLITTER_KEY}
+            defaultShare={CHARTS_RIGHT_SPLIT_DEFAULT}
+            minFirst={PANE_MIN_HEIGHT}
+            minSecond={HISTOGRAM_MIN_HEIGHT}
+            label="Resize the frame pane and the histogram"
+            tour="review-charts-right-splitter"
+            first={pane}
+            second={<Histogram values={scatter?.ring_ratio ?? []} min={info.ring_ratio_min} max={info.ring_ratio_max} />}
+          />
+        }
+      />
     </div>
   );
 }

@@ -7,7 +7,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { FramePacket } from "../framePacket";
 import { REVIEW_PIXEL_FORMATS } from "./reviewContract";
 import { reviewBridge, type OverlayMode } from "./reviewBridge";
-import { gridGeometry, imageBand, PageCache, pagesFor, scrollToReveal, THUMB_PAGE, THUMB_SIZE, tileRgba, visibleRange } from "./thumbnails";
+import { gridGeometry, imageBand, PageCache, pagesFor, scrollToReveal, THUMB_PAGE, THUMB_SIZE, thumbTooltip, tileRgba, visibleRange } from "./thumbnails";
+import { recallScroll, rememberScroll, type TabMemory } from "./tabMemory";
 
 const GAP = 8;
 const CACHE_PAGES = 12;
@@ -30,6 +31,9 @@ export interface ThumbnailGridProps {
   /** Frame geometry of the set (cells follow its aspect ratio). */
   imageWidth: number;
   imageHeight: number;
+  /** Scroll position of each set, kept by the panel so it outlives the grid
+   * (Qt validScrollValue_ / invalidScrollValue_, #867 REVIEW-018). */
+  scrollMemory?: TabMemory;
   onSelect: (index: number) => void;
   onOpen: (index: number) => void;
   log: (line: string) => void;
@@ -53,7 +57,7 @@ function Tile(props: { page: Page | undefined; tile: number; index: number; band
       className={`thumb${props.selected ? " selected" : ""}`}
       role="option"
       aria-selected={props.selected}
-      title={`#${props.index + 1}`}
+      title={thumbTooltip(props.index)}
       onClick={props.onSelect}
       onDoubleClick={props.onOpen}
     >
@@ -64,7 +68,7 @@ function Tile(props: { page: Page | undefined; tile: number; index: number; band
 }
 
 export function ThumbnailGrid(props: ThumbnailGridProps) {
-  const { valid, total, overlay, roiOverlay, selected, fileKey, imageWidth, imageHeight, onSelect, onOpen, log } = props;
+  const { valid, total, overlay, roiOverlay, selected, fileKey, imageWidth, imageHeight, scrollMemory, onSelect, onOpen, log } = props;
   const band = imageBand(THUMB_SIZE, imageWidth, imageHeight);
   const cellW = band.w + GAP;
   const cellH = band.h + GAP + 12; // + label line
@@ -124,14 +128,37 @@ export function ThumbnailGrid(props: ThumbnailGridProps) {
     for (const offset of pagesFor(range.start, range.end)) void fetchPage(offset);
   }, [range.start, range.end, fetchPage]);
 
-  // Keep the selected item visible (table clicks, prev/next in the viewer).
-  useEffect(() => {
+  // A set (or file) shown for the first time since this grid mounted goes back
+  // to where the operator left it (Qt `onTabChanged` restores the scroll value
+  // of the tab it enters), and the selection that comes back with it is not
+  // scrolled to; afterwards, and for a set never left, the selected item is
+  // kept visible (table clicks, prev/next in the viewer).
+  const setKey = `${fileKey}|${valid}`;
+  const shownSet = useRef<string | null>(null);
+  const selectionComingBack = useRef(false);
+  const set = valid ? "valid" : "invalid";
+  useLayoutEffect(() => {
     const el = scroller.current;
-    if (!el || selected < 0 || selected >= total) return;
+    if (!el) return;
+    if (shownSet.current !== setKey) {
+      shownSet.current = setKey;
+      const kept = scrollMemory ? recallScroll(scrollMemory, fileKey, set) : null;
+      selectionComingBack.current = kept !== null && selected < 0;
+      if (kept !== null) {
+        el.scrollTop = kept;
+        setViewport((v) => ({ ...v, scrollTop: el.scrollTop }));
+        return;
+      }
+    }
+    if (selected < 0 || selected >= total) return;
+    if (selectionComingBack.current) {
+      selectionComingBack.current = false;
+      return;
+    }
     const top = scrollToReveal(selected, el.scrollTop, el.clientHeight, geometry);
     if (top !== null) el.scrollTop = top;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, geometry.columns]);
+  }, [setKey, selected, geometry.columns]);
 
   const onKey = (e: React.KeyboardEvent) => {
     if (total === 0) return;
@@ -177,8 +204,10 @@ export function ThumbnailGrid(props: ThumbnailGridProps) {
       aria-label={valid ? "Frames" : "Invalid frames"}
       tabIndex={0}
       onKeyDown={onKey}
+      data-tour="review-thumbnail-grid"
       onScroll={(e) => {
         const el = e.currentTarget;
+        if (scrollMemory && shownSet.current === setKey) rememberScroll(scrollMemory, fileKey, set, el.scrollTop);
         setViewport((v) => (v.scrollTop === el.scrollTop ? v : { ...v, scrollTop: el.scrollTop }));
       }}
     >

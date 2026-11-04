@@ -25,6 +25,7 @@ import {
 } from "./reviewAvailability";
 import { FramePullScheduler } from "../framePullScheduler";
 import { ReviewPanel, type ReviewPanelHandle } from "./ReviewPanel";
+import { CORE_FRACTION_MAX, CORE_FRACTION_MIN, clampCoreFraction, loadCoreFraction, saveCoreFraction } from "./charts/chartData";
 import { reviewBridge, type ReviewInfo } from "./reviewBridge";
 import { checkUpdate, loadUpdateChannel, saveUpdateChannel, UpdateDialog, type UpdateChannel } from "./updates";
 import "../App.css";
@@ -59,16 +60,22 @@ function safeStorage(): Storage | null {
   }
 }
 
-function PreferencesDialog(props: {
+export function PreferencesDialog(props: {
   value: number;
+  /** KDE core share (0.05 – 1), the Qt Monitoring/KdeCoreFraction. */
+  coreFraction: number;
   channel: UpdateChannel;
-  onSave: (v: number, channel: UpdateChannel) => void;
+  onSave: (v: number, channel: UpdateChannel, coreFraction: number) => void;
   onClose: () => void;
 }) {
   const [text, setText] = useState(String(props.value));
   const [channel, setChannel] = useState<UpdateChannel>(props.channel);
+  // Shown as the whole percent of Qt's Monitoring settings spin box (5 – 100 %, step 5).
+  const [corePct, setCorePct] = useState(String(Math.round(props.coreFraction * 100)));
   const v = Number(text);
-  const valid = Number.isFinite(v) && v > 0 && v < 1000;
+  const core = Number(corePct);
+  const coreValid = corePct.trim() !== "" && Number.isFinite(core) && core >= CORE_FRACTION_MIN * 100 && core <= CORE_FRACTION_MAX * 100;
+  const valid = Number.isFinite(v) && v > 0 && v < 1000 && coreValid;
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
       <div className="modal" role="dialog" aria-label="Preferences" onClick={(e) => e.stopPropagation()}>
@@ -81,13 +88,27 @@ function PreferencesDialog(props: {
           Used only for files that do not record their pixel-to-micron factor (older recordings). Files that record one always use it.
         </p>
         <div className="row">
+          <label htmlFor="pref-core">Core contour (%)</label>
+          <input
+            id="pref-core"
+            type="number"
+            step="5"
+            min={CORE_FRACTION_MIN * 100}
+            max={CORE_FRACTION_MAX * 100}
+            value={corePct}
+            data-tour="review-pref-core-share"
+            onChange={(e) => setCorePct(e.target.value)}
+          />
+        </div>
+        <p className="hint">Share of the population enclosed by the core contour that Compute core contour draws on the scatter (5 – 100 %, default 90 %).</p>
+        <div className="row">
           <label htmlFor="pref-channel">Update channel</label>
           <select id="pref-channel" value={channel} onChange={(e) => setChannel(e.target.value === "beta" ? "beta" : "stable")}>
             <option value="stable">Stable</option>
             <option value="beta">Beta (pre-releases)</option>
           </select>
         </div>
-        {!valid && <p className="form-error">Enter a positive number.</p>}
+        {!valid && <p className="form-error">Enter a positive factor and a core share from 5 to 100 %.</p>}
         <div className="actions">
           <button className="btn" onClick={props.onClose}>
             Cancel
@@ -96,7 +117,7 @@ function PreferencesDialog(props: {
             className="btn primary"
             disabled={!valid}
             onClick={() => {
-              props.onSave(v, channel);
+              props.onSave(v, channel, Math.round(core) / 100);
               props.onClose();
             }}
           >
@@ -148,6 +169,7 @@ export default function ReviewApp() {
   const [filePath, setFilePath] = useState("");
   const [info, setInfo] = useState<ReviewInfo | null>(null);
   const [pxToUm, setPxToUm] = useState(() => loadPixelToMicron());
+  const [coreFraction, setCoreFraction] = useState(() => loadCoreFraction());
   const [showPrefs, setShowPrefs] = useState(false);
   const [channel, setChannel] = useState<UpdateChannel>(() => loadUpdateChannel());
   const [showUpdate, setShowUpdate] = useState(false);
@@ -357,9 +379,10 @@ export default function ReviewApp() {
       {showPrefs && (
         <PreferencesDialog
           value={pxToUm}
+          coreFraction={coreFraction}
           channel={channel}
           onClose={() => setShowPrefs(false)}
-          onSave={(v, ch) => {
+          onSave={(v, ch, core) => {
             setChannel(ch);
             saveUpdateChannel(ch);
             setPxToUm(v);
@@ -369,6 +392,8 @@ export default function ReviewApp() {
               // Storage unavailable: this session only.
             }
             append(`fallback px→µm set to ${v}`);
+            setCoreFraction(saveCoreFraction(clampCoreFraction(core)));
+            append(`core contour share set to ${Math.round(clampCoreFraction(core) * 100)} %`);
           }}
         />
       )}

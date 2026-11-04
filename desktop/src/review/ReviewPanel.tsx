@@ -29,7 +29,8 @@ import { REVIEW_OPERATION_KINDS } from "./reviewContract";
 import { ChartsView } from "./charts/ChartsView";
 import { gatherChartInputs, renderChartPngs, stageCharts, type ChartViewState } from "./charts/chartExport";
 import { JobDialog, SeriesPrompt } from "./exports/ExportDialogs";
-import { defaultMetricsName, dirName, exportDir, joinPath, rememberExportDir, seriesRangeFor, type SeriesChoice } from "./exports/exportHelpers";
+import { baseName, defaultMetricsName, dirName, exportDir, joinPath, rememberExportDir, seriesRangeFor, type SeriesChoice } from "./exports/exportHelpers";
+import { withTiffExtension } from "./exports/frameExport";
 import { useReviewJobs, type TrackedJob } from "./exports/useReviewJobs";
 import { RegenerateMasksDialog, type RegenerateRequest } from "./RegenerateMasks";
 import { FrameViewer } from "./FrameViewer";
@@ -45,6 +46,8 @@ import {
   type ReviewRows,
 } from "./reviewBridge";
 import { ThumbnailGrid } from "./ThumbnailGrid";
+import { useImageZoom, zoomedSize } from "./imageZoom";
+import { leaveTab, newTabMemory, recallSelection } from "./tabMemory";
 import "./review.css";
 
 export const H5_FILTER = [{ name: "HDF5", extensions: ["h5", "hdf5"] }];
@@ -133,6 +136,11 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rowsRef = useRef<ReviewRows | null>(null);
   rowsRef.current = rows;
+  // Each set keeps its own selection and thumbnail scroll position (Qt onTabChanged, REVIEW-018).
+  const tabMemory = useRef(newTabMemory());
+  // The Charts frame pane zooms with Ctrl+wheel and goes back with Fit to Window (REVIEW-032).
+  const paneZoom = useImageZoom(canvasRef);
+  const [paneSize, setPaneSize] = useState({ w: 0, h: 0 });
 
   const reviewing = !!info?.file_open;
   const isRecording = !!info?.recording_file;
@@ -150,6 +158,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     canvas.width = p.width;
     canvas.height = p.height;
     canvas.getContext("2d")?.putImageData(packetToImageData(p), 0, 0);
+    setPaneSize((s) => (s.w === p.width && s.h === p.height ? s : { w: p.width, h: p.height }));
   }, []);
 
   useEffect(() => scheduler.mount("review", draw, (e) => log(`review frame error: ${e}`)), [scheduler, draw, log]);
@@ -207,15 +216,19 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
   }, [scheduler]);
 
+  // Qt onTabChanged: the tab left keeps its selection and scroll position, the
+  // tab entered gets its own back (the first time, its first item).
   const selectTab = useCallback(
     async (tab: ReviewTab) => {
+      leaveTab(tabMemory.current, fileKey, reviewTab, selected);
       resetView();
       setReviewTab(tab);
       if (tab === "charts") return;
-      await loadRows(tab !== "invalid", 0);
-      setSelected(0);
+      const start = recallSelection(tabMemory.current, fileKey, tab, setTotalFor(info, tab !== "invalid"));
+      await loadRows(tab !== "invalid", pageOffsetFor(start, METRICS_PAGE_SIZE));
+      setSelected(start);
     },
-    [loadRows, resetView],
+    [fileKey, info, loadRows, resetView, reviewTab, selected],
   );
 
   const closeFile = useCallback(async () => {
@@ -279,10 +292,12 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   useImperativeHandle(ref, () => ({ openFile, openPath, closeFile }), [openFile, openPath, closeFile]);
 
-  // A new file starts from an unopened Charts view (data extent, prefs).
+  // A new file starts from an unopened Charts view (data extent, prefs) and an unzoomed pane.
+  const fitPane = paneZoom.fit;
   useEffect(() => {
     chartView.current = null;
-  }, [fileKey]);
+    fitPane();
+  }, [fileKey, fitPane]);
 
   // TD-17 fallback factor: files without a recorded factor use it; the info
   // (and scatter µm²) follow a change.
@@ -316,8 +331,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   // Export Charts.
   const stageChartSnapshots = useCallback(async () => {
     if (!info) return;
-    await stageCharts(await renderChartPngs(await gatherChartInputs(info, chartView.current)));
-  }, [info]);
+    await stageCharts(await renderChartPngs(await gatherChartInputs(info, chartView.current, log)));
+  }, [info, log]);
 
   const onExportMetrics = useCallback(async () => {
     if (!info) return;
@@ -331,6 +346,31 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
       log(`export error: ${e}`);
     }
   }, [info, jobs, log]);
+
+  // Frame viewer ▸ Export as TIFF… (#867 REVIEW-031), the Qt onExportFrame: a save
+  // dialog proposing frame_N[_series_K].tiff, ".tiff" appended when missing, the
+  // displayed image (overlay and ROI burned in). The PNG is staged like a chart
+  // snapshot and the Export Charts job writes it as a TIFF into the chosen folder.
+  const onExportFrame = useCallback(
+    async (defaultName: string, png: () => Promise<Uint8Array>) => {
+      if (!info) return;
+      try {
+        const dir = exportDir(info.file_path);
+        const picked = await save({
+          title: "Export Frame as TIFF",
+          filters: [{ name: "TIFF Files", extensions: ["tiff", "tif"] }, { name: "All Files", extensions: ["*"] }],
+          defaultPath: joinPath(dir, defaultName),
+        });
+        if (!picked) return;
+        const target = withTiffExtension(picked);
+        const prepare = { label: "Encoding frame…", work: async () => stageCharts([{ name: baseName(target), bytes: await png() }]) };
+        remember(await jobs.start("Export Frame as TIFF", REVIEW_OPERATION_KINDS.ExportCharts, () => reviewBridge.exportCharts(dirName(target)), prepare), dirName(target));
+      } catch (e) {
+        log(`frame export error: ${e}`);
+      }
+    },
+    [info, jobs, log],
+  );
 
   const onExportAll = useCallback(async () => {
     if (!info) return;
@@ -410,16 +450,26 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   const pageTo = (offset: number) => void loadRows(validSet, Math.max(0, offset));
 
+  // The Charts pane may be zoomed (Ctrl+wheel); the Frames preview follows the View ▸ Fit preference only.
+  const inCharts = reviewTab === "charts";
+  const paneZoomed = inCharts && paneZoom.zoom !== null;
   const previewPane = (
-    <div className="canvas-wrap preview" onDoubleClick={() => selected >= 0 && setViewerOpen(true)} title="Double-click to open the viewer">
-      <canvas ref={canvasRef} className={fitWindow ? "fit" : ""} />
-      <span className="preview-caption mono">
-        {selected >= 0
-          ? `#${selected + 1} of ${setTotal}${selectedRow ? ` · frame ${selectedRow.frame_index}` : ""}`
-          : reviewTab === "charts"
-            ? "Click a point to show its cell"
-            : "—"}
-      </span>
+    <div
+      ref={inCharts ? paneZoom.wrapRef : undefined}
+      className="canvas-wrap preview"
+      onDoubleClick={() => selected >= 0 && setViewerOpen(true)}
+      title="Double-click to open the viewer"
+    >
+      <canvas
+        ref={canvasRef}
+        className={fitWindow && !paneZoomed ? "fit" : ""}
+        style={paneZoomed ? { width: zoomedSize(paneSize.w, paneZoom.zoom as number), height: zoomedSize(paneSize.h, paneZoom.zoom as number) } : undefined}
+      />
+      {!inCharts && (
+        <span className="preview-caption mono">
+          {selected >= 0 ? `#${selected + 1} of ${setTotal}${selectedRow ? ` · frame ${selectedRow.frame_index}` : ""}` : "—"}
+        </span>
+      )}
     </div>
   );
 
@@ -531,6 +581,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
             validTotal={setTotal}
             onSelect={select}
             framePane={previewPane}
+            selectedFrameIndex={selectedRow?.frame_index}
+            onFitPane={paneZoom.fit}
+            onOpenViewer={() => selected >= 0 && setViewerOpen(true)}
             refreshInfo={refreshInfo}
             onViewChange={onChartViewChange}
             log={log}
@@ -546,6 +599,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
               fileKey={fileKey}
               imageWidth={imageDims(info, validSet).w}
               imageHeight={imageDims(info, validSet).h}
+              scrollMemory={tabMemory.current}
               onSelect={select}
               onOpen={(i) => {
                 select(i);
@@ -632,7 +686,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         />
       )}
       {showRegenerate && <RegenerateMasksDialog info={info} onRun={onRegenerate} onCancel={() => setShowRegenerate(false)} />}
-      {jobs.job && <JobDialog job={jobs.job} onCancel={jobs.cancel} onClose={jobs.dismiss} />}
+      {jobs.job && <JobDialog job={jobs.job} onCancel={jobs.cancel} onClose={jobs.dismiss} log={log} />}
       {viewerOpen && reviewing && selected >= 0 && (
         <FrameViewer
           scheduler={scheduler}
@@ -641,8 +695,12 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           total={setTotal}
           overlay={isRecording ? OVERLAY.None : overlay}
           roiOverlay={!isRecording && roiOverlay}
+          recording={isRecording}
           row={selectedRow}
           onIndexChange={select}
+          onOverlayChange={setOverlay}
+          onRoiOverlayChange={setRoiOverlay}
+          onExportFrame={(name, png) => void onExportFrame(name, png)}
           onClose={() => setViewerOpen(false)}
           log={log}
         />

@@ -179,7 +179,7 @@
     "cmd": "fetch_review_series_packet",
     "args": {
      "index": "0",
-     "k": "0",
+     "k": "1",
      "overlay": 0,
      "roiOverlay": false
     }
@@ -188,7 +188,7 @@
     "cmd": "fetch_review_series_packet",
     "args": {
      "index": "0",
-     "k": "1",
+     "k": "2",
      "overlay": 0,
      "roiOverlay": false
     }
@@ -197,15 +197,6 @@
     "cmd": "fetch_review_series_count",
     "args": {
      "index": "1"
-    }
-   },
-   {
-    "cmd": "fetch_review_series_packet",
-    "args": {
-     "index": "1",
-     "k": "1",
-     "overlay": 0,
-     "roiOverlay": false
     }
    },
    {
@@ -617,7 +608,7 @@
    {
     "cmd": "review_compute_core",
     "args": {
-     "coreFraction": 0.8
+     "coreFraction": 0.9
     }
    },
    {
@@ -876,6 +867,207 @@
      "paths": [
       "/data/out/clip_remasked_2.h5"
      ]
+    }
+   }
+  ]
+ },
+ {
+  "flow": "viewer overlay, ROI and export as TIFF",
+  "calls": [
+   {
+    "cmd": "fetch_review_series_count",
+    "args": {
+     "index": "0"
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 2,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 1,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "plugin:dialog|save",
+    "args": {
+     "options": {
+      "title": "Export Frame as TIFF",
+      "filters": [
+       {
+        "name": "TIFF Files",
+        "extensions": [
+         "tiff",
+         "tif"
+        ]
+       },
+       {
+        "name": "All Files",
+        "extensions": [
+         "*"
+        ]
+       }
+      ],
+      "defaultPath": "/data/out/frame_0_series_0.tiff"
+     }
+    }
+   },
+   {
+    "cmd": "review_clear_charts",
+    "args": {}
+   },
+   {
+    "cmd": "review_stage_chart",
+    "args": {
+     "rawBytes": [
+      137,
+      80,
+      78,
+      71,
+      13,
+      10,
+      26,
+      10,
+      5,
+      255,
+      0
+     ]
+    },
+    "options": {
+     "headers": {
+      "x-chart-name": "frame_0_series_0.tiff"
+     }
+    }
+   },
+   {
+    "cmd": "review_export_charts",
+    "args": {
+     "outputDir": "/data/out"
+    }
+   },
+   {
+    "cmd": "plugin:opener|reveal_item_in_dir",
+    "args": {
+     "paths": [
+      "/data/out"
+     ]
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 2,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 2,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 2,
+     "roiOverlay": true
     }
    }
   ]
