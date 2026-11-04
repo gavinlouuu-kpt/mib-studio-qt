@@ -1,24 +1,30 @@
 // @vitest-environment jsdom
 // Pumps operate as in Qt (epic #868, bug #855): no Service mode / arm / experiment gate, Stop always available, the device is
 // polled every 500 ms without a command lock, rate/unit/direction apply 300 ms after the last edit, hold-to-purge, exact
-// syringe numbers.
+// syringe numbers, Connect from the saved pump settings, rate/unit/direction kept on the host (HW-003, HW-016).
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PumpControls } from './PumpControls';
 import { bridge } from '../bridge';
-import type { CmdResult, PlatformCapabilities, PumpStatus } from '../bridge';
+import type { CmdResult, HostSettingsDocument, PlatformCapabilities, PumpStatus } from '../bridge';
+import { OPEN_PUMP_SETTINGS_EVENT } from './hardwareDialogEvents';
 
 vi.mock('../bridge', () => ({bridge: {
   fetchPumpStatus: vi.fn(), pumpPollStatus: vi.fn(), pumpStart: vi.fn(), pumpStop: vi.fn(), pumpPurge: vi.fn(), pumpStopPurge: vi.fn(),
   pumpSetFlowRate: vi.fn(), pumpSetDirection: vi.fn(), pumpSetSyringeVolume: vi.fn(), pumpConnectModel: vi.fn(), pumpConnectEndpoint: vi.fn(),
-  pumpDisconnect: vi.fn(),
+  pumpDisconnect: vi.fn(), fetchHostSettings: vi.fn(), hostSettingsCommand: vi.fn(),
 }}));
 const ok = (message = 'ok'): CmdResult => ({ok: true, command: 10, message, operation_id: '0'});
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return {promise, resolve}; };
 const base: PumpStatus = {valid: true, connected: true, run_status: 0, current_flow_rate: 0, accumulated_volume: 0, min_flow_rate: 0, max_flow_rate: 100, stalled: false, com_port: 3, baud_rate: 115200, modbus_address: 1, configured_flow_rate: 0, flow_rate_unit: 100, direction: 0, model: 0, port_name: 'COM3'};
 let host: HTMLDivElement, root: Root;
 let statuses: [PumpStatus, PumpStatus];
+/** The host's saved settings: a stand-in for the backend that merges `set_pumps` patches like host_settings.json does. */
+let saved: Record<string, unknown>;
+const hostDocument = (): HostSettingsDocument => ({valid: true, path: '/data/host_settings.json', settings: structuredClone(saved), load_error: '', boot_env: '', pump_scan: {state: 'idle', operation_id: '0', port: '', found: [], error: ''}});
+const lastPatch = () => { const all = savedPatches(); return all[all.length - 1]; };
+const savedPatches = () => vi.mocked(bridge.hostSettingsCommand).mock.calls.map(([request]) => request as {action: string; settings: Record<string, unknown>}).filter(request => request.action === 'set_pumps').map(request => request.settings);
 const append = vi.fn();
 
 const panel = (slot: number) => Array.from(host.querySelectorAll('fieldset'))[slot];
@@ -44,6 +50,13 @@ beforeEach(() => {
   statuses = [{...base}, {...base, modbus_address: 2}];
   vi.mocked(bridge.fetchPumpStatus).mockImplementation(async slot => statuses[slot]);
   vi.mocked(bridge.pumpPollStatus).mockResolvedValue(ok('Pump status polled'));
+  saved = {};
+  vi.mocked(bridge.fetchHostSettings).mockImplementation(async () => hostDocument());
+  vi.mocked(bridge.hostSettingsCommand).mockImplementation(async request => {
+    const patch = (request as {settings: Record<string, unknown>}).settings;
+    for (const [key, value] of Object.entries(patch)) { if (value === null) delete saved[key]; else saved[key] = value; }
+    return ok('Pump settings saved');
+  });
   for (const name of ['pumpStart', 'pumpStop', 'pumpPurge', 'pumpStopPurge', 'pumpSetFlowRate', 'pumpSetDirection', 'pumpSetSyringeVolume', 'pumpConnectModel', 'pumpConnectEndpoint', 'pumpDisconnect'] as const)
     vi.mocked(bridge[name] as (...a: unknown[]) => Promise<CmdResult>).mockResolvedValue(ok(name));
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
@@ -51,11 +64,11 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); });
 
 describe('operator controls need no Service mode, arm or idle experiment (D1)', () => {
-  it('starts, purges, edits rate, direction and volume with nothing but a connected pump', async () => {
+  it('starts, purges and edits rate and direction with nothing but a connected pump', async () => {
     await render();
     for (const name of ['Run configured pump', 'Stop pump', 'Disconnect']) expect(button(name).disabled, name).toBe(false);
     expect(purgeButton().disabled).toBe(false);
-    for (const label of ['Flow rate', 'Rate unit', 'Direction', 'Syringe volume', 'Volume unit']) expect(field(label).disabled, label).toBe(false);
+    for (const label of ['Flow rate', 'Rate unit', 'Direction']) expect(field(label).disabled, label).toBe(false);
     await click(button('Run configured pump'));
     expect(bridge.pumpStart).toHaveBeenCalledWith(0);
     expect(append).toHaveBeenCalledWith('Start pump: pumpStart');
@@ -464,11 +477,10 @@ describe('peristaltic pump (Tushui, HW-070)', () => {
     await setRate(field('Flow rate'), '2.5'); await tick(300);
     expect(bridge.pumpSetFlowRate).toHaveBeenCalledWith(0, 2.5, 100);
   });
-  it('hides the syringe volume, and a syringe pump never keeps the rpm unit', async () => {
+  it('a syringe pump never keeps the rpm unit', async () => {
     statuses = [{...peristaltic, connected: false}, {...base, connected: false}];
     await render();
     await choose(field('Pump model'), '1');
-    expect(field('Syringe volume')).toBeUndefined();
     await choose(field('Rate unit'), '200');
     expect(field('Rate unit').value).toBe('200');
     await choose(field('Pump model'), '0');
@@ -480,10 +492,9 @@ describe('peristaltic pump (Tushui, HW-070)', () => {
     statuses = [{...base, connected: false}, {...base, connected: false}];
     await render();
     await choose(field('Pump model', 0), '1');
-    expect(field('System serial port', 0).value).toBe('/dev/ttyPS1');
-    expect(field('Device address', 0).value).toBe('3');
+    expect(panel(0).textContent).toContain('Connect to /dev/ttyPS1 · 115200 baud · Modbus address 3');
     await choose(field('Pump model', 1), '1');
-    expect(field('Device address', 1).value).toBe('4');
+    expect(panel(1).textContent).toContain('Connect to /dev/ttyPS1 · 115200 baud · Modbus address 4');
     expect(field('Calibration (µL per revolution)', 0).value).toBe('25');
     await click(button('Connect', 0));
     expect(bridge.pumpConnectModel).toHaveBeenCalledWith(0, 1, '/dev/ttyPS1', 115200, 3, 25);
@@ -497,83 +508,148 @@ describe('peristaltic pump (Tushui, HW-070)', () => {
       pump: {model: 'tushui_peristaltic', port: '/dev/ttyPS1', sample_address: 3, sheath_address: 4, microliters_per_rev: 25},
     };
     await render({capabilities});
-    expect([0, 1].map(slot => field('System serial port', slot).value)).toEqual(['/dev/ttyPS1', '/dev/ttyPS1']);
-    expect([0, 1].map(slot => field('Device address', slot).value)).toEqual(['3', '4']);
+    expect([0, 1].map(slot => panel(slot).textContent)).toEqual([expect.stringContaining('Connect to /dev/ttyPS1 · 115200 baud · Modbus address 3'), expect.stringContaining('Connect to /dev/ttyPS1 · 115200 baud · Modbus address 4')]);
     expect([0, 1].map(slot => field('Pump model', slot).value)).toEqual(['1', '1']);
     expect(host.textContent).toContain('Sample at Modbus address 3, Sheath at 4');
   });
 });
 
-describe('connection defaults (HW-005, HW-006)', () => {
+describe('Connect uses the saved pump settings (HW-003, HW-005, HW-006)', () => {
   beforeEach(() => { statuses = [{...base, connected: false}, {...base, connected: false}]; });
-  it('defaults to 115200 baud and Modbus addresses 1 (Sample) and 2 (Sheath), offering the standard baud rates', async () => {
+  it('says where to set a port when none is saved, and calls nothing', async () => {
     await render();
-    expect(field('Baud rate', 0).value).toBe('115200');
-    expect([0, 1].map(slot => field('Device address', slot).value)).toEqual(['1', '2']);
-    expect(field('Baud rate', 0).getAttribute('min')).toBe('1200');
-    expect(field('Baud rate', 0).getAttribute('max')).toBe('921600');
-    const list = host.querySelector(`#${field('Baud rate', 0).getAttribute('list')}`)!;
-    expect(Array.from(list.querySelectorAll('option')).map(o => o.getAttribute('value'))).toEqual(['1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200', '230400', '460800', '921600']);
-  });
-  it('connects a syringe pump without a calibration, with the Sheath on address 2', async () => {
-    await render();
-    await type(field('System serial port', 1), '3');
-    await click(button('Connect', 1));
-    expect(bridge.pumpConnectEndpoint).toHaveBeenCalledWith(1, 'COM3', 115200, 2);
+    expect(panel(0).textContent).toContain('No COM port configured. Open Pump settings…');
+    await click(button('Connect', 0));
+    expect(alertText()).toContain('No COM port configured. Open Pump settings…');
+    expect(bridge.pumpConnectEndpoint).not.toHaveBeenCalled();
     expect(bridge.pumpConnectModel).not.toHaveBeenCalled();
   });
-  it('accepts 1200 to 921600 baud only', async () => {
+  it('connects each pump with its saved port, baud rate and Modbus address, a syringe pump without a calibration', async () => {
+    saved = {pump_sample_port: 'COM3', pump_sample_baud_rate: 9600, pump_sample_address: 5, pump_sheath_port: 'COM4'};
     await render();
-    await type(field('System serial port', 0), 'COM3');
-    for (const baud of ['1199', '921601', '9600.5', '']) {
-      await type(field('Baud rate', 0), baud);
-      await click(button('Connect', 0));
-      expect(alertText(), baud).toContain('Baud rate');
-    }
-    expect(bridge.pumpConnectEndpoint).not.toHaveBeenCalled();
-    for (const baud of ['1200', '921600']) { await type(field('Baud rate', 0), baud); await click(button('Connect', 0)); }
-    expect(bridge.pumpConnectEndpoint).toHaveBeenNthCalledWith(1, 0, 'COM3', 1200, 1);
-    expect(bridge.pumpConnectEndpoint).toHaveBeenNthCalledWith(2, 0, 'COM3', 921600, 1);
+    expect(panel(0).textContent).toContain('Connect to COM3 · 9600 baud · Modbus address 5');
+    await click(button('Connect', 0));
+    expect(bridge.pumpConnectEndpoint).toHaveBeenLastCalledWith(0, 'COM3', 9600, 5);
+    await click(button('Connect', 1));
+    expect(bridge.pumpConnectEndpoint).toHaveBeenLastCalledWith(1, 'COM4', 115200, 2);  // Qt's defaults: 115200 baud, Sheath on address 2
+    expect(bridge.pumpConnectModel).not.toHaveBeenCalled();
   });
-  it('needs a port and an address from 1 to 247', async () => {
+  it('takes a saved COM number as COMn and a saved system path as it is', async () => {
+    saved = {pump_sample_com_port: 7, pump_sheath_port: '/dev/ttyUSB0'};
     await render();
+    await click(button('Connect', 0)); await click(button('Connect', 1));
+    expect(bridge.pumpConnectEndpoint).toHaveBeenNthCalledWith(1, 0, 'COM7', 115200, 1);
+    expect(bridge.pumpConnectEndpoint).toHaveBeenNthCalledWith(2, 1, '/dev/ttyUSB0', 115200, 2);
+  });
+  it('follows a save made in the settings dialog at once', async () => {
+    await render();
+    expect(panel(0).textContent).toContain('No COM port configured');
+    saved = {pump_sample_port: 'COM3'};
+    await act(async () => { window.dispatchEvent(new CustomEvent('mib:host-settings', {detail: hostDocument()})); });
+    expect(panel(0).textContent).toContain('Connect to COM3 · 115200 baud · Modbus address 1');
+  });
+  it('ignores a saved value that is no longer valid and refuses a baud rate outside 1200-921600', async () => {
+    saved = {pump_sample_port: 'COM3', pump_sample_address: 248, pump_sample_baud_rate: 1000};
+    await render();
+    expect(panel(0).textContent).toContain('Modbus address 1');              // 248 is not an address: the default is used
     await click(button('Connect', 0));
-    expect(alertText()).toContain('System serial port is required');
-    await type(field('System serial port', 0), 'COM3');
-    await type(field('Device address', 0), '248');
-    await click(button('Connect', 0));
-    expect(alertText()).toContain('Address');
+    expect(alertText()).toContain('Baud rate');
     expect(bridge.pumpConnectEndpoint).not.toHaveBeenCalled();
+  });
+  it('shows the saved syringe size beside the connection, and offers Pump settings…', async () => {
+    saved = {pump_sample_port: 'COM3', pump_sample_syringe_vol: 0.5, pump_sample_syringe_unit: 103};
+    await render();
+    expect(panel(0).textContent).toContain('Syringe 0.5 mL');
+    const opened = vi.fn(); window.addEventListener(OPEN_PUMP_SETTINGS_EVENT, opened);
+    await click(Array.from(host.querySelectorAll('button')).find(node => node.textContent === 'Pump settings…')!);
+    window.removeEventListener(OPEN_PUMP_SETTINGS_EVENT, opened);
+    expect(opened).toHaveBeenCalledOnce();
   });
 });
 
-describe('syringe volume (HW-019, D9)', () => {
-  it('applies a volume live to a connected pump, also while it runs: 0.5 mL goes out as 500 µL', async () => {
-    statuses = [{...base, run_status: 1}, {...base}];
+describe('rate, unit and direction are kept on the host (HW-016)', () => {
+  it('restores them into the fields at startup and pushes nothing to the pump', async () => {
+    saved = {pump_sample_flow_rate: 12.5, pump_sample_flow_unit: 103, pump_sample_direction: 1, pump_sheath_flow_rate: 30};
+    statuses = [{...base, connected: false}, {...base, connected: false}];
     await render();
-    expect(button('Apply volume').disabled).toBe(true);           // nothing typed yet
-    await type(field('Syringe volume'), '0.5'); await choose(field('Volume unit'), '103');
-    expect(host.textContent).toContain('Sent to the pump as 500 µL');
-    expect(bridge.pumpSetSyringeVolume).not.toHaveBeenCalled();
-    await click(button('Apply volume'));
-    expect(bridge.pumpSetSyringeVolume).toHaveBeenCalledWith(0, 500, 100);
-    expect(append).toHaveBeenCalledWith('Set syringe volume: pumpSetSyringeVolume');
+    expect([field('Flow rate', 0).value, field('Rate unit', 0).value, field('Direction', 0).value]).toEqual(['12.5', '103', '1']);
+    expect([field('Flow rate', 1).value, field('Rate unit', 1).value, field('Direction', 1).value]).toEqual(['30', '100', '0']);
+    await tick(2000);
+    expect(bridge.pumpSetFlowRate).not.toHaveBeenCalled(); expect(bridge.pumpSetDirection).not.toHaveBeenCalled(); expect(bridge.pumpStart).not.toHaveBeenCalled();
+    expect(savedPatches()).toEqual([]);                                      // restoring writes nothing
   });
-  it('sends a whole number in the chosen unit unchanged', async () => {
+  it('saves the fields once an applied rate or direction went through (Qt: onApplySample), per pump', async () => {
     await render();
-    await type(field('Syringe volume'), '2500'); await click(button('Apply volume'));
-    expect(bridge.pumpSetSyringeVolume).toHaveBeenLastCalledWith(0, 2500, 100);
-    await choose(field('Volume unit'), '103'); await type(field('Syringe volume'), '5'); await click(button('Apply volume'));
-    expect(bridge.pumpSetSyringeVolume).toHaveBeenLastCalledWith(0, 5, 103);
+    await setRate(field('Flow rate', 1), '20'); await tick(300);
+    expect(bridge.pumpSetFlowRate).toHaveBeenCalledWith(1, 20, 100);
+    expect(savedPatches()).toEqual([{pump_sheath_flow_unit: 100, pump_sheath_direction: 0, pump_sheath_flow_rate: 20}]);
+    await choose(field('Direction', 1), '1'); await tick(300);
+    expect(lastPatch()).toEqual({pump_sheath_flow_unit: 100, pump_sheath_direction: 1, pump_sheath_flow_rate: 20});
+    await choose(field('Rate unit', 1), '103'); await tick(300);
+    expect(lastPatch()).toEqual({pump_sheath_flow_unit: 103, pump_sheath_direction: 1, pump_sheath_flow_rate: 20});
+    expect(savedPatches().every(patch => Object.keys(patch).every(key => key.startsWith('pump_sheath_')))).toBe(true);
   });
-  it('refuses a value the device cannot take exactly, or outside 0.1-9999, with a message', async () => {
+  it('saves nothing when the pump refused the edit, and leaves an unparsable rate out of the record', async () => {
+    vi.mocked(bridge.pumpSetFlowRate).mockResolvedValue({...ok(), ok: false, message: 'Device stalled'});
     await render();
-    for (const [value, unit, text] of [['0.5', '100', 'cannot be sent exactly'], ['12.5', '103', 'cannot be sent exactly'], ['1.25', '100', 'at most 1 decimal'], ['0', '100', 'from 0.1 to 9999'], ['10000', '100', 'from 0.1 to 9999'], ['-3', '100', 'Syringe volume']] as const) {
-      await choose(field('Volume unit'), unit); await type(field('Syringe volume'), value);
-      await click(button('Apply volume'));
-      expect(alertText(), value).toContain(text);
-    }
-    expect(bridge.pumpSetSyringeVolume).not.toHaveBeenCalled();
+    await setRate(field('Flow rate'), '20'); await tick(300);
+    expect(alertText()).toContain('Device stalled');
+    expect(savedPatches()).toEqual([]);
+    vi.mocked(bridge.pumpSetFlowRate).mockResolvedValue(ok());
+    await choose(field('Direction'), '1'); await tick(300);
+    expect(lastPatch()).toEqual({pump_sample_flow_unit: 100, pump_sample_direction: 1, pump_sample_flow_rate: 20});
+    await type(field('Flow rate'), '1.23456');                              // five decimals: not a rate
+    await choose(field('Direction'), '0'); await tick(300);
+    expect(lastPatch()).toEqual({pump_sample_flow_unit: 100, pump_sample_direction: 0});
+  });
+  it('saves the edited fields on Disconnect and when the window goes away, and only if they were edited', async () => {
+    await render();
+    await click(button('Disconnect', 0));
+    expect(savedPatches()).toEqual([]);                                      // untouched fields: nothing to save
+    await render();
+    await type(field('Flow rate', 1), '40');                                // typed, never applied
+    await fire(window, 'pagehide');
+    expect(savedPatches()).toEqual([{pump_sheath_flow_unit: 100, pump_sheath_direction: 0, pump_sheath_flow_rate: 40}]);
+    await fire(window, 'pagehide');
+    expect(savedPatches()).toHaveLength(1);                                  // saved: nothing more to save
+    await type(field('Flow rate', 0), '15');
+    await click(button('Disconnect', 0));
+    expect(lastPatch()).toEqual({pump_sample_flow_unit: 100, pump_sample_direction: 0, pump_sample_flow_rate: 15});
+    expect(bridge.pumpDisconnect).toHaveBeenCalledWith(0);
+  });
+  it('shows what the pump holds when it connects, and the saved rate for a pump that was never given one', async () => {
+    saved = {pump_sample_flow_rate: 12.5, pump_sheath_flow_rate: 30};
+    statuses = [{...base, connected: false}, {...base, connected: false}];
+    await render();
+    expect([field('Flow rate', 0).value, field('Flow rate', 1).value]).toEqual(['12.5', '30']);
+    statuses = [{...base, configured_flow_rate: 18}, {...base, configured_flow_rate: 0}];
+    await tick(500);
+    expect(field('Flow rate', 0).value).toBe('18');                          // the pump's own value wins
+    expect(field('Flow rate', 1).value).toBe('30');                          // never configured: the saved one stays
+    expect(bridge.pumpSetFlowRate).not.toHaveBeenCalled();
+  });
+  it('keeps the saved unit and direction with the saved rate for a pump that was never given one', async () => {
+    // A restart found 1.5 mL/min, Withdraw saved; a fresh pump reports unit uL/min, Infuse (meaningless at rate 0).
+    saved = {pump_sample_flow_rate: 1.5, pump_sample_flow_unit: 103, pump_sample_direction: 1};
+    statuses = [{...base, connected: false}, {...base, connected: false}];
+    await render();
+    statuses = [{...base, configured_flow_rate: 0, flow_rate_unit: 100, direction: 0}, {...base, connected: false}];
+    await tick(500);
+    expect([field('Flow rate', 0).value, field('Rate unit', 0).value, field('Direction', 0).value]).toEqual(['1.5', '103', '1']);
+    expect(bridge.pumpSetFlowRate).not.toHaveBeenCalled();
+    expect(bridge.pumpSetDirection).not.toHaveBeenCalled();
+  });
+  it('does not overwrite the values of a pump that is already connected when the settings arrive', async () => {
+    saved = {pump_sample_flow_rate: 12.5};
+    statuses = [{...base, configured_flow_rate: 18}, {...base}];
+    await render();
+    expect(field('Flow rate', 0).value).toBe('18');
+  });
+  it('reports a save the host refused', async () => {
+    vi.mocked(bridge.hostSettingsCommand).mockResolvedValue({...ok(), ok: false, message: 'There is no data directory to keep the settings in'});
+    await render();
+    await setRate(field('Flow rate'), '20'); await tick(300);
+    expect(append).toHaveBeenCalledWith('Pump settings were not saved: There is no data directory to keep the settings in');
   });
 });
 

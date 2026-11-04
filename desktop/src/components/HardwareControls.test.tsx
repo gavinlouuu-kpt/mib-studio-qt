@@ -9,7 +9,7 @@ vi.mock('../bridge', () => ({bridge: {
   fetchPumpStatus: vi.fn(), pumpPollStatus: vi.fn(), fetchAutofocusStatus: vi.fn(), fetchAutofocusConfig: vi.fn(),
   pumpStart: vi.fn(), pumpStop: vi.fn(), pumpStopPurge: vi.fn(), pumpPurge: vi.fn(), pumpSetFlowRate: vi.fn(),
   autofocusSetEnabled: vi.fn(), autofocusJog: vi.fn(), autofocusSetConfig: vi.fn(),
-  pulseGeneratorStatus: vi.fn(),
+  pulseGeneratorStatus: vi.fn(), fetchHostSettings: vi.fn(), hostSettingsCommand: vi.fn(),
 }}));
 const ok = (message = 'ok'): CmdResult => ({ok: true, command: 10, message, operation_id: '0'});
 const pump: PumpStatus = {valid: true, connected: true, run_status: 0, current_flow_rate: 1, accumulated_volume: 0, min_flow_rate: 0, max_flow_rate: 10, stalled: false, com_port: 1, baud_rate: 115200, modbus_address: 1, configured_flow_rate: 1, flow_rate_unit: 100, direction: 0};
@@ -31,6 +31,7 @@ beforeEach(() => {
   vi.mocked(bridge.fetchAutofocusConfig).mockResolvedValue(config);
   for (const name of ['pumpStart', 'pumpStop', 'pumpStopPurge', 'autofocusSetEnabled', 'autofocusJog'] as const) vi.mocked(bridge[name] as (...a: unknown[]) => Promise<CmdResult>).mockResolvedValue(ok(name));
   vi.mocked(bridge.pulseGeneratorStatus).mockRejectedValue(new Error('no generator'));
+  vi.mocked(bridge.fetchHostSettings).mockResolvedValue({valid: true, path: '', settings: {}, load_error: '', boot_env: '', pump_scan: {state: 'idle', operation_id: '0', port: '', found: [], error: ''}});
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
@@ -39,7 +40,7 @@ describe('device panel composition', () => {
   it('shows pumps, autofocus and the pulse generator on the desktop, and pumps only on the PZ7035', async () => {
     await render();
     expect(host.querySelector('h2')?.textContent).toBe('Pumps and autofocus');
-    expect(Array.from(host.querySelectorAll('legend')).map(node => node.textContent)).toEqual(['Startup hardware selection', 'Sample pump', 'Sheath pump', 'Autofocus / nanopositioner', 'Acquisition pulse generator (RS485)']);
+    expect(Array.from(host.querySelectorAll('legend')).map(node => node.textContent)).toEqual(['Startup hardware selection', 'Sample pump', 'Sheath pump', 'Autofocus / nanopositioner', 'Pulse generator (external trigger source, RS485)']);
     const capabilities = {
       instrument: 'pz7035' as const, autofocus: false, trigger: false, host_background: false, frame_buffer: false,
       reanalysis: false, core_updates: false, egrabber_script: false, pl_identity: true, led_strobe: true, align_mode: false, run_mode: false,

@@ -2,6 +2,7 @@
 // Moved from App.tsx without change (#869 wave 0).
 import { CentralMethodsPanel } from "../../CentralMethodsPanel";
 import { DiagnosticsPanel } from "../../components/DiagnosticsPanel";
+import { HardwareDialogs } from "../../components/HardwareDialogs";
 import { volatileDataNotice } from "../../diagnosticsView";
 import { OfflineHelp } from "../../OfflineHelp";
 import { stripView } from "../../ssdView";
@@ -20,6 +21,7 @@ export function ShellDialogs() {
         <CentralMethodsPanel onClose={() => setShowCentralMethods(false)} onError={append} />
       )}
 
+      <HardwareDialogs />
       {offlineHelp && <OfflineHelp kind={offlineHelp} version={helpVersion} close={() => setOfflineHelp(null)} />}
       {/* ---- About modal ---- */}
       {showDiagnostics && isRemote && (

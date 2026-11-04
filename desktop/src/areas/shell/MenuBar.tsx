@@ -7,6 +7,7 @@ import { isRemote } from "../../transport";
 import { openUrl, revealItemInDir } from "../../transport/dialogs";
 import { useStudio } from "../../studio/StudioContext";
 import { ModeToggle } from "../hardware/ServiceMode";
+import { openBootServices, openPumpSettings } from "../../components/hardwareDialogEvents";
 
 // A menu-bar dropdown. Items with a `pending` reason render disabled with the
 // reason as tooltip.
@@ -72,6 +73,9 @@ export function MenuBar() {
           { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
           { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
           { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
+          // Hardware stream (#868, HW-020 / HW-038 / SHELL-008): the dialogs live in components/HardwareDialogs.tsx.
+          { label: "Syringe Pump Settings…", onClick: openPumpSettings, pending: viewerOnly ? VIEWER_ONLY_REASON : undefined },
+          { label: "Boot Service Toggles…", onClick: openBootServices, pending: viewerOnly ? VIEWER_ONLY_REASON : undefined },
           // Board diagnostics (versions, log tail, download) are served by the instrument's server: browser only.
           ...(isRemote ? [{ label: "Diagnostics…", onClick: () => setShowDiagnostics(true) }] : []),
           // The central registry import and the application updater are desktop-shell features: in the

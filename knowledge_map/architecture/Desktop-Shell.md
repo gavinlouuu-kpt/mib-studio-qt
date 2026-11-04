@@ -1117,6 +1117,33 @@ WebSocket server allows for the controlling client.
   endpoints 3 and 4); a syringe pump connects with `pump_connect_endpoint`, a peristaltic one with
   `pump_connect_model` and its calibration.
 
+### Saved pump settings, the settings dialog and boot toggles (2026-11-05, #868 PR4, bridge ABI 46)
+
+The connection fields left the panel for **Settings > Syringe Pump Settings…** (also the panel's "Pump
+settings…" button), as in Qt's `SyringePumpSettingsDialog`; the panel shows a one-line summary per pump.
+
+- **Dialog (HW-020, HW-004, HW-021).** `PumpSettingsDialog.tsx` + `pumpSettingsModel.ts`: per pump an enumerated
+  port list (`list_serial_ports`; a saved port that is not listed stays selectable) with Refresh, baud, Modbus
+  address, Scan (1-8, 300 ms: the dialog starts `scan_pump_addresses` and polls `fetch_host_settings`
+  `pump_scan`), a result list with Use, and the syringe volume and unit. OK / Cancel / Apply: Apply checks both
+  pumps first and saves them in one write; a volume is also sent to a connected pump (D9 refusal text as in
+  the panel). Escape and the backdrop cancel. Scan messages are Qt's.
+- **Persistence (HW-003, HW-016).** `hostSettingsStore.ts` is the one read/write path (saves are chained; every
+  change is announced with a `mib:host-settings` window event). Connect uses the saved port/baud/address/volume
+  (no saved port: "No COM port configured. Open Pump settings…"). The panel saves
+  rate (when parsable), unit and direction after each successful command, on page hide and on Disconnect, and
+  restores them into the fields once on start, sending nothing.
+  A pump that connects with no rate of its own (configured 0, its unit and direction meaningless) keeps the saved
+  rate, unit and direction together; a pump that has a rate shows its own three.
+- **Startup discovery (HW-037, D8).** The automatic selection is on unless the stored preference is `false`.
+  Saved pump ports are reserved by the host ([[../services/HostSettings]]), so the search and Refresh never
+  probe them (HW-023).
+- **Boot Service Toggles (HW-038).** `BootServicesDialog.tsx`: one checkbox per service, saved to the host;
+  the message is Qt's ("Changes are persisted and applied on next launch"); a `MIB_DISABLED_SERVICES` in the
+  environment is shown as an override. `auto_update` is not offered (no quiet updater in the Tauri app).
+- **Wiring.** `hardwareDialogEvents.ts` (window events) -> `<HardwareDialogs />` mounted once in
+  `areas/shell/Dialogs.tsx`; `areas/shell/MenuBar.tsx` has the two Settings items (disabled for viewers).
+
 ## Remembered discovery and named pump endpoints (2026-09-23)
 
 Startup selection now installs validated, per-user remembered vendor/endpoint/baud/address preferences into the shared startup coordinator before optional automatic selection. Malformed persistence skips automatic selection; failed persistence is distinguished from a session-only applied preference. Preference changes do not connect hardware.

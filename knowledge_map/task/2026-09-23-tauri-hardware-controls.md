@@ -23,6 +23,10 @@ Implementation:
   values, voltage range, step size, and sample policy. Syringe volume follows
   the device's integer 1–9999 limit; unit mappings reuse Qt's 100/103 values.
 
+Update 2026-11-05 (#868 wave 1, PR4): connection fields moved into a Syringe Pump Settings dialog and the
+connection, rate, unit and direction now persist in the host's `host_settings.json`
+([[services/HostSettings]]); the limitation below about persistence applies to autofocus only.
+
 Limitations:
 - Existing bridge uses numeric COM identifiers; typed serial endpoints/discovery
   remain follow-up work. Config applies to runtime only; no persistence promise.

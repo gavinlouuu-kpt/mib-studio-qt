@@ -3,11 +3,13 @@ import { bridge, type CmdResult, type PlatformCapabilities, type PumpStatus } fr
 import { DESKTOP_CAPABILITIES } from '../platformCapabilities';
 import { PUMP_MODELS } from '../bridgeContract';
 import { numericInput, operatorGate } from './hardwareControlModel';
-import { ConnectionFields, initialConnection, type Connection } from './HardwareConnectionFields';
 import {
-  AUTO_APPLY_MS, BAUD_MAX, BAUD_MIN, BAUD_RATES, POLL_MS, PURGE_TOOLTIP, RATE_DECIMALS, RATE_MAX, UNIT_ML, UNIT_UL, VOLUME_DECIMALS, VOLUME_MAX,
-  VOLUME_MIN, CommandCancelled, PumpCommandQueue, PurgeHold, errorText, formatRate, parseDecimal, syringeRateForDevice, syringeVolumeForDevice,
+  AUTO_APPLY_MS, BAUD_MAX, BAUD_MIN, POLL_MS, PURGE_TOOLTIP, RATE_DECIMALS, RATE_MAX, UNIT_ML, UNIT_UL,
+  CommandCancelled, PumpCommandQueue, PurgeHold, errorText, formatRate, parseDecimal, syringeRateForDevice,
 } from './pumpControlModel';
+import { NO_PORT_MESSAGE, connectionOf, instrumentFallback, portName, pumpKey, savedPump, type SavedPump } from './pumpSettingsModel';
+import { savePumpSettings, useHostSettings } from './hostSettingsStore';
+import { openPumpSettings } from './hardwareDialogEvents';
 import { MICROLITERS_PER_MIN_UNIT, RPM_UNIT, directionLabel, flowToRpm, rpmToMicrolitersPerMin } from '../pumpRate';
 import './HardwareControls.css';
 
@@ -16,8 +18,6 @@ type Props = { ready: boolean; append: (message: string) => void; capabilities?:
 const DEFAULT_MICROLITERS_PER_REV = '25';
 // Where the PZ7035 instrument's peristaltic pumps answer (PS UART1 RS485): Sample slave 3, Sheath slave 4 (#501).
 const PERISTALTIC_DEFAULT_ENDPOINTS = [{port: '/dev/ttyPS1', address: '3'}, {port: '/dev/ttyPS1', address: '4'}];
-// Qt's defaults: the Sample pump answers at Modbus address 1, the Sheath pump at 2 (SyringePumpSettingsDialog.ui).
-const defaultAddress = (slot: number) => String(slot + 1);
 const SKIPPED: CmdResult = {ok: true, command: 10, message: 'Purge released before it started', operation_id: '0'};
 const STATE_NAMES = ['Stopped', 'Forward', 'Backward', 'Paused'];
 const unitLabel = (unit: number) => unit === UNIT_UL ? 'µL/min' : unit === UNIT_ML ? 'mL/min' : `unit ${unit}`;
@@ -57,39 +57,40 @@ export function PumpControls({ready, append, capabilities = DESKTOP_CAPABILITIES
     return () => { ++generation.current; window.clearInterval(timer); };
   }, [ready, poll]);
   const instrumentPump = capabilities.pump;
+  const {doc, loaded} = useHostSettings(ready);
   return <div className="hardware-pumps">
-    <p>Pump controls work as in the Qt app and need no Service mode: connect, flow rate, direction, syringe volume, Start and Stop stay available while an experiment runs. As in Qt, a flow rate is applied {AUTO_APPLY_MS} ms after you press Enter or leave the field, a unit or direction change {AUTO_APPLY_MS} ms after the change, also while a pump runs. Hold Purge to purge at full speed; letting go stops it. Stop is always available.</p>
+    <p>Pump controls work as in the Qt app and need no Service mode: connect, flow rate, direction, Start and Stop stay available while an experiment runs. Port, baud rate, Modbus address and syringe volume are set in Pump settings; Connect uses what is saved there. As in Qt, a flow rate is applied {AUTO_APPLY_MS} ms after you press Enter or leave the field, a unit or direction change {AUTO_APPLY_MS} ms after the change, also while a pump runs. Hold Purge to purge at full speed; letting go stops it. Stop is always available.</p>
+    <div className="hardware-actions"><button data-tour="pump-settings" onClick={openPumpSettings}>Pump settings…</button></div>
     {capabilities.autofocus
       ? <p>Pumps accept system serial endpoints; devices may share a bus at distinct Modbus addresses.</p>
       : instrumentPump && <p>This instrument's peristaltic pumps share {instrumentPump.port}: Sample at Modbus address {instrumentPump.sample_address}, Sheath at {instrumentPump.sheath_address}.</p>}
     {!ready && <p role="status">Backend is not ready.</p>}
     {statusError && <p role="alert">Status unavailable: {statusError}</p>}
-    <datalist id="pump-baud-rates">{BAUD_RATES.map(rate => <option key={rate} value={rate} />)}</datalist>
-    {pumps.map((status, slot) => <PumpPanel key={slot} slot={slot} status={status} ready={ready} append={append} capabilities={capabilities} onCommandDone={() => void poll()} />)}
+    {pumps.map((status, slot) => <PumpPanel key={slot} slot={slot} status={status} ready={ready} append={append} capabilities={capabilities} onCommandDone={() => void poll()}
+      saved={savedPump(doc?.settings, slot)} settingsLoaded={loaded && !!doc} />)}
   </div>;
 }
 
-type PanelProps = { slot: number; status: PumpStatus | null; ready: boolean; append: (message: string) => void; capabilities: PlatformCapabilities; onCommandDone: () => void };
+type PanelProps = { slot: number; status: PumpStatus | null; ready: boolean; append: (message: string) => void; capabilities: PlatformCapabilities; onCommandDone: () => void;
+  /** What the host has saved for this pump (Pump settings, and the last rate, unit and direction). */
+  saved: SavedPump; settingsLoaded: boolean };
 type Pending = { rate: boolean; direction: boolean };
 
-function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: PanelProps) {
+function PumpPanel({slot, status, ready, append, capabilities, onCommandDone, saved, settingsLoaded}: PanelProps) {
   const instrumentPump = capabilities.pump;
   const [model, setModel] = useState<number>(instrumentPump ? PUMP_MODELS.TushuiPeristaltic : PUMP_MODELS.DlspSyringe);
   const [calibration, setCalibration] = useState(instrumentPump ? String(instrumentPump.microliters_per_rev) : DEFAULT_MICROLITERS_PER_REV);
-  const peristalticConnection = (): Connection => instrumentPump
-    ? {port: instrumentPump.port, baud: '115200', address: String(slot === 0 ? instrumentPump.sample_address : instrumentPump.sheath_address)}
-    : initialConnection(defaultAddress(slot));
-  const [connection, setConnection] = useState<Connection>(peristalticConnection);
   const [rateText, setRateText] = useState('');
   const [unit, setUnit] = useState(UNIT_UL);
   const [direction, setDirection] = useState(0);
-  const [volumeText, setVolumeText] = useState('');
-  const [volumeUnit, setVolumeUnit] = useState(UNIT_UL);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const connected = !!status?.connected;
   const effectiveModel = connected && status?.model !== undefined ? status.model : model;
   const peristaltic = effectiveModel === PUMP_MODELS.TushuiPeristaltic;
+  // Where a Connect goes: what Pump settings saved, else (peristaltic only) where the instrument's own pumps answer.
+  const peristalticDefault = instrumentFallback(capabilities, slot) ?? {port: PERISTALTIC_DEFAULT_ENDPOINTS[slot].port, address: Number(PERISTALTIC_DEFAULT_ENDPOINTS[slot].address)};
+  const connection = connectionOf(saved, slot, peristaltic ? peristalticDefault : undefined);
   // The rpm unit exists for the peristaltic pump only; a syringe pump never keeps it (HW-070).
   const rateUnit = unit === RPM_UNIT && !peristaltic ? UNIT_UL : unit;
   // The capability report arrives after mount: adopt the instrument's pump once.
@@ -97,16 +98,18 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
     if (!instrumentPump) return;
     setModel(PUMP_MODELS.TushuiPeristaltic);
     setCalibration(String(instrumentPump.microliters_per_rev));
-    setConnection(peristalticConnection());
   }, [instrumentPump?.port, instrumentPump?.sample_address, instrumentPump?.sheath_address, instrumentPump?.microliters_per_rev]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The newest values, for the debounce timer and the purge hooks that outlive a render.
-  const latest = useRef({rateText, rateUnit, direction, calibration, status, connected, ready, slot, append, onCommandDone});
-  latest.current = {rateText, rateUnit, direction, calibration, status, connected, ready, slot, append, onCommandDone};
+  const latest = useRef({rateText, rateUnit, direction, calibration, status, connected, ready, slot, append, onCommandDone, saved});
+  latest.current = {rateText, rateUnit, direction, calibration, status, connected, ready, slot, append, onCommandDone, saved};
   const queue = useRef(new PumpCommandQueue());
   const pending = useRef<Pending>({rate: false, direction: false});
   const timer = useRef<number | undefined>(undefined);
   const wasConnected = useRef<boolean | null>(null);
+  /** The fields changed since they were last saved; the restore from the host happens once. */
+  const touched = useRef(false);
+  const restored = useRef(false);
   /** The rate text changed since it was last committed (Enter or focus out). */
   const rateDirty = useRef(false);
 
@@ -118,17 +121,18 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
     return command();
   };
   /** Queued like every non-stop command, but without `busy`: typing into the rate field must not disable it. */
-  async function applyQueued(label: string, command: () => Promise<CmdResult>) {
+  async function applyQueued(label: string, command: () => Promise<CmdResult>): Promise<boolean> {
     setError('');
     try {
       const result = await queue.current.run(needsPump(command));
       latest.current.append(`${label}: ${result.message || 'Command accepted'}`);
       latest.current.onCommandDone();
-    } catch (failure) { fail(label, failure); }
+      return true;
+    } catch (failure) { fail(label, failure); return false; }
   }
   const sendRate = () => {
     const {rateText: text, rateUnit: chosen, status: current, calibration: perRev} = latest.current;
-    if (!text.trim()) return Promise.resolve(); // nothing typed yet: a unit change alone has nothing to send
+    if (!text.trim()) return Promise.resolve(true); // nothing typed yet: a unit change alone has nothing to send
     return applyQueued('Set flow rate', async () => {
       if (chosen === RPM_UNIT) {
         const rpm = parseDecimal(text, 'Head speed', 0, RATE_MAX, RATE_DECIMALS);
@@ -143,15 +147,28 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
     });
   };
   const sendDirection = () => applyQueued('Set direction', () => bridge.pumpSetDirection(slot, latest.current.direction));
-  /** Qt's 300 ms timer firing: send what the operator committed, rate before direction. */
+  /** Qt's saveConfig (SyringePumpTab.cpp:384-410): the rate, unit and direction on the fields, kept by the host for the next
+   *  launch. A rate that does not parse is left out, so half-typed text never replaces a good saved one. Only the fields are
+   *  restored at startup; nothing is pushed to the pump until the operator edits. */
+  const persist = () => {
+    touched.current = false;
+    const {rateText: text, rateUnit: chosen, direction: way, slot: which, append: log} = latest.current;
+    const patch: Record<string, unknown> = {[pumpKey(which, 'flow_unit')]: chosen, [pumpKey(which, 'direction')]: way};
+    try { patch[pumpKey(which, 'flow_rate')] = parseDecimal(text, 'Flow rate', 0, RATE_MAX, RATE_DECIMALS); } catch { /* keep the saved rate */ }
+    void savePumpSettings(patch).then(outcome => { if (!outcome.ok) log(`Pump settings were not saved: ${outcome.message}`); });
+  };
+  /** Qt's 300 ms timer firing: send what the operator committed, rate before direction; then save the fields (Qt: onApplySample). */
   const flushNow = () => {
     window.clearTimeout(timer.current); timer.current = undefined;
     const todo = pending.current; pending.current = {rate: false, direction: false};
     if (!latest.current.connected || !latest.current.ready) return;
-    if (todo.rate) void sendRate();
-    if (todo.direction) void sendDirection();
+    const sent: Array<Promise<boolean>> = [];
+    if (todo.rate) sent.push(sendRate());
+    if (todo.direction) sent.push(sendDirection());
+    if (sent.length) void Promise.all(sent).then(results => { if (results.some(Boolean)) persist(); });
   };
   const edited = (what: keyof Pending) => {
+    touched.current = true;
     if (!latest.current.connected) return;
     pending.current[what] = true;
     window.clearTimeout(timer.current);
@@ -199,14 +216,36 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
     };
   }, []);
 
+  // Qt restores the spin boxes from config.json when the tab is built and pushes nothing to the pump (SyringePumpTab::loadConfig).
+  // A pump that is already connected shows its own values (below), so they are not overwritten.
+  useEffect(() => {
+    if (!settingsLoaded || restored.current) return;
+    restored.current = true;
+    if (wasConnected.current === true || touched.current) return;
+    if (saved.rate !== null) setRateText(formatRate(saved.rate));
+    if (saved.rateUnit !== null) setUnit(saved.rateUnit);
+    if (saved.direction !== null) setDirection(saved.direction);
+  }, [settingsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  // App quit (Qt: aboutToQuit): the window going away saves the edited fields. The host call is sent best effort.
+  useEffect(() => {
+    const onHide = () => { if (touched.current && latest.current.ready) persist(); };
+    window.addEventListener('pagehide', onHide);
+    return () => window.removeEventListener('pagehide', onHide);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // A pump that just connected shows its configured rate, unit and direction (Qt shows the saved ones); a pump that went
   // away drops the pending edits and any hold. A status read that merely failed (null) changes nothing.
   useEffect(() => {
     if (!status) return;
     if (status.connected && wasConnected.current !== true) {
-      setRateText(status.configured_flow_rate > 0 ? formatRate(status.configured_flow_rate) : '');
-      if (status.flow_rate_unit === UNIT_UL || status.flow_rate_unit === UNIT_ML) setUnit(status.flow_rate_unit);
-      setDirection(status.direction === 1 ? 1 : 0);
+      // A pump that was never given a rate (configured 0: its unit and direction mean nothing yet) shows what is saved on the
+      // host as one set (Qt: the saved values), else stays empty; a pump that has a rate shows its own rate, unit and direction.
+      const remembered = latest.current.saved;
+      const keep = status.configured_flow_rate <= 0 && remembered.rate !== null;
+      setRateText(status.configured_flow_rate > 0 ? formatRate(status.configured_flow_rate) : keep ? formatRate(remembered.rate!) : '');
+      const unit = keep && remembered.rateUnit !== null ? remembered.rateUnit : status.flow_rate_unit;
+      if (unit === UNIT_UL || unit === UNIT_ML) setUnit(unit);
+      setDirection((keep && remembered.direction !== null ? remembered.direction : status.direction) === 1 ? 1 : 0);
       rateDirty.current = false;
     }
     if (!status.connected && wasConnected.current === true) {
@@ -228,25 +267,23 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
     } catch (failure) { fail(label, failure); }
     finally { setBusy(false); }
   }
+  /** Connect uses what Pump settings saved (Qt's onConnectSample reads config.json); with no port saved it says where to set one. */
   const connect = () => runButton('Connect pump', async () => {
-    const port = connection.port.trim(); if (!port) throw new Error('System serial port is required');
-    const portName = /^\d+$/.test(port) ? `COM${port}` : port;
-    const baud = numericInput(connection.baud, 'Baud rate', BAUD_MIN, BAUD_MAX, true);
-    const address = numericInput(connection.address, 'Address', 1, 247, true);
+    if (!connection.port.trim()) throw new Error(NO_PORT_MESSAGE);
+    const port = portName(connection.port);
+    const baud = numericInput(String(connection.baud), 'Baud rate', BAUD_MIN, BAUD_MAX, true);
+    const address = numericInput(String(connection.address), 'Address', 1, 247, true);
     // A syringe pump needs no µL/rev calibration; the backend defaults it and ignores it.
     return peristaltic
-      ? bridge.pumpConnectModel(slot, effectiveModel, portName, baud, address, numericInput(calibration, 'Calibration', 0.001, 100000))
-      : bridge.pumpConnectEndpoint(slot, portName, baud, address);
+      ? bridge.pumpConnectModel(slot, effectiveModel, port, baud, address, numericInput(calibration, 'Calibration', 0.001, 100000))
+      : bridge.pumpConnectEndpoint(slot, port, baud, address);
   }, false);
   const disconnect = () => {
     queue.current.invalidate('cancelled by Disconnect');
     window.clearTimeout(timer.current); timer.current = undefined; pending.current = {rate: false, direction: false};
+    if (touched.current) persist(); // Qt: onDisconnectSample saves the fields first
     return runButton('Disconnect pump', () => bridge.pumpDisconnect(slot));
   };
-  const setVolume = () => runButton('Set syringe volume', async () => {
-    const exact = syringeVolumeForDevice(parseDecimal(volumeText, 'Syringe volume', VOLUME_MIN, VOLUME_MAX, VOLUME_DECIMALS), volumeUnit);
-    return bridge.pumpSetSyringeVolume(slot, exact.value, exact.unit);
-  });
   /** Stop never waits for the command queue, `busy` or the connection state (#855). It also clears a full-speed purge, which
    *  the dLSP keeps in its own register; a lost purge release must not leave a pump running. */
   const stop = async () => {
@@ -268,8 +305,6 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
   const selectModel = (value: number) => {
     setModel(value);
     if (value !== PUMP_MODELS.TushuiPeristaltic && unit === RPM_UNIT) setUnit(UNIT_UL);
-    const untouched = !connection.port.trim() && connection.address === defaultAddress(slot);
-    if (value === PUMP_MODELS.TushuiPeristaltic && untouched) setConnection({...connection, ...PERISTALTIC_DEFAULT_ENDPOINTS[slot]});
   };
   const rateHint = (() => {
     if (!rateText.trim()) return null;
@@ -279,13 +314,6 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
       if (peristaltic) return null;
       const exact = syringeRateForDevice(rate, rateUnit);
       return exact.unit === rateUnit ? null : {problem: false, text: `Sent to the pump as ${exact.value} ${unitLabel(exact.unit)}.`};
-    } catch (failure) { return {problem: true, text: errorText(failure)}; }
-  })();
-  const volumeHint = (() => {
-    if (!volumeText.trim()) return null;
-    try {
-      const exact = syringeVolumeForDevice(parseDecimal(volumeText, 'Syringe volume', VOLUME_MIN, VOLUME_MAX, VOLUME_DECIMALS), volumeUnit);
-      return exact.unit === volumeUnit ? null : {problem: false, text: `Sent to the pump as ${exact.value} ${exact.unit === UNIT_UL ? 'µL' : 'mL'}.`};
     } catch (failure) { return {problem: true, text: errorText(failure)}; }
   })();
   const control = ready && connected; // rate, unit, direction and volume: the pump must be there; nothing else gates them (D1)
@@ -306,14 +334,14 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
       </select></label>
       {peristaltic && <label>Calibration (µL per revolution)<input type="number" min="0" step="any" value={calibration} disabled={connected} onChange={e => setCalibration(e.target.value)} /></label>}
     </div>
-    <ConnectionFields systemPort value={connection} disabled={connected} onChange={setConnection} baud={{min: BAUD_MIN, max: BAUD_MAX, step: 1200, list: 'pump-baud-rates'}} />
+    <p className="hardware-hint" data-tour={`pump-${slot}-connection`}>{connection.port ? `Connect to ${connection.port} · ${connection.baud} baud · Modbus address ${connection.address}` : NO_PORT_MESSAGE}{saved.volume !== null && !peristaltic ? ` · Syringe ${formatRate(saved.volume)} ${saved.volumeUnit === UNIT_ML ? 'mL' : 'µL'}` : ''}</p>
     <div className="hardware-actions">
       <button data-tour={`pump-${slot}-connect`} disabled={busy || !ready || !status || connected} onClick={() => void connect()}>Connect</button>
       <button disabled={busy || !ready || !connected} onClick={() => disconnect()}>Disconnect</button>
     </div>
     <div className="hardware-fields">
       <label>Flow rate<input data-tour={`pump-${slot}-rate`} type="number" min="0" max={RATE_MAX} step="any" value={rateText} disabled={!control}
-        onChange={e => { setRateText(e.target.value); rateDirty.current = true; }}
+        onChange={e => { setRateText(e.target.value); rateDirty.current = true; touched.current = true; }}
         onBlur={() => { if (rateDirty.current) { rateDirty.current = false; edited('rate'); } }}
         onKeyDown={e => { if (e.key === 'Enter') { rateDirty.current = false; edited('rate'); } }} /></label>
       <label>Rate unit{rateUnits}</label>
@@ -321,12 +349,6 @@ function PumpPanel({slot, status, ready, append, capabilities, onCommandDone}: P
       <label>Direction<select data-tour={`pump-${slot}-direction`} value={direction} disabled={!control} onChange={e => { setDirection(Number(e.target.value)); edited('direction'); }}><option value={0}>{directionLabel(peristaltic, 0)}</option><option value={1}>{directionLabel(peristaltic, 1)}</option></select></label>
     </div>
     {rateHint && <p className={rateHint.problem ? 'hardware-hint hardware-hint-problem' : 'hardware-hint'}>{rateHint.text}</p>}
-    {!peristaltic && <div className="hardware-fields">
-      <label>Syringe volume ({VOLUME_MIN}–{VOLUME_MAX})<input data-tour={`pump-${slot}-volume`} type="number" min={VOLUME_MIN} max={VOLUME_MAX} step="any" value={volumeText} disabled={!control} onChange={e => setVolumeText(e.target.value)} /></label>
-      <label>Volume unit<select value={volumeUnit} disabled={!control} onChange={e => setVolumeUnit(Number(e.target.value))}><option value={UNIT_UL}>µL</option><option value={UNIT_ML}>mL</option></select></label>
-      <button disabled={busy || !control || !volumeText.trim()} onClick={() => void setVolume()}>Apply volume</button>
-    </div>}
-    {!peristaltic && volumeHint && <p className={volumeHint.problem ? 'hardware-hint hardware-hint-problem' : 'hardware-hint'}>{volumeHint.text}</p>}
     <div className="hardware-actions">
       <button data-tour={`pump-${slot}-start`} disabled={busy || !!startReason} onClick={() => { flushNow(); void runButton('Start pump', () => bridge.pumpStart(slot)); }}>Run configured pump</button>
       <button className="purge-button" data-tour={`pump-${slot}-purge`} title={PURGE_TOOLTIP} disabled={!ready || !connected}
