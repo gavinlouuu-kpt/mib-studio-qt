@@ -6,7 +6,7 @@ import {
 } from "../areas/connect/useConnect";
 import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
 import {
-  experimentModel, useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useSsdStatus,
+  experimentModel, useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useSsdStatus, useStartReadiness,
 } from "../areas/monitoring/useMonitoring";
 import { useLiveFrames, useLivePreview, usePreviewBufferModel, usePreviewState } from "../areas/preview/usePreview";
 import { useReviewAccounting, useReviewJobs, useReviewSource, useReviewState } from "../areas/review/useReview";
@@ -49,6 +49,7 @@ export function useStudioController() {
   const connection = useCameraConnection({ ...states, ...liveFrames, ...polling }); // connect
   const livePreview = useLivePreview({ ...states, ...liveFrames, ...configSync }); // preview
   const ssd = useSsdStatus(states); // monitoring
+  useStartReadiness(states); // monitoring: the standing Start readiness (#866 MON-028)
   const reviewSource = useReviewSource({ ...states, ...liveFrames, ...polling }); // review
   const experiment = useExperimentLifecycle(states); // monitoring
   useReviewAccounting(states); // review
