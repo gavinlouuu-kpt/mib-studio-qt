@@ -1,0 +1,11 @@
+[
+  {
+    "date": "2026-11-04",
+    "job": "driverjs-build",
+    "title": "Integrated Driver.js Linux QA build",
+    "outcome": "Six tours and three safety/recovery scenarios pass on the packaged mock build.",
+    "status": "QA build verified; hardware/platform acceptance open",
+    "commit": "ad193d3671c1816275ae336d4cdcc8c9ead1dbda",
+    "report": "2026-11-04-driverjs-build.md"
+  }
+]
