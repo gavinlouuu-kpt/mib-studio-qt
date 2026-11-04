@@ -35,6 +35,9 @@ overlay), ADR 0008, ADR 0009 (design registry),
   16-bit containers normalised), run `dotgrid::Decoder::decode`, and publish
   a `Pose` (valid or not, always with `reason`, `frameIndex`, `timestampNs`,
   image size, detected dots for the overlay).
+- Switching the service on (`setConfig` with `enabled` false to true) forgets the pose of the
+  earlier session: `getLatestPose()` is false until the first decode, so a toggle never shows a
+  position from another frame or camera.
 - `getLatestPose()` snapshot under `poseMutex_`; `setPoseCallback()` invoked
   on the service thread after the snapshot is updated. `decodeImage()` runs
   the decoder synchronously on any image (UI / tests).

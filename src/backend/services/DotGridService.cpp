@@ -117,6 +117,7 @@ bool DotGridService::setConfig(const Config& config, std::string* errorOut) {
             SPDLOG_INFO("DotGridService: codec core {} (contract {} '{}', {})", c.coreVersion,
                         c.contract, c.line, c.source);
     }
+    bool turnedOn = false;
     {
         std::lock_guard<std::mutex> lock(configMutex_);
         config_ = config;
@@ -124,8 +125,15 @@ bool DotGridService::setConfig(const Config& config, std::string* errorOut) {
             registry_ = registry;
             decoder_ = std::make_shared<const dotgrid::DesignDecoder>(codecs_, registry_);
         }
+        turnedOn = config.enabled && !enabled_.load(std::memory_order_acquire);
         enabled_.store(config.enabled, std::memory_order_release);
         configGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    }
+    if (turnedOn) {
+        // Switching on starts without the pose of the last time it was on (another frame, maybe
+        // another camera): "no pose yet" until the first decode, which the wake below triggers.
+        std::lock_guard<std::mutex> lock(poseMutex_);
+        hasPose_ = false;
     }
     wake();
     return true;

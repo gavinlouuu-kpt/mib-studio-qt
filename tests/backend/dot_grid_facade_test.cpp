@@ -12,7 +12,8 @@
 //   4. unpausing decodes the newest frame: a valid pose names the design, carries the dots and
 //      the image size; since_sequence == sequence returns only the state block (unchanged);
 //   5. a frame without a grid is an invalid pose with a reason and no dots;
-//   6. pausing stops decoding again; disabling hides the pose and keeps the registry.
+//   6. pausing stops decoding again; disabling hides the pose and keeps the registry; switching
+//      on again starts without the earlier pose.
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/playback/FrameStore.h"
@@ -227,6 +228,12 @@ int main(int argc, char** argv)
         }
         MIB_REQUIRE(facade.setDotGridEnabled(true).ok, "re-enable");
         MIB_EXPECT(service.getConfig().registry == bundled, "re-enabling does not reload the registry");
+        {
+            // Paused, so nothing has decoded since: the pose of the earlier session is forgotten.
+            const json again = pose(facade);
+            MIB_EXPECT(again["enabled"] == true && again["has_pose"] == false,
+                       "switching on forgets the earlier pose: " + again.dump());
+        }
 
         facade.shutdown();
     }

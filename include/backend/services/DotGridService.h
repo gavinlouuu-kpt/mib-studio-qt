@@ -121,7 +121,8 @@ public:
     void stop();
     bool isRunning() const { return running_.load(std::memory_order_acquire); }
 
-    // Latest decode outcome (valid or not); false if nothing decoded yet.
+    // Latest decode outcome (valid or not); false if nothing decoded yet or since the service was
+    // last switched on (setConfig with enabled false -> true forgets the earlier pose).
     bool getLatestPose(Pose& out) const;
     // Bumped on every publish: a UI tick compares it before copying a Pose.
     uint64_t poseSequence() const { return poseSequence_.load(std::memory_order_acquire); }
