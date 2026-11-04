@@ -371,15 +371,22 @@ pub fn fetch_experiment_readiness(state: &AppState, output_path: String) -> Resu
 /// only the backend parser sees it, so a duplicate key is refused instead of being collapsed and
 /// the 16 KiB bound applies to the client's own bytes (contract `experiment_start_request`).
 /// `None` declares nothing.
+///
+/// `acknowledge_latest_frame_drops` (ABI 45, #858): the operator accepted that Latest Frame delivery
+/// discards frames; without it a Latest Frame start is refused by the coordinator.
 pub fn experiment_start(
     state: &AppState,
     output_path: String,
     acknowledge_discard_ring: bool,
     start_request_json: Option<String>,
+    acknowledge_latest_frame_drops: bool,
 ) -> Result<CmdResult, String> {
     let request = start_request_json.unwrap_or_default();
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().experiment_start(&output_path, acknowledge_discard_ring, &request).into())
+    Ok(guard
+        .pin_mut()
+        .experiment_start(&output_path, acknowledge_discard_ring, &request, acknowledge_latest_frame_drops)
+        .into())
 }
 
 /// Authoritative capture state and retained failure details.

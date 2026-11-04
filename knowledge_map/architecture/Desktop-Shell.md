@@ -91,10 +91,21 @@ status, the run lock, Stop Camera and Raw Record refusal reasons, stop/save prog
 Camera group, Runtime hh:mm:ss, the one-line status bar), `pollHealth.ts` (a notice only after three
 consecutive poll failures) and `clearBuffer.ts` (Yes/No before Clear Buffer, the `onMonitoringCleared`
 hook point). `experimentStart.ts` runs the Qt order of checks: readiness without a destination, the
-discard-ring question, the file dialog, the inline-mode note, readiness with the destination, Start;
-every dialog goes through `transport/dialogs.message`. `useStartReadiness` reads
+Latest Frame question, the discard-ring question, the file dialog, the inline-mode note, readiness with
+the destination, Start; every dialog goes through `transport/dialogs` (`message`, and `choose` for a
+question with custom buttons). **Latest Frame (#858, SHELL-054):** when the preflight's
+`camera.deliveryMode` gate warns (a running capture confirmed in Latest Frame), Qt's question opens
+before the file dialog: "Latest Frame prioritizes low latency and may intentionally discard frames.
+The recorded sequence may be incomplete." with Switch to Every Frame / Continue with Latest Frame /
+Cancel. Both Switch and Continue send `acknowledgeLatestFrameDrops` (ABI 45, [[Rust-Bridge]]); Switch
+also sets Every Frame for the next camera start and the start notice says this recording still runs
+Latest Frame. Switch needs the Connect stage's delivery-mode setter (#863); until it is wired
+(`switchToEveryFrame` in `useExperimentLifecycle`) the question offers Continue and Cancel. `useStartReadiness` reads
 `fetch_experiment_readiness("")` every 2 s on the Experiment stage (no run active) for the standing
-list of blocking and Warn gates. The run phase (`experimentModel`'s `runPresentation`, `runLocked`)
+list of blocking and Warn gates; the Start flow's own preflight read refreshes it, and a refusal's
+inline alert lasts until that standing readiness changes. Starting lasts until the status after the
+Start reply is set, and the run outcome waits for the run's accounting read (no saved-row count shown
+as "admitted" in between). The run phase (`experimentModel`'s `runPresentation`, `runLocked`)
 locks the Overview and Review stage tabs, Review's Select HDF File and Open Recording, Stop Camera and
 Raw Record; the shell views (`Sidebar`, `StatusBar`, `Workflow`) and `CameraActions`, `PreviewPanel`,
 `ReviewTab` only place what these modules return. `ProcessingStats` (eventAdapter) carries the

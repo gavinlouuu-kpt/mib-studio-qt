@@ -137,6 +137,48 @@ export function startOutcomeWording(outcome: number | undefined, message: string
   }
 }
 
+// ---- Latest Frame at Start (#858, SHELL-054) -----------------------------------------------------------
+
+/** The gate that carries the capture's delivery mode. */
+export const DELIVERY_MODE_GATE = "camera.deliveryMode";
+
+/** True when the readiness says the capture runs Latest Frame. The backend warns on this gate only for a running
+ *  capture whose Latest Frame mode is confirmed (ExperimentCoordinator::evaluateReadiness); Every Frame passes, and an
+ *  unconfirmed mode is Unavailable, which blocks Start on its own. */
+export function runsLatestFrame(gates: readonly StartGate[]): boolean {
+  return gates.some((g) => g.id === DELIVERY_MODE_GATE && g.status === READINESS_GATE_STATUSES.Warn);
+}
+
+/** Qt's question before the file dialog (MainWindow::onStartExperiment, #332), word for word. */
+export const LATEST_FRAME_PROMPT = {
+  title: "Start Experiment",
+  text: "Latest Frame prioritizes low latency and may intentionally discard frames. The recorded sequence may be incomplete.",
+  switchLabel: "Switch to Every Frame",
+  continueLabel: "Continue with Latest Frame",
+  cancelLabel: "Cancel",
+} as const;
+
+export type LatestFrameChoice = "switch" | "continue" | "cancel";
+
+/** The buttons of the question, in Qt's order: Switch (the default) first when it is offered. */
+export function latestFrameButtons(offerSwitch: boolean): { yes: string; no?: string; cancel: string } {
+  return offerSwitch
+    ? { yes: LATEST_FRAME_PROMPT.switchLabel, no: LATEST_FRAME_PROMPT.continueLabel, cancel: LATEST_FRAME_PROMPT.cancelLabel }
+    : { yes: LATEST_FRAME_PROMPT.continueLabel, cancel: LATEST_FRAME_PROMPT.cancelLabel };
+}
+
+/** The operator's answer for the button clicked (`choose`'s yes / no / cancel) under `latestFrameButtons(offerSwitch)`. */
+export function latestFrameChoice(answer: "yes" | "no" | "cancel", offerSwitch: boolean): LatestFrameChoice {
+  if (answer === "cancel") return "cancel";
+  if (!offerSwitch) return answer === "yes" ? "continue" : "cancel";
+  return answer === "yes" ? "switch" : "continue";
+}
+
+/** The start notice after "Switch to Every Frame": the running capture keeps Latest Frame until it restarts, so this
+ *  recording is still Latest Frame (Qt says so only in a code comment; the operator is told here). */
+export const SWITCHED_NOTICE =
+  "Delivery mode set to Every Frame; it applies at the next camera start. This recording runs with Latest Frame.";
+
 // ---- Multi-image series (MON-008) ----------------------------------------------------------------------
 
 export const INLINE_SERIES_NOTICE =

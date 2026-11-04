@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { EXPERIMENT_START_OUTCOMES, READINESS_GATE_STATUSES as S } from "../../bridgeContract";
 import {
-  INLINE_SERIES_NOTICE, blockersLine, blockingGates, blocksStart, explainReadiness, gateLine, gateStatusLabel, seriesForcesInline,
-  sameReadiness, startOutcomeWording, summarizeReadiness, warningGates, warningNotice, type StartGate,
+  INLINE_SERIES_NOTICE, LATEST_FRAME_PROMPT, blockersLine, blockingGates, blocksStart, explainReadiness, gateLine, gateStatusLabel,
+  latestFrameButtons, latestFrameChoice, runsLatestFrame, seriesForcesInline, sameReadiness, startOutcomeWording, summarizeReadiness,
+  warningGates, warningNotice, type StartGate,
 } from "./startReadiness";
 
 const gate = (id: string, status: number, reason = "", remediation = ""): StartGate => ({ id, status, reason, remediation });
@@ -114,5 +115,29 @@ describe("sameReadiness", () => {
     expect(sameReadiness(r([RATE]), r([{ ...RATE, reason: "other" }]))).toBe(false);
     expect(sameReadiness(r([RATE]), r([RATE, BUFFER]))).toBe(false);
     expect(sameReadiness(r([RATE]), r([RATE], true))).toBe(false);
+  });
+});
+
+describe("Latest Frame at Start (#858, SHELL-054)", () => {
+  const g = (status: number, id = "camera.deliveryMode") => ({ id, status, reason: "r" });
+  it("reads the delivery mode from the camera.deliveryMode Warn", () => {
+    expect(runsLatestFrame([g(S.Warn)])).toBe(true);
+    expect(runsLatestFrame([g(S.Pass)])).toBe(false);
+    expect(runsLatestFrame([g(S.Unavailable)])).toBe(false);
+    expect(runsLatestFrame([g(S.Warn, "camera.rate")])).toBe(false);
+    expect(runsLatestFrame([])).toBe(false);
+  });
+  it("asks Qt's question with Qt's buttons, Switch first when it is offered", () => {
+    expect(LATEST_FRAME_PROMPT.text).toBe("Latest Frame prioritizes low latency and may intentionally discard frames. The recorded sequence may be incomplete.");
+    expect(latestFrameButtons(true)).toEqual({ yes: "Switch to Every Frame", no: "Continue with Latest Frame", cancel: "Cancel" });
+    expect(latestFrameButtons(false)).toEqual({ yes: "Continue with Latest Frame", cancel: "Cancel" });
+  });
+  it("maps the clicked button to the operator's choice", () => {
+    expect(latestFrameChoice("yes", true)).toBe("switch");
+    expect(latestFrameChoice("no", true)).toBe("continue");
+    expect(latestFrameChoice("cancel", true)).toBe("cancel");
+    expect(latestFrameChoice("yes", false)).toBe("continue");
+    expect(latestFrameChoice("no", false)).toBe("cancel");
+    expect(latestFrameChoice("cancel", false)).toBe("cancel");
   });
 });

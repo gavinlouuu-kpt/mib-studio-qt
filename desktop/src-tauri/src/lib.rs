@@ -148,9 +148,17 @@ fn experiment_start(
     output_path: String,
     acknowledge_discard_ring: Option<bool>,
     start_request_json: Option<String>,
+    acknowledge_latest_frame_drops: Option<bool>,
 ) -> Result<cmds::CmdResult, String> {
     // ABI 39: the client's JSON text, byte for byte; only the backend parses it.
-    cmds::experiment_start(&state, output_path, acknowledge_discard_ring.unwrap_or(false), start_request_json)
+    // ABI 45 (#858): the operator's Latest Frame acknowledgement; absent = not acknowledged.
+    cmds::experiment_start(
+        &state,
+        output_path,
+        acknowledge_discard_ring.unwrap_or(false),
+        start_request_json,
+        acknowledge_latest_frame_drops.unwrap_or(false),
+    )
 }
 
 #[tauri::command]

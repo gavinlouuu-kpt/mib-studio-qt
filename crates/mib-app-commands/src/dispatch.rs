@@ -288,9 +288,18 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
                 /// ABI 39 (#712): the startRequest document as the client's JSON text, passed through
                 /// unparsed (the backend alone decodes it and bounds those bytes). Absent or null: none.
                 #[serde(rename = "startRequestJson", default)] start_request_json: Option<String>,
+                /// ABI 45 (#858): the client accepts that Latest Frame delivery discards frames.
+                #[serde(rename = "acknowledgeLatestFrameDrops", default)] acknowledge_latest_frame_drops: bool,
             }
             let a: A = args(value)?;
-            crate::experiment_start(state, a.output_path, a.acknowledge_discard_ring, a.start_request_json).and_then(json)
+            crate::experiment_start(
+                state,
+                a.output_path,
+                a.acknowledge_discard_ring,
+                a.start_request_json,
+                a.acknowledge_latest_frame_drops,
+            )
+            .and_then(json)
         }
         "fetch_capture_lifecycle" => crate::fetch_capture_lifecycle(state).and_then(json),
         "experiment_acknowledge_fault" => {
@@ -1116,7 +1125,7 @@ mod tests {
             let message = remote["message"].as_str().unwrap_or_default().to_string();
             assert_eq!(remote["ok"], json!(false), "{remote}");
             assert!(message.contains("invalid start request") && message.contains(why), "dispatch: {message}");
-            let tauri = crate::experiment_start(&state, out.clone(), false, Some(doc.to_string())).unwrap();
+            let tauri = crate::experiment_start(&state, out.clone(), false, Some(doc.to_string()), false).unwrap();
             assert!(!tauri.ok, "the Tauri path refuses too");
             assert!(tauri.message.contains("invalid start request") && tauri.message.contains(why), "tauri: {}", tauri.message);
         }
@@ -1126,10 +1135,18 @@ mod tests {
             json!({ "outputPath": out, "startRequestJson": "  {\"sample_ref\" : null }\n" }),
             json!({ "outputPath": out, "startRequestJson": null }),
             json!({ "outputPath": out }),
+            // ABI 45 (#858): the Latest Frame acknowledgement is an optional boolean beside the others.
+            json!({ "outputPath": out, "acknowledgeLatestFrameDrops": true }),
+            json!({ "outputPath": out, "acknowledgeLatestFrameDrops": false, "acknowledgeDiscardRing": false }),
         ] {
             let Reply::Json(r) = dispatch(&state, &host, "experiment_start", args.clone()).unwrap() else { panic!("JSON") };
             assert!(!r["message"].as_str().unwrap_or_default().contains("invalid start request"), "{args}: {r}");
         }
+        // A non-boolean acknowledgement is an argument error, never read as "acknowledged".
+        assert!(
+            dispatch(&state, &host, "experiment_start", json!({ "outputPath": out, "acknowledgeLatestFrameDrops": "yes" })).is_err(),
+            "a string acknowledgement must be refused"
+        );
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&data);
     }
@@ -1158,7 +1175,7 @@ mod tests {
         assert_eq!(r["start_outcome"], json!(7), "{r}");
         let message = r["message"].as_str().unwrap();
         assert!(message.starts_with("invalid start request: ") && message.contains("operator_name"), "{r}");
-        let tauri = crate::experiment_start(&state, out.clone(), false, Some("{\"sample_ref\":\"S\"}".into())).unwrap();
+        let tauri = crate::experiment_start(&state, out.clone(), false, Some("{\"sample_ref\":\"S\"}".into()), false).unwrap();
         assert_eq!(tauri.start_outcome, Some(7), "Tauri start reply: {}", tauri.message);
 
         // Stop: no generation is NotActive (1) as before; a generation while idle is RunMismatch (3).
@@ -1529,7 +1546,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

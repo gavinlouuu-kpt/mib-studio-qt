@@ -30,7 +30,7 @@ describe("starting an experiment from a stopped Run", () => {
     const d = deps();
     const out = await startExperiment(d);
     expect(d.confirm).toHaveBeenCalledWith("Starting an experiment discards the 5,000 buffered frames of the stopped Run. Continue?");
-    expect(d.start).toHaveBeenCalledWith("/data/run.h5", true);
+    expect(d.start).toHaveBeenCalledWith("/data/run.h5", true, false);
     expect(out).toEqual({ kind: "started", path: "/data/run.h5", notice: "", warnings: [] });
   });
   it("a refused confirm starts nothing, and does not even open the file dialog", async () => {
@@ -48,12 +48,12 @@ describe("starting an experiment from a stopped Run", () => {
     const d = deps({ fetchRingStatus: vi.fn(async () => ring({ run_frozen: false })) });
     await startExperiment(d);
     expect(d.confirm).not.toHaveBeenCalled();
-    expect(d.start).toHaveBeenCalledWith("/data/run.h5", false);
+    expect(d.start).toHaveBeenCalledWith("/data/run.h5", false, false);
   });
   it("a ring status that cannot be fetched does not block a start the backend would accept (it enforces the acknowledgement itself)", async () => {
     const d = deps({ fetchRingStatus: vi.fn(async () => { throw new Error("offline"); }) });
     const out = await startExperiment(d);
-    expect(d.start).toHaveBeenCalledWith("/data/run.h5", false);
+    expect(d.start).toHaveBeenCalledWith("/data/run.h5", false, false);
     expect(out.kind).toBe("started");
   });
   it("the backend's refusal of an unacknowledged discard comes back as the refusal", async () => {
@@ -180,5 +180,68 @@ describe("a refused Start, by its typed outcome (MON-010, SHELL-058)", () => {
   it("a dialog that fails to open does not lose the outcome", async () => {
     const d = deps({ start: vi.fn(async () => ({ ok: false, message: "busy", outcome: O.Busy })), inform: vi.fn(async () => { throw new Error("no window"); }) });
     expect(await startExperiment(d)).toMatchObject({ kind: "refused", summary: "busy" });
+  });
+});
+
+// #858 (SHELL-054): a capture that runs Latest Frame. The backend warns on camera.deliveryMode and refuses a start that does
+// not carry the operator's acknowledgement; Qt asks Switch to Every Frame / Continue with Latest Frame / Cancel first.
+describe("starting while the capture runs Latest Frame (#858)", () => {
+  const latest = gate("camera.deliveryMode", 1, "Latest Frame intentionally discards frames; the recording may be incomplete",
+    "switch to Every Frame or acknowledge the policy at Start");
+  const noRing = { fetchRingStatus: vi.fn(async () => ring({ run_frozen: false })) };
+  const readiness = (extra: StartGate[]) => vi.fn(async (path: string): Promise<StartReadiness> =>
+    (path === "" ? { valid: true, ready: false, gates: [gate("storage.output", 3, "no output path chosen yet"), ...extra] } : { valid: true, ready: true, gates: extra }));
+
+  it("asks before the file dialog and sends the acknowledgement on Continue", async () => {
+    const order: string[] = [];
+    const chooseLatestFrame = vi.fn(async () => { order.push("ask"); return "continue" as const; });
+    const d = deps({ ...noRing, fetchReadiness: readiness([latest]), chooseLatestFrame, pickFile: vi.fn(async () => { order.push("file"); return "/data/run.h5"; }) });
+    const out = await startExperiment(d);
+    expect(chooseLatestFrame).toHaveBeenCalledWith(false);
+    expect(order).toEqual(["ask", "file"]);
+    expect(d.start).toHaveBeenCalledWith("/data/run.h5", false, true);
+    expect(out.kind).toBe("started");
+  });
+  it("Cancel starts nothing and opens no file dialog", async () => {
+    const d = deps({ ...noRing, fetchReadiness: readiness([latest]), chooseLatestFrame: vi.fn(async () => "cancel" as const) });
+    expect(await startExperiment(d)).toEqual({ kind: "cancelled" });
+    expect(d.pickFile).not.toHaveBeenCalled();
+    expect(d.start).not.toHaveBeenCalled();
+  });
+  it("Switch sets Every Frame for the next camera start, still acknowledges this run, and says so", async () => {
+    const switchToEveryFrame = vi.fn(async () => ({ ok: true, message: "Delivery mode set to Every Frame." }));
+    const chooseLatestFrame = vi.fn(async () => "switch" as const);
+    const d = deps({ ...noRing, fetchReadiness: readiness([latest]), chooseLatestFrame, switchToEveryFrame });
+    const out = await startExperiment(d);
+    expect(chooseLatestFrame).toHaveBeenCalledWith(true);
+    expect(switchToEveryFrame).toHaveBeenCalledTimes(1);
+    expect(d.start).toHaveBeenCalledWith("/data/run.h5", false, true);
+    expect(out.kind === "started" && out.notice.split("\n")[0]).toBe(
+      "Delivery mode set to Every Frame; it applies at the next camera start. This recording runs with Latest Frame.");
+  });
+  it("a refused switch is explained and starts nothing", async () => {
+    const switchToEveryFrame = vi.fn(async () => ({ ok: false, message: "refused during an experiment" }));
+    const d = deps({ ...noRing, fetchReadiness: readiness([latest]), chooseLatestFrame: vi.fn(async () => "switch" as const), switchToEveryFrame });
+    expect(await startExperiment(d)).toEqual({ kind: "cancelled" });
+    expect(d.inform).toHaveBeenCalledWith({ kind: "warning", title: "Start Experiment",
+      text: "The delivery mode could not be set to Every Frame: refused during an experiment\n\nThe experiment was not started." });
+    expect(d.pickFile).not.toHaveBeenCalled();
+    expect(d.start).not.toHaveBeenCalled();
+  });
+  it("asks nothing for Every Frame (the gate passes) or an unconfirmed mode (Unavailable blocks on its own)", async () => {
+    for (const status of [0, 3]) {
+      const chooseLatestFrame = vi.fn(async () => "continue" as const);
+      const d = deps({ ...noRing, fetchReadiness: readiness([{ ...latest, status }]), chooseLatestFrame });
+      await startExperiment(d);
+      expect(chooseLatestFrame).not.toHaveBeenCalled();
+      if (status === 0) expect(d.start).toHaveBeenCalledWith("/data/run.h5", false, false);
+    }
+  });
+  it("without the question (an older shell) the start goes unacknowledged, and the backend's refusal comes back", async () => {
+    const d = deps({ ...noRing, fetchReadiness: readiness([latest]), start: vi.fn(async () => ({
+      ok: false, outcome: O.NotReady, message: "Latest Frame delivery discards frames; acknowledge the policy or switch to Every Frame" })) });
+    const out = await startExperiment(d);
+    expect(d.start).toHaveBeenCalledWith("/data/run.h5", false, false);
+    expect(out).toMatchObject({ kind: "refused", summary: "Experiment not ready: Latest Frame delivery discards frames; acknowledge the policy or switch to Every Frame" });
   });
 });

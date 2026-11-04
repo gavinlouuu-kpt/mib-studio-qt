@@ -10,7 +10,7 @@ import { startExperiment, type StartReadiness } from "../../experimentStart";
 import { describeRunOutcome, runKey } from "../../runOutcome";
 import type { SsdStatus } from "../../ssdView";
 import { isRemote } from "../../transport";
-import { confirm, message, save } from "../../transport/dialogs";
+import { choose, confirm, message, save } from "../../transport/dialogs";
 import type { CoresModel } from "../config/useConfig";
 import type { ConnectState } from "../connect/useConnect";
 import type { HardwareState } from "../hardware/useHardware";
@@ -20,7 +20,9 @@ import type { ShellState } from "../shell/useShell";
 import { POLL_HEALTHY, pollHealthAfter, pollNotice, type PollHealth } from "./pollHealth";
 import { accountingDialog } from "./runFinish";
 import { cameraStopBlock, deriveRunPresentation, recordBlock, runProgressText } from "./runStatus";
-import { sameReadiness, seriesForcesInline, summarizeReadiness } from "./startReadiness";
+import {
+  LATEST_FRAME_PROMPT, latestFrameButtons, latestFrameChoice, sameReadiness, seriesForcesInline, summarizeReadiness,
+} from "./startReadiness";
 
 /** MON-009: Qt's "Save Experiment Data" filter, "HDF5 Files (*.h5 *.hdf5);;All Files (*)". Review shares H5_FILTER
  *  (studio/constants.ts), which stays .h5 only. */
@@ -55,8 +57,11 @@ export function useMonitoringState() {
   // The run's reconciled accounting (ABI 31) gives the true admitted-frame denominator; the status
   // alone only knows the rows it saved.
   const [runAccounting, setRunAccounting] = useState<RunAccounting | null>(null);
-  const runOutcome = describeRunOutcome(expStatus, runAccounting);
   const finishedRun = runKey(expStatus);
+  // The finished run whose accounting read is back (or failed). Until then the outcome is not shown: the status alone counts saved
+  // rows, which flashed as "admitted" for ~20 ms before the real figure (#877 bench B6).
+  const [accountingRun, setAccountingRun] = useState("");
+  const runOutcome = finishedRun && accountingRun !== finishedRun ? null : describeRunOutcome(expStatus, runAccounting);
   const loggedRun = useRef("");
   const elapsedWallSeconds = expStatus?.valid && BigInt(expStatus.start_time_ns) > 0n
     ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
@@ -87,7 +92,7 @@ export function useMonitoringState() {
   return {
     expTab, setExpTab, expStatus, setExpStatus, monSnapshot, setMonSnapshot,
     experimentPending, experimentRequestBusy, setExperimentRequestBusy, readinessMessage, setReadinessMessage,
-    startNotice, setStartNotice, expState, runAccounting, setRunAccounting, runOutcome, finishedRun, loggedRun,
+    startNotice, setStartNotice, expState, runAccounting, setRunAccounting, accountingRun, setAccountingRun, runOutcome, finishedRun, loggedRun,
     elapsedWallSeconds, expActive,
     startInFlight, setStartInFlight, stopRequested, setStopRequested, runDismissed, setRunDismissed,
     startReadiness, setStartReadiness, readinessHealth, setReadinessHealth, monitoringIssue, setMonitoringIssue,
@@ -152,13 +157,25 @@ export function useMonitoringPolling({
   return { monitoringVisible };
 }
 
-type StartReadinessDeps = Pick<ShellState, "ready" | "tab"> & Pick<MonitoringState, "expActive" | "setStartReadiness" | "setReadinessHealth">;
+type StartReadinessDeps = Pick<ShellState, "ready" | "tab">
+  & Pick<MonitoringState, "expActive" | "setStartReadiness" | "setReadinessHealth" | "startReadiness" | "readinessMessage" | "setReadinessMessage">;
 
 // The standing readiness (MON-028): what would block Start, and what only warns, read with no destination while the
 // Experiment stage is shown and no run holds its plan. Qt does the same every second (MainWindow::refreshRecordingCapacity).
 // The read is the backend's own evaluation, not a copy of its rules; one at a time, every 2 s, no state set when nothing changed.
-export function useStartReadiness({ ready, tab, expActive, setStartReadiness, setReadinessHealth }: StartReadinessDeps) {
+export function useStartReadiness({
+  ready, tab, expActive, setStartReadiness, setReadinessHealth, startReadiness, readinessMessage, setReadinessMessage,
+}: StartReadinessDeps) {
   const visible = tab === "experiment" && !expActive;
+  // A Start refusal ("Experiment readiness: ...") holds while the readiness it was refused under stands: the standing readiness when
+  // the alert appeared (the Start flow refreshes it with its own preflight read). A later change (the cause gone, a profile or camera
+  // change) clears it. Before, it stayed until the next Start, next to "Ready to start" (#877 bench B3).
+  const refusedUnder = useRef<{ message: string; readiness: StartReadiness | null }>({ message: "", readiness: null });
+  useEffect(() => {
+    if (!readinessMessage) { refusedUnder.current = { message: "", readiness: null }; return; }
+    if (refusedUnder.current.message !== readinessMessage) { refusedUnder.current = { message: readinessMessage, readiness: startReadiness }; return; }
+    if (refusedUnder.current.readiness !== startReadiness) setReadinessMessage("");
+  }, [readinessMessage, startReadiness]);
   useEffect(() => {
     if (!ready || !visible) return;
     let disposed = false, polling = false;
@@ -198,12 +215,13 @@ export function useSsdStatus({ ready }: Pick<ShellState, "ready">) {
 type ExperimentLifecycleDeps = Pick<ShellState, "append" | "hostProcessing"> & Pick<ConnectState, "running">
   & Pick<MonitoringState, "experimentPending" | "setExperimentRequestBusy" | "setReadinessMessage" | "setStartNotice"
     | "setExpStatus" | "finishedRun" | "loggedRun" | "expStatus" | "setRunAccounting" | "setStartInFlight" | "setStopRequested"
-    | "setRunDismissed" | "setAccountingError">;
+    | "setRunDismissed" | "setAccountingError" | "setAccountingRun" | "setStartReadiness">;
 
 // Start / Stop Experiment, and the outcome line logged once per finished run.
 export function useExperimentLifecycle({
   append, hostProcessing, running, experimentPending, setExperimentRequestBusy, setReadinessMessage, setStartNotice, setExpStatus,
   finishedRun, loggedRun, expStatus, setRunAccounting, setStartInFlight, setStopRequested, setRunDismissed, setAccountingError,
+  setAccountingRun, setStartReadiness,
 }: ExperimentLifecycleDeps) {
   // ---- Experiment lifecycle (backend-owned, BE-4) ----
 
@@ -217,15 +235,26 @@ export function useExperimentLifecycle({
         // No default name (Qt: ""): the desktop dialog opens where the operator last saved. A browser has no file dialog, so its
         // prompt keeps a suggested name under the instrument's data directory (#651 G8).
         pickFile: () => save({ title: "Save Experiment Data", filters: EXPERIMENT_FILE_FILTER, defaultPath: isRemote ? "experiment.h5" : undefined }),
-        fetchReadiness: (path) => bridge.fetchExperimentReadiness(path),
-        start: async (path, acknowledgeDiscardRing) => {
+        fetchReadiness: async (path) => {
+          const readiness = await bridge.fetchExperimentReadiness(path);
+          // The preflight is the standing readiness, read now: a refusal's alert then lasts until that readiness changes (bench B3).
+          if (path === "") setStartReadiness((prev) => (sameReadiness(prev, readiness) ? prev : readiness));
+          return readiness;
+        },
+        start: async (path, acknowledgeDiscardRing, acknowledgeLatestFrameDrops) => {
+          // "Starting" lasts until the status after the reply is set (below): clearing it at the reply showed the previous run's
+          // end state for 7-18 ms between Starting and Running (#877 bench B5).
           setStartInFlight(true);
-          try {
-            const res = await bridge.experimentStart(path, acknowledgeDiscardRing);
-            return { ok: res.ok, message: res.message, outcome: res.start_outcome };
-          } finally { setStartInFlight(false); }
+          const res = await bridge.experimentStart(path, acknowledgeDiscardRing, undefined, acknowledgeLatestFrameDrops);
+          return { ok: res.ok, message: res.message, outcome: res.start_outcome };
         },
         inform: ({ kind, title, text }) => message(text, { title, kind }),
+        // #858 (SHELL-054): Qt's Latest Frame question. "Switch to Every Frame" needs the delivery-mode setter of the
+        // Connect stage (#863), so until that lands the question offers Continue and Cancel.
+        chooseLatestFrame: async (offerSwitch) => latestFrameChoice(
+          await choose(LATEST_FRAME_PROMPT.text, { title: LATEST_FRAME_PROMPT.title, kind: "warning", ...latestFrameButtons(offerSwitch) }),
+          offerSwitch,
+        ),
         // MON-008: a multi-image series runs inline; only the host pipeline has the realtime mode.
         needsInlineForSeries: hostProcessing
           ? async () => { const doc = await bridge.fetchProcessingConfigJson(); return doc.valid && seriesForcesInline(doc.json); }
@@ -246,7 +275,7 @@ export function useExperimentLifecycle({
       }
     } catch (e) {
       append(`experiment start error: ${e}`);
-    } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
+    } finally { experimentPending.current = false; setExperimentRequestBusy(false); setStartInFlight(false); }
   }, [append, hostProcessing]);
 
   const onStopExperiment = useCallback(async () => {
@@ -281,7 +310,7 @@ export function useExperimentLifecycle({
   useEffect(() => {
     if (!finishedRun || finishedRun === loggedRun.current) return;
     loggedRun.current = finishedRun;
-    let live = true;
+    let live = true, done = false;
     const status = expStatus;
     const observed = !!status && observedRun.current === status.start_generation;
     if (!observed) setRunDismissed(finishedRun);
@@ -290,8 +319,10 @@ export function useExperimentLifecycle({
       (acc) => ({ acc, error: !acc.available && acc.error ? acc.error : "" }),
       (e) => ({ acc: null as RunAccounting | null, error: String(e) }),
     ).then(({ acc, error }) => {
+      done = true;
       if (!live) return;
       setRunAccounting(acc);
+      setAccountingRun(finishedRun);
       if (error) {
         setAccountingError(`The run's frame accounting could not be read (${error}); the counts below come from the saved status only.`);
         append(`run accounting unavailable: ${error}`);
@@ -305,7 +336,11 @@ export function useExperimentLifecycle({
       const dialog = observed ? accountingDialog(status, acc) : null;
       if (dialog) void message(dialog.text, { title: dialog.title, kind: dialog.kind });
     });
-    return () => { live = false; };
+    return () => {
+      live = false;
+      // Cut short before the read came back: let the next run of this effect read it again, or the outcome would stay hidden.
+      if (!done && loggedRun.current === finishedRun) loggedRun.current = "";
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finishedRun]);
   return { onStartExperiment, onStopExperiment };

@@ -12,7 +12,7 @@ const bridge = vi.hoisted(() => ({
   fetchRingStatus: vi.fn(), experimentStart: vi.fn(), fetchExperimentStatus: vi.fn(), experimentStop: vi.fn(), fetchRunAccounting: vi.fn(),
   fetchProcessingConfigJson: vi.fn(),
 }));
-const dialogs = vi.hoisted(() => ({ confirm: vi.fn(), save: vi.fn(), message: vi.fn(), ask: vi.fn() }));
+const dialogs = vi.hoisted(() => ({ confirm: vi.fn(), save: vi.fn(), message: vi.fn(), ask: vi.fn(), choose: vi.fn() }));
 vi.mock("../../bridge", () => ({ bridge }));
 vi.mock("../../transport/dialogs", () => dialogs);
 vi.mock("../../transport", () => ({ isRemote: false }));
@@ -154,7 +154,8 @@ describe("Start Experiment (MON-003, 008, 009, 010)", () => {
     expect(dialogs.save).toHaveBeenCalledWith({
       title: "Save Experiment Data", filters: [{ name: "HDF5 Files", extensions: ["h5", "hdf5"] }, { name: "All Files", extensions: ["*"] }], defaultPath: undefined,
     });
-    expect(bridge.experimentStart).toHaveBeenCalledWith("/d/run.h5", false);
+    expect(bridge.experimentStart).toHaveBeenCalledWith("/d/run.h5", false, undefined, false);
+    expect(dialogs.choose).not.toHaveBeenCalled();
     expect(probe.log.some((l) => l.startsWith("experiment started"))).toBe(true);
     expect(probe.state.startInFlight).toBe(false);
   });
@@ -188,6 +189,28 @@ describe("Start Experiment (MON-003, 008, 009, 010)", () => {
     expect(dialogs.message).toHaveBeenCalledWith("Failed to prepare the experiment file:\n/d/run.h5\n\ndisk full", { title: "Error", kind: "error" });
     expect(probe.state.readinessMessage).toBe("/d/run.h5: Experiment start failed: disk full");
     expect(probe.log).toContain("experiment start failed: Experiment start failed: disk full");
+  });
+  // #858 (SHELL-054): Latest Frame recording was impossible in Tauri (parity run S7): nothing could send the acknowledgement.
+  it("asks Qt's Latest Frame question before the file dialog and starts with the acknowledgement", async () => {
+    const latest = { id: "camera.deliveryMode", status: S.Warn, reason: "Latest Frame intentionally discards frames; the recording may be incomplete", remediation: "" };
+    bridge.fetchExperimentReadiness.mockResolvedValue({ ...ready, gates: [latest] });
+    bridge.experimentStart.mockResolvedValue({ ok: true, message: "", start_outcome: O.Started });
+    dialogs.choose.mockResolvedValue("yes");
+    const probe = await mount({ expTab: "preview" });
+    await act(async () => { await probe.lifecycle.onStartExperiment(); });
+    expect(dialogs.choose).toHaveBeenCalledWith(
+      "Latest Frame prioritizes low latency and may intentionally discard frames. The recorded sequence may be incomplete.",
+      { title: "Start Experiment", kind: "warning", yes: "Continue with Latest Frame", cancel: "Cancel" });
+    expect(dialogs.choose.mock.invocationCallOrder[0]).toBeLessThan(dialogs.save.mock.invocationCallOrder[0]);
+    expect(bridge.experimentStart).toHaveBeenCalledWith("/d/run.h5", false, undefined, true);
+  });
+  it("Cancel on the Latest Frame question starts nothing", async () => {
+    bridge.fetchExperimentReadiness.mockResolvedValue({ ...ready, gates: [{ id: "camera.deliveryMode", status: S.Warn, reason: "r", remediation: "" }] });
+    dialogs.choose.mockResolvedValue("cancel");
+    const probe = await mount({ expTab: "preview" });
+    await act(async () => { await probe.lifecycle.onStartExperiment(); });
+    expect(dialogs.save).not.toHaveBeenCalled();
+    expect(bridge.experimentStart).not.toHaveBeenCalled();
   });
   it("shows every warning of a started run, not only the persistence one", async () => {
     bridge.fetchExperimentReadiness.mockResolvedValue({ ...ready, gates: [{ id: "camera.rate", status: S.Warn, reason: "rate cannot be checked", remediation: "" }] });
@@ -268,6 +291,82 @@ describe("the end of a run (MON-023, App.tsx:1031 at 5f906ac2)", () => {
     expect(probe.state.runDismissed).toBe("");
     await act(async () => root.render(<Harness probe={probe} expTab="preview" running={false} />));
     expect(probe.state.runDismissed).toBe(`4:99`);
+  });
+});
+
+// Findings of the #877 bench run (handover/tauri-w1-monitoring/BENCH-REPORT.md, B3, B5, B6).
+describe("#877 bench findings", () => {
+  it("B3: a Start refusal stays while its readiness stands and clears when the readiness changes", async () => {
+    const blocked = { valid: true, ready: false, generation: "1", method_calibration: null,
+      gates: [{ id: "camera.rate", status: S.Fail, reason: "too fast", remediation: "lower it" }] };
+    bridge.fetchExperimentReadiness.mockResolvedValue(blocked);
+    const probe = await mount({ expTab: "preview" });
+    await tick(0);
+    await act(async () => { await probe.lifecycle.onStartExperiment(); });
+    expect(probe.state.readinessMessage).toBe("camera.rate: too fast — lower it");
+    await tick(4100); // two more standing reads, nothing changed
+    expect(probe.state.readinessMessage).toBe("camera.rate: too fast — lower it");
+    bridge.fetchExperimentReadiness.mockResolvedValue({ ...blocked, ready: true, gates: [] });
+    await tick(2100);
+    expect(probe.state.readinessMessage).toBe("");
+  });
+  it("B3: a refusal keeps its alert even when the standing read was stale when Start was pressed", async () => {
+    bridge.fetchExperimentReadiness.mockResolvedValue({ valid: true, ready: true, generation: "1", gates: [], method_calibration: null });
+    const probe = await mount({ expTab: "preview" });
+    await tick(0);
+    // The cause appears between two standing reads: the flow's own preflight sees it first.
+    bridge.fetchExperimentReadiness.mockResolvedValue({ valid: true, ready: false, generation: "2", method_calibration: null,
+      gates: [{ id: "storage.buffer", status: S.Fail, reason: "too small", remediation: "" }] });
+    await act(async () => { await probe.lifecycle.onStartExperiment(); });
+    await tick(2100);
+    expect(probe.state.readinessMessage).toBe("storage.buffer: too small");
+  });
+  it("B5: Starting lasts until the status after the reply is set, so no old end state shows in between", async () => {
+    bridge.fetchExperimentReadiness.mockResolvedValue({ valid: true, ready: true, generation: "1", gates: [], method_calibration: null });
+    bridge.experimentStart.mockResolvedValue({ ok: true, message: "", start_outcome: O.Started });
+    let release: (v: ExperimentStatus) => void = () => undefined;
+    bridge.fetchExperimentStatus.mockReturnValue(new Promise<ExperimentStatus>((resolve) => { release = resolve; }));
+    const probe = await mount({ expTab: "preview" });
+    let pending: Promise<void> = Promise.resolve();
+    await act(async () => { pending = probe.lifecycle.onStartExperiment(); });
+    await tick(0);
+    expect(bridge.experimentStart).toHaveBeenCalled();
+    expect(probe.state.startInFlight).toBe(true); // the reply is back, the status is not
+    await act(async () => { release(status({ state: EXPERIMENT_STATES.Active, output_path: "/d/run.h5", start_generation: "5" })); await pending; });
+    expect(probe.state.startInFlight).toBe(false);
+    expect(probe.state.expStatus?.state).toBe(EXPERIMENT_STATES.Active);
+  });
+  it("B6: no outcome until the run's accounting is back, then the admitted count is the accounting's", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    bridge.fetchRunAccounting.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    const probe = await mount({ expTab: "preview" });
+    await act(async () => probe.state.setExpStatus(status({ output_path: "/d/run.h5", start_generation: "4", state: EXPERIMENT_STATES.Active })));
+    await act(async () => probe.state.setExpStatus(status({
+      output_path: "/d/run.h5", start_generation: "4", terminal: true, finalization_ok: true, end_time_ns: "99", completion: C.Complete,
+      completion_reason: "all reconciled", persistence_admitted: "938", persistence_committed: "938" })));
+    await tick(0);
+    expect(probe.state.runOutcome).toBeNull();
+    await act(async () => { release({ available: true, source: "last_run", start_generation: 4, completion: C.Complete, admitted: "66107" }); });
+    await tick(0);
+    expect(probe.state.runOutcome?.headline).toBe("Run complete: all 66107 admitted frames reconciled.");
+  });
+  it("B6: an accounting read cut short by a remount is read again, so the outcome shows", async () => {
+    bridge.fetchRunAccounting.mockResolvedValue({ available: true, source: "last_run", start_generation: 4, completion: C.Complete, admitted: "500" });
+    const probe = { log: [] } as unknown as Probe;
+    const done = status({ output_path: "/d/run.h5", start_generation: "4", terminal: true, end_time_ns: "99", completion: C.Complete, completion_reason: "ok" });
+    bridge.fetchExperimentStatus.mockResolvedValue(done);
+    // StrictMode mounts, unmounts and mounts again: the first effect's read is dropped, the second must read again.
+    const { StrictMode } = await import("react");
+    function Recovered() {
+      const state = useMonitoringState();
+      probe.lifecycle = useExperimentLifecycle({ ...state, append: (l: string) => { probe.log.push(l); }, hostProcessing: true, running: true });
+      probe.state = state;
+      useState(() => { state.setExpStatus(done); return 0; });
+      return null;
+    }
+    await act(async () => root.render(<StrictMode><Recovered /></StrictMode>));
+    await tick(0);
+    expect(probe.state.runOutcome?.headline).toBe("Run complete: all 500 admitted frames reconciled.");
   });
 });
 
