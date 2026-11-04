@@ -221,16 +221,17 @@ describe("one camera command at a time and why a command is blocked (CONNECT-033
 });
 
 describe("the space bar (CONNECT-041)", () => {
-  const ctx = { tab: "overview", expActive: false, ready: true };
+  const ctx = { tab: "experiment", expTab: "preview", expActive: false, ready: true };
   const space = (over: Record<string, unknown> = {}) => ({ key: " ", code: "Space", target: { tagName: "BODY" }, ...over });
-  it("toggles the camera on the live-view stages when nothing else owns the key", () => {
+  it("toggles the camera on the Experiment Preview (Qt's PlaybackPanel) when nothing else owns the key", () => {
     expect(spaceTogglesCamera(space(), ctx)).toBe(true);
-    expect(spaceTogglesCamera(space(), { ...ctx, tab: "experiment" })).toBe(true);
     expect(spaceTogglesCamera(space({ target: null }), ctx)).toBe(true);
     expect(spaceTogglesCamera(space({ key: "Spacebar", code: "Space" }), ctx)).toBe(true);
     expect(spaceTogglesCamera(space({ target: { tagName: "DIV", role: "presentation" } }), ctx)).toBe(true);
   });
-  it("never during an experiment, on other stages, or before the backend is ready", () => {
+  it("never during an experiment, on other stages or Experiment sub-tabs, or before the backend is ready", () => {
+    expect(spaceTogglesCamera(space(), { ...ctx, tab: "overview" })).toBe(false);
+    expect(spaceTogglesCamera(space(), { ...ctx, expTab: "monitoring" })).toBe(false);
     expect(spaceTogglesCamera(space(), { ...ctx, expActive: true })).toBe(false);
     expect(spaceTogglesCamera(space(), { ...ctx, tab: "connect" })).toBe(false);
     expect(spaceTogglesCamera(space(), { ...ctx, tab: "review" })).toBe(false);

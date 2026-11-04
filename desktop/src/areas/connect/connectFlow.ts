@@ -315,10 +315,12 @@ const KEY_OWNER_ROLES = new Set(["button", "checkbox", "radio", "switch", "tab",
 /** Qt: the space bar in the preview toggles the camera through the same guarded path (#360, CONNECT-041). Only on the
  *  stages that show the live view, never during an experiment, never while a control that uses the space bar itself
  *  has the focus (a text field, a button, a checkbox, a list) or a dialog is open. */
-export function spaceTogglesCamera(e: SpaceKeyEvent, ctx: { tab: string; expActive: boolean; ready: boolean }): boolean {
+/** Qt: the shortcut belongs to the Experiment > Preview page (PlaybackPanel.cpp:405-409, a QShortcut of the panel, active only
+ *  while that page is shown), so it works on the Experiment stage's Preview sub-tab only. */
+export function spaceTogglesCamera(e: SpaceKeyEvent, ctx: { tab: string; expTab: string; expActive: boolean; ready: boolean }): boolean {
   if (e.key !== " " && e.code !== "Space") return false;
   if (e.repeat || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return false;
-  if (!ctx.ready || ctx.expActive || (ctx.tab !== "overview" && ctx.tab !== "experiment")) return false;
+  if (!ctx.ready || ctx.expActive || ctx.tab !== "experiment" || ctx.expTab !== "preview") return false;
   const t = e.target;
   if (!t) return true;
   if (t.isContentEditable || t.inDialog) return false;

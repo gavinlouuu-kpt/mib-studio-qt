@@ -39,7 +39,7 @@ export function useCameraPhase({ ready, setLifecycle, cameraCommandRef }: PhaseD
   }, [ready]);
 }
 
-type ShortcutDeps = Pick<ShellState, "ready" | "tab"> & Pick<MonitoringState, "expActive"> & Pick<PreviewState, "recording">
+type ShortcutDeps = Pick<ShellState, "ready" | "tab"> & Pick<MonitoringState, "expActive" | "expTab"> & Pick<PreviewState, "recording">
   & Pick<ConnectState, "running" | "cameraCommand"> & Pick<ConnectModel, "startCameraReason">
   & Pick<CameraConnectionModel, "onStartCamera" | "onStopCamera" | "refuse">;
 
@@ -58,7 +58,7 @@ export function useCameraShortcut(deps: ShortcutDeps) {
         inDialog: !!el.closest('[role="dialog"], [role="alertdialog"], .modal-backdrop'),
       } : null;
       if (!spaceTogglesCamera({ key: e.key, code: e.code, repeat: e.repeat, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey,
-        shiftKey: e.shiftKey, defaultPrevented: e.defaultPrevented, target }, { tab: d.tab, expActive: d.expActive, ready: d.ready })) return;
+        shiftKey: e.shiftKey, defaultPrevented: e.defaultPrevented, target }, { tab: d.tab, expTab: d.expTab, expActive: d.expActive, ready: d.ready })) return;
       if (document.querySelector(".modal-backdrop")) return; // a dialog is open: the keys are its
       e.preventDefault();
       const action = spaceCameraAction({ running: d.running, recording: d.recording, commandInFlight: d.cameraCommand !== null, startReason: d.startCameraReason });

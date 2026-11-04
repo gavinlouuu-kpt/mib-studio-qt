@@ -326,7 +326,13 @@ describe("Start and Stop Camera (CONNECT-033/036/038/039/040)", () => {
 describe("Configure Mock defaults (CONNECT-014/016)", () => {
   beforeEach(() => {
     log.length = 0;
-    localStorage.clear();
+    // An in-memory store, as the other storage tests use: Node 25+ defines its own global localStorage, which
+    // jsdom does not replace, and it is unusable without --localstorage-file.
+    const saved = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => { saved.set(key, String(value)); },
+      removeItem: (key: string) => { saved.delete(key); }, clear: () => saved.clear(),
+    });
     vi.mocked(bridge.fetchCameraSelection).mockResolvedValue(selection as never);
     vi.mocked(bridge.discoverCameras).mockResolvedValue(scan());
     vi.mocked(bridge.appPaths).mockResolvedValue({ documents: "/home/op/Documents" } as never);

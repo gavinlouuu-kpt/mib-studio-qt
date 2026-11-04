@@ -387,8 +387,8 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
   finishes the recording first (the file is closed, nothing is lost) and then stops; if the recording cannot be
   closed the camera keeps running. The space bar, which is easy to hit, never ends a take: Qt's refusal, "Cannot
   stop camera while frame recording is active. Stop recording first.".
-- **Space bar** (CONNECT-041): `useCameraShortcut` toggles the camera on the Overview and Experiment stages
-  through the same guarded commands; not during an experiment, not while a text field, button, list or dialog
+- **Space bar** (CONNECT-041): `useCameraShortcut` toggles the camera on the Experiment stage's Preview sub-tab
+  (Qt's shortcut belongs to the Preview page's PlaybackPanel) through the same guarded commands; not during an experiment, not while a text field, button, list or dialog
   has the key, not with a modifier or a repeat (`spaceTogglesCamera`, `spaceCameraAction`).
 - **Display rate** (CONNECT-045, decision): the live view draws at the profile's `display_fps` (default 30, 1 to
   240), not Qt's fixed up-to-50 fps: the camera's 50 fps full-sensor stream is 104 MB/s over IPC, a 50 fps

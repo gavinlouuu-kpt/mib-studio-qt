@@ -80,7 +80,7 @@ describe("the space bar", () => {
   const calls = { start: vi.fn(), stop: vi.fn(), refuse: vi.fn() };
   function Shortcut() { useCameraShortcut(deps); return <><input data-testid="field" /><button data-testid="btn">b</button></>; }
   const base = (): Deps => ({
-    ready: true, tab: "overview", expActive: false, recording: false, running: false, cameraCommand: null, startCameraReason: undefined,
+    ready: true, tab: "experiment", expTab: "preview", expActive: false, recording: false, running: false, cameraCommand: null, startCameraReason: undefined,
     onStartCamera: calls.start as never, onStopCamera: calls.stop as never, refuse: calls.refuse as never,
   });
   const press = (target: Element | Window = document.body, init: KeyboardEventInit = {}) => {
@@ -125,11 +125,13 @@ describe("the space bar", () => {
     expect(calls.refuse).not.toHaveBeenCalled();
   });
 
-  it("never during an experiment, on the Connect and Review stages, or before the backend is ready", async () => {
+  it("only on the Experiment Preview: never during an experiment, on another stage or sub-tab, or before the backend is ready", async () => {
     await rerender({ expActive: true }); press();
     await rerender({ expActive: false, tab: "connect" }); press();
     await rerender({ tab: "review" }); press();
-    await rerender({ tab: "overview", ready: false }); press();
+    await rerender({ tab: "overview" }); press();
+    await rerender({ tab: "experiment", expTab: "monitoring" }); press();
+    await rerender({ expTab: "preview", ready: false }); press();
     expect(calls.start).not.toHaveBeenCalled();
     expect(calls.stop).not.toHaveBeenCalled();
     expect(calls.refuse).not.toHaveBeenCalled();
