@@ -640,8 +640,10 @@ fn dot_grid_commands_decode_the_mock_camera_view() {
     assert!(bridge.pin_mut().set_dot_grid_enabled(true).ok);
     assert!(bridge.pin_mut().set_dot_grid_paused(false).ok);
     let deadline = Instant::now() + Duration::from_secs(30);
+    // The first decode after the switch may still read the wafer camera's last frame (the frame store keeps
+    // it until the new session commits one; CI hit that): wait for a pose of the blank frames.
     let mut bad = pose(&mut bridge, 0);
-    while bad["has_pose"] != true && Instant::now() < deadline {
+    while !(bad["has_pose"] == true && bad["valid"] == false) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
         bad = pose(&mut bridge, 0);
     }
