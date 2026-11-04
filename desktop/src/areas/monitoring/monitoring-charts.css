@@ -51,7 +51,10 @@
   padding: 3px 6px;
   border-radius: 3px;
   font-size: 11px;
-  white-space: nowrap;
+  /* One line while it fits; a long text wraps inside the chart instead of being cut off. */
+  width: max-content;
+  max-width: calc(100% - 8px);
+  white-space: normal;
   z-index: 30;
 }
 

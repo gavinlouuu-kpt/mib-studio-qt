@@ -148,6 +148,10 @@ describe("the classic view gates its control commands", () => {
     ["onClick={onApplyProcessing}", "|| viewerOnly}"],
     ["apply={bridge.setInstrumentLed}", "|| viewerOnly}"],
     ['label: "Open Recording…"', "pending: viewerOnly ? VIEWER_ONLY_REASON"],
+    // PR E1: pin and unpin are control commands (the server refuses them for a viewer), run by the hook behind the selected-cell pane;
+    // a gate handle writes the draft the panel's gated inputs write.
+    ["const cell = useCellView(", "canPin: !viewerOnly"],
+    ["const gate = useGateOverlay(", "viewerOnly }"],
   ])("%s is disabled for a viewer on its own", (needle, guard) => {
     const line = appSource.split("\n").find((l) => l.includes(needle));
     expect(line, needle).toBeDefined();

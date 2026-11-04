@@ -15,7 +15,7 @@ import { DEFAULT_MONITORING_SETTINGS } from "../monitoringSettings";
 import { initialTuneState, tuneReducer, type TuneAction, type TuneFieldId, type TuneState, type TuneValues } from "../tuneDraft";
 import { GATE_ACTIVE, GATE_WARN, NO_TABLE_NOTICE } from "./gateOverlay";
 import { useGateOverlay } from "./useGateOverlay";
-import { handleAnchor, isoContour, NO_CONTOURS, toDataPoint, toPixel } from "./targetGate";
+import { handleAnchor, isoContour, toDataPoint, toPixel } from "./targetGate";
 import { syntheticTable } from "./syntheticLut";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -318,6 +318,5 @@ describe("dragging an iso-E contour (MON-066)", () => {
     const none = await mount({ values: gate(), table: { status: "none" } });
     await hover(none, [start[0], start[1]]);
     expect(none.style.cursor).toBe("default");
-    void NO_CONTOURS;
   });
 });

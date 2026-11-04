@@ -10,7 +10,7 @@
 //    on its handles (interceptor) and a hover, and repaints when `version` changes.
 //  - the E readout in the tooltip: `emodulusAt(area, deformability)`; absent (or with no value there), the
 //    tooltip says area and deformability only.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MonitoringRow } from "../../../bridge";
 import { toData, type Viewport } from "../../../review/charts/chartMath";
 import { MARKER } from "../../../review/charts/drawScatter";
@@ -139,6 +139,19 @@ export function MonitoringScatter(props: MonitoringScatterProps) {
     tip = plotTooltip(area, deformability, emodulusAt?.(area, deformability));
   }
 
+  // The tooltip sits right of the pointer, left of it when it would leave the chart, and never outside it: a long text (a
+  // gate handle's "... — drag to change") is placed from its measured width, before the browser paints.
+  const tipRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = tipRef.current;
+    if (!el || !hover) return;
+    const w = el.offsetWidth;
+    if (!w) return; // no layout (a test environment): the left-anchored style stands
+    let left = hover.px + 14;
+    if (left + w > size.w - 2) left = hover.px - 14 - w;
+    el.style.left = `${Math.max(2, Math.min(left, size.w - w - 2))}px`;
+  });
+
   return (
     <div className="mon-chart" data-tour="monitoring-scatter">
       <div ref={view.wrapRef} className="mon-chart-wrap mon-scatter-wrap">
@@ -151,12 +164,7 @@ export function MonitoringScatter(props: MonitoringScatterProps) {
           {...view.canvasProps}
         />
         {tip && hover && (
-          // Right of the pointer, or left of it near the right edge, so the text stays inside the chart.
-          <div
-            className="mon-chart-tip mono"
-            role="tooltip"
-            style={hover.px > size.w * 0.55 ? { right: size.w - hover.px + 14, top: hover.py + 12 } : { left: hover.px + 14, top: hover.py + 12 }}
-          >
+          <div ref={tipRef} className="mon-chart-tip mono" role="tooltip" style={{ left: hover.px + 14, top: hover.py + 12 }}>
             {tip}
           </div>
         )}

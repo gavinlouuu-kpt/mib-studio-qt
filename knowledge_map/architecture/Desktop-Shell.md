@@ -794,7 +794,9 @@ reads the settings from the studio state when mounted in the classic view):
   or middle-drag pans after 10 px, double-click on empty space resets (never on a point),
   plus a Reset zoom button. Tooltips: "Area X µm² · deformability Y" anywhere in the plot
   (plus " · E Z kPa" from the loaded E-modulus table, see below), "Frame N · ... · click to view"
-  and a hand cursor over a point.
+  and a hand cursor over a point. The tooltip is placed from its measured width (right of the pointer, left
+  of it when it would leave the chart, wrapping when longer than the chart), so a long handle tooltip is
+  never cut off.
 - *Seams:* `onSelectPoint(row)` and `selectedKey` (`monitoringRowKey`: run:capture:frame:object, the
   orange 13 px marker; hidden for exports via `drawMonitoringScatter(..., {selection: false})`) are
   click to view; the `overlay` prop (`draw(g, vp)` with the live axis transform, a press `interceptor`,
