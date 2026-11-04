@@ -228,3 +228,22 @@ defined 8 mm chip envelope extending to negative mask coordinates. Generation,
 codebook origin, raster bounds and Fit drawing expand consistently without moving
 source entities. The ordinary overall capacity limits still apply. A generator
 round-trip and the UI flow cover this case; no drawing-bounds clipping fallback remains.
+
+## Oversized-file correction
+
+The previous combined ASCII DXF repeated 2.69 million circle records and was
+reported unopenable by the user. Compact alternatives preserve the same mask:
+combined DWG 44.04 MB and dots-only OASIS 1.52 MB. Original compatibility files
+remain available rather than being overwritten. The delivered wafer's identity,
+geometry and dot positions are unchanged. See DotGridPortal vault note for
+round-trip evidence; independent scripts/reports are retained in the private
+`compact-mask/` artifact directory. Target user application is not yet known;
+opening in that application remains unverified. The broader upload/geometry
+review workflow has not been simplified by this export fix.
+
+Acceptance: 25 container Python tests (including real DWG), 14 API/job tests
+(including compact-artifact storage failure), and 3 browser flows pass. The
+full-wafer compact export also completes with network disabled, 4 GiB container
+memory, 2 CPUs and the worker's 3 GiB address-space bound. Live HTTPS downloads
+match verified file hashes. Real Driver.js walkthrough reaches feedback; compact
+links/sizes are visible, compatibility links collapsed, no page errors observed.

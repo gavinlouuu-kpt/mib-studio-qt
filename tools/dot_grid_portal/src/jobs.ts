@@ -96,7 +96,9 @@ export async function execute(job: Job, attempt: number, env: Env) {
       entry: Record<string, unknown>;
       preview?: Record<string, unknown>;
     }>();
-    for (const f of FILES) {
+    const compact = ((result.preview?.exports ?? []) as {name: string}[])
+      .map(x => x.name).filter(n => ["dotgrid_layer.oas", "design_with_dotgrid.dwg"].includes(n));
+    for (const f of [...FILES, ...new Set(compact)]) {
       const file = await checked(await c.fetch(`http://cad/files/${f}`));
       await env.FILES.put(`${prefix}/${f}`, file.body);
     }

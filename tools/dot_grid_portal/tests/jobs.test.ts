@@ -44,7 +44,7 @@ it("runs real Python inspection and generation through job orchestration, publis
         return b ? { body: new Blob([b]) } : null;
       },
       async put(k: string, b: any) {
-        if (failArtifact && k.endsWith("mib-map.zip"))
+        if (failArtifact && k.endsWith("dotgrid_layer.oas"))
           throw new Error("Injected R2 failure");
         files.set(k, new Uint8Array(await new Response(b).arrayBuffer()));
       },
@@ -130,6 +130,7 @@ it("runs real Python inspection and generation through job orchestration, publis
     for (const f of [
       "design_with_dotgrid.dxf",
       "dotgrid_layer.gds",
+      "dotgrid_layer.oas",
       "mib-map.zip",
     ])
       expect(files.get(`a/dg-aaaa/${f}`)!.length).toBeGreaterThan(100);

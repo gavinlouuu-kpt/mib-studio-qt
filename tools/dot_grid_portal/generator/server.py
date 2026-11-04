@@ -16,6 +16,8 @@ ALLOWED = {
     "normalized.dxf",
     "design_with_dotgrid.dxf",
     "dotgrid_layer.gds",
+    "dotgrid_layer.oas",
+    "design_with_dotgrid.dwg",
     "mib-map.zip",
 }
 

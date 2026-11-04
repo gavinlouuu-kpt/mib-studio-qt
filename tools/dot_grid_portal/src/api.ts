@@ -19,6 +19,8 @@ export const FILES = [
   "mib-map.zip",
 ] as const;
 const CUSTOMER_FILES = [
+  "design_with_dotgrid.dwg",
+  "dotgrid_layer.oas",
   "design_with_dotgrid.dxf",
   "dotgrid_layer.gds",
 ] as const;
@@ -26,6 +28,8 @@ const MAX_UPLOAD = 10 * 1024 * 1024;
 export function importError(error: string | null) {
   if (!error) return null;
   for (const [code, message] of Object.entries({
+    CAD_EXPORT_FAILED:
+      "Compact CAD export failed. Your original drawing is retained; contact support with this design selected.",
     CAD_PLACEMENT_INVALID:
       "The selected cut boundaries overlap, conflict, or have no usable interior. Reinspect and select one final boundary per chip.",
     CAD_CHIP_EMPTY:

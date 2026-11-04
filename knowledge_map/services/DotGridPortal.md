@@ -68,3 +68,21 @@ Delivered tailnet review run: **Wafer_soRT — post-cut review draft**, 2,689,28
 across all 20 chips. Both downloaded formats and preservation of all 9,171 normalized
 device entities passed independent checks. Source geometry and review roles remain
 separate. See the dated portal report for the live receipt and verification scope.
+
+### Compact delivery (2026-11-04)
+
+The flat ASCII DXF is a compatibility export, not the primary wafer download.
+`generator/compact.py` uses KLayout 0.30.12 to losslessly compact the dots-only
+GDS hierarchy into OASIS; the provisioned ODA converter additionally creates a
+combined device+dots ACAD2018 DWG. Without ODA, DWG is not advertised. No points
+are decimated and the codec/identity is unchanged. The worker returns an explicit
+export list with byte sizes, all listed files are stored before readiness, and
+the customer allowlist excludes maps. The UI puts compact files first and hides
+DXF/GDS under Other file formats. DWG failure fails generation, not a broken link.
+
+Actual wafer: 2,689,289 dots; combined DWG 44,037,408 bytes; dots-only OASIS
+1,517,576 bytes. DWG was reopened via ODA and round-tripped to DXF with all dot
+coordinates/radii and 9,171 device geometry/annotation records preserved within
+1e-8 drawing units (serialization precision). OASIS was loaded/rendered in
+KLayout and every dot position matched the original spool. This is not an
+AutoCAD, supplier acceptance, physical fabrication or optical-recognition test.

@@ -60,3 +60,22 @@ def test_streamed_exports_preserve_device_and_unique_handles(tmp_path,monkeypatc
     assert len(lib['DOTGRID'].get_polygons())==len(dots)
     assert supported(3668,3668)
     assert not supported(5001,5001)
+
+
+def test_compact_oasis_roundtrip_and_converter_failure(tmp_path, monkeypatch):
+    from compact import compact_exports
+    import klayout.db as kdb
+    monkeypatch.delenv('CAD_ODA_EXECUTABLE', raising=False)
+    cb=generate_codebook(9,30,30)
+    dots=np.array([(i,j,*cb.dot_um(i,j)) for i in range(30) for j in range(30)])
+    write_gds_stream(dots,cb,tmp_path/'dotgrid_layer.gds')
+    assert compact_exports(tmp_path)==['dotgrid_layer.oas']
+    layout=kdb.Layout(); layout.read(str(tmp_path/'dotgrid_layer.oas'))
+    iterator=layout.top_cell().begin_shapes_rec(layout.layer(10,0)); xy=[]
+    while not iterator.at_end():
+        xy.append((iterator.trans().disp.x,iterator.trans().disp.y));iterator.next()
+    assert sorted(xy)==sorted(map(tuple,np.rint(dots[:,2:]*1000).astype(int)))
+    assert (tmp_path/'dotgrid_layer.oas').stat().st_size < (tmp_path/'dotgrid_layer.gds').stat().st_size/4
+    (tmp_path/'design_with_dotgrid.dxf').write_text('test',encoding='utf-8')
+    monkeypatch.setenv('CAD_ODA_EXECUTABLE','/bin/false')
+    with pytest.raises(ValueError,match='CAD_EXPORT_FAILED'):compact_exports(tmp_path)

@@ -32,6 +32,7 @@ type Inspection = {
     dot_radius_um: number;
     bounds?: number[];
     chip_dot_counts?: number[];
+    exports?: {name: string; bytes: number}[];
     chip_details?: { detail_bounds: number[]; detail_points: number[][] }[];
   };
   region_candidates?: Candidate[];
@@ -543,15 +544,31 @@ async function open(id: string) {
   if (ready) {
     el("downloads").hidden = false;
     el("links").replaceChildren();
-    for (const [name, label] of [
-      ["design_with_dotgrid.dxf", "Device + dots · DXF"],
-      ["dotgrid_layer.gds", "Dots only · GDS"],
-    ]) {
+    const exports = d.inspection?.generated_preview?.exports;
+    const labels: Record<string, string> = {
+      "design_with_dotgrid.dwg": "Device + dots · DWG",
+      "dotgrid_layer.oas": "Dots only · OASIS",
+      "design_with_dotgrid.dxf": "Device + dots · DXF (large compatibility file)",
+      "dotgrid_layer.gds": "Dots only · GDS (compatibility file)",
+    };
+    const compatibility = document.createElement("details");
+    const heading = document.createElement("summary");
+    heading.textContent = "Other file formats";
+    compatibility.append(heading);
+    const available = exports ?? [
+      {name: "design_with_dotgrid.dxf", bytes: 0},
+      {name: "dotgrid_layer.gds", bytes: 0},
+    ];
+    for (const {name, bytes} of available) {
+      if (!labels[name]) continue;
       const a = document.createElement("a");
       a.href = `/api/designs/${id}/files/${name}`;
-      a.textContent = label;
-      el("links").append(a);
+      a.textContent = labels[name] + (bytes ? ` · ${(bytes/1e6).toFixed(2)} MB` : "");
+      if (exports && ["design_with_dotgrid.dxf", "dotgrid_layer.gds"].includes(name))
+        compatibility.append(a);
+      else el("links").append(a);
     }
+    if (exports) el("links").append(compatibility);
     say(
       "Your device and proprietary dots are ready to download. Review the geometry before fabrication.",
     );
@@ -770,7 +787,7 @@ el("tour").onclick = () => {
         popover: {
           title: "Device and dots",
           description:
-            "Download the combined device + dots DXF or the separate dots-only GDS. The dot technology is proprietary.",
+            "Use the compact device + dots DWG when available, or the dots-only OASIS. File sizes are shown before download; DXF and GDS remain under Other file formats. The dot technology is proprietary.",
         },
       },
       {

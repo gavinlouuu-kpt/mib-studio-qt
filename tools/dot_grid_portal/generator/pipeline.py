@@ -15,12 +15,14 @@ from ezdxf import bbox
 from ezdxf.math import Matrix44
 import numpy as np
 try:
+    from .compact import compact_exports
     from .placement import Placement, selected_areas
     from .batched import MAX_NODES, supported, pattern_batches, spool_pattern, write_dxf_stream, write_gds_stream, dot_preview
     from .regions import regions, outside_regions
     from .cad_import import convert, flatten_regions
     from .domains import candidates, matching_groups
 except ImportError:
+    from compact import compact_exports
     from placement import Placement, selected_areas
     from batched import MAX_NODES, supported, pattern_batches, spool_pattern, write_dxf_stream, write_gds_stream, dot_preview
     from regions import regions, outside_regions
@@ -281,6 +283,7 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
     write_dxf_stream(doc, dots, cb, str(out / "design_with_dotgrid.dxf"))
     if not write_gds_stream(dots, cb, str(out / "dotgrid_layer.gds")):
         raise ValueError("GDS exporter unavailable")
+    compact_files = compact_exports(out)
     cb.save(str(out / "codebook.json"))
     Registry([design]).save(str(out / "registry.json"))
     manifest = {
@@ -303,7 +306,7 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
         "cross_design_views": 6,
         "files": {
             n: digest(out / n)
-            for n in [
+            for n in compact_files + [
                 "design_with_dotgrid.dxf",
                 "dotgrid_layer.gds",
                 "codebook.json",
@@ -319,4 +322,4 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
     with zipfile.ZipFile(out / "mib-map.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for n in ["registry.json", "codebook.json", "manifest.json", "README.txt"]:
             z.write(out / n, n)
-    return {"entry": design.to_dict(), "manifest": manifest, "preview": {**dot_preview(dots, (w,h), [(p.centroid.x,p.centroid.y) for p in placement.polys], placement.bounds), "chip_dot_counts": chip_counts}}
+    return {"entry": design.to_dict(), "manifest": manifest, "preview": {**dot_preview(dots, (w,h), [(p.centroid.x,p.centroid.y) for p in placement.polys], placement.bounds), "chip_dot_counts": chip_counts, "exports": [{"name": n, "bytes": (out/n).stat().st_size} for n in compact_files + ["design_with_dotgrid.dxf", "dotgrid_layer.gds"]]}}

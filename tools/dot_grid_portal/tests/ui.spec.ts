@@ -32,6 +32,7 @@ test("guided click-through gates actions and exposes only device and dot exports
           generated_preview:
             state === "ready"
               ? {
+                  exports: [{name:"design_with_dotgrid.dwg",bytes:44037408},{name:"dotgrid_layer.oas",bytes:1517576},{name:"design_with_dotgrid.dxf",bytes:363000000},{name:"dotgrid_layer.gds",bytes:75000000}],
                   dot_count: 2,
                   overview_png: "",
                   detail_bounds: [0, 0, 1000, 1000],
@@ -111,7 +112,10 @@ test("guided click-through gates actions and exposes only device and dot exports
   await page.locator("#confirmed").check();
   await page.locator("#generate").click();
   await expect(page.locator("#downloads")).toBeVisible();
-  await expect(page.locator("#links a")).toHaveCount(2);
+  await expect(page.locator("#links a:visible")).toHaveCount(2);
+  await expect(page.getByRole("link", {name: /DWG/})).toContainText("44.04 MB");
+  await page.getByText("Other file formats", {exact:true}).click();
+  await expect(page.locator("#links a:visible")).toHaveCount(4);
   await expect(page.locator("#dot-summary")).toContainText("2 generated dots");
   await page.locator("#dot-detail").click();
   await expect(page.locator("[data-dot-detail] circle")).toHaveCount(2);
