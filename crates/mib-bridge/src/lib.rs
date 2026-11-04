@@ -541,6 +541,33 @@ pub mod ffi {
         pub median_ring_ratio: f64,
         pub last_ring_ratio_update_us: u64,
         pub ring_ratio_age_us: u64,
+        /// ABI 45 (HW-033): the latest AutofocusService status message (what Qt's Nanopositioner
+        /// tab shows) and its sequence, +1 per message; "" / 0 until the service has said anything.
+        pub status_message: String,
+        pub status_sequence: u64,
+    }
+
+    /// One serial port for a picker (ABI 45, HW-004/HW-026/HW-049; bridge-contract.json
+    /// `hardware_parity.serial_ports`). Enumeration only.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeSerialPortInfo {
+        /// What a connect command takes as its port name ("COM5", "/dev/ttyUSB0").
+        pub system_path: String,
+        /// n of a "COMn" port, -1 for any other.
+        pub com_port: i32,
+        pub description: String,
+        pub serial_number: String,
+        /// "0403:6001" (lower-case hex), "" when the platform gives no USB identity.
+        pub vid_pid: String,
+        /// Served by the MIB_SERIAL_MODE=sim rig, not the OS.
+        pub simulated: bool,
+    }
+
+    /// `list_serial_ports` reply; `valid` is false before the backend is initialized.
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeSerialPortList {
+        pub valid: bool,
+        pub ports: Vec<BridgeSerialPortInfo>,
     }
 
     /// Autofocus configuration (schema v11, BE-8) — plain values, no
@@ -961,6 +988,14 @@ pub mod ffi {
         ) -> BridgeCommandResult;
         fn fetch_autofocus_status(self: Pin<&mut BackendBridge>) -> BridgeAutofocusStatus;
         fn fetch_autofocus_config(self: Pin<&mut BackendBridge>) -> BridgeAutofocusConfig;
+
+        /// Serial ports for a picker (ABI 45, HW-004/HW-026/HW-049). A read: nothing is opened.
+        /// Under MIB_SERIAL_MODE=sim only the simulated rig's ports, as in the Qt dialogs.
+        fn list_serial_ports(self: Pin<&mut BackendBridge>) -> BridgeSerialPortList;
+        /// Reserve the pump RS485 ports the shell remembers (ABI 45, HW-023), so the startup
+        /// nanopositioner probe never opens the pump bus. Replaces the previous list of this owner
+        /// (the config.json reservation is separate); empty clears. Invalid entries refuse the lot.
+        fn reserve_pump_ports(self: Pin<&mut BackendBridge>, ports: Vec<String>) -> BridgeCommandResult;
 
         /// Syringe pump commands (schema v10, BE-7). `pump` is a contract
         /// `pump_ids` value (0 Sample, 1 Sheath). Serial-port conflicts with

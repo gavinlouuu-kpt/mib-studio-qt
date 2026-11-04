@@ -79,6 +79,8 @@ pub const COMMANDS: &[&str] = &[
     "autofocus_set_config",
     "fetch_autofocus_status",
     "fetch_autofocus_config",
+    "list_serial_ports",
+    "reserve_pump_ports",
     "pump_connect_endpoint",
     "pump_connect_model",
     "pump_connect",
@@ -410,6 +412,17 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
         }
         "fetch_autofocus_status" => crate::fetch_autofocus_status(state).and_then(json),
         "fetch_autofocus_config" => crate::fetch_autofocus_config(state).and_then(json),
+        // ABI 45 (HW-004/HW-026/HW-049): a read, nothing is opened.
+        "list_serial_ports" => crate::list_serial_ports(state).and_then(json),
+        // ABI 45 (HW-023): the shell's remembered pump ports; a control command on the WebSocket server.
+        "reserve_pump_ports" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "ports")] ports: Vec<String>,
+            }
+            let a: A = args(value)?;
+            crate::reserve_pump_ports(state, a.ports).and_then(json)
+        }
         "pump_connect_endpoint" => {
             #[derive(Deserialize)]
             struct A {
@@ -1514,6 +1527,70 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
+    // ABI 45 (Qt-parity HW-033, HW-004/026/049, HW-023): the new status members, the serial port list
+    // and the pump port reservation through dispatch (the WebSocket's path, which serialises the same
+    // functions the Tauri commands call).
+    #[test]
+    #[serial]
+    fn hardware_parity_commands_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_hw_parity_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        let json_of = |reply: Result<Reply, String>| match reply {
+            Ok(Reply::Json(v)) => v,
+            other => panic!("expected JSON, got {other:?}"),
+        };
+
+        // The ports cannot be listed before initialization (the simulated rig is installed by it).
+        let err = dispatch(&state, &host, "list_serial_ports", Value::Null).unwrap_err();
+        assert!(err.starts_with("BACKEND_NOT_INITIALIZED"), "{err}");
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+
+        // A JSON array of well-formed entries; the key set is the contract's.
+        let ports = json_of(dispatch(&state, &host, "list_serial_ports", Value::Null));
+        for port in ports.as_array().expect("an array of ports") {
+            let mut keys: Vec<&str> = port.as_object().unwrap().keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            assert_eq!(keys, ["com_port", "description", "serial_number", "simulated", "system_path", "vid_pid"], "{port}");
+            assert!(port["system_path"].as_str().is_some_and(|p| !p.is_empty()), "{port}");
+            assert!(port["com_port"].is_i64() && port["simulated"].is_boolean(), "{port}");
+        }
+
+        // The autofocus status carries the message and sequence additively; silent until the service speaks.
+        let status = json_of(dispatch(&state, &host, "fetch_autofocus_status", Value::Null));
+        assert_eq!(status["status_message"], json!(""), "{status}");
+        assert_eq!(status["status_sequence"], json!(0), "{status}");
+        assert_eq!(status["valid"], json!(true), "{status}");
+        let _ = json_of(dispatch(&state, &host, "autofocus_connect", json!({ "comPort": 250, "baudRate": 115200, "deviceAddress": 1 })));
+        let status = json_of(dispatch(&state, &host, "fetch_autofocus_status", Value::Null));
+        assert!(status["status_sequence"].as_u64().unwrap() >= 1, "{status}");
+        assert!(!status["status_message"].as_str().unwrap().is_empty(), "{status}");
+
+        // Reserving pump ports: strict arguments, a structured refusal, a clean replace.
+        for bad in [json!({}), json!({ "ports": "COM5" }), json!({ "ports": [5] })] {
+            let e = dispatch(&state, &host, "reserve_pump_ports", bad.clone()).unwrap_err();
+            assert!(e.starts_with("INVALID_ARGUMENTS"), "{bad}: {e}");
+        }
+        let ok = json_of(dispatch(&state, &host, "reserve_pump_ports", json!({ "ports": ["COM5", "/dev/ttyUSB0"] })));
+        assert_eq!(ok["ok"], json!(true), "{ok}");
+        assert_eq!(ok["command"], json!(10), "a Pump command: {ok}");
+        let refused = json_of(dispatch(&state, &host, "reserve_pump_ports", json!({ "ports": [""] })));
+        assert_eq!(refused["ok"], json!(false), "{refused}");
+        let too_many: Vec<String> = (0..9).map(|n| format!("COM{n}")).collect();
+        assert_eq!(json_of(dispatch(&state, &host, "reserve_pump_ports", json!({ "ports": too_many })))["ok"], json!(false));
+        let cleared = json_of(dispatch(&state, &host, "reserve_pump_ports", json!({ "ports": [] })));
+        assert_eq!(cleared["ok"], json!(true), "{cleared}");
+
+        // Both are Tauri commands too (every_command_is_dispatchable lists the handler names).
+        let tauri = include_str!("../../../desktop/src-tauri/src/lib.rs");
+        for name in ["list_serial_ports", "reserve_pump_ports"] {
+            assert!(tauri.contains(&format!("            {name},")), "{name} is registered with Tauri");
+        }
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
     // ABI 44 (#716 A7a): the run quick look through dispatch (the WebSocket's path) and the Tauri
     // function: strict arguments refused before the backend, the parity fixture computed, the
     // reference confirmed with deltas, a second read from the cache, and nothing written.
@@ -1529,7 +1606,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

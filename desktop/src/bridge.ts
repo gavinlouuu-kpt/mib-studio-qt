@@ -60,6 +60,31 @@ export interface AutofocusStatus {
   median_ring_ratio: number;
   last_ring_ratio_update_us: number;
   ring_ratio_age_us: number;
+  /**
+   * ABI 45 (HW-033): the latest AutofocusService status message (the text Qt's Nanopositioner tab
+   * shows: "Connected to ...", "Voltage change failed: ...") and its sequence, +1 per message, so a
+   * poller can tell a new message from a repeat. "" and 0 until the service has said anything;
+   * absent from a backend older than ABI 45. Failures are also in the event log.
+   */
+  status_message?: string;
+  status_sequence?: number;
+}
+
+/**
+ * One serial port for a picker (ABI 45; HW-004/HW-026/HW-049; bridge-contract.json
+ * hardware_parity.serial_ports). Enumeration only: listing opens nothing.
+ */
+export interface SerialPortInfo {
+  /** What a connect command takes as its port name: "COM5", "/dev/ttyUSB0". */
+  system_path: string;
+  /** n of a "COMn" port, -1 for any other. */
+  com_port: number;
+  description: string;
+  serial_number: string;
+  /** "0403:6001" (lower-case hex), "" without a USB identity. */
+  vid_pid: string;
+  /** Served by the MIB_SERIAL_MODE=sim rig, not the OS. */
+  simulated: boolean;
 }
 
 /** Autofocus configuration (schema v11, BE-8) — plain values end to end. */
@@ -850,6 +875,15 @@ export const bridge = {
     invokeCommand("autofocus_set_config", { config }),
   fetchAutofocusStatus: () => invoke<AutofocusStatus>("fetch_autofocus_status"),
   fetchAutofocusConfig: () => invoke<AutofocusConfig>("fetch_autofocus_config"),
+  // ABI 45 (HW-004/HW-026/HW-049): the serial ports a picker offers, Qt's pump and pulse-generator
+  // lists in one; under MIB_SERIAL_MODE=sim only the simulated rig's. A read: nothing is opened.
+  // Rejects until the backend is initialized.
+  listSerialPorts: () => invoke<SerialPortInfo[]>("list_serial_ports"),
+  // ABI 45 (HW-023): reserve the pump RS485 ports the shell remembers (system paths, at most 8), so
+  // the startup nanopositioner probe never opens the pump bus; call it before startup discovery.
+  // Replaces the previous list ([] clears it); config.json's own reservation is separate. One invalid
+  // entry refuses the whole call (ok false).
+  reservePumpPorts: (ports: string[]) => invokeCommand("reserve_pump_ports", { ports }),
   // Syringe pumps (schema v10, BE-7): pump 0 = Sample, 1 = Sheath.
   pumpConnectEndpoint: (pump: number, portName: string, baudRate: number, modbusAddress: number) => invokeCommand("pump_connect_endpoint", {pump, portName, baudRate, modbusAddress}),
   // v22: either pump model in either slot; microlitersPerRev calibrates peristaltic flow.

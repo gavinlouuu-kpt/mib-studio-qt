@@ -195,6 +195,14 @@ mib_add_backend_test_executable(pump_bridge_facade_test backend/pump_bridge_faca
 add_test(NAME backend.pump_bridge_facade COMMAND $<TARGET_FILE:mib_backend_tests> pump_bridge_facade_test)
 set_tests_properties(backend.pump_bridge_facade PROPERTIES LABELS "backend;bridge" TIMEOUT 60)
 
+# Qt-parity hardware rows (#868 HW-033, HW-004/026/049, HW-023): the autofocus status
+# message + sequence and its event/detach rules, the serial port list under the
+# simulated rig, the pump port reservation next to config.json's.
+mib_add_backend_test_executable(hardware_parity_facade_test backend/hardware_parity_facade_test.cpp)
+mib_backend_test_link(hardware_parity_facade_test PRIVATE Threads::Threads)
+add_test(NAME backend.hardware_parity_facade COMMAND $<TARGET_FILE:mib_backend_tests> hardware_parity_facade_test)
+set_tests_properties(backend.hardware_parity_facade PROPERTIES LABELS "backend;bridge;serial;concurrency" TIMEOUT 120)
+
 mib_add_backend_test_executable(serial_port_posix_loopback_test backend/serial_port_posix_loopback_test.cpp)
 add_test(NAME backend.serial_port_posix_loopback COMMAND $<TARGET_FILE:mib_backend_tests> serial_port_posix_loopback_test)
 set_tests_properties(backend.serial_port_posix_loopback PROPERTIES LABELS "backend" TIMEOUT 30)

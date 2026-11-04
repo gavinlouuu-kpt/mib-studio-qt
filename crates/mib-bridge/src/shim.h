@@ -35,6 +35,7 @@ struct BridgeConfigTransactionResult;
 struct BridgeProcessingCoreStatus;
 struct BridgeAutofocusConfig;
 struct BridgeAutofocusStatus;
+struct BridgeSerialPortList;
 struct BridgePumpStatus;
 struct BridgeStageStatus;
 struct BridgeReviewMetadata;
@@ -94,6 +95,8 @@ public:
     BridgeCommandResult autofocus_set_config(BridgeAutofocusConfig config);
     BridgeAutofocusStatus fetch_autofocus_status();
     BridgeAutofocusConfig fetch_autofocus_config();
+    BridgeSerialPortList list_serial_ports();
+    BridgeCommandResult reserve_pump_ports(rust::Vec<rust::String> ports);
     BridgeCommandResult pump_connect_endpoint(std::uint32_t pump, rust::Str port_name,
                                               std::int32_t baud_rate, std::int32_t modbus_address);
     BridgeCommandResult pump_connect(std::uint32_t pump, std::int32_t com_port,

@@ -40,6 +40,9 @@
 #include "backend/services/AutofocusService.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/CaptureService.h"
+#include "backend/services/SerialBus.h"
+#include "backend/services/SerialPortClaims.h"
+#include "backend/services/SimulatedSerial.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/TriggerService.h"
 #include "backend/services/PulseGeneratorService.h"
@@ -50,7 +53,10 @@
 #include "backend/pz/PzPlatformMonitor.h"
 #include "backend/services/TushuiPumpProtocol.h"
 #include <atomic>
+#include <cctype>
+#include <cstdio>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <type_traits>
 #include <utility>
@@ -207,8 +213,60 @@ namespace backend::bridge
         }
     } // namespace
 
+    // The latest AutofocusService status message and its sequence (HW-033). The callback registered
+    // on the service holds this object and nothing of the facade: AutofocusService invokes a copy of
+    // its callback taken outside its lock, so a call can still be running when setStatusCallback({})
+    // returns (the experiment coordinator's callback waits such a call out; this one cannot rely on
+    // the service for it). `owner` is the facade while attached and null once detached; detach waits
+    // for the failure events other threads are emitting through it.
+    struct BackendFacade::AutofocusStatusMirror
+    {
+        std::mutex mutex;
+        std::condition_variable idle;
+        std::string message;
+        std::uint64_t sequence{0};
+        const BackendFacade *owner{nullptr};
+        std::vector<std::thread::id> emitting; // threads inside owner->emitEvent for a failure
+    };
+
+    namespace
+    {
+        // A message the operator has to act on belongs in the event log; the routine
+        // "Voltage: ... V" line fires on every autofocus step and must not.
+        bool isAutofocusFailureMessage(const std::string &message)
+        {
+            if (message.rfind("No nanopositioner", 0) == 0) return true;
+            std::string lower(message.size(), '\0');
+            std::transform(message.begin(), message.end(), lower.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return lower.find("failed") != std::string::npos;
+        }
+
+        // "COM5", "com5", "/dev/COM5" -> 5; -1 for anything else (/dev/ttyUSB0, "COM", "COM5x").
+        int comPortNumber(const std::string &name)
+        {
+            const std::string key = services::portclaims::key(name);
+            if (key.size() <= 3 || key.compare(0, 3, "com") != 0 || key.size() > 3 + 5) return -1;
+            for (std::size_t i = 3; i < key.size(); ++i)
+                if (!std::isdigit(static_cast<unsigned char>(key[i]))) return -1;
+            return std::stoi(key.substr(3));
+        }
+
+        std::string vidPidText(std::uint16_t vendorId, std::uint16_t productId)
+        {
+            if (vendorId == 0) return {};
+            char text[16];
+            std::snprintf(text, sizeof(text), "%04x:%04x", static_cast<unsigned>(vendorId),
+                          static_cast<unsigned>(productId));
+            return text;
+        }
+
+        constexpr const char *kPreferencePumpPortsOwner = "the syringe pumps (desktop preferences)";
+    } // namespace
+
     BackendFacade::BackendFacade(AppBackend &backend)
-        : backend_(backend), review_(std::make_shared<review::ReviewSession>()),
+        : backend_(backend), autofocusStatus_(std::make_shared<AutofocusStatusMirror>()),
+          review_(std::make_shared<review::ReviewSession>()),
           // The review lanes report through the facade's operations: Started
           // comes from beginOperation (the host hook), Progress and the one
           // terminal state from the sink (ADR 0004 late-event policy: both
@@ -257,6 +315,8 @@ namespace backend::bridge
             // The quick-look reader captures the review lanes: detached (waiting out a call in
             // progress) before they go.
             backend_.experiment().setClosedRunStatisticsReader({});
+            // The autofocus status callback emits through this facade (HW-033).
+            detachAutofocusStatus();
         }
         // A review file left open without shutdown(): close it and lift the
         // D1 refusal it holds on AppBackend (#512 S5).
@@ -334,6 +394,9 @@ namespace backend::bridge
                                         BackendCommandType::Experiment,
                                         message});
         });
+        // The nanopositioner's runtime messages (HW-033): Qt shows them in the Nanopositioner tab
+        // through AutofocusService::setStatusCallback; the shell reads them from the autofocus status.
+        attachAutofocusStatus();
 
         emitEvent(makeCameraStatus(backend_.isCameraConfigured()
                                        ? CameraState::Configured
@@ -361,6 +424,7 @@ namespace backend::bridge
         backend_.experiment().shutdown();
         backend_.experiment().setStatusCallback({});
         backend_.experiment().setClosedRunStatisticsReader({});
+        detachAutofocusStatus();
         cancelAllOperations("Backend shutdown");
         // The review lanes (#512 S7): their jobs observe the (now set) cancel
         // flags, clean partial outputs and report; joined so no callback
@@ -414,6 +478,53 @@ namespace backend::bridge
     bool BackendFacade::isInitialized() const
     {
         return initialized_;
+    }
+
+    void BackendFacade::attachAutofocusStatus()
+    {
+        {
+            std::scoped_lock lock(autofocusStatus_->mutex);
+            autofocusStatus_->owner = this;
+        }
+        backend_.autofocus().setStatusCallback([mirror = autofocusStatus_](const std::string &message) {
+            const BackendFacade *owner = nullptr;
+            {
+                std::scoped_lock lock(mirror->mutex);
+                mirror->message = message;
+                ++mirror->sequence;
+                if (mirror->owner && isAutofocusFailureMessage(message))
+                {
+                    owner = mirror->owner;
+                    mirror->emitting.push_back(std::this_thread::get_id());
+                }
+            }
+            if (!owner) return;
+            // Outside the mirror's lock: the sink is the host's code. The facade stays alive for this
+            // call because detachAutofocusStatus() waits for `emitting` to drain before it returns.
+            owner->emitEvent(BackendErrorEvent{BackendErrorSource::Hardware, BackendCommandType::Autofocus, message});
+            {
+                std::scoped_lock lock(mirror->mutex);
+                const auto self = std::find(mirror->emitting.begin(), mirror->emitting.end(), std::this_thread::get_id());
+                if (self != mirror->emitting.end()) mirror->emitting.erase(self);
+            }
+            mirror->idle.notify_all();
+        });
+    }
+
+    void BackendFacade::detachAutofocusStatus()
+    {
+        {
+            std::unique_lock lock(autofocusStatus_->mutex);
+            if (!autofocusStatus_->owner) return;
+            autofocusStatus_->owner = nullptr; // from now on a call only records the message
+            // A sink that calls shutdown() runs inside its own emission: do not wait for ourselves.
+            const auto me = std::this_thread::get_id();
+            autofocusStatus_->idle.wait(lock, [&] {
+                return std::none_of(autofocusStatus_->emitting.begin(), autofocusStatus_->emitting.end(),
+                                    [&](const std::thread::id &id) { return id != me; });
+            });
+        }
+        backend_.autofocus().setStatusCallback({});
     }
 
     void BackendFacade::setEventSink(EventSink sink)
@@ -2643,7 +2754,78 @@ namespace backend::bridge
             out.lastRingRatioUpdateUs == 0
                 ? 0
                 : Tools::getTimestamp() - out.lastRingRatioUpdateUs;
+        {
+            std::scoped_lock lock(autofocusStatus_->mutex);
+            out.statusMessage = autofocusStatus_->message;
+            out.statusSequence = autofocusStatus_->sequence;
+        }
         return true;
+    }
+
+    bool BackendFacade::listSerialPorts(std::vector<BackendSerialPortInfo> &out) const
+    {
+        out.clear();
+        if (!initialized_)
+        {
+            return false;
+        }
+        // The simulated rig (MIB_SERIAL_MODE=sim) is what enumerateSerialPorts() serves while it is
+        // installed, and the only list Qt's pickers offer then.
+        const bool simulated = services::serialsim::installed() != nullptr;
+        for (const auto &port : services::serialbus::availablePorts())
+        {
+            BackendSerialPortInfo info;
+            const int comPort = comPortNumber(port.systemName);
+            // "COM3" is the name Windows and the rig open; elsewhere the device node is the path.
+            info.systemPath = comPort >= 0 || port.systemLocation.empty() ? port.systemName : port.systemLocation;
+            info.comPort = comPort;
+            info.description = port.description;
+            info.serialNumber = port.serialNumber;
+            info.vidPid = vidPidText(port.vendorId, port.productId);
+            info.simulated = simulated;
+            out.push_back(std::move(info));
+        }
+        if (!simulated)
+        {
+            // Qt's pump dialog reads COM numbers from the Windows registry, which also lists ports
+            // the device enumeration does not (virtual COM ports); nothing on other platforms.
+            for (const int number : Tools::availableComPortNumbers())
+            {
+                const bool known = std::any_of(out.begin(), out.end(), [&](const BackendSerialPortInfo &p) {
+                    return p.comPort == number;
+                });
+                if (known) continue;
+                BackendSerialPortInfo info;
+                info.systemPath = "COM" + std::to_string(number);
+                info.comPort = number;
+                out.push_back(std::move(info));
+            }
+        }
+        std::stable_sort(out.begin(), out.end(), [](const BackendSerialPortInfo &a, const BackendSerialPortInfo &b) {
+            if ((a.comPort >= 0) != (b.comPort >= 0)) return a.comPort >= 0;
+            if (a.comPort != b.comPort) return a.comPort < b.comPort;
+            return a.systemPath < b.systemPath;
+        });
+        return true;
+    }
+
+    BackendCommandResult BackendFacade::reservePumpPorts(const std::vector<std::string> &ports)
+    {
+        auto refuse = [](const std::string &message) -> BackendCommandResult {
+            return {false, BackendCommandType::Pump, message};
+        };
+        if (ports.size() > kMaxReservedPumpPorts) return refuse("Too many pump ports to reserve");
+        for (const auto &port : ports)
+        {
+            // The pump connect endpoint's rule (handlePumpCommand, Connect).
+            if (port.size() > 512 || port.find('\0') != std::string::npos ||
+                port.find_first_not_of(" \t") == std::string::npos)
+                return refuse("Invalid pump serial endpoint");
+        }
+        services::portclaims::setReserved(kPreferencePumpPortsOwner, ports);
+        return {true, BackendCommandType::Pump,
+                ports.empty() ? "Pump port reservation cleared"
+                              : "Reserved " + std::to_string(ports.size()) + " pump port(s)"};
     }
 
     bool BackendFacade::fetchAutofocusConfig(services::AutofocusService::Config &out) const

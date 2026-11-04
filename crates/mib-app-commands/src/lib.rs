@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use mib_bridge::ffi::{self, BridgeEventKind};
 use serde::{Deserialize, Serialize};
 
+pub mod boot_services;
 pub mod camera_document;
 pub mod config_document;
 pub mod dispatch;
@@ -470,6 +471,39 @@ pub struct AutofocusStatus {
     median_ring_ratio: f64,
     last_ring_ratio_update_us: u64,
     ring_ratio_age_us: u64,
+    /// ABI 45 (HW-033): the latest AutofocusService status message (what Qt's Nanopositioner tab
+    /// shows) and its sequence, +1 per message; "" and 0 until the service has said anything.
+    status_message: String,
+    status_sequence: u64,
+}
+
+/// One serial port for a picker (ABI 45, HW-004/HW-026/HW-049; bridge-contract.json
+/// `hardware_parity.serial_ports`).
+#[derive(Serialize, Clone, Default, Debug, PartialEq)]
+pub struct SerialPortInfo {
+    /// What a connect command takes as its port name: "COM5", "/dev/ttyUSB0".
+    pub system_path: String,
+    /// n of a "COMn" port, -1 for any other.
+    pub com_port: i32,
+    pub description: String,
+    pub serial_number: String,
+    /// "0403:6001" (lower-case hex), "" without a USB identity.
+    pub vid_pid: String,
+    /// Served by the MIB_SERIAL_MODE=sim rig, not the OS.
+    pub simulated: bool,
+}
+
+impl From<ffi::BridgeSerialPortInfo> for SerialPortInfo {
+    fn from(p: ffi::BridgeSerialPortInfo) -> Self {
+        SerialPortInfo {
+            system_path: p.system_path,
+            com_port: p.com_port,
+            description: p.description,
+            serial_number: p.serial_number,
+            vid_pid: p.vid_pid,
+            simulated: p.simulated,
+        }
+    }
 }
 
 /// Autofocus configuration for the webview (schema v11, BE-8).
@@ -600,7 +634,30 @@ pub fn fetch_autofocus_status(state: &AppState) -> Result<AutofocusStatus, Strin
         median_ring_ratio: s.median_ring_ratio,
         last_ring_ratio_update_us: s.last_ring_ratio_update_us,
         ring_ratio_age_us: s.ring_ratio_age_us,
+        status_message: s.status_message,
+        status_sequence: s.status_sequence,
     })
+}
+
+/// ABI 45 (HW-004/HW-026/HW-049): the serial ports a picker offers, Qt's pump and pulse-generator
+/// lists in one (bridge-contract.json `hardware_parity.serial_ports`). A read: nothing is opened.
+/// Fails before the backend is initialized, because the simulated rig (MIB_SERIAL_MODE=sim) is
+/// installed by initialization and its ports must replace the OS's.
+pub fn list_serial_ports(state: &AppState) -> Result<Vec<SerialPortInfo>, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let list = guard.pin_mut().list_serial_ports();
+    if !list.valid {
+        return Err("BACKEND_NOT_INITIALIZED: the backend is not initialized, so the serial ports cannot be listed".to_string());
+    }
+    Ok(list.ports.into_iter().map(SerialPortInfo::from).collect())
+}
+
+/// ABI 45 (HW-023): reserve the pump RS485 ports the shell remembers, so the startup
+/// nanopositioner probe never opens the pump bus (bridge-contract.json
+/// `hardware_parity.reserve_pump_ports`). A control command on the WebSocket server.
+pub fn reserve_pump_ports(state: &AppState, ports: Vec<String>) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().reserve_pump_ports(ports).into())
 }
 
 pub fn fetch_autofocus_config(state: &AppState) -> Result<AutofocusConfig, String> {

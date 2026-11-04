@@ -520,6 +520,63 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 45: Qt-parity hardware reads and reservations (#868: HW-033, HW-004/026/049, HW-023)
+
+Additive over ABI 44; contract: `hardware_parity` (a `$comment` and one description per surface).
+Three things the Qt tabs get from the services directly and the bridge did not carry. Backend
+rows of the parity program; the React views place them ([[Desktop-Shell]]).
+
+- **Autofocus status message (HW-033).** `fetch_autofocus_status` gains `status_message` and
+  `status_sequence`: the latest text `AutofocusService::notifyStatus` sent (what Qt's
+  Nanopositioner tab shows through `setStatusCallback`) and a counter that grows by one per
+  message. `BackendFacade::initialize` registers the callback (`attachAutofocusStatus`), `shutdown`
+  and the destructor detach it. The service calls a *copy* of its callback outside its lock, so
+  unlike the experiment status callback a call can outlive `setStatusCallback({})`: the callback
+  holds a shared `AutofocusStatusMirror` (mutex, message, sequence, `owner`), never the facade, and
+  detach nulls `owner` and waits for the failure emissions on other threads (a sink that calls
+  `shutdown()` is its own thread and is not waited for). A *failure* (message contains "failed" in
+  any case, or starts with "No nanopositioner") is also a `BackendError` event, source Hardware,
+  command Autofocus; the routine `Voltage: ...` line (every autofocus step) never is. Connect-time
+  device errors that say neither (`notifyStatus(error)` from the device: "CoreMOR SDK support is not
+  available") appear in the status only; the facade's own "Autofocus controller connect failed" event
+  still follows them.
+- **`list_serial_ports` (HW-004/HW-026/HW-049).** A read (every WebSocket client): `[{system_path,
+  com_port, description, serial_number, vid_pid, simulated}]`, stable order (COMn by number, then by
+  path). One list for Qt's two pickers: `serialbus::availablePorts()` (the pulse generator panel's
+  description / serial number / VID:PID) plus, outside the rig, `Tools::availableComPortNumbers()`
+  (the pump dialog's registry COM numbers, Windows). `system_path` is what a connect takes: `COM5`
+  on Windows and under the rig, `/dev/ttyUSB0` on Linux. Under `MIB_SERIAL_MODE=sim` (the rig
+  [[../services/SimulatedSerial]] installs in `AppBackend::initialize`) only the rig's present ports,
+  each `simulated`, as the Qt dialogs offer them. Nothing is opened or claimed. It fails
+  (`BACKEND_NOT_INITIALIZED`, `valid false` at the cxx layer) before initialization, because the rig
+  does not exist yet.
+- **`reserve_pump_ports` (HW-023).** A control command: `ports: [string]` (at most 8; each not
+  blank, at most 512 characters, no NUL, the pump connect endpoint's rule; one bad entry refuses
+  all) goes to `portclaims::setReserved("the syringe pumps (desktop preferences)", ...)`
+  ([[../services/SerialPortClaims]]), so the startup nanopositioner probe never opens the pump bus.
+  Qt gets this from config.json (`AppBackend::setLastConfigJson`, owner "the syringe pumps
+  (config.json)"); `setReserved` is per owner, so the two coexist and neither wipes the other. A
+  call replaces this owner's list (`[]` clears it). Process-wide, no initialized backend needed.
+- **Boot service toggles (HW-038) are not a bridge command.** The Tauri `init` command applies the
+  `bootDisabledServices` preference as `MIB_DISABLED_SERVICES` before `cmds::init`
+  (`mib_app_commands::boot_services`; [[Desktop-Shell]]).
+- **Path:** C++ `BackendFacade::{listSerialPorts, reservePumpPorts}` and `BackendAutofocusStatus.
+  {statusMessage, statusSequence}` -> cxx `list_serial_ports`, `reserve_pump_ports`,
+  `BridgeAutofocusStatus` -> `mib-app-commands` (`SerialPortInfo`, `AutofocusStatus`; Tauri and the
+  WebSocket server alike) -> `desktop/src/bridge.ts` (`listSerialPorts`, `reservePumpPorts`,
+  `AutofocusStatus.status_message?`/`status_sequence?`).
+- **ABI touch points:** `bridge-contract.json` `abi_version` 45 and `hardware_parity`; `shim.cpp`
+  `bridge_abi_version()`; `contract.rs` `abi_version_is_stable`; the generated `bridgeContract.ts`
+  (`BRIDGE_ABI_VERSION`); the server's `CONTROL_COMMANDS` (`reserve_pump_ports`); the
+  `eventAdapter.test.ts` pin.
+- **Tests:** C++ `backend.hardware_parity_facade` (message, sequence, event rules with a fake device,
+  detach racing a talking service, rig list with an unplugged port and no port opened, reservation
+  validation and coexistence with config.json, a probe turned away); `contract.rs`
+  `hardware_parity_is_described`, `autofocus_status_carries_the_message_and_failures_are_events`,
+  `list_serial_ports_is_a_read_of_an_initialized_backend`, `reserve_pump_ports_validates_and_replaces`;
+  `dispatch.rs` `hardware_parity_commands_through_dispatch`; the server's
+  `reserving_pump_ports_is_control_only_but_listing_ports_is_a_read`; `boot_services.rs` tests.
+
 ## ABI 44: the run quick look (#716 A7a)
 
 Additive over ABI 43. `run_quick_look {paths: 1..32, reference?: {path, run_id, start_generation?}}`

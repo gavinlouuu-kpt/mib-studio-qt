@@ -126,7 +126,102 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    assert_eq!(ffi::bridge_abi_version(), 44);
+    // v45 (Qt-parity epic #868) the hardware reads and reservations: the autofocus status message and
+    // sequence (HW-033), list_serial_ports (HW-004/026/049), reserve_pump_ports (HW-023).
+    assert_eq!(ffi::bridge_abi_version(), 45);
+}
+
+// ABI 45: the contract documents the three hardware-parity surfaces and the boot tokens.
+#[test]
+fn hardware_parity_is_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["hardware_parity"];
+    for (key, needle) in [("autofocus_status", "status_sequence"), ("autofocus_status", "No nanopositioner"),
+                          ("autofocus_status", "never an event"), ("serial_ports", "vid_pid"),
+                          ("serial_ports", "MIB_SERIAL_MODE=sim"), ("serial_ports", "nothing is opened"),
+                          ("reserve_pump_ports", "the syringe pumps (desktop preferences)"),
+                          ("reserve_pump_ports", "coexist"), ("boot_disabled_services", "bootDisabledServices"),
+                          ("boot_disabled_services", "already in the environment")] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "hardware_parity.{key} mentions {needle}");
+    }
+    assert_eq!(c["boot_service_tokens"].as_array().map(Vec::len), Some(8));
+}
+
+// ABI 45 (HW-033): the autofocus status carries the service's latest message and its sequence. Which
+// messages are also Hardware/Autofocus BackendError events (a "failed" line, never the routine
+// voltage line) is the facade's ctest, backend.hardware_parity_facade, which drives them with a fake
+// device; this host's connect message (no Coremor SDK) is neither.
+#[test]
+#[serial]
+fn autofocus_status_carries_the_message_and_failures_are_events() {
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_af_msg_data_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+
+    let quiet = bridge.pin_mut().fetch_autofocus_status();
+    assert!(quiet.valid);
+    assert_eq!(quiet.status_sequence, 0, "the service has said nothing yet");
+    assert!(quiet.status_message.is_empty());
+
+    // No SDK on this host: the connect message is a failure.
+    assert!(!bridge.pin_mut().autofocus_connect(250, 115200, 1).ok);
+    let after = bridge.pin_mut().fetch_autofocus_status();
+    assert!(after.status_sequence > quiet.status_sequence, "{after:?}");
+    assert!(!after.status_message.is_empty(), "{after:?}");
+
+    // Every message moves the sequence and replaces the text: disconnect disables control first.
+    assert!(bridge.pin_mut().autofocus_disconnect().ok);
+    let last = bridge.pin_mut().fetch_autofocus_status();
+    assert!(last.status_sequence > after.status_sequence, "{last:?}");
+    assert_eq!(last.status_message, "Autofocus disabled");
+
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+// ABI 45 (HW-004/HW-026/HW-049): the port list is a read that needs an initialized backend (the
+// simulated rig is installed by initialization), and its entries are well formed.
+#[test]
+#[serial]
+fn list_serial_ports_is_a_read_of_an_initialized_backend() {
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_ports_data_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let before = bridge.pin_mut().list_serial_ports();
+    assert!(!before.valid && before.ports.is_empty(), "not initialized: no list");
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+
+    let list = bridge.pin_mut().list_serial_ports();
+    assert!(list.valid);
+    for port in &list.ports {
+        assert!(!port.system_path.is_empty());
+        assert!(port.com_port >= -1);
+        // Not the simulated rig (MIB_SERIAL_MODE is not set by this test): the OS's ports.
+        assert!(!port.simulated, "{port:?}");
+        assert!(port.vid_pid.is_empty() || (port.vid_pid.len() == 9 && port.vid_pid.as_bytes()[4] == b':'), "{port:?}");
+    }
+    let again = bridge.pin_mut().list_serial_ports();
+    let paths = |l: &ffi::BridgeSerialPortList| l.ports.iter().map(|p| p.system_path.clone()).collect::<Vec<_>>();
+    assert_eq!(paths(&list), paths(&again), "a stable order");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+// ABI 45 (HW-023): reserve_pump_ports validates like the pump connect endpoint and refuses the
+// whole list on one bad entry.
+#[test]
+#[serial]
+fn reserve_pump_ports_validates_and_replaces() {
+    let mut bridge = ffi::new_backend_bridge(); // process-wide: no backend needed
+    let ok = bridge.pin_mut().reserve_pump_ports(vec!["COM5".to_string(), "/dev/ttyUSB0".to_string()]);
+    assert!(ok.ok, "{}", ok.message);
+    assert_eq!(ok.command, 10, "a Pump command");
+    for bad in [vec![String::new()], vec!["  ".to_string()], vec!["x".repeat(513)], (0..9).map(|n| format!("COM{n}")).collect()] {
+        let refused = bridge.pin_mut().reserve_pump_ports(bad);
+        assert!(!refused.ok && !refused.message.is_empty(), "{}", refused.message);
+    }
+    let cleared = bridge.pin_mut().reserve_pump_ports(Vec::new());
+    assert!(cleared.ok, "{}", cleared.message);
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.

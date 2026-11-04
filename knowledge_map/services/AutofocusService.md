@@ -140,6 +140,20 @@ CoreMorrow endpoints (the vendor DLL would open real ports).
 CH340/CH341 candidates. The discovery provider decides the probe order (see
 [[DeviceDiscoveryService]], probe stages).
 
+## Status messages (`setStatusCallback`)
+
+`notifyStatus` sends the operator-facing text ("Connected to ...", "Voltage: 12.5V", "Voltage
+change failed: ...", "Failed to apply safe shutdown voltage: ...", "Autofocus voltage step failed:
+...", "No nanopositioner backend is available ...") to one `StatusCallback`. Qt's
+[[../frontend/NanopositionerTab]] registers it. The Tauri shell gets the same text from
+`BackendFacade` (HW-033, ABI 45): it registers the callback in `initialize`, keeps the latest
+message and a sequence behind a mutex, serves both on `fetch_autofocus_status`, and emits failures
+as `BackendError` events (never the per-step voltage line). The callback is invoked from a copy
+outside the service's lock (control thread, or the caller's thread inside `connect`/`setEnabled`),
+so a registered callback must not assume it stops running the moment `setStatusCallback({})` returns;
+the facade's holds only its shared mirror. See [[../architecture/Rust-Bridge]] (ABI 45). Test:
+`backend.hardware_parity_facade`.
+
 ## Gotchas
 
 - A NaN ring ratio (every Contract 2/3 object) used to pass the `<= 0.0`

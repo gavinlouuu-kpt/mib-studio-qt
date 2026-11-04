@@ -7,7 +7,7 @@
 **Source:** `include/backend/services/SerialPortClaims.h`,
 `src/backend/services/SerialPortClaims.cpp` (`oeabt_serial` archive)
 **Tests:** `backend.serial_startup_race` (regression: failed on every seed
-before), `backend.serial_sim`
+before), `backend.serial_sim`, `backend.hardware_parity_facade` (the shell reservation)
 **Related:** [[SerialBus]], [[AutofocusService]], [[DeviceDiscoveryService]],
 [[SimulatedSerial]], [[SyringePumpService]], [[../architecture/AppBackend]]
 
@@ -40,6 +40,7 @@ serial adapters the operator is about to connect:
 | Nanopositioner probe (`probeNanopositionerEndpoint`) | `tryProbe` | Refused (probe fails, logged "skips …") when a service or another probe holds the port, or it is reserved; the startup retries take it later |
 | Generator `auto` sweep (`discoverLiveView`) | `isReserved`, `tryProbe(…, kProbeYield, &holder)` | Skips reserved ports; waits for another probe; shares a live bus session; joins a bus session another client is opening (waits for it to exist, never opens its own in that window); a port an exclusive service holds is "busy" |
 | config.json `pump_sample_com_port` / `pump_sheath_com_port` | `setReserved` (from `AppBackend::setLastConfigJson`) | Probes and the sweep skip `COM<n>` even before the pumps connect |
+| Desktop shell's remembered pump ports (Tauri / Studio preferences) | `setReserved("the syringe pumps (desktop preferences)", ...)` (from `BackendFacade::reservePumpPorts`, command `reserve_pump_ports`, ABI 45, HW-023) | Same skip, for a shell that never writes config.json's pump keys. Another owner than config.json's: `setReserved` replaces only its own owner's list, so the two coexist and a config.json load does not wipe it; `[]` clears only this owner. Ports are system paths (`COM5`, `/dev/ttyUSB0`), validated like the pump connect endpoint. `backend.hardware_parity_facade` |
 
 A service registers its claim **before** it waits. Without that, probes
 retrying back to back (startup attempts, the sweep) could take the port in

@@ -198,6 +198,9 @@ const CONTROL_COMMANDS: &[&str] = &[
     // Calibration apply (#716 A4a, ABI 42): it sets the instrument's pixel-to-micron factor, so
     // only the controlling client may send it. Listing and reading records stay open to viewers.
     "calibration_apply",
+    // Pump port reservation (ABI 45, HW-023): it changes which ports the startup probe may open, for
+    // everyone, so only the controlling client may send it. Listing the ports is a read.
+    "reserve_pump_ports",
 ];
 
 impl Server {
@@ -708,6 +711,17 @@ mod stage_control_tests {
         assert!(CONTROL_COMMANDS.contains(&"calibration_apply"), "calibration_apply must be a CONTROL command");
         for cmd in ["calibration_records_list", "calibration_record_get"] {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
+    }
+
+    // Serial ports and the pump port reservation (ABI 45): listing opens nothing, so every client may
+    // read it; the reservation changes what the startup probe may open, so it needs control.
+    #[test]
+    fn reserving_pump_ports_is_control_only_but_listing_ports_is_a_read() {
+        assert!(CONTROL_COMMANDS.contains(&"reserve_pump_ports"), "reserve_pump_ports must be a CONTROL command");
+        assert!(!CONTROL_COMMANDS.contains(&"list_serial_ports"), "list_serial_ports is a read: viewers may use it");
+        for cmd in ["list_serial_ports", "reserve_pump_ports"] {
+            assert!(mib_app_commands::dispatch::COMMANDS.contains(&cmd), "the server dispatches {cmd}");
         }
     }
 

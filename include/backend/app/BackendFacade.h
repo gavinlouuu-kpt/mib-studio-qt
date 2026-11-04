@@ -1016,6 +1016,27 @@ namespace backend::bridge
         double medianRingRatio{0.0};
         std::uint64_t lastRingRatioUpdateUs{0};
         std::uint64_t ringRatioAgeUs{0}; // now - last update; 0 when never
+        // The latest AutofocusService status message (the text Qt's Nanopositioner
+        // tab shows: "Connected to ...", "Voltage change failed: ...") and a
+        // sequence that grows by one per message, so a poller can tell a new
+        // message from a repeat. "" / 0 until the service has said anything.
+        std::string statusMessage;
+        std::uint64_t statusSequence{0};
+    };
+
+    // One serial port for a port picker (HW-004/HW-026/HW-049): the same list Qt's
+    // pump settings dialog (COM numbers) and the pulse generator panel (description,
+    // serial number, VID:PID) show. Enumeration only; no port is opened.
+    struct BackendSerialPortInfo
+    {
+        // What a connect command takes as its port name: "COM5" on Windows and
+        // under the simulated rig, "/dev/ttyUSB0" on Linux.
+        std::string systemPath;
+        int comPort{-1}; // n of a "COMn" port, -1 for any other
+        std::string description;
+        std::string serialNumber;
+        std::string vidPid; // "0403:6001" (lower-case hex), "" when the platform gives no USB identity
+        bool simulated{false}; // served by the MIB_SERIAL_MODE=sim rig, not the OS
     };
 
     // Sorter trigger status snapshot (BE-5).
@@ -1218,6 +1239,20 @@ namespace backend::bridge
         bool fetchCameraSelection(BackendCameraSelection &out) const;
         bool fetchPumpStatus(int pumpId, BackendPumpStatus &out) const;
         bool fetchAutofocusStatus(BackendAutofocusStatus &out) const;
+        // Serial ports for a picker, in a stable order (COMn by number, then the rest by path). Under
+        // MIB_SERIAL_MODE=sim only the simulated rig's ports, as in the Qt dialogs. A read: nothing is
+        // opened and nothing claimed. False (and `out` empty) when the facade is not initialized,
+        // because the simulated rig is installed by AppBackend::initialize.
+        bool listSerialPorts(std::vector<BackendSerialPortInfo> &out) const;
+        // Reserve the pump RS485 ports remembered by the shell (HW-023), so the startup nanopositioner
+        // probe never opens the pump bus before the pumps connect. Replaces this owner's previous list
+        // ("the syringe pumps (desktop preferences)"); the config.json pump ports
+        // (AppBackend::setLastConfigJson) are a separate owner and stay reserved. An empty list clears
+        // this owner's reservation. At most kMaxReservedPumpPorts entries, each a non-empty port name of
+        // at most 512 characters without NUL (the pump connect endpoint's rule); nothing changes on a
+        // refusal. Process-wide, so it needs no initialized backend.
+        static constexpr std::size_t kMaxReservedPumpPorts = 8;
+        BackendCommandResult reservePumpPorts(const std::vector<std::string> &ports);
         bool fetchStageStatus(BackendStageStatus &out) const;
         bool fetchAutofocusConfig(services::AutofocusService::Config &out) const;
         // Processing configuration (BE-3): the full lossless config document
@@ -1340,10 +1375,19 @@ namespace backend::bridge
             CancelFlag cancelRequested;
         };
 
+        // The latest autofocus status message and its sequence (HW-033), shared with the callback
+        // installed on AutofocusService. AutofocusService calls its callback from a copy taken outside
+        // its own lock, so a call can run after setStatusCallback({}) returned: the callback holds
+        // this object, never the facade, and detachAutofocusStatus() waits out the calls in flight.
+        struct AutofocusStatusMirror;
+        void attachAutofocusStatus();
+        void detachAutofocusStatus();
+
         AppBackend &backend_;
         mutable std::mutex eventSinkMutex_;
         EventSink eventSink_;
         bool initialized_{false};
+        const std::shared_ptr<AutofocusStatusMirror> autofocusStatus_;
 
         std::string startupPreferenceJson_{
             R"({"backend":"auto","endpoint":"","com_port":-1,"baud":115200,"address":1})"};

@@ -20,12 +20,29 @@ mod registry_transport;
 pub mod updater;
 mod app_update;
 
+/// HW-038 (Qt Settings > Boot Service Toggles): turn the `bootDisabledServices` preference into
+/// `MIB_DISABLED_SERVICES` before the backend initializes, unless the environment already names
+/// services (the environment wins, as in Qt). Once per process; the line saying which source applied
+/// goes to the shell log. A preferences file that cannot be read applies nothing.
+fn apply_boot_services(app: &tauri::AppHandle) {
+    static APPLIED: std::sync::Once = std::sync::Once::new();
+    APPLIED.call_once(|| {
+        let (level, line) = match platform::get_preferences(app.clone()) {
+            Ok(preferences) => ("info", cmds::boot_services::apply_preferences(&preferences)),
+            Err(e) => ("warn", format!("boot service toggles not applied, preferences unreadable: {e}")),
+        };
+        let _ = platform::shell_log(app.clone(), level.to_string(), line);
+    });
+}
+
 #[tauri::command]
 fn init(
     app: tauri::AppHandle,
     state: State<AppState>,
     data_dir: String,
 ) -> Result<bool, String> {
+    // AppBackend::initialize reads MIB_DISABLED_SERVICES once: set it first.
+    apply_boot_services(&app);
     // An empty data_dir means "use the platform app-data dir" — AppBackend
     // rejects an empty path, so resolve it here (found by the Xvfb E2E run:
     // the UI passed "" and init always failed).
@@ -262,6 +279,18 @@ fn fetch_autofocus_status(state: State<AppState>) -> Result<cmds::AutofocusStatu
 #[tauri::command]
 fn fetch_autofocus_config(state: State<AppState>) -> Result<cmds::AutofocusConfig, String> {
     cmds::fetch_autofocus_config(&state)
+}
+
+/// ABI 45 (HW-004/HW-026/HW-049): the serial ports a picker offers; a read, nothing is opened.
+#[tauri::command]
+fn list_serial_ports(state: State<AppState>) -> Result<Vec<cmds::SerialPortInfo>, String> {
+    cmds::list_serial_ports(&state)
+}
+
+/// ABI 45 (HW-023): reserve the pump RS485 ports the shell remembers, before startup discovery.
+#[tauri::command]
+fn reserve_pump_ports(state: State<AppState>, ports: Vec<String>) -> Result<cmds::CmdResult, String> {
+    cmds::reserve_pump_ports(&state, ports)
 }
 
 #[tauri::command]
@@ -866,6 +895,8 @@ pub fn run() {
             autofocus_set_config,
             fetch_autofocus_status,
             fetch_autofocus_config,
+            list_serial_ports,
+            reserve_pump_ports,
             pump_connect_endpoint,
             pump_connect_model,
             pump_connect,

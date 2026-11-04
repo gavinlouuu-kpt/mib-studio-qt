@@ -229,6 +229,12 @@ Supported backend tokens:
 - `playback`
 - `all` (disables all backend startup paths above)
 
+The Qt shell fills the variable from `Startup/DisabledServices` (Settings > Boot Service Toggles,
+`main.cpp`); the Tauri shell from the `bootDisabledServices` preference in `init`, before the
+backend initializes ([[Desktop-Shell]], HW-038). In both, a non-empty variable already in the
+environment wins. The Tauri toggles list is the eight tokens Qt offers (`sqlite`, `hdf5`, `processing`,
+`autofocus`, `trigger`, `capture`, `playback`, `auto_update`).
+
 Notes:
 
 - Tokens are case-insensitive; `-` and `_` are treated the same.
