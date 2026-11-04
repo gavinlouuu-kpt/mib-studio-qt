@@ -326,6 +326,18 @@ held at ~10 fps by per-byte frame copies in the bridge.
 `vitest` discovery is limited to `src/` (`vite.config.ts`): crawling
 `src-tauri/target`'s cxx symlink loop hung `vitest run`.
 
+## Wafer Grid (Overview, CONNECT-054)
+
+The Overview stage has Qt's **Wafer Grid** toggle (bridge ABI 45, [[Rust-Bridge]]): dot-grid localization decodes
+the live frame only while the Overview is on screen, and the live canvas shows the detected dots, the image-centre
+cross and the pose text (wafer X/Y, theta, um/px, design, chip) or the failure reason. Files:
+`areas/connect/waferGrid.ts` (pure: text, reducer, pause rule, overlay geometry, drawing),
+`useWaferGrid.ts` (pause / resume on the stage and `document.visibilitychange`, the 4 Hz poll, the toggle),
+`WaferGridControls.tsx` (the toolbar button inside a `<ViewerGate>`, the refusal notice); the overlay is a ref in
+`useConnectState()` that `areas/preview/usePreview.ts` `draw()` calls last on the live canvas. Qt's details:
+[[../frontend/OverviewTab]]. The decoder's design registry is compiled into the backend, so the bundle's
+`resources/defaults/dot_grid/` copy is not read; `config.json`'s `dot_grid` section is not applied by profile apply.
+
 ## Command layer
 
 Thin wrappers over the bridge (all take the managed `AppState`; bodies in
