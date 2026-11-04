@@ -1,12 +1,17 @@
 import json
+import os
 from pathlib import Path
 import resource
 import sys
 
+# Prevent numerical-library thread stacks from exhausting the address-space bound.
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+
 # Bound expansion of adversarial CAD, not just upload bytes.
 resource.setrlimit(resource.RLIMIT_AS, (3 * 1024**3, 3 * 1024**3))
 resource.setrlimit(resource.RLIMIT_CPU, (280, 290))
-resource.setrlimit(resource.RLIMIT_FSIZE, (512 * 1024**2, 512 * 1024**2))
+resource.setrlimit(resource.RLIMIT_FSIZE, (3 * 1024**3, 3 * 1024**3))
 from pipeline import inspect, generate
 
 phase, folder = sys.argv[1:]

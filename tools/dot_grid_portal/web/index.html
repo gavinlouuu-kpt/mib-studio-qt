@@ -136,6 +136,10 @@
             aria-label="Converted CAD geometry"
           ></svg>
           <button id="reset-view" type="button">Fit drawing</button>
+          <button id="dot-detail" type="button" hidden>
+            Magnify actual dots
+          </button>
+          <div id="dot-summary"></div>
           <div id="region-controls" hidden>
             <button id="region-tour" type="button">
               Guide me through no-dot areas
@@ -145,8 +149,8 @@
               generation
             </div>
             <div aria-label="After area review" class="flow">
-              After: shaded exclusions + dimension check → confirmation → device
-              + dots
+              After: shaded exclusions + dimension check → confirmation →
+              batched generation → streamed device + dots
             </div>
             <p>
               Scroll to zoom. Click closed areas to shade channels, chambers and
@@ -160,6 +164,9 @@
             ></label>
             <button id="toggle-region" type="button">
               Toggle selected area
+            </button>
+            <button id="select-polygons" type="button">
+              Exclude all closed polygons
             </button>
             <button id="clear-regions" type="button">
               Clear added exclusions

@@ -16,6 +16,13 @@ type Candidate = {
   radius?: number;
 };
 type Inspection = {
+  generated_preview?: {
+    dot_count: number;
+    overview_png: string;
+    detail_bounds: number[];
+    detail_points: number[][];
+    dot_radius_um: number;
+  };
   region_candidates?: Candidate[];
   selected_regions?: number[];
   no_dot_regions?: number;
@@ -124,6 +131,10 @@ async function open(id: string) {
     updateSelection();
     el("summary").textContent =
       `${d.name} · ${i.extent_um.map((v: number) => v.toFixed(1)).join(" × ")} µm · ${i.entity_count} entities · source ${i.source_units}${i.converter ? " · DWG converted" : ""}`;
+    el("dot-detail").hidden = !i.generated_preview;
+    el("dot-summary").textContent = i.generated_preview
+      ? `${i.generated_preview.dot_count.toLocaleString()} generated dots. Overview shows dot occupancy; use Magnify actual dots for exact circles in a 1 mm detail.`
+      : "";
     const svg = el("preview");
     svg.replaceChildren();
     svg.setAttribute("viewBox", `0 0 ${i.extent_um[0]} ${i.extent_um[1]}`);
@@ -147,8 +158,53 @@ async function open(id: string) {
       p.setAttribute("vector-effect", "non-scaling-stroke");
       svg.append(p);
     }
-    el("reset-view").onclick = () =>
+    let overview: SVGElement | undefined;
+    let detail: SVGElement | undefined;
+    const generated = i.generated_preview;
+    if (generated) {
+      overview = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "image",
+      );
+      overview.setAttribute(
+        "href",
+        `data:image/png;base64,${generated.overview_png}`,
+      );
+      overview.setAttribute("width", String(i.extent_um[0]));
+      overview.setAttribute("height", String(i.extent_um[1]));
+      overview.style.pointerEvents = "none";
+      svg.prepend(overview);
+      detail = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      detail.setAttribute("data-dot-detail", "true");
+      detail.style.pointerEvents = "none";
+      detail.style.display = "none";
+      for (const [x, y] of generated.detail_points) {
+        const dot = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "circle",
+        );
+        dot.setAttribute("cx", String(x));
+        dot.setAttribute("cy", String(i.extent_um[1] - y));
+        dot.setAttribute("r", String(generated.dot_radius_um));
+        dot.setAttribute("fill", "#145ab4");
+        detail.append(dot);
+      }
+      svg.append(detail);
+      el("dot-detail").onclick = () => {
+        const [x0, y0, x1, y1] = generated.detail_bounds;
+        svg.setAttribute(
+          "viewBox",
+          `${x0} ${i.extent_um[1] - y1} ${x1 - x0} ${y1 - y0}`,
+        );
+        overview!.style.display = "none";
+        detail!.style.display = "";
+      };
+    }
+    el("reset-view").onclick = () => {
       svg.setAttribute("viewBox", `0 0 ${i.extent_um[0]} ${i.extent_um[1]}`);
+      if (overview) overview.style.display = "";
+      if (detail) detail.style.display = "none";
+    };
     svg.onwheel = (event) => {
       event.preventDefault();
       const box = svg.getAttribute("viewBox")!.split(" ").map(Number);
@@ -230,6 +286,10 @@ async function open(id: string) {
       select.append(option);
     }
     el("toggle-region").onclick = () => toggle(Number(select.value));
+    el("select-polygons").onclick = () => {
+      for (const r of i.region_candidates ?? [])
+        if (r.kind === "polygon" && !selectedRegions.has(r.id)) toggle(r.id);
+    };
     el("clear-regions").onclick = () => {
       for (const id of [...selectedRegions]) toggle(id);
     };
@@ -394,7 +454,7 @@ el("region-tour").onclick = () => {
         popover: {
           title: "Verify complete coverage",
           description:
-            "Check physical units and all shaded interiors. Open fragments need review. Changing a selection clears confirmation. Full-wafer generation remains unavailable while the capacity warning is shown.",
+            "Check physical units and all shaded interiors. Open fragments need review. Changing a selection clears confirmation. Wafer-sized drawings generate in batches after confirmation. Exclude all closed polygons is conservative: it may remove entire chip interiors, not only fluid channels.",
         },
       },
       {

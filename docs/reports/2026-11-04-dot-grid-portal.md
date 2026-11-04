@@ -155,3 +155,30 @@ No actual-wafer mask was generated, and no fabrication approval is implied. Prod
 converter provisioning/licensing and cloud deployment remain separate from this private
 review deployment. This supersedes the earlier “manual CAD re-export required” conclusion
 for this particular file, not all possible DWG or ACIS entities.
+
+## Follow-up: wafer generation capacity
+
+The import-only delivery did not generate wafer dots. Added bounded batches, disk
+spooling, indexed exact region-distance filtering, streamed DXF/GDS, and streamed
+review object storage. Scalar-engine equivalence and export read-back regressions
+cover the unchanged codec. Limits remain explicit; this is not an unbounded cap raise.
+
+Measured on the actual normalized source: 6,387,278-dot capacity-only run, 65.24 s,
+423 MiB peak RSS. A separate conservative all-closed-polygons run: 3,452,492 dots,
+94.35 s, 342 MiB peak RSS. An independent streaming DXF/GDS reader checked every
+exported centre against the spool, and analytic rectangle clearance checked all
+20 outer chip boundaries: zero mismatches and zero violations. The capacity-only
+output has incomplete exclusions and must not be published as a usable mask.
+
+User choice of surrounding-wafer-only versus inside-chip placement is pending;
+no test output has been accepted as a manufacturing mask.
+
+Deployment verification: private image `mib-dot-grid-portal:wafer-batched` completed
+actual conservative wafer generation offline at 4 GiB / 2 CPUs with the normal
+subprocess limits. 18 Python tests (including actual DWG preservation), 13 API/runtime
+checks and 3 Playwright tests passed. The live tailnet wafer record was capacity-
+upgraded only after checking its normalized source hash; the old inspection object
+and old container were retained. Live Driver.js review, 1,008-polygon selection,
+capacity enablement and coverage-reset gate passed without saving any selections
+or submitting a mask. Actual-dot rendering is covered by UI fixtures; no customer
+wafer generation was submitted while the exclusion preference remains unanswered.

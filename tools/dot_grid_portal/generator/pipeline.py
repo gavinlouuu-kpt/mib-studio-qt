@@ -15,10 +15,12 @@ from ezdxf import bbox
 from ezdxf.math import Matrix44
 import numpy as np
 try:
+    from .batched import MAX_NODES, supported, pattern_batches, spool_pattern, write_dxf_stream, write_gds_stream, dot_preview
     from .regions import regions, outside_regions
     from .cad_import import convert, flatten_regions
     from .domains import candidates, apply_selection
 except ImportError:
+    from batched import MAX_NODES, supported, pattern_batches, spool_pattern, write_dxf_stream, write_gds_stream, dot_preview
     from regions import regions, outside_regions
     from cad_import import convert, flatten_regions
     from domains import candidates, apply_selection
@@ -38,7 +40,6 @@ from dotgrid.pattern import (
 )
 
 MAX_ENTITIES = 20000
-MAX_NODES = 1_000_000
 MAX_EXTENT_UM = 150000
 BUNDLED = ROOT / "resources/defaults/dot_grid/registry.json"
 
@@ -172,7 +173,7 @@ def inspect(source: Path, units: str, out: Path) -> dict:
         "open_fragments": open_fragments,
         "converted_regions": converted_regions,
         "annotation_count": len(annotations),
-        "generation_supported": columns * rows <= MAX_NODES,
+        "generation_supported": supported(columns, rows),
         "no_dot_contract": 1,
         "converter": converter,
         "paths": paths,
@@ -186,7 +187,7 @@ def inspect(source: Path, units: str, out: Path) -> dict:
         result["warnings"].append(f"{open_fragments} open boundary fragments: no interiors were guessed. Check these before confirming coverage.")
     if choices:
         result["warnings"].append("Select closed no-dot areas in the preview. These are geometry candidates, not automatically identified fluid channels.")
-    if columns * rows > MAX_NODES:
+    if not supported(columns, rows):
         result["warnings"].append("Full drawing imported for review; generation exceeds the current capacity. No mask is generated from this full wafer yet.")
     header_units = {13: "um", 4: "mm", 1: "inch"}.get(ezdxf.readfile(converted).units)
     if header_units and header_units != units:
@@ -212,7 +213,7 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
     doc, pts, chips, marks, wafer = load_design(str(source))
     w, h = inspection["extent_um"]
     cols, rows = math.ceil(w / 30) + 1, math.ceil(h / 30) + 1
-    if cols * rows > MAX_NODES:
+    if not supported(cols, rows):
         raise ValueError("Job node limit exceeded")
     cb = generate_codebook(
         seed,
@@ -231,15 +232,11 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
     )
     review_shapes = apply_selection(doc, inspection)
     areas = regions(doc)
-    dots = build_pattern(cb, pts, chips, marks, wafer, ko)
-    dots = dots[outside_regions(dots[:, 2:4], areas, ko.channel_um + cb.dot_diameter_um / 2 + (0.1 if inspection.get("selected_regions") else 0))]
-    # Keep whole displaced dots within the confirmed rectangular extent as well.
-    dots = dots[
-        (dots[:, 2] >= 6)
-        & (dots[:, 2] <= w - 6)
-        & (dots[:, 3] >= 6)
-        & (dots[:, 3] <= h - 6)
-    ]
+    out.mkdir(parents=True, exist_ok=True)
+    dots = spool_pattern(out / "dots.bin", pattern_batches(
+        cb, pts, chips, marks, wafer, ko, areas, (w,h),
+        ko.channel_um + cb.dot_diameter_um/2 + (0.1 if inspection.get("selected_regions") else 0),
+    ))
     if len(dots) < 100:
         raise ValueError("Too few usable dots after keep-outs")
     design = Design.from_codebook(
@@ -265,8 +262,8 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
     # Review-only exclusion geometry must not become device fabrication geometry.
     for shape in review_shapes:
         doc.modelspace().delete_entity(shape)
-    write_dxf(doc, dots, cb, str(out / "design_with_dotgrid.dxf"))
-    if not write_gds(dots, cb, str(out / "dotgrid_layer.gds")):
+    write_dxf_stream(doc, dots, cb, str(out / "design_with_dotgrid.dxf"))
+    if not write_gds_stream(dots, cb, str(out / "dotgrid_layer.gds")):
         raise ValueError("GDS exporter unavailable")
     cb.save(str(out / "codebook.json"))
     Registry([design]).save(str(out / "registry.json"))
@@ -303,4 +300,4 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
     with zipfile.ZipFile(out / "mib-map.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for n in ["registry.json", "codebook.json", "manifest.json", "README.txt"]:
             z.write(out / n, n)
-    return {"entry": design.to_dict(), "manifest": manifest}
+    return {"entry": design.to_dict(), "manifest": manifest, "preview": dot_preview(dots, (w,h))}

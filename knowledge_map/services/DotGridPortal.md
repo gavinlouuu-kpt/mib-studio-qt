@@ -36,3 +36,15 @@ The area-selection Driver.js tour resets confirmation on edits and includes feed
 only server-validated selection IDs enter the confirmation record. Helper exclusion
 polygons are removed before device export. Full-wafer inspection now works, but the
 one-million-node generation cap remains: wafer mask acceptance is still open.
+
+## Full-wafer batching (2026-11-04)
+
+The portal adapter now batches lattice generation without changing codec contract 1,
+indexes filled-region clearance, and streams DXF circles / GDS cells. Bounds are
+14 million candidates, 3,700 per axis, 3 GiB address space and per-file size, and
+five minutes. The review adapter streams object uploads/downloads as well.
+The private wafer produced 6,387,278 dots in a capacity-only benchmark; a separate
+conservative all-closed-polygons test produced 3,452,492 dots, with both exported
+formats independently checked and zero whole-chip clearance violations across
+20 chips. These are tests, not approval of fluid semantics or placement inside chips.
+Ready designs expose actual-dot overview/detail previews; maps and seeds remain private.

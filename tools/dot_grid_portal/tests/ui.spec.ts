@@ -28,6 +28,19 @@ test("guided click-through gates actions and exposes only device and dot exports
         name: "Test drawing",
         status: state,
         inspection: {
+          generated_preview:
+            state === "ready"
+              ? {
+                  dot_count: 2,
+                  overview_png: "",
+                  detail_bounds: [0, 0, 1000, 1000],
+                  detail_points: [
+                    [100, 100],
+                    [200, 200],
+                  ],
+                  dot_radius_um: 6,
+                }
+              : undefined,
           extent_um: [6000, 6000],
           entity_count: 2,
           no_dot_regions: 1,
@@ -74,6 +87,15 @@ test("guided click-through gates actions and exposes only device and dot exports
   await page.locator("#generate").click();
   await expect(page.locator("#downloads")).toBeVisible();
   await expect(page.locator("#links a")).toHaveCount(2);
+  await expect(page.locator("#dot-summary")).toContainText("2 generated dots");
+  await page.locator("#dot-detail").click();
+  await expect(page.locator("[data-dot-detail] circle")).toHaveCount(2);
+  await expect(page.locator("#preview")).toHaveAttribute(
+    "viewBox",
+    "0 5000 1000 1000",
+  );
+  await page.locator("#reset-view").click();
+  await expect(page.locator("[data-dot-detail]")).toBeHidden();
   await page.getByRole("button", { name: "Take a tour" }).click();
   for (let n = 0; n < 4; n++)
     await page.locator(".driver-popover-next-btn").click();

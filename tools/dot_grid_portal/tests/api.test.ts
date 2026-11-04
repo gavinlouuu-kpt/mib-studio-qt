@@ -30,7 +30,10 @@ const req = (path: string, method = "GET", data?: unknown) =>
 beforeEach(() => {
   env = {
     DB: db(),
-    FILES: { get: async () => ({ body: "secret" }) },
+    FILES: {
+      get: async (key: string) =>
+        key.endsWith("dot-preview.json") ? null : { body: "secret" },
+    },
     JOBS: { send: async () => {} },
   } as any;
 });

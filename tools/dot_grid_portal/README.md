@@ -110,10 +110,18 @@ required deployment credentials through the existing Vault mechanism; never comm
 
 ## Current bounds and gaps
 
-- 10 MiB upload, 20 designs/tenant/day, 20,000 model-space entities, 20,000 preview vertices,
-  512 kB preview metadata, 1,000,000 lattice nodes, 5-minute subprocess timeout, 3 GiB address-space cap.
-  These are conservative v1 bounds, **not full-wafer capacity proof**. A 100 mm wafer at 30 µm
-  pitch exceeds the current node bound; full-array chunking is outstanding.
+- 10 MiB upload, 20 designs/tenant/day, 20,000 model-space entities, 200,000 preview vertices,
+  7 MiB inspection metadata, 14,000,000 lattice nodes and 3,700 nodes per axis,
+  5-minute subprocess timeout, 3 GiB address-space and per-file caps. Generation uses
+  65,536-node batches, exact indexed filled-area clearance, a disk spool and streaming
+  DXF / hierarchical GDS exports. The frozen displacement codec is unchanged.
+- Actual 110 mm drawing capacity was measured locally: 6,387,278 dots in 65 s with
+  423 MiB peak RSS (deliberately incomplete exclusions; **not a usable mask**).
+  A separate whole-chip exclusion test generated 3,452,492 dots; independent DXF/GDS
+  position checks and all 20 outer-chip clearance checks passed. This does not approve
+  dots inside chips or establish fluid-domain semantics.
+- Generated previews show an occupancy raster of every exported dot and exact circles
+  in one 1 mm detail. The overview is not a full-resolution fabrication view.
 - Fixed validated starting geometry: 30 µm pitch, 12 µm dot, 5 µm displacement;
   no mask shrink/expansion compensation is applied (design scale 1.0).
 - Existing keep-out geometry is sampled/heuristic. Do not call it manufacturing DRC.
@@ -186,7 +194,7 @@ this change does not raise generation resource limits or qualify the wafer mask.
 
 Before: DWG → incomplete converter output → generic unsupported-entity error.
 After: isolated conversion → payload/topology checks → preserved device preview →
-explicit no-dot choices → capacity/coverage gate → existing verified generator.
+explicit no-dot choices → capacity/coverage gate → batched generator and streamed exports.
 The in-app “Guide me through no-dot areas” tour demonstrates the review controls,
 with restart/skip, selection-gated progress and a feedback checkpoint.
 

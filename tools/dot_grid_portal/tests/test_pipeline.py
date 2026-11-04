@@ -241,5 +241,5 @@ def test_actual_wafer_opt_in(tmp_path):
     assert i["extent_um"]==[110000,110000]
     assert i["open_fragments"]==20
     assert len(i["region_candidates"])==3210
-    assert i["generation_supported"] is False
+    assert i["generation_supported"] is True
     assert any("header says mm" in w for w in i["warnings"])

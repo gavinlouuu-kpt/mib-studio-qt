@@ -1,10 +1,24 @@
 /** Local tailnet review adapter only. Never imported by the Cloudflare entrypoint. */
 import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync, readFileSync, existsSync } from "node:fs";
-import { readFile, writeFile, unlink, mkdir } from "node:fs/promises";
+import {
+  mkdirSync,
+  readFileSync,
+  existsSync,
+  createReadStream,
+  createWriteStream,
+} from "node:fs";
+import {
+  readFile,
+  writeFile,
+  unlink,
+  mkdir,
+  stat,
+  rename,
+} from "node:fs/promises";
 import { resolve, dirname, extname } from "node:path";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { api, type Job } from "../src/api";
 import { execute } from "../src/jobs";
 import { HttpError } from "../src/auth";
@@ -74,7 +88,8 @@ const env: any = {
   FILES: {
     async get(k: string) {
       try {
-        return { body: new Blob([await readFile(objectPath(k))]).stream() };
+        await stat(objectPath(k));
+        return { body: Readable.toWeb(createReadStream(objectPath(k))) };
       } catch (e: any) {
         if (e.code === "ENOENT") return null;
         throw e;
@@ -83,7 +98,19 @@ const env: any = {
     async put(k: string, body: any) {
       const p = objectPath(k);
       await mkdir(dirname(p), { recursive: true });
-      await writeFile(p, Buffer.from(await new Response(body).arrayBuffer()));
+      const temporary = `${p}.part`;
+      try {
+        const stream = new Response(body).body;
+        if (!stream) throw new Error("Missing object body");
+        await pipeline(
+          Readable.fromWeb(stream as any),
+          createWriteStream(temporary),
+        );
+        await rename(temporary, p);
+      } catch (error) {
+        await unlink(temporary).catch(() => {});
+        throw error;
+      }
     },
     async delete(k: string) {
       await unlink(objectPath(k));

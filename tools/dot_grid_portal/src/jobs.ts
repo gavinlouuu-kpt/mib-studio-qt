@@ -91,11 +91,19 @@ export async function execute(job: Job, attempt: number, env: Env) {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    const result = await r.json<{ entry: Record<string, unknown> }>();
+    const result = await r.json<{
+      entry: Record<string, unknown>;
+      preview?: Record<string, unknown>;
+    }>();
     for (const f of FILES) {
       const file = await checked(await c.fetch(`http://cad/files/${f}`));
       await env.FILES.put(`${prefix}/${f}`, file.body);
     }
+    if (result.preview)
+      await env.FILES.put(
+        `${prefix}/dot-preview.json`,
+        JSON.stringify(result.preview),
+      );
     await env.DB.prepare(
       "UPDATE designs SET status='ready',registry_entry=?,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",
     )
