@@ -433,6 +433,14 @@ Two gates, both without a real display:
   loop under `src-tauri/target/**/cxxbridge` that crashes Vite's watcher with
   `ELOOP` seconds after startup. `vite.config.ts` sets
   `server.watch.ignored: ["**/src-tauri/**"]`.
+- **The backend shuts down on `RunEvent::Exit`, not in a destructor (#850).** tauri's
+  `App::run` ends with `std::process::exit`, so the managed `AppState` is never dropped and
+  `BackendBridge`'s destructor never ran: the log stopped at `CaptureService stopped`, with no
+  pump, pulse-generator or Z-stage shutdown. `run()` now builds the app and calls
+  `cmds::shutdown(state, EXIT_SHUTDOWN_WAIT)` on `RunEvent::Exit`, which logs
+  `AppBackend: shutdown complete` as Qt does. It waits at most 30 s for a command that holds
+  the bridge (a forced close during a stuck stop), then logs the busy error to stderr and exits.
+  Tests: `shutdown_tests` in `mib-app-commands`.
 - An **empty `data_dir`** passed to the `init` command resolves to Tauri's
   `app_data_dir` — `AppBackend::initialize("")` rejects an empty path (found
   by driving the UI under Xvfb: init always failed before this).

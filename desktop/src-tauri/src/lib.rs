@@ -953,6 +953,22 @@ pub fn run() {
             trigger_periodic_stop,
             fetch_trigger_status,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // tauri's App::run ends with std::process::exit, so the managed AppState is never
+            // dropped and BackendBridge's destructor never runs. Shut the backend down here,
+            // as the Qt app does on exit: pumps, pulse generator, Z stage, then
+            // "AppBackend: shutdown complete" in the log (#850).
+            if let tauri::RunEvent::Exit = event {
+                shutdown_on_exit(&app.state::<AppState>());
+            }
+        });
+}
+
+fn shutdown_on_exit(state: &AppState) {
+    match cmds::shutdown(state, cmds::EXIT_SHUTDOWN_WAIT) {
+        Ok(_) => {}
+        Err(e) => eprintln!("mib-studio-desktop: backend shutdown on exit skipped: {e}"),
+    }
 }

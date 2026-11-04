@@ -132,6 +132,24 @@ pub fn init(state: &AppState, data_dir: &str, resource_dir: &str) -> Result<bool
     Ok(guard.pin_mut().initialize_with_resources(data_dir, resource_dir))
 }
 
+/// How long the exit shutdown waits for a long command (a stuck stop) to release the bridge.
+pub const EXIT_SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Shut the backend down: capture, recording, pumps, pulse generator, Z stage, then
+/// `AppBackend: shutdown complete` in the log, as the Qt app does on exit (#850). The desktop
+/// app calls it on `RunEvent::Exit`, because tauri's `App::run` exits the process without
+/// dropping managed state. Waits at most `wait` for a command that holds the bridge (a forced
+/// close during a stuck stop) and then gives up with the busy error rather than hang the exit.
+/// Returns false when the backend was never initialised or is already shut down.
+pub fn shutdown(state: &AppState, wait: std::time::Duration) -> Result<bool, String> {
+    let mut guard = state.bridge.lock_within(wait)?;
+    if !guard.is_initialized() {
+        return Ok(false);
+    }
+    guard.pin_mut().shutdown();
+    Ok(true)
+}
+
 pub fn configure_mock(
     state: &AppState,
     frame_dir: String,
@@ -2204,6 +2222,59 @@ mod bridge_lock_backend_tests {
         slow.join().unwrap();
         assert!(bridge_lock::status_scope(|| is_initialized(&state)).unwrap());
         state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use serial_test::serial;
+    use std::sync::{mpsc, Arc};
+    use std::time::{Duration, Instant};
+
+    // #850: the exit path shuts the backend down through the bridge, once.
+    #[test]
+    #[serial]
+    fn exit_shutdown_runs_the_backend_shutdown_once() {
+        let data = std::env::temp_dir().join(format!("mib_exit_shutdown_{}", std::process::id()));
+        let state = AppState::new();
+        assert_eq!(shutdown(&state, Duration::from_secs(1)), Ok(false), "nothing to shut down before init");
+        assert!(init(&state, &data.to_string_lossy(), "").unwrap());
+        assert!(is_initialized(&state).unwrap());
+
+        assert_eq!(shutdown(&state, EXIT_SHUTDOWN_WAIT), Ok(true));
+        assert!(!is_initialized(&state).unwrap(), "the backend is shut down");
+        assert_eq!(shutdown(&state, EXIT_SHUTDOWN_WAIT), Ok(false), "a second exit event is a no-op");
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // A forced close during a stuck stop: the exit shutdown gives up after its wait instead of
+    // holding the process open for the whole stop.
+    #[test]
+    #[serial]
+    fn exit_shutdown_is_bounded_when_a_command_holds_the_bridge() {
+        let data = std::env::temp_dir().join(format!("mib_exit_bounded_{}", std::process::id()));
+        let state = Arc::new(AppState::new());
+        assert!(init(&state, &data.to_string_lossy(), "").unwrap());
+        let (held, wait_held) = mpsc::channel();
+        let (release, wait_release) = mpsc::channel::<()>();
+        let slow = {
+            let state = Arc::clone(&state);
+            std::thread::spawn(move || {
+                let _guard = state.bridge.lock_for("stop_capture").unwrap();
+                held.send(()).unwrap();
+                let _ = wait_release.recv();
+            })
+        };
+        wait_held.recv().unwrap();
+        let started = Instant::now();
+        let error = shutdown(&state, Duration::from_millis(300)).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(bridge_lock::is_busy(&error) && error.contains("stop_capture"), "{error}");
+        release.send(()).unwrap();
+        slow.join().unwrap();
+        assert_eq!(shutdown(&state, EXIT_SHUTDOWN_WAIT), Ok(true));
         let _ = std::fs::remove_dir_all(&data);
     }
 }
