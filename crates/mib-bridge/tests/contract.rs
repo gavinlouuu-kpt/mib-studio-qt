@@ -509,6 +509,28 @@ fn camera_alignment_commands_without_overview_camera() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
+// #863 A2: a selected MindVision camera's geometry carries the profile's ISP mirroring and the measured capture rate
+// (additive members, no ABI change). This build has no MindVision SDK, so the staged camera is the mock fallback and no
+// profile is readable: the members are present with their neutral values and the geometry says why there is no ROI.
+#[test]
+#[serial]
+fn mindvision_geometry_carries_mirroring_and_capture_rate() {
+    let data = std::env::temp_dir().join(format!("mib_bridge_mvgeom_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    let selected = bridge.pin_mut().select_mindvision_camera(0, "MindVision test camera", "");
+    assert!(selected.ok, "{}", selected.message);
+    let g: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_camera_geometry()).unwrap();
+    assert_eq!(g["supported"], serde_json::json!(true), "{g}");
+    assert_eq!(g["camera"], serde_json::json!("mindvision"), "{g}");
+    assert_eq!(g["flip_horizontal"], serde_json::json!(false), "{g}");
+    assert_eq!(g["flip_vertical"], serde_json::json!(false), "{g}");
+    assert_eq!(g["capture_fps"], serde_json::json!(0), "{g}");
+    assert!(g["profile_error"].as_str().is_some_and(|e| e.contains("Cannot read MindVision experiment profile")), "{g}");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 // ABI 45 (#863): the contract describes the eGrabber window functions.
 #[test]
 fn egrabber_window_functions_are_described() {
@@ -525,6 +547,8 @@ fn egrabber_window_functions_are_described() {
         ("fetch_recording_capacity", "camera.window, then camera.rate, storage.buffer, storage.throughput"),
         ("fetch_camera_geometry", "window_source"),
         ("fetch_camera_geometry", "window_apply"),
+        ("fetch_camera_geometry", "flip_horizontal"),
+        ("fetch_camera_geometry", "capture_fps"),
     ] {
         assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "camera_alignment.{key} mentions {needle}");
     }
@@ -555,6 +579,10 @@ fn camera_script_roles_without_a_hardware_camera() {
     assert!(g["window_apply"].is_null(), "{g}");
     assert_eq!(g["illuminated_live"], serde_json::json!(false), "{g}");
     assert_eq!(g["profile_error"], serde_json::json!(""), "{g}");
+    // #863 A2, additive: the MindVision profile's mirroring and the measured capture rate are always present.
+    assert_eq!(g["flip_horizontal"], serde_json::json!(false), "{g}");
+    assert_eq!(g["flip_vertical"], serde_json::json!(false), "{g}");
+    assert_eq!(g["capture_fps"], serde_json::json!(0), "{g}");
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&data);

@@ -122,6 +122,21 @@ std::string describeWindow(const ::camera::common::CameraWindow& window);
 // "SVS-Vistek GmbH MC2066", or "an unnamed camera"
 std::string describeCamera(const std::string& vendor, const std::string& model);
 
+// The MindVision experiment profile as the Overview shows it (Qt OverviewTab::initializeRoiFromConfig, #863 A2):
+// the saved experiment ROI in sensor coordinates, whether the rig is illuminated (no Overview auto-start,
+// "Trigger: 400 Hz" in the mode label), and the ISP mirroring the camera applies, which the Overview box and its
+// drag direction compensate (SimpleImageCanvas::setRoiTransform). `ok` is false with `error` set when the file
+// cannot be read or is not a valid profile; the message is the one Qt shows ("Cannot read MindVision experiment
+// profile: ..." or the parser's own).
+struct MindVisionOverviewProfile {
+    bool ok{false};
+    int offsetX{0}, offsetY{0}, width{0}, height{0};
+    bool illuminatedLive{false};
+    bool flipHorizontal{false}, flipVertical{false};
+    std::string error;
+};
+MindVisionOverviewProfile readMindVisionOverviewProfile(const std::string& path);
+
 // What applying the profile window after the camera script did (AppBackend::
 // applyCameraScriptFromFile, Experiment role). Kept for the camera.window gate.
 struct CameraWindowApplyReport {

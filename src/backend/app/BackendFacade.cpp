@@ -4003,6 +4003,10 @@ std::string BackendFacade::fetchCameraGeometryJson() const {
         {"window_apply", windowApplyJson(g)},
         {"illuminated_live", g.illuminatedLive},
         {"profile_error", g.profileError},
+        // #863 A2, additive: the MindVision profile's mirroring and the measured capture rate.
+        {"flip_horizontal", g.flipHorizontal},
+        {"flip_vertical", g.flipVertical},
+        {"capture_fps", g.captureFps},
     }.dump();
 }
 

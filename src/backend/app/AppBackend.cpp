@@ -3144,6 +3144,8 @@ namespace backend
     AppBackend::CameraGeometry AppBackend::cameraGeometry() const
     {
         CameraGeometry g;
+        // The camera's own measured rate, as Qt's MindVision mode label shows it ("Capture: N fps").
+        g.captureFps = captureService_ ? captureService_->stats().lastFrameRate.load() : 0;
         if (isMindVisionCameraSelected()) {
             g.supported = true;
             g.camera = "mindvision";
@@ -3154,21 +3156,18 @@ namespace backend
             g.minWidth = std::max(1, sensor.minWidth);
             g.minHeight = std::max(1, sensor.minHeight);
             try {
-                std::ifstream input(std::filesystem::u8path(lastMindVisionConfigPath_));
-                if (!input) {
-                    g.profileError = "Cannot read MindVision experiment profile: " + lastMindVisionConfigPath_;
+                const auto profile = app::readMindVisionOverviewProfile(lastMindVisionConfigPath_);
+                if (profile.ok) {
+                    g.roiX = profile.offsetX;
+                    g.roiY = profile.offsetY;
+                    g.roiWidth = profile.width;
+                    g.roiHeight = profile.height;
+                    g.illuminatedLive = profile.illuminatedLive;
+                    // #863 A2: the ISP mirroring the Overview box and its drag compensate (Qt setRoiTransform).
+                    g.flipHorizontal = profile.flipHorizontal;
+                    g.flipVertical = profile.flipVertical;
                 } else {
-                    const auto parsed = camera::mindvision::parseConfig(
-                        std::string(std::istreambuf_iterator<char>(input), {}));
-                    if (parsed.ok) {
-                        g.roiX = parsed.config.offsetX;
-                        g.roiY = parsed.config.offsetY;
-                        g.roiWidth = parsed.config.width;
-                        g.roiHeight = parsed.config.height;
-                        g.illuminatedLive = parsed.config.illuminatedLive;
-                    } else {
-                        g.profileError = parsed.error;
-                    }
+                    g.profileError = profile.error;
                 }
             } catch (...) {
             }

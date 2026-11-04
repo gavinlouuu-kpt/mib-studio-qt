@@ -102,6 +102,12 @@ adapter's `onSession` callback). Test: `backend.aravis_camera_overview`. If Arav
 request records an unavailable effective source and a null factory so capture
 reports the configuration error; it does not silently substitute MockCamera.
 
+**MindVision Overview profile (#863 A2).** `cameraGeometry()` reads the selected MindVision profile through
+`app::readMindVisionOverviewProfile` (`CameraWindowProfile.{h,cpp}`, Qt-free, test `backend.camera_window_profile`):
+the saved ROI, `illuminatedLive`, the ISP mirroring (`flipHorizontal`/`flipVertical`, which the desktop Overview
+compensates in the box and drag direction, as Qt's `SimpleImageCanvas::setRoiTransform`) and the error when the
+file cannot be read. Every geometry also carries `captureFps` (the capture service's measured rate).
+
 **eGrabber camera window (#863, ABI 45).** A selected eGrabber hardware camera is `supported` in
 `cameraGeometry()`: the window is the applied profile's `camera.window`, else the Experiment script's
 own (`chooseEgrabberWindow`; the script last applied or saved a window into, else the applied local

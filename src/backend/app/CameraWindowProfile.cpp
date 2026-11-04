@@ -1,10 +1,14 @@
 #include "backend/app/CameraWindowProfile.h"
 
+#include "backend/camera/mindvision/MindVisionConfig.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -213,6 +217,30 @@ std::string describeCamera(const std::string& vendor, const std::string& model)
     if (vendor.empty()) return model;
     if (model.empty()) return vendor;
     return vendor + " " + model;
+}
+
+MindVisionOverviewProfile readMindVisionOverviewProfile(const std::string& path)
+{
+    MindVisionOverviewProfile out;
+    std::ifstream input(std::filesystem::u8path(path), std::ios::binary);
+    if (!input) {
+        out.error = "Cannot read MindVision experiment profile: " + path;
+        return out;
+    }
+    const auto parsed = ::backend::camera::mindvision::parseConfig(std::string(std::istreambuf_iterator<char>(input), {}));
+    if (!parsed.ok) {
+        out.error = parsed.error;
+        return out;
+    }
+    out.ok = true;
+    out.offsetX = parsed.config.offsetX;
+    out.offsetY = parsed.config.offsetY;
+    out.width = parsed.config.width;
+    out.height = parsed.config.height;
+    out.illuminatedLive = parsed.config.illuminatedLive;
+    out.flipHorizontal = parsed.config.flipHorizontal;
+    out.flipVertical = parsed.config.flipVertical;
+    return out;
 }
 
 } // namespace backend::app

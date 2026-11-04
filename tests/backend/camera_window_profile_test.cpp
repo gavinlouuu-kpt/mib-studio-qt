@@ -9,12 +9,17 @@
 //  - a window made for another camera model is refused by name;
 //  - (#863) the eGrabber window the Overview edits: snapped as the Qt Overview snaps it, written back
 //    into the script's lines without touching the rest of the text, and chosen between the profile
-//    and the script.
+//    and the script;
+//  - (#863 A2) the MindVision experiment profile the Overview shows: its saved ROI, whether it is illuminated and
+//    its ISP mirroring (the geometry carries flip_horizontal / flip_vertical), and why it cannot be read.
 
 #include "backend/app/CameraWindowProfile.h"
 
 #include "support/assert.h"
+#include "support/tempdir.h"
 
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <initializer_list>
 #include <optional>
@@ -200,6 +205,45 @@ g.DevicePort.set("CycleMinimumPeriod", "200");
         MIB_EXPECT(backend::app::appliedProfileScriptPath("not json").empty() && backend::app::appliedProfileScriptPath("").empty() &&
                        backend::app::appliedProfileScriptPath("[1]").empty(),
                    "text that is not a configuration object");
+    }
+
+    // ---- the MindVision profile the Overview shows (#863 A2) ----------------------------------------------
+    {
+        mib::test::TempDir td("camera_window_profile_mv");
+        const auto write = [&](const char* name, const std::string& text) {
+            const auto path = td / name;
+            std::ofstream(path, std::ios::binary) << text;
+            return path.string();
+        };
+        const auto mirrored = backend::app::readMindVisionOverviewProfile(write("mirrored.json",
+            R"({"width": 640, "height": 128, "offset_x": 16, "offset_y": 8, "flip_horizontal": true, "flip_vertical": false})"));
+        MIB_REQUIRE(mirrored.ok, "a valid profile is read: " + mirrored.error);
+        MIB_EXPECT(mirrored.width == 640 && mirrored.height == 128 && mirrored.offsetX == 16 && mirrored.offsetY == 8,
+                   "its saved ROI in sensor coordinates");
+        MIB_EXPECT(mirrored.flipHorizontal && !mirrored.flipVertical && !mirrored.illuminatedLive,
+                   "horizontal mirroring only, not illuminated");
+        const auto both = backend::app::readMindVisionOverviewProfile(write("both.json",
+            R"({"width": 512, "height": 96, "flip_horizontal": true, "flip_vertical": true})"));
+        MIB_EXPECT(both.ok && both.flipHorizontal && both.flipVertical, "both mirrorings");
+        const auto plain = backend::app::readMindVisionOverviewProfile(write("plain.json", R"({"width": 512, "height": 96})"));
+        MIB_EXPECT(plain.ok && !plain.flipHorizontal && !plain.flipVertical && plain.offsetX == 0 && plain.offsetY == 0,
+                   "no flips and offset 0 by default");
+        const auto illuminated = backend::app::readMindVisionOverviewProfile(write("lit.json",
+            R"({"width":512,"height":96,"exposure_time_us":100,"trigger_mode":2,"ext_trig_signal_type":2,
+                "strobe_mode":1,"strobe_pulse_width_us":100,"strobe_polarity":1,"flip_vertical":true,
+                "live_view":{"enabled":true,"port":"COM1"}})"));
+        MIB_REQUIRE(illuminated.ok, "an illuminated-live profile is read: " + illuminated.error);
+        MIB_EXPECT(illuminated.illuminatedLive && illuminated.flipVertical && !illuminated.flipHorizontal,
+                   "it says it is illuminated and keeps its vertical mirroring");
+        const auto missing = backend::app::readMindVisionOverviewProfile((td / "absent.json").string());
+        MIB_EXPECT(!missing.ok && missing.error.find("Cannot read MindVision experiment profile") != std::string::npos &&
+                       missing.error.find("absent.json") != std::string::npos,
+                   "a missing file is named: " + missing.error);
+        const auto broken = backend::app::readMindVisionOverviewProfile(write("broken.json", "{ not json"));
+        MIB_EXPECT(!broken.ok && !broken.error.empty() && broken.error.find("Cannot read") == std::string::npos,
+                   "an unparseable profile gives the parser's own reason: " + broken.error);
+        const auto empty = backend::app::readMindVisionOverviewProfile("");
+        MIB_EXPECT(!empty.ok && !empty.error.empty(), "no profile path (none staged yet)");
     }
 
     // ---- camera compatibility ------------------------------------------------------------------------

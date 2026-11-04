@@ -421,6 +421,11 @@ namespace backend
             // illuminated, Qt MainWindow::onTabChanged) and why it could not be read, if so.
             bool illuminatedLive{false};
             std::string profileError;
+            // MindVision (#863 A2): the profile's ISP mirroring (the Overview box and the drag direction
+            // are mirrored to match, the stored offset stays in sensor coordinates), and the camera's
+            // measured frame rate (CaptureStats::lastFrameRate, 0 while stopped).
+            bool flipHorizontal{false}, flipVertical{false};
+            uint64_t captureFps{0};
         };
         CameraGeometry cameraGeometry() const;
         bool setCameraOverview(bool overview, std::string* errorOut = nullptr);
