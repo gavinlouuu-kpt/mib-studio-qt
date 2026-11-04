@@ -78,3 +78,6 @@ list, per-file manifest, synthetic HDF and a verified TIFF. Requires compatible
 Ubuntu 24.04 shared libraries; not a self-contained installer or native Tauri/Qt build.
 
 Archive SHA-256: `8f92df0c2b87cedb2b379bab1b7547ec081b9fc6acc487b38124ddb619e44bc3`.
+
+Verified downloadable bundle and curated evidence: [project Drive folder](https://drive.google.com/drive/folders/1AaTUVbUyGTvCrz8oZUdKWUC84tIdz0zH).
+Source/report review: [draft PR #836](https://github.com/gavinlouuu-kpt/mib-studio-qt/pull/836).
