@@ -1023,7 +1023,7 @@ pure and unit tested):
 
 ## Pump model per slot (2026-10-04)
 
-The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:
+The Pumps panel (`PumpControls.tsx`, composed by `HardwareControls.tsx`) has a **Pump model** select per slot:
 Syringe (Longer dLSP) or Peristaltic (Tushui). Peristaltic adds a calibration
 field (µL per revolution, default 25), pre-fills the instrument endpoint
 `/dev/ttyPS1` address 3 when the fields are untouched, hides the syringe

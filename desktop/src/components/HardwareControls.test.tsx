@@ -61,6 +61,7 @@ describe('hardware operator interactions', () => {
   });
   it('blocks motion and configuration when status cannot be read', async () => {
     vi.mocked(bridge.fetchPumpStatus).mockRejectedValue(new Error('Transport lost'));
+    vi.mocked(bridge.fetchAutofocusStatus).mockRejectedValue(new Error('Transport lost'));
     await render();
     expect(button('Run configured pump').disabled).toBe(true);
     expect(button('Apply rate').disabled).toBe(true);
