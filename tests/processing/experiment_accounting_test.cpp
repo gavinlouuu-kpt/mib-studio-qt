@@ -232,6 +232,19 @@ int main()
             svc.setExperimentAccountingContext(100 + run, false);
             svc.startExperiment();
             std::this_thread::sleep_for(std::chrono::milliseconds(15 + (run % 5)));
+            if (admittedTotal == 0) {
+                // Only frames committed after startExperiment() belong to the run
+                // (the run-start boundary, #810). During a run the inline loop
+                // never drops frames, so on a slow lane (TSan) it can still be
+                // working through the pre-run backlog when a 15 ms window closes,
+                // and every run admits nothing. Keep runs open, bounded, until
+                // the first one admits a frame so the boundary checks above are
+                // not vacuous; later runs keep the short windows.
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+                while (svc.experimentAccountingSnapshot().admitted == 0 &&
+                       std::chrono::steady_clock::now() < deadline)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
             svc.endExperiment();
             const auto a = svc.experimentAccountingSnapshot();
             admittedTotal += a.admitted;

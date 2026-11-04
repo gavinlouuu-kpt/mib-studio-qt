@@ -20,6 +20,12 @@ the combined tree:
   so they are measured on Linux only.
   `fcs_reader_test` and `flowjo_reference_test` call `popen` / `pclose` for the optional
   comparator; on `_WIN32` these now map to `_popen` / `_pclose`.
+- **`sanitizers.yml` TSan:** `processing.experiment_accounting` experiment 3 (inline) admitted 0
+  frames in 40 runs. #810 counts only frames committed after `startExperiment()`
+  (`experimentFirstFrame_`). During a run the inline loop never drops frames, so under TSan it was
+  still working through the pre-run backlog of the 4096-slot store when each 15 ms window closed.
+  The test now keeps runs open (bounded at 20 s) until the first run admits a frame. The boundary
+  rule and the `admittedTotal > 0` check are unchanged.
 
 The bridge ABI numbers 48–50 still need confirming in #716. The macOS
 `run_statistics_twin_over_the_parity_fixture` last-bit failure fails on `develop` too, and
