@@ -3,6 +3,7 @@
 import { SEG_STATUS_LABEL } from "../../contextBar";
 import { metricNumber } from "../../metricFormat";
 import { useStudio } from "../../studio/StudioContext";
+import { DeliveryModeBadge } from "../monitoring/DeliveryModeBadge";
 import { EXPERIMENT_STATE_NAMES } from "../monitoring/useMonitoring";
 
 export function ContextBar() {
@@ -57,6 +58,8 @@ export function StatusBar() {
           {(EXPERIMENT_STATE_NAMES[expState] ?? "Inactive").toLowerCase()}
           {expActive ? ` (buffered ${String(BigInt(expStatus?.valid_buffered ?? "0") + BigInt(expStatus?.invalid_buffered ?? "0"))})` : ""}
         </span>
+        {/* #858 (SHELL-055): Qt's permanent acquisition-mode badge (monitoring area). */}
+        <DeliveryModeBadge />
       </footer>
       {showLog && (
         <div className="log-drawer" role="log">

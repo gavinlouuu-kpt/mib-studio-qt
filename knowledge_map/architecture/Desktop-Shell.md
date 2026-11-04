@@ -366,6 +366,13 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
   to its revision, so a rewrite would make the next launch refuse the profile). The choice holds for the session,
   the run's method records it as a change after apply, and the control's tooltip says to edit
   `camera.frame_delivery_mode` in the profile to keep it.
+- **Acquisition-mode badge (#858, SHELL-055).** `areas/monitoring/DeliveryModeBadge.tsx` sits at the end of the
+  status bar on every stage, as Qt's permanent widget (`MainWindow::updateDeliveryModeBadge`): "▶ EVERY FRAME ·
+  sequence preserved" or "⏩ LATEST FRAME · drops stale frames", with " (requested)" until a running camera confirms
+  the mode, Qt's tooltip, and green / amber as a secondary cue (`deliveryModeBadgeModel.ts`). It reads
+  `fetch_frame_delivery_mode` itself (`active_mode`, `confirmed`) every 2 s and at once when the camera starts or
+  stops, because the Connect stage's preflight poll runs only on that stage; nothing shows on the PZ7035 (no
+  live-camera delivery in Run), before the backend is ready, or when the read fails.
 
 ## Command layer
 
