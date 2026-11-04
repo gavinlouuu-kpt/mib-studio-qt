@@ -75,9 +75,11 @@ preview.
   lower rate, or a faster destination such as an NVMe drive.
 - The requested rate is the one the frame grabber drives the camera at
   (`CycleMinimumPeriod`); for a camera that does not report it, the profile's
-  `target_fps`. The destination's write rate is measured once when you choose
-  it at Start: a short write of frame-sized data (at most 32 MiB or 0.75 s)
-  beside the file, then removed.
+  `target_fps`. The destination's write rate is measured when you choose it at
+  Start: a short write of frame-sized data (at most 32 MiB or 0.75 s) beside
+  the file, then removed. A slow reading is measured again (up to three times,
+  the best is kept), and a destination that still falls below the minimum is
+  measured again at the next Start instead of being remembered.
 
 ### Wafer Grid — locate the chip
 
