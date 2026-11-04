@@ -1,0 +1,12 @@
+[
+  {
+    "date": "2026-11-04",
+    "job": "tauri-parity",
+    "title": "Qt vs React/Tauri parity check",
+    "outcome": "Not ready to replace Qt: stable on mock (all tests pass, no console errors) but 112 Qt behaviours missing and 283 partial; 1 blocker (FCS export), Review layout regression.",
+    "status": "complete",
+    "commit": "5f906ac2",
+    "report": "docs/reports/2026-11-04-tauri-parity.md",
+    "page": "https://claude.ai/artifact/AqMayU6NpF7d9TK51fzLQm"
+  }
+]
