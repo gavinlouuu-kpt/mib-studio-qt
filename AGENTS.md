@@ -48,7 +48,6 @@ lives once under `env/` + `conan/profiles/` (see Build.md). Fresh container:
 `screenshot_tour` (regenerates the user-manual screenshots, [`docs/manual/README.md`](docs/manual/README.md)).
 
 ## Build delivery: Driver.js onboarding
-
 - Every build delivering new or changed user-facing work must include an actual in-app **Driver.js onboarding tour** showing that work; update/reuse the existing integration rather than creating a detached demo.
 - Highlight real production controls and explain the workflow and observable result. Advance action-dependent steps only after verified success; provide skip, restart, missing-target recovery and a feedback checkpoint.
 - Tours must ship in the delivered build and be discoverable/restartable from the app. Keep them independent of agent-only APIs; use explicit UUID/geometry adapters for canvas targets, never guessed selectors.
