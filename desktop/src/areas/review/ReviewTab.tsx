@@ -9,7 +9,9 @@ import { ViewerGate } from "../../components/ViewerGate";
 import { ReviewExportOptions } from "../../exportControls";
 import { ReanalysisControls } from "../../reanalysisControls";
 import { noImagesNotice } from "../../review/noImages";
+import { OpenFailureDialog, ReviewStatus, reviewStatusText } from "../../review/reviewOpen";
 import { useStudio } from "../../studio/StudioContext";
+import { reviewLockReason } from "./reviewLock";
 
 export function ReviewTab() {
   const {
@@ -17,12 +19,19 @@ export function ReviewTab() {
     reviewSourceGeneration, append, clearReviewSource, reviewExport, stats, reviewing, reviewPath, reviewTab,
     metricsGeneration, setMetricsPage, setReviewTab, setReviewImgIndex, loadMetricsPage, reviewOutcome, caps, reanalysis,
     reviewImgIndex, fitWindow, reviewCanvasRef, reviewIndex, onScrub, metricsPage, metricsOffset, METRICS_PAGE_SIZE,
+    reviewOpenPhase, reviewOpenFailure, setReviewOpenFailure,
   } = useStudio();
+  // Qt locks the Review tab while an experiment is active (REVIEW-007); a raw recording refuses the load too.
+  const reviewLock = reviewLockReason(expActive, recording);
+  // A recording file (REVIEW-006): one "Frames" view, no valid/invalid sets, no metrics or charts.
+  const recordingFile = !!reviewMeta?.recording_file;
+  // The file's own px→µm factor (recorded, else the live one); an older backend does not say.
+  const areaFactor = reviewMeta?.file_open && !recordingFile && (reviewMeta.pixel_to_micron ?? 0) > 0 ? reviewMeta.pixel_to_micron : undefined;
   return (
-    <>
+    <fieldset className="review-lock" disabled={!!reviewLock} title={reviewLock ?? undefined} data-tour="review-stage" data-review-lock={reviewLock ? "locked" : "open"}>
       <div className="toolbar">
         <ViewerGate>
-        <button onClick={onSelectHdf} disabled={!ready || reviewSourceBusy} title={ready ? undefined : "Backend is not initialized"}>
+        <button onClick={onSelectHdf} disabled={!ready || reviewSourceBusy || !!reviewLock} title={reviewLock ?? (ready ? undefined : "Backend is not initialized")}>
           Select HDF File…
         </button>
         <button disabled={!reviewMeta?.file_open || expActive || recording || reviewSourceBusy} onClick={async () => {
@@ -35,7 +44,7 @@ export function ReviewTab() {
         }}>Close File</button>
         <button
           onClick={() => void reviewExport.start("metrics_csv", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}
-          disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy}
+          disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy || reviewSourceBusy}
           title={reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
         >
           Export Metrics to CSV…
@@ -57,13 +66,15 @@ export function ReviewTab() {
             ? `${reviewPath}${reviewMeta?.valid ? ` · ${reviewMeta.recording_file ? "recording" : "experiment"} · valid ${reviewMeta.total_valid}, invalid ${reviewMeta.total_invalid}${reviewMeta.has_core_identity ? ` · core v${reviewMeta.core_version}` : ""}` : ""}`
             : "No file selected"}
         </span>
+        <ReviewStatus text={reviewStatusText(reviewOpenPhase, reviewMeta)} />
       </div>
+      {reviewLock && <p className="pending-note" role="status" data-testid="review-locked" data-tour="review-locked">{reviewLock}</p>}
       {noImagesNotice(reviewMeta) && <p className="pending-note" role="status" data-testid="review-no-images">{noImagesNotice(reviewMeta)}</p>}
       <div className="subtabs" role="tablist" aria-label="Review views">
         <button className={reviewTab === "raw" ? "active" : ""} onClick={() => { ++metricsGeneration.current; setMetricsPage(null); setReviewTab("raw"); }}>
-          Raw Frames
+          {recordingFile ? "Frames" : "Raw Frames"}
         </button>
-        <button
+        {!recordingFile && <button
           className={reviewTab === "valid" ? "active" : ""}
           disabled={!reviewMeta?.valid_images.present}
           title={reviewMeta?.valid_images.present ? undefined : "No valid-frame images in this file"}
@@ -74,8 +85,8 @@ export function ReviewTab() {
           }}
         >
           Valid Frames
-        </button>
-        <button
+        </button>}
+        {!recordingFile && <button
           className={reviewTab === "invalid" ? "active" : ""}
           disabled={!reviewMeta?.invalid_images.present}
           title={reviewMeta?.invalid_images.present ? undefined : "No invalid-frame images in this file"}
@@ -86,7 +97,7 @@ export function ReviewTab() {
           }}
         >
           Invalid Frames
-        </button>
+        </button>}
         <button className={reviewTab === "charts" ? "active" : ""} disabled={!reviewMeta?.file_open || reviewMeta.recording_file} onClick={() => setReviewTab("charts")}>Charts</button>
       </div>
       <div className="subtab-body">
@@ -149,15 +160,23 @@ export function ReviewTab() {
           <div className="table-panel">
             <table className="metrics-table">
               <thead>
-                <tr>
-                  <th>Index</th>
-                  <th>Object Id</th>
-                  <th>Track Id</th>
-                  <th>Area (px²)</th>
-                  <th>Deformability</th>
-                  <th>Ring ratio</th>
-                  <th>E (kPa)</th>
-                </tr>
+                {recordingFile ? (
+                  <tr>
+                    <th>Index</th>
+                    <th>Timestamp</th>
+                  </tr>
+                ) : (
+                  <tr>
+                    <th>Index</th>
+                    <th>Object Id</th>
+                    <th>Track Id</th>
+                    <th>Area (px²)</th>
+                    {areaFactor !== undefined && <th data-tour="review-area-um2" title="Area in px² × (the file's px→µm factor)²">Area (µm²)</th>}
+                    <th>Deformability</th>
+                    <th>Ring ratio</th>
+                    <th>E (kPa)</th>
+                  </tr>
+                )}
               </thead>
               <tbody>
                 {(metricsPage?.rows ?? []).map((r, rowIndex) => (
@@ -167,14 +186,16 @@ export function ReviewTab() {
                     onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setReviewImgIndex(metricsOffset + rowIndex); } }}>
 
                     <td>{r.frame_index}</td>
-                    <td>{r.object_id}</td>
-                    <td>{r.track_id}</td>
-                    <ResultMetricCells row={r} />
+                    {recordingFile ? <td>{r.timestamp_ns}</td> : <>
+                      <td>{r.object_id}</td>
+                      <td>{r.track_id}</td>
+                      <ResultMetricCells row={r} areaUm2Factor={areaFactor} />
+                    </>}
                   </tr>
                 ))}
                 {(metricsPage?.rows?.length ?? 0) === 0 && (
                   <tr>
-                    <td colSpan={7} style={{ color: "#777" }}>
+                    <td colSpan={recordingFile ? 2 : areaFactor !== undefined ? 8 : 7} style={{ color: "#777" }}>
                       {reviewing ? "No metric rows in this table." : "Load a file to see frame/object metrics."}
                     </td>
                   </tr>
@@ -205,6 +226,7 @@ export function ReviewTab() {
           </div>
         </div>
       </div>
-    </>
+      {reviewOpenFailure && <OpenFailureDialog failure={reviewOpenFailure} onClose={() => setReviewOpenFailure(null)} />}
+    </fieldset>
   );
 }

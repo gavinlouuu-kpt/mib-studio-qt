@@ -1,0 +1,19 @@
+/* Review (epic #867): the Review stage's own rules. Part of the App.css cascade. */
+
+/* The lock around the whole stage (Qt disables the Review tab during an experiment): a fieldset
+   that only carries `disabled`; no box, like fieldset.viewer-gate. */
+fieldset.review-lock {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+
+/* Qt's status label next to the path ("Ready", "Loading...", "Valid: 3, Invalid: 1"). */
+.review-status {
+  color: #444;
+  font-size: 12px;
+  margin-left: 12px;
+  white-space: nowrap;
+}

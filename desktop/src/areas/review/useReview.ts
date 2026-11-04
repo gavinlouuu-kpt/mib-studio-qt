@@ -8,6 +8,7 @@ import { useReviewExport } from "../../exportControls";
 import { decimalU64 } from "../../framePacket";
 import { useReanalysis } from "../../reanalysisControls";
 import { describeReviewOutcome } from "../../runOutcome";
+import { isOpenFailureMessage, openFailureFor, type OpenFailure, type OpenPhase } from "../../review/reviewOpen";
 import { open } from "../../transport/dialogs";
 import { H5_FILTER } from "../../studio/constants";
 import type { LiveFramesModel, PreviewState } from "../preview/usePreview";
@@ -33,6 +34,9 @@ export function useReviewState() {
   const reviewSourcePending=useRef(false);
   const reviewSourceGeneration=useRef(0);
   const [reviewSourceBusy,setReviewSourceBusy]=useState(false);
+  // Qt's status label ("Loading...", "Error loading file") and the critical dialog of a failed open.
+  const [reviewOpenPhase,setReviewOpenPhase]=useState<OpenPhase>("idle");
+  const [reviewOpenFailure,setReviewOpenFailure]=useState<OpenFailure|null>(null);
   // The accounting saved in the file loaded for review.
   const [reviewAccounting, setReviewAccounting] = useState<RunAccounting | null>(null);
   const reviewFilePath = reviewMeta?.file_open ? reviewMeta.file_path : "";
@@ -43,6 +47,7 @@ export function useReviewState() {
     reviewImgIndex, setReviewImgIndex, METRICS_PAGE_SIZE, reviewCanvasRef, metricsGeneration,
     reviewSourcePending, reviewSourceGeneration, reviewSourceBusy, setReviewSourceBusy,
     reviewAccounting, setReviewAccounting, reviewFilePath, reviewOutcome,
+    reviewOpenPhase, setReviewOpenPhase, reviewOpenFailure, setReviewOpenFailure,
   };
 }
 export type ReviewState = ReturnType<typeof useReviewState>;
@@ -51,13 +56,15 @@ type ReviewSourceDeps = Pick<ShellState, "ready" | "tab" | "setTab" | "append"> 
   & Pick<LiveFramesModel, "stopLoop"> & Pick<StatePollingModel, "applyEvents">
   & Pick<ReviewState, "setReviewIndex" | "metricsGeneration" | "reviewMeta" | "setMetricsPage" | "setMetricsOffset"
     | "setReviewMeta" | "setReviewPath" | "setReviewing" | "setReviewImgIndex" | "reviewCanvasRef" | "reviewSourcePending"
-    | "setReviewSourceBusy" | "reviewSourceGeneration" | "setReviewTab" | "range" | "recoveredReview" | "METRICS_PAGE_SIZE">;
+    | "setReviewSourceBusy" | "reviewSourceGeneration" | "setReviewTab" | "range" | "recoveredReview" | "METRICS_PAGE_SIZE"
+    | "setReviewOpenPhase" | "setReviewOpenFailure">;
 
 // Open and close the file, scrub its frames, page its metrics; reopen a file a native session recovered.
 export function useReviewSource({
   ready, tab, setTab, append, framePulls, stopLoop, applyEvents, setReviewIndex, metricsGeneration, reviewMeta,
   setMetricsPage, setMetricsOffset, setReviewMeta, setReviewPath, setReviewing, setReviewImgIndex, reviewCanvasRef,
   reviewSourcePending, setReviewSourceBusy, reviewSourceGeneration, setReviewTab, range, recoveredReview, METRICS_PAGE_SIZE,
+  setReviewOpenPhase, setReviewOpenFailure,
 }: ReviewSourceDeps) {
   // ---- Review ----
 
@@ -107,15 +114,20 @@ export function useReviewSource({
     ++metricsGeneration.current;
     framePulls.current.invalidate("review");
     setMetricsPage(null);
+      setReviewOpenPhase("loading");
       const res = await bridge.loadRecording(picked);
       if(sourceGeneration!==reviewSourceGeneration.current)return;
-      if (!res.ok) { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata);return append(`load failed: ${res.message}`); }
+      if (!res.ok) { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata);
+        // Qt's critical "Cannot Open HDF5 File" for a file that cannot be opened; a refusal about the instrument stays in the log.
+        if (isOpenFailureMessage(res.message)) { setReviewOpenPhase("error"); setReviewOpenFailure(openFailureFor(picked, res.message)); } else setReviewOpenPhase("idle");
+        return append(`load failed: ${res.message}`); }
       setReviewPath(picked);
       setReviewing(true);
       append(`loaded ${picked}`);
       applyEvents(await bridge.pollEvents());
       const meta = await bridge.fetchReviewMetadata();
       setReviewMeta(meta);
+      setReviewOpenPhase("idle");
       setReviewTab(meta.recording_file ? "raw" : "valid");
       setReviewImgIndex(0);
       await loadMetricsPage(true, 0, picked);
@@ -125,6 +137,7 @@ export function useReviewSource({
         await drawReviewImage(0, 0);
       }
     } catch (e) {
+      setReviewOpenPhase("error");
       append(`load error: ${e}`);
       try { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata); } catch { clearReviewSource(); }
     } finally {reviewSourcePending.current=false;setReviewSourceBusy(false);}
@@ -146,14 +159,15 @@ export function useReviewSource({
   return { onScrub, loadMetricsPage, drawReviewImage, clearReviewSource, onSelectHdf, openReviewFromMenu };
 }
 
-type ReviewAccountingDeps = Pick<ReviewState, "reviewFilePath" | "setReviewAccounting">;
+type ReviewAccountingDeps = Pick<ReviewState, "reviewFilePath" | "setReviewAccounting"> & Pick<ShellState, "append">;
 
 // The run accounting saved in the file loaded for review.
-export function useReviewAccounting({ reviewFilePath, setReviewAccounting }: ReviewAccountingDeps) {
+export function useReviewAccounting({ reviewFilePath, setReviewAccounting, append }: ReviewAccountingDeps) {
   useEffect(() => {
     if (!reviewFilePath) { setReviewAccounting(null); return; }
     let live = true;
-    void bridge.fetchRunAccounting("review").catch(() => null).then((acc) => { if (live) setReviewAccounting(acc); });
+    // A failed read must not look like a file without accounting: the outcome notice would just vanish.
+    void bridge.fetchRunAccounting("review").catch((e) => { if (live) append(`review run accounting unavailable: ${e}`); return null; }).then((acc) => { if (live) setReviewAccounting(acc); });
     return () => { live = false; };
   }, [reviewFilePath]);
 }

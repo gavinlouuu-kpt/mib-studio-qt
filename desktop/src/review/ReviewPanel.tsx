@@ -32,6 +32,7 @@ import { JobDialog, SeriesPrompt } from "./exports/ExportDialogs";
 import { defaultMetricsName, dirName, exportDir, joinPath, rememberExportDir, seriesRangeFor, type SeriesChoice } from "./exports/exportHelpers";
 import { useReviewJobs, type TrackedJob } from "./exports/useReviewJobs";
 import { RegenerateMasksDialog, type RegenerateRequest } from "./RegenerateMasks";
+import { OpenFailureDialog, ReviewStatus, openFailureFor, reviewStatusText, type OpenFailure, type OpenPhase } from "./reviewOpen";
 import { FrameViewer } from "./FrameViewer";
 import { DEFAULT_COLUMNS, METRIC_COLUMNS, pageOffsetFor, toggleColumn, visibleColumns } from "./metricsColumns";
 import {
@@ -121,6 +122,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   const [info, setInfo] = useState<ReviewInfo | null>(null);
   const [fileKey, setFileKey] = useState("");
+  // Qt status label and critical dialog of a failed open (REVIEW-003/004).
+  const [openPhase, setOpenPhase] = useState<OpenPhase>("idle");
+  const [openFailure, setOpenFailure] = useState<OpenFailure | null>(null);
   const [reviewTab, setReviewTab] = useState<ReviewTab>("valid");
   const [rows, setRows] = useState<ReviewRows | null>(null);
   const [rowsOffset, setRowsOffset] = useState(0);
@@ -228,6 +232,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     setInfo(null);
     setFileKey("");
     setReviewTab("valid");
+    setOpenPhase("idle");
     onInfo?.(null);
     onFileChange?.("");
   }, [log, onFileChange, onInfo, resetView]);
@@ -237,14 +242,26 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
       beforeLoad?.();
       resetView();
       onFileChange?.(path);
+      setOpenPhase("loading");
+      // The backend closes the previous file before it opens the next (ReviewSession::open, all or
+      // nothing), so a failed open leaves no file: the old info must not stay on screen (REVIEW-003).
+      const dropFile = () => {
+        setInfo(null);
+        setFileKey("");
+        onInfo?.(null);
+      };
       try {
         const res = await reviewBridge.open(path);
         if (!res.ok) {
           log(`open failed: ${res.message}`);
+          dropFile();
+          setOpenPhase("error");
+          setOpenFailure(openFailureFor(path, res.message));
           return;
         }
         const fresh = await reviewBridge.info();
         setInfo(fresh);
+        setOpenPhase("idle");
         setFileKey(`${path}#${Date.now()}`);
         onInfo?.(fresh);
         log(`opened ${path}${fresh.accounting_summary}`);
@@ -256,6 +273,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         setSelected(setTotalFor(fresh, startTab !== "invalid") > 0 ? 0 : -1);
       } catch (e) {
         log(`open error: ${e}`);
+        dropFile();
+        setOpenPhase("error");
       }
     },
     [beforeLoad, loadRows, log, onFileChange, onInfo, resetView],
@@ -408,6 +427,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     [jobs, log, openPath],
   );
 
+  const closeOpenFailure = useCallback(() => setOpenFailure(null), []);
   const pageTo = (offset: number) => void loadRows(validSet, Math.max(0, offset));
 
   const previewPane = (
@@ -484,9 +504,10 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         </span>
         <span className="path-label right" title={info?.file_path}>
           {reviewing && info
-            ? `${info.file_path} · ${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid}, invalid ${info.total_invalid}${info.has_core_identity ? ` · core v${info.core_version}` : ""} · px→µm ${metricNumber(info.pixel_to_micron, 4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}${info.accounting_summary}`
+            ? `${info.file_path} · ${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid}, invalid ${info.total_invalid}${info.has_core_identity ? ` · core v${info.core_version}` : ""} · px→µm ${metricNumber(info.pixel_to_micron, 4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}`
             : "No file selected"}
         </span>
+        <ReviewStatus text={reviewStatusText(openPhase, info, info?.accounting_summary)} />
       </div>
       {noImagesNotice(info) && <p className="pending-note" role="status" data-testid="review-no-images">{noImagesNotice(info)}</p>}
       <div className="subtabs" role="tablist" aria-label="Review views">
@@ -631,6 +652,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           }}
         />
       )}
+      {openFailure && <OpenFailureDialog failure={openFailure} onClose={closeOpenFailure} />}
       {showRegenerate && <RegenerateMasksDialog info={info} onRun={onRegenerate} onCancel={() => setShowRegenerate(false)} />}
       {jobs.job && <JobDialog job={jobs.job} onCancel={jobs.cancel} onClose={jobs.dismiss} />}
       {viewerOpen && reviewing && selected >= 0 && (
