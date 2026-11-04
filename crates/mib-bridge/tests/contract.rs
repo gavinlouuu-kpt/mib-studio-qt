@@ -1606,6 +1606,27 @@ fn experiment_lifecycle_end_to_end() {
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(bridge.pin_mut().fetch_experiment_status().state, 2, "the run continues after a stale stop");
 
+    // #866 MON-080 (no ABI change): an Active run takes a patch of the cell acceptance and target group
+    // criteria through the bridge, and refuses every other key, naming it, without changing anything.
+    let tuned = bridge.pin_mut().apply_processing_config_json(
+        r#"{"image_processing": {"area_threshold_min": 41, "filters": {"enable_border_check": false},
+                                  "target_group": {"enabled": true, "area_max": 150}}}"#,
+    );
+    assert!(tuned.ok, "a tune patch applies while Active: {}", tuned.message);
+    for locked in [
+        r#"{"image_processing": {"gaussian_blur_size": 5}}"#,
+        r#"{"image_processing": {"multi_image": {"count": 3}}}"#,
+        r#"{"image_processing": {"area_threshold_min": 40}, "pixel_to_micron": 2.0}"#,
+    ] {
+        let refused = bridge.pin_mut().apply_processing_config_json(locked);
+        assert!(!refused.ok && refused.message.contains("locked during an experiment"), "{locked}: {}", refused.message);
+    }
+    let live: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_processing_config_json().json).unwrap();
+    assert_eq!(live["image_processing"]["area_threshold_min"], 41, "the tune applied");
+    assert_eq!(live["image_processing"]["filters"]["enable_border_check"], false);
+    assert_eq!(live["image_processing"]["target_group"]["area_max"], 150);
+    assert_eq!(live["image_processing"]["gaussian_blur_size"], 3, "a refused key changed nothing");
+
     let stop = bridge.pin_mut().experiment_stop(true, 1);
     assert!(stop.ok, "experiment_stop failed: {}", stop.message);
     assert!(stop.has_stop_outcome && stop.stop_outcome == 0 && stop.message == "accepted", "{stop:?}");

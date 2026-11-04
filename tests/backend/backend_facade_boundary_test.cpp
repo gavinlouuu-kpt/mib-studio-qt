@@ -447,8 +447,10 @@ int main()
         const auto configPath = (dataDir / "checked-config.json").string();
         std::ofstream(configPath) << "{}";
         const auto baseline = facade.fetchConfigDocument(configPath);
+        // A tune criterion (area_threshold_min) may change during a run since #866 MON-080 (see
+        // experiment_tune_apply_test); every other processing key is still locked.
         const auto checked = facade.applyConfigDocument(configPath, baseline.revision,
-            R"({"image_processing":{"area_threshold_min":42}})");
+            R"({"image_processing":{"gaussian_blur_size":5}})");
         if (checked.saved || checked.applied || checked.error.empty() ||
             facade.fetchConfigDocument(configPath).revision != baseline.revision)
         {

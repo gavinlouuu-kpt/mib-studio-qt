@@ -261,6 +261,9 @@ exposed subset of `ProcessingConfig`, owned by the pure
   an exposed field differs → **Conflict** (draft retained, Apply blocked,
   alert `tune.conflict` in the main window) until Revert. Revert always
   adopts the latest authoritative config.
+- **Tauri port** (#866 MON-069..081): the React panel `desktop/src/areas/monitoring/TunePanel.tsx`
+  follows this section field for field; where it differs (no single active config file, multi-image
+  locked during a run, no E-table indicator) see [[architecture/Desktop-Shell]] "Monitoring tune panel".
 - Test hooks: `tuneDraft()`, `tuneFieldWidget(TuneField)`,
   `setTuneFieldForTests`, `tunePanel/tuneScrollArea/tuneFooter`,
   `tuneApplyButton/tuneRevertButton`, `tuneStateText()`. Guards:

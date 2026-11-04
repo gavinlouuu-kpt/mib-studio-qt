@@ -1101,12 +1101,20 @@ pub mod ffi {
         /// profile selection when no startup pointer exists.
         fn restore_startup_configuration(self: Pin<&mut BackendBridge>, profile_base: &str) -> String;
         fn fetch_config_document(self: Pin<&mut BackendBridge>, path: &str) -> BridgeCheckedConfigDocument;
+        /// Idle: any image_processing patch. While an experiment is Active it also takes a patch of the
+        /// cell acceptance and target group criteria only (#866 MON-080; any other key, multi_image
+        /// included, is refused and nothing is written), applying exactly the patch to the running
+        /// configuration. Starting, Stopping and Failed refuse it. No ABI change.
         fn apply_config_document(self: Pin<&mut BackendBridge>, path: &str, baseline: &str, patch: &str) -> BridgeConfigTransactionResult;
 
 
         /// Merge-apply a processing configuration document (schema v8, BE-3):
         /// only keys present in the JSON change; malformed values fail the
-        /// whole command without touching state.
+        /// whole command without touching state. Locked while an experiment
+        /// is not idle, except that an Active run takes a `{"image_processing":
+        /// {...}}` patch of the cell acceptance and target group criteria only
+        /// (#866 MON-080: the Monitoring tune panel); every other key is
+        /// refused naming it, nothing changes. No ABI change.
         fn apply_processing_config_json(self: Pin<&mut BackendBridge>, json: &str)
             -> BridgeCommandResult;
 

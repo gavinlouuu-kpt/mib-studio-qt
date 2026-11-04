@@ -452,6 +452,42 @@ enclosing idle authorization and restores it even on exceptions. Other threads
 still serialize against Start. This supports both facade transactions and Qt
 watched-document applies without bypassing the backend ROI/background gates.
 
+### Live tuning of the criteria during a run (#866 MON-080)
+
+The Qt Monitoring tune panel applies the cell acceptance and target group criteria while a run is
+Active; the Tauri backend used to refuse every processing change then. `withTuneConfiguration(fn(midRun))`
+is `withIdleConfiguration` that also runs `fn` with `midRun = true` for an Active run, under the same
+coordinator mutex, so it cannot overlap Start or the finalization: Stop's acceptance (`requestStop`),
+the worker's switch to Stopping and the file's closing all need that mutex, and a run that has been asked
+to stop (`stopRequested_`, a fatal save error, shutdown) is refused too. Starting, Stopping and Failed stay
+refused with the old reason, and so does an Active run on a PL instrument (`midRunTuneAllowed`): the PL
+runs with the profile compiled at Start (`liveWatcherLoop` recompiles it only for a live session without a
+run), so a host-side change would only make the file's recorded settings untrue. The thread-local owners
+are two: an idle transaction still lends its authorization to nested setters, while a mid-run one lends
+none (a `withIdleConfiguration` inside it returns false instead of locking the held mutex).
+
+What may change is `processingPatchIsTuneOnly` (`ProcessingConfigTransaction.h`): area, deformability,
+ring ratio and area ratio thresholds, the `filters.enable_*` switches (not the Laplacian one),
+`require_single_inner_contour`, and every `target_group` key including the E-modulus range. Anything else
+is refused naming the key, `multi_image` included: it fixes the run's saved image layout (capacity inputs,
+the file's `multi_image_*` metadata) and Start forces the realtime mode inline for a series, none of which
+may move under a run. `BackendFacade::handleProcessingSettingsCommand` accepts only a
+`{"image_processing": {...}}` `configJson` mid-run (no typed members, no ROI, realtime, pixel size or flush
+interval), applies `withTuneCriteriaFrom(running, merged)` through `setProcessingConfig` and changes the
+provenance text's `image_processing` only (no realtime restart, no other setter). The document transaction
+(`applyProcessingConfigTransaction`) writes exactly the patch to the file and applies exactly the patch on
+top of the running configuration, not the document's other values (the file may be stale against what
+runs). The processing loops pick the new values up through `getConfigVersion()` (inline: per frame,
+`ProcessingService.cpp`; recording thread: per poll). The finalization writes `getLastConfigJson()` in
+Stopping, when no tune can be accepted any more, so the file records the last accepted tune; each accepted
+mid-run tune is logged (`BackendFacade: tuned the running experiment`, `ProcessingConfigTransaction: tuned
+the running experiment`). Enabling the target group mid-run does not re-run the Start gates for the sort
+trigger (`trigger.*`, RF generator): those were evaluated for the settings at Start. Test:
+`backend.experiment_tune_apply` (Active apply and read-back, every refusal, the document path with a stale
+file, Starting/Stopping from the status events, a thread tuning while Stop finalizes, the file's recorded
+configuration); the old "config transactions are refused while Active" check of
+`backend.facade_boundary` now uses a non-tune key.
+
 ## Recording safety re-port (#403)
 
 `requestFlush()` wakes the worker on buffer pressure using the existing #407

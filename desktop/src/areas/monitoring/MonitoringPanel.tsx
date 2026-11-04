@@ -1,15 +1,16 @@
-// Experiment start/stop and Monitoring (epic #866): the Monitoring sub-tab: buffer counts, charts,
-// the processing-settings link and the latest result rows. The trigger tests in its toolbar are
-// areas/hardware. Moved from App.tsx without change (#869 wave 0).
+// Experiment start/stop and Monitoring (epic #866): the Monitoring sub-tab: buffer counts, the charts
+// beside the tune panel (TunePanel.tsx) and the latest result rows. The trigger tests in its toolbar are
+// areas/hardware. Moved from App.tsx (#869 wave 0); the tune panel replaced its processing-settings link.
 import { bridge } from "../../bridge";
 import { MonitoringCharts } from "../../components/MonitoringCharts";
 import { ResultMetricCells } from "../../components/ResultMetricCells";
 import { ViewerGate } from "../../components/ViewerGate";
 import { useStudio } from "../../studio/StudioContext";
 import { TriggerTestControls } from "../hardware/TriggerTestControls";
+import { TunePanel } from "./TunePanel";
 
 export function MonitoringPanel() {
-  const { append, ready, caps, trigStatus, monSnapshot, expActive, setExpTab, setConfigTab } = useStudio();
+  const { append, ready, caps, trigStatus, monSnapshot } = useStudio();
   return (
     <>
       <div className="toolbar">
@@ -37,15 +38,11 @@ export function MonitoringPanel() {
           )}
         </span>
       </div>
-      <div className="config-grid" style={{ flex: 1 }}>
-        <MonitoringCharts snapshot={monSnapshot} />
-        <div className="config-group">
-          <h5>Processing settings</h5>
-          <button disabled={expActive} onClick={() => {setExpTab("preview");setConfigTab("app");}}>Edit processing configuration</button>
-          <p className="pending-note">
-            Filter thresholds, target groups and multi-image settings use the checked processing configuration. Changes are locked during an experiment.
-          </p>
+      <div className="monitoring-split">
+        <div className="config-grid monitoring-charts">
+          <MonitoringCharts snapshot={monSnapshot} />
         </div>
+        <TunePanel />
       </div>
       <div className="table-panel" style={{ maxHeight: 180, overflow: "auto" }}>
         <table className="metrics-table">

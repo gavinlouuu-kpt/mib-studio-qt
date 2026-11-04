@@ -1,0 +1,37 @@
+/* The Monitoring tune panel (#866 MON-069..081, areas/monitoring/TunePanel.tsx). Part of the App.css cascade. */
+.monitoring-split { display: flex; gap: 10px; align-items: stretch; flex: 1; }
+.monitoring-charts { flex: 1 1 0; min-width: 0; align-content: flex-start; }
+/* The panel is as tall as the charts beside it (at least 420 px); its body scrolls inside and its footer stays in view. */
+.tune-panel {
+  flex: 0 0 clamp(220px, 22vw, 280px); position: relative; min-height: 420px;
+  border: 1px solid var(--border); background: #fff;
+}
+.tune-inner { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; }
+.tune-scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px; }
+.tune-heading { margin: 8px 0 2px; font-size: 12px; }
+.tune-heading:first-child { margin-top: 2px; }
+.tune-hint { margin: 2px 0 4px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.tune-criterion { border: 1px solid var(--border); margin: 4px 0; padding: 2px 6px 4px; }
+.tune-criterion .tune-criterion { margin: 2px 0 0; border-style: dashed; }
+.tune-criterion-title { display: flex; align-items: center; gap: 4px; font-weight: 600; cursor: pointer; }
+.tune-values { display: flex; flex-direction: column; gap: 3px; margin-top: 3px; }
+.tune-row { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tune-row-label { overflow-wrap: anywhere; }
+.tune-row-field { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.tune-row-field input { flex: 1 1 auto; min-width: 0; width: 100%; }
+.tune-unit { color: var(--muted); white-space: nowrap; }
+/* A criterion that is switched off keeps its values visible and unchanged, only dimmed. */
+.tune-off .tune-values { opacity: 0.6; }
+/* Unapplied change: marked by the "*" in its label and, not by colour alone, an outline. */
+.tune-changed > .tune-row-label, .tune-changed > .tune-criterion-title span { font-style: italic; }
+.tune-row-field input[data-changed="true"] { outline: 2px solid var(--accent); outline-offset: -1px; }
+.tune-footer { flex: 0 0 auto; border-top: 1px solid var(--border); padding: 4px; display: flex; flex-direction: column; gap: 3px; }
+.tune-state { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.tune-issues { margin: 0; padding-left: 16px; color: var(--err); font-size: 11px; }
+.tune-note { margin: 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.tune-buttons { display: flex; gap: 4px; }
+.tune-buttons .btn { flex: 1 1 auto; }
+@media (max-width: 720px) {
+  .monitoring-split { flex-direction: column; }
+  .tune-panel { flex-basis: auto; }
+}
