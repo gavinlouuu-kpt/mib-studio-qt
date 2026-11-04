@@ -30,8 +30,8 @@ conan install . -of build/review-core --build=missing \
 ```
 
 `review_core=True` (in `conanfile.py`) resolves only spdlog, HDF5, OpenCV
-(core / imgproc / imgcodecs / videoio, no FFmpeg) and nlohmann_json, all
-static; no Qt. The profile pins `os.version=13.0`, the bundle's
+(core / imgproc / imgcodecs / videoio, no FFmpeg), nlohmann_json and SQLite,
+all static; no Qt. The profile pins `os.version=13.0`, the bundle's
 `minimumSystemVersion`. The first run builds the packages from source (tens of
 minutes); later runs reuse `~/.conan2`.
 

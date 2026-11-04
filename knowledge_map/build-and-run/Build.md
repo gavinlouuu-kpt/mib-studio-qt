@@ -504,7 +504,8 @@ windeployqt.exe --release build/Release/mib_studio_qt.exe
 Dependencies resolved via Conan 2 (`conanfile.py`; host profiles in
 `conan/profiles/`). See [[Dependencies]]. Option `review_core=True` (YOFO
 Review) resolves only spdlog, HDF5, OpenCV (four modules, no FFmpeg /
-protobuf / Eigen) and nlohmann_json, with OpenCV and HDF5 **static**; the
+protobuf / Eigen), nlohmann_json and SQLite (static; analysis workspace and
+recipe store), with OpenCV and HDF5 **static**; the
 default graph is unchanged (shared OpenCV / HDF5, Qt, SQLite, ONNX Runtime on
 Windows) — the shared/static choice moved from `default_options` to
 `configure()`. Post-build hooks call
