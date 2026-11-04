@@ -911,6 +911,11 @@ export const bridge = {
     invoke<{ valid: boolean; json: string }>("fetch_processing_config_json"),
   applyProcessingConfigJson: (json: string) =>
     sourceMutation("apply_processing_config_json", { json }),
+  // The Monitoring tune panel's apply (#866 MON-080): the same command, for an image_processing patch
+  // of the cell acceptance and target group criteria, which the backend takes while an experiment is
+  // Active too (any other key is refused then). It never changes the frame source, so it is not a
+  // source mutation and the live frame pulls go on.
+  applyProcessingTune: (json: string) => invokeCommand("apply_processing_config_json", { json }),
   setProcessingRoi: (x: number, y: number, w: number, h: number) =>
     sourceMutation("set_processing_roi", { x, y, w, h }),
   // Camera & Alignment (ABI 20): the overview changes the frame geometry, so it is a source

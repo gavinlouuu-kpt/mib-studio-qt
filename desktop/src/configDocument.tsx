@@ -65,7 +65,13 @@ export function useConfigDocument({ ready, active, append, refresh }: { ready: b
     } catch (e) { setError(String(e)); append(`Config: ${String(e)}`); }
     finally { pending.current=false; setBusy(false); }
   };
-  return {doc,draft,dirty,busy,blocked,result,error,run,edit:(text:string)=>{setDraft(text);setDirty(true);}};
+  // The Monitoring tune panel saves a change to the open document (#866); it hands the file it read back
+  // here so this editor's revision stays the file's and its next Save and Apply is not a false conflict.
+  const adopt = (loaded: ConfigDocument) => {
+    try { const parsed = JSON.parse(loaded.document_json); setDoc(loaded); setDraft(JSON.stringify(parsed.image_processing ?? {},null,2)); setDirty(false); setResult(null); }
+    catch { /* an unreadable document leaves the editor as it was */ }
+  };
+  return {doc,draft,dirty,busy,blocked,result,error,run,adopt,edit:(text:string)=>{setDraft(text);setDirty(true);}};
 }
 
 export function ConfigDocumentEditor({model}:{model:ReturnType<typeof useConfigDocument>}) {

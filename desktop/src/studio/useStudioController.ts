@@ -8,6 +8,7 @@ import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware"
 import {
   experimentModel, useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useSsdStatus,
 } from "../areas/monitoring/useMonitoring";
+import { useTunePanel } from "../areas/monitoring/useTune";
 import { useLiveFrames, useLivePreview, usePreviewBufferModel, usePreviewState } from "../areas/preview/usePreview";
 import { useReviewAccounting, useReviewJobs, useReviewSource, useReviewState } from "../areas/review/useReview";
 import {
@@ -70,6 +71,7 @@ export function useStudioController() {
     ...previewBuffer, ...cores, viewerOnly, ...documents, ...reviewJobs,
   };
   const closeGuard = useShellCloseGuard(composed); // shell
+  const tunePanel = useTunePanel(composed); // monitoring: the tune panel's sync, Apply and Revert (#866)
   // Render-time values (no hooks).
   const startExperiment = experimentModel(composed); // monitoring
   const connectView = connectModel(composed); // connect: Start Camera gate, preflight, quality gates
@@ -78,7 +80,7 @@ export function useStudioController() {
   const serviceMode = useServiceMode(composed); // hardware
   const landing = useWorkflowLanding({ ...composed, ...connectView, ...workflow }); // shell
   return {
-    ...composed, ...closeGuard, ...startExperiment, ...connectView, ...workflow, ...telemetry, ...serviceMode, ...landing,
+    ...composed, ...closeGuard, ...tunePanel, ...startExperiment, ...connectView, ...workflow, ...telemetry, ...serviceMode, ...landing,
   };
 }
 
