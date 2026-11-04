@@ -345,8 +345,10 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
 - **Connect / Configure Mock** are blocked, with the reason as tooltip, while the camera runs, an experiment
   is active or a script apply is in flight; backend guards back them (`select_hardware_camera` in Rust,
   `ConfigureMockCamera` in the facade). A refusal is a modal warning ("Connect Device", "Configure Mock
-  Camera") and status text. After Connect or Configure Mock the stage moves to Overview; the Overview stage
-  applies its script and starts the live view (separate stream).
+  Camera") and status text, in Qt's words ("Cannot change camera connection while camera is running. Please stop the
+  camera first.", "Please select a <device> from the list."). After Connect or Configure Mock the selection is read
+  and the stage moves to Overview at once, the device rescan runs behind it; the Overview stage applies its script
+  and starts the live view (separate stream).
 - **Startup.** `useStartupSelection` polls `startup_discovery_status` (500 ms) and reports each camera job of
   the startup coordinator once: lists refreshed from that job's snapshot, then the auto-selected camera is
   highlighted with its sub-tab open and the stage moves to Overview; no camera shows "No cameras found." and
@@ -354,11 +356,16 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
   forces the Connect stage; several cameras and incomplete scans say so on the status line. The shell mirrors
   the backend's `decideCamera` (`startupCameraOutcome`) because the facade installs no outcome listener.
   The startup selection is on by default; the Hardware controls start it where they exist (they install the
-  nanopositioner preference first), `useStartupSelection` on other instruments, whose Connect stage shows
-  the opt-out checkbox. Nanopositioner step wording stays with the hardware area (#868).
+  nanopositioner preference first), `useStartupSelection` on other instruments (after its first status reading, so
+  a scan that ends at once is reported, not taken for a job from before a webview reload), whose Connect stage
+  shows the opt-out checkbox. Nanopositioner step wording stays with the hardware area (#868).
 - **Delivery mode.** A select on the Connect stage ("Every Frame (preserves sequence)" / "Latest Frame (lowest
   latency, may drop)"), read with the preflight poll (so a profile apply shows within one poll) and set with
-  `set_frame_delivery_mode` (see [[Rust-Bridge]]). Decision: it is not written back to the saved profile.
+  `set_frame_delivery_mode` (see [[Rust-Bridge]]). Decision: it is not written back to the saved profile (Qt
+  rewrites the watched config.json; here the applied profile is a revisioned file and the startup restore is pinned
+  to its revision, so a rewrite would make the next launch refuse the profile). The choice holds for the session,
+  the run's method records it as a change after apply, and the control's tooltip says to edit
+  `camera.frame_delivery_mode` in the profile to keep it.
 
 ## Command layer
 

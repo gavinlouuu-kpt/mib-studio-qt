@@ -158,6 +158,27 @@ describe("the startup selection is on by default (#852)", () => {
     await mount({ ready: true }); await tick();
     expect(bridge.startupDiscoveryRun).toHaveBeenCalledOnce();
   });
+  it("starts after the first status reading, so a scan that ends at once is reported, not taken for an old one", async () => {
+    let firstReading!: (s: StartupDiscoveryStatus) => void;
+    vi.mocked(bridge.startupDiscoveryStatus).mockImplementationOnce(() => new Promise((resolve) => { firstReading = resolve; }));
+    vi.mocked(bridge.startupDiscoveryStatus).mockResolvedValue(status(ENDED));
+    vi.mocked(bridge.fetchDeviceDiscovery).mockResolvedValue(snapshot());
+    vi.mocked(bridge.fetchCameraSelection).mockResolvedValue(sel());
+    await mount();
+    expect(bridge.startupDiscoveryRun).not.toHaveBeenCalled();
+    await act(async () => firstReading(status()));
+    expect(bridge.startupDiscoveryRun).toHaveBeenCalledWith("start");
+    await tick();
+    expect(bridge.fetchDeviceDiscovery).toHaveBeenCalledWith("7");
+    expect(cap.connect.noCameraDialog).toBe(true);
+  });
+  it("does not wait for a status reading that never comes", async () => {
+    vi.mocked(bridge.startupDiscoveryStatus).mockImplementation(() => new Promise(() => {}));
+    await mount();
+    expect(bridge.startupDiscoveryRun).not.toHaveBeenCalled();
+    await tick(2100);
+    expect(bridge.startupDiscoveryRun).toHaveBeenCalledWith("start");
+  });
   it("waits for the platform report", async () => {
     await mount({ platform: null });
     expect(bridge.startupDiscoveryRun).not.toHaveBeenCalled();

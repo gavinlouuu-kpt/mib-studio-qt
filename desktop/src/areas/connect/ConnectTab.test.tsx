@@ -57,7 +57,7 @@ describe("buttons and their reasons", () => {
     expect(button("Configure Mock…").title).toMatch(/experiment is active/);
     await render({ discovery: d });
     expect(button("Connect").disabled).toBe(true);
-    expect(button("Connect").title).toBe("Select a eGrabber camera from the list first");
+    expect(button("Connect").title).toBe("Please select a eGrabber camera from the list.");
   });
 
   it("Refresh is disabled while scanning; the status line shows the scan", async () => {
@@ -115,6 +115,7 @@ describe("delivery mode (CONNECT-019)", () => {
     const select = host.querySelector('select[aria-label="Delivery mode"]') as HTMLSelectElement;
     expect([...select.options].map((o) => o.textContent)).toEqual(["Every Frame (preserves sequence)", "Latest Frame (lowest latency, may drop)"]);
     expect(select.value).toBe("latestFrame");
+    expect(select.closest("label")?.title).toMatch(/^Applies at the next capture start\. For this session only/);
     await act(async () => { select.value = "everyFrame"; select.dispatchEvent(new Event("change", { bubbles: true })); });
     expect(s.calls.delivery).toHaveBeenCalledWith("everyFrame");
   });

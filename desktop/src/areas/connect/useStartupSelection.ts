@@ -22,6 +22,7 @@ type StartupSelectionDeps = Pick<ShellState, "ready" | "platform" | "caps" | "pz
   & Pick<MonitoringState, "expActive">;
 
 const POLL_MS = 500;
+const FIRST_READING_PATIENCE_MS = 2000;
 
 export function useStartupSelection({
   ready, platform, caps, pz7035, append, setTab, setDiscovery, setCamSelection, setPickedDevices, setConnectTab,
@@ -37,15 +38,29 @@ export function useStartupSelection({
     if (!saveAutoSelect(localStorage, value)) append("Startup preference could not be saved.");
   }, [append, setAutoSelectStored]);
 
+  // The report below treats a job that had ended before the first status reading as already reported (a webview reload). So
+  // the selection is started only after that first reading: a scan that ends within milliseconds (no SDK on the PC) is not
+  // taken for an old one.
+  const firstReading = useRef<{ promise: Promise<void>; done: () => void }>();
+  const freshFirstReading = () => {
+    let done = () => {};
+    const promise = new Promise<void>((resolve) => { done = resolve; });
+    firstReading.current = { promise, done };
+  };
+  if (!firstReading.current) freshFirstReading();
+
   // Start the startup selection once per backend-ready session (#852). With autofocus the Hardware controls own it:
   // they first install the remembered nanopositioner preference.
   const started = useRef(false);
   useEffect(() => {
-    if (!ready) { started.current = false; return; }
+    if (!ready) { started.current = false; freshFirstReading(); return; }
     if (started.current || !platform) return;
     started.current = true;
     if (live.current.hardwareControls || !live.current.autoSelect || live.current.expActive) return;
-    void bridge.startupDiscoveryRun("start")
+    const reading = firstReading.current!.promise;
+    const patience = new Promise<void>((resolve) => { window.setTimeout(resolve, FIRST_READING_PATIENCE_MS); });
+    void Promise.race([reading, patience])
+      .then(() => bridge.startupDiscoveryRun("start"))
       .then((r) => append(r.message))
       .catch((e) => append(`startup selection: ${e}`));
   }, [ready, platform, append]);
@@ -68,6 +83,7 @@ export function useStartupSelection({
     if (!ready) return;
     let alive = true, polling = false, primed = false;
     let lastJob = "0", wasConfigured = false;
+    const reading = firstReading.current!;
     const poll = async () => {
       if (polling) return;
       polling = true;
@@ -121,6 +137,7 @@ export function useStartupSelection({
         /* the backend is gone or the job was evicted: the next poll, or the operator's Refresh, tells */
       } finally {
         polling = false;
+        reading.done(); // the first reading is in (or failed): the selection may start
       }
     };
     void poll();

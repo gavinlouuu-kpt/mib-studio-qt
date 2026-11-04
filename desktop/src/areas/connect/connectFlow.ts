@@ -144,14 +144,14 @@ export interface BlockInput {
  *  running"); an experiment holds the camera as well. Undefined when the camera source may change. */
 export function cameraSourceBlockReason({ ready, running, expActive, scriptBusy }: BlockInput): string | undefined {
   if (!ready) return "Backend is not initialized";
-  if (running) return "Cannot change camera connection while camera is running. Stop the camera first.";
+  if (running) return "Cannot change camera connection while camera is running. Please stop the camera first.";
   if (expActive) return "Cannot change camera connection while an experiment is active.";
   if (scriptBusy) return "Camera setup is in progress";
   return undefined;
 }
 
 export function connectBlockReason(input: BlockInput, tab: DeviceTab, row: DeviceRow | null): string | undefined {
-  return cameraSourceBlockReason(input) ?? (row ? undefined : `Select a ${DEVICE_NOUN[tab]} from the list first`);
+  return cameraSourceBlockReason(input) ?? (row ? undefined : `Please select a ${DEVICE_NOUN[tab]} from the list.`);
 }
 
 /** The Refresh button: never while a scan runs (it joins that job instead); a refusal while capturing is the backend's
@@ -219,6 +219,10 @@ export const MOCK_CONFIGURED_NOTE = "Mock camera configured (not capturing)";
 export const VANISHED_NOTE = "The selected device is no longer listed. Scanning again; pick a device and click Connect.";
 
 // ---- delivery mode ---------------------------------------------------------------------------------------------
+
+/** Qt writes the choice back to the watched config.json. Here the applied profile is a revisioned file (the startup restore
+ *  is pinned to its revision), so the choice holds for this session and a run records it; keeping it is a profile edit. */
+export const DELIVERY_MODE_HINT = "Applies at the next capture start. For this session only: to keep it, set camera.frame_delivery_mode in the profile.";
 
 export const DELIVERY_MODES: ReadonlyArray<{ value: FrameDeliveryMode; label: string }> = [
   { value: "everyFrame", label: "Every Frame (preserves sequence)" },

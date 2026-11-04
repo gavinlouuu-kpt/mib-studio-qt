@@ -128,6 +128,21 @@ describe("Connect and Configure Mock", () => {
     expect(captured.tab).toBe("overview");
   });
 
+  it("moves to Overview with the new selection at once; the device rescan runs behind it", async () => {
+    const d = scan({ cameras: [camera("Cam A")] });
+    await withScan(d);
+    let finishScan!: (d: CameraDiscovery) => void;
+    vi.mocked(bridge.discoverCameras).mockReturnValue(new Promise((r) => { finishScan = r; }));
+    vi.mocked(bridge.fetchCameraSelection).mockResolvedValue({ ...selection, configured: true, label: "Cam A" } as never);
+    await act(async () => { await captured.model.onConnectPicked(); });
+    expect(captured.tab).toBe("overview");
+    expect(captured.connect.camSelection?.configured).toBe(true); // Start Camera on Overview sees it before the scan ends
+    expect(captured.connect.scanning).toBe(true);
+    await act(async () => { finishScan(d); });
+    expect(captured.connect.scanning).toBe(false);
+    expect(captured.connect.actionNote).toBe("Connected to Cam A (not capturing)");
+  });
+
   it("a framegrabber row selects that interface and device", async () => {
     const d = scan({ framegrabbers: [grabber("Coaxlink 0", 0), { ...grabber("Coaxlink 1", 1), interface_index: 2 }] });
     await withScan(d);

@@ -106,7 +106,7 @@ describe("why a button is blocked (CONNECT-009/013)", () => {
   const ok = { ready: true, running: false, expActive: false, scriptBusy: false };
   it("names the reason in Qt's words", () => {
     expect(cameraSourceBlockReason(ok)).toBeUndefined();
-    expect(cameraSourceBlockReason({ ...ok, running: true })).toMatch(/^Cannot change camera connection while camera is running/);
+    expect(cameraSourceBlockReason({ ...ok, running: true })).toBe("Cannot change camera connection while camera is running. Please stop the camera first.");
     expect(cameraSourceBlockReason({ ...ok, expActive: true })).toMatch(/while an experiment is active/);
     expect(cameraSourceBlockReason({ ...ok, scriptBusy: true })).toBe("Camera setup is in progress");
     expect(cameraSourceBlockReason({ ...ok, ready: false, running: true })).toBe("Backend is not initialized");
@@ -115,8 +115,8 @@ describe("why a button is blocked (CONNECT-009/013)", () => {
     const d = discovery({ cameras: [cam({})] });
     const row = pickedRow(d, "cameras", preselectDevices(d));
     expect(connectBlockReason(ok, "cameras", row)).toBeUndefined();
-    expect(connectBlockReason(ok, "mindvision", null)).toBe("Select a MindVision camera from the list first");
-    expect(connectBlockReason(ok, "framegrabbers", null)).toBe("Select a framegrabber from the list first");
+    expect(connectBlockReason(ok, "mindvision", null)).toBe("Please select a MindVision camera from the list.");
+    expect(connectBlockReason(ok, "framegrabbers", null)).toBe("Please select a framegrabber from the list.");
     expect(connectBlockReason({ ...ok, running: true }, "cameras", row)).toMatch(/camera is running/);
   });
   it("Refresh is blocked only while scanning; a refusal while capturing reaches the status line instead", () => {

@@ -197,6 +197,16 @@ export function useCameraConnection({
     append(`${title}: ${message}`);
   }, [append]);
 
+  // The backend's selection is read first and the stage moves on at once: the device scan that refreshes the lists runs
+  // behind it (it takes seconds on a real rig), while Start Camera on the next stage already sees the new selection.
+  const adoptSelection = useCallback(async () => {
+    try {
+      setCamSelection(await bridge.fetchCameraSelection());
+    } catch (e) {
+      append(`discovery error: ${e}`);
+    }
+  }, [append]);
+
   const onConfigureMock = useCallback(async () => {
     try {
       const cfg = await bridge.configureMock(frameDir, Number(intervalMs) || 33, loopFiles);
@@ -204,16 +214,17 @@ export function useCameraConnection({
       setShowMockConfig(false);
       setCamStatus("configured (mock)");
       append(`mock camera configured (${frameDir})`);
-      await refreshCameraState();
+      await adoptSelection();
       // Qt: "Mock camera configured (not capturing)" and the stage moves to Overview (CONNECT-017); the Overview stage
       // applies its script and starts the live view.
       setActionNote(MOCK_CONFIGURED_NOTE);
       setTab((t) => (t === "connect" ? "overview" : t));
+      void refreshCameraState();
     } catch (e) {
       setShowMockConfig(false);
       refuse("Configure Mock Camera", String(e));
     }
-  }, [frameDir, intervalMs, loopFiles, append, refreshCameraState, refuse, setTab]);
+  }, [frameDir, intervalMs, loopFiles, append, adoptSelection, refreshCameraState, refuse, setTab]);
 
   // Connect acts on the row picked in the shown sub-tab; a framegrabber row selects that interface/device
   // (CONNECT-003). A picked row that a rescan removed says so instead of doing nothing (App.tsx:703).
@@ -245,14 +256,15 @@ export function useCameraConnection({
       }
       if (!res.ok) return refuse("Connect Device", res.message);
       append(`selected ${row.label}`);
-      await refreshCameraState();
+      await adoptSelection();
       // Qt (CONNECT-011): "Connected to <label> (not capturing)" and the stage moves to Overview.
       setActionNote(connectedNote(row.label));
       setTab((t) => (t === "connect" ? "overview" : t));
+      void refreshCameraState();
     } catch (e) {
       refuse("Connect Device", String(e));
     }
-  }, [pickedDevices, connectTab, discovery, append, refreshCameraState, refuse, setTab]);
+  }, [pickedDevices, connectTab, discovery, append, adoptSelection, refreshCameraState, refuse, setTab]);
 
   // The delivery mode (CONNECT-019/020): applies at the next capture start; the backend's reply says which.
   const onDeliveryModeChange = useCallback(async (mode: FrameDeliveryMode) => {

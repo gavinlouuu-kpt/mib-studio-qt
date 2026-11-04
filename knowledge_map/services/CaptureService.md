@@ -62,6 +62,7 @@ stop/grab/restart boundary.
 ```cpp
 void setConfig(const Config& cfg);              // bufferPartCount, numBuffers, deliveryMode (lock-guarded)
 Config config() const;                          // a copy of what the next start() uses
+void setDeliveryMode(FrameDeliveryMode m);       // the mode only, in one step (the Connect control; sizing untouched)
 camera::common::FrameDeliveryMode activeDeliveryMode(); // backend-confirmed
 void setFrameCallback(FrameCallback cb);        // UI live preview hook
 void setFrameStore(shared_ptr<FrameStore>);     // ring buffer sink
@@ -98,8 +99,13 @@ Camera factory is how `AppBackend` chooses between
 [[../frontend/ConnectTab]] delivery-mode combo), by `ConfigDocumentApply` (a Tauri profile, central
 method or config document) and by `BackendFacade::setFrameDeliveryModeJson` (the Tauri Connect stage's
 delivery mode, #863). The control changes the mode while a capture may run, so `config_` is guarded by
-`lifecycleMutex_` (`setConfig`, `config()`) and the worker takes one copy when its session starts; a
-change while a capture runs applies at the next `start()` and never restarts it.
+`lifecycleMutex_` (`setConfig`, `setDeliveryMode`, `config()`) and the worker takes one copy when its session
+starts; a change while a capture runs applies at the next `start()` and never restarts it. The Connect control
+uses `setDeliveryMode` (the mode alone, so the buffer sizing set by a profile is not reset, which Qt's combo
+handler does by writing a default `Config`). `connect_camera_guards_test` stresses `setConfig` / `setDeliveryMode`
+/ `config()` from writer and reader threads against 60 start/stop sessions and checks that every configuration a
+session applied and every one a reader saw is exactly one that was set; TSan cannot run on P5, so this is a
+stress, not a race proof.
 `deliveryModeConfirmed` is cleared when the capture loop releases the
 camera, so `activeDeliveryMode()` falls back to the requested config mode
 between runs.

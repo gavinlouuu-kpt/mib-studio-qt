@@ -5,7 +5,7 @@ import { ViewerGate } from "../../components/ViewerGate";
 import { CHECK_STATUS_LABEL } from "../../preflight";
 import { useStudio } from "../../studio/StudioContext";
 import {
-  cameraSourceBlockReason, connectBlockReason, connectStatusLine, DELIVERY_MODES, deviceRows, pickedRow, refreshBlockReason,
+  cameraSourceBlockReason, connectBlockReason, connectStatusLine, DELIVERY_MODE_HINT, DELIVERY_MODES, deviceRows, pickedRow, refreshBlockReason,
 } from "./connectFlow";
 
 export function ConnectTab() {
@@ -64,7 +64,7 @@ export function ConnectTab() {
           >
             Connect
           </button>
-          <label className="delivery-mode" title={deliveryBlock}>
+          <label className="delivery-mode" title={deliveryBlock ?? DELIVERY_MODE_HINT}>
             Delivery mode{" "}
             <select
               aria-label="Delivery mode"

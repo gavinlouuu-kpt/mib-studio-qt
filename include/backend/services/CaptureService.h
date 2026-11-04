@@ -88,6 +88,9 @@ public:
     void setConfig(const Config& cfg);
     // A copy of the configuration the next start() will use.
     Config config() const;
+    // Changes only the delivery mode, in one step under the lifecycle lock (a concurrent setConfig() of
+    // the buffer sizing is not lost). A running capture keeps the mode it started with.
+    void setDeliveryMode(::camera::common::FrameDeliveryMode mode);
     void setFrameCallback(FrameCallback cb);
 
     // Optional: store frames to a shared ring for playback/display

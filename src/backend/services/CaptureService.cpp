@@ -45,6 +45,11 @@ void CaptureService::setConfig(const Config& cfg) {
     config_ = cfg;
 }
 
+void CaptureService::setDeliveryMode(::camera::common::FrameDeliveryMode mode) {
+    std::lock_guard<std::mutex> lk(lifecycleMutex_);
+    config_.deliveryMode = mode;
+}
+
 CaptureService::Config CaptureService::config() const {
     std::lock_guard<std::mutex> lk(lifecycleMutex_);
     return config_;

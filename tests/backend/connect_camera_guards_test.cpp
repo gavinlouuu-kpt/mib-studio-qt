@@ -12,17 +12,22 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ConfigDocumentApply.h"
+#include "backend/app/ExperimentReadiness.h"
 #include "backend/services/CaptureService.h"
 #include "support/assert.h"
+#include "support/fake_lifecycle_camera.h"
 #include "support/frames.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <memory>
 #include <thread>
+#include <vector>
 
 using backend::bridge::BackendFacade;
 using backend::bridge::CameraCommand;
@@ -52,6 +57,129 @@ bool pollUntil(Pred pred, std::chrono::milliseconds timeout)
     return true;
 }
 
+// CaptureService::setConfig / setDeliveryMode / config() run on the command thread while the worker of a
+// capture takes its session's copy: a session must never see a half-written or mixed configuration, and
+// setDeliveryMode must not reset the buffer sizing (Qt's own combo handler does). TSan cannot run on P5,
+// so this is a stress: two writers, a reader and a start/stop cycle on one service for a fixed number of
+// sessions; what it proves is that every configuration a session applied, and every one a reader saw, is
+// exactly one that was set (a torn read of the three-field struct would show a mix), and that no
+// operation deadlocks (the watchdog bounds it). It cannot prove the absence of a data race the way TSan does.
+void configUnderConcurrentChange()
+{
+    using backend::services::CaptureService;
+    using camera::common::FrameDeliveryMode;
+    const auto fullConfig = [](int parts, int buffers, FrameDeliveryMode mode) {
+        CaptureService::Config c;
+        c.bufferPartCount = parts;
+        c.numBuffers = buffers;
+        c.deliveryMode = mode;
+        return c;
+    };
+    const auto isOneOf = [](const CaptureService::Config& c, const std::vector<CaptureService::Config>& allowed) {
+        for (const auto& a : allowed)
+            if (a.bufferPartCount == c.bufferPartCount && a.numBuffers == c.numBuffers && a.deliveryMode == c.deliveryMode) return true;
+        return false;
+    };
+    const auto cycle = [](CaptureService& service, int sessions) {
+        for (int i = 0; i < sessions; ++i) {
+            MIB_REQUIRE(service.start(), "session starts");
+            MIB_REQUIRE(pollUntil([&] { return service.lifecycleSnapshot().state == backend::services::CaptureLifecycleState::Running; }, 5000ms),
+                        "session runs");
+            service.stop();
+        }
+    };
+
+    // Phase 1: whole configurations A and B written alternately; sessions and readers see A or B, never a mix.
+    {
+        auto obs = std::make_shared<mib::test::FakeLifecycleCamera::Observations>();
+        CaptureService service;
+        service.setCameraFactory([obs]() -> std::unique_ptr<camera::common::ICamera> {
+            return std::make_unique<mib::test::FakeLifecycleCamera>(mib::test::FakeLifecycleCamera::Script{}, obs.get());
+        });
+        const auto a = fullConfig(1, 8, FrameDeliveryMode::EveryFrame);
+        const auto b = fullConfig(2, 16, FrameDeliveryMode::LatestFrame);
+        service.setConfig(a);
+        std::atomic<bool> done{false};
+        std::atomic<int> torn{0};
+        std::atomic<long> reads{0};
+        std::thread writer([&] {
+            for (long i = 0; !done.load(); ++i) service.setConfig(i % 2 ? a : b);
+        });
+        std::thread reader([&] {
+            while (!done.load()) {
+                if (!isOneOf(service.config(), {a, b})) torn.fetch_add(1);
+                const auto mode = service.activeDeliveryMode(); // reads the configuration between sessions
+                if (mode != FrameDeliveryMode::EveryFrame && mode != FrameDeliveryMode::LatestFrame) torn.fetch_add(1);
+                reads.fetch_add(1);
+            }
+        });
+        cycle(service, 60);
+        done.store(true);
+        writer.join();
+        reader.join();
+        MIB_EXPECT(torn.load() == 0, "a reader saw a configuration that was never set (torn read): " + std::to_string(torn.load()));
+        MIB_EXPECT(reads.load() > 0, "the reader ran");
+        const auto applied = obs->appliedConfigs();
+        MIB_EXPECT(applied.size() == 60, "one configuration per session: " + std::to_string(applied.size()));
+        int mixed = 0;
+        for (const auto& c : applied) {
+            const CaptureService::Config seen = fullConfig(c.bufferPartCount, c.numBuffers, c.deliveryMode);
+            if (!isOneOf(seen, {a, b})) ++mixed;
+        }
+        MIB_EXPECT(mixed == 0, "a session applied a mixed configuration: " + std::to_string(mixed));
+    }
+
+    // Phase 2: only the delivery mode flips; the buffer sizing set once survives every flip and every session.
+    {
+        auto obs = std::make_shared<mib::test::FakeLifecycleCamera::Observations>();
+        CaptureService service;
+        service.setCameraFactory([obs]() -> std::unique_ptr<camera::common::ICamera> {
+            return std::make_unique<mib::test::FakeLifecycleCamera>(mib::test::FakeLifecycleCamera::Script{}, obs.get());
+        });
+        service.setConfig(fullConfig(3, 33, FrameDeliveryMode::EveryFrame));
+        std::atomic<bool> done{false};
+        std::thread flipper([&] {
+            for (long i = 0; !done.load(); ++i)
+                service.setDeliveryMode(i % 2 ? FrameDeliveryMode::EveryFrame : FrameDeliveryMode::LatestFrame);
+        });
+        cycle(service, 60);
+        done.store(true);
+        flipper.join();
+        int reset = 0, modes[2] = {0, 0};
+        const auto applied = obs->appliedConfigs();
+        for (const auto& c : applied) {
+            if (c.bufferPartCount != 3 || c.numBuffers != 33) ++reset;
+            ++modes[c.deliveryMode == FrameDeliveryMode::LatestFrame ? 1 : 0];
+        }
+        MIB_EXPECT(applied.size() == 60 && reset == 0, "setDeliveryMode left the buffer sizing alone in every session: reset=" + std::to_string(reset));
+        MIB_EXPECT(modes[0] > 0 && modes[1] > 0, "both modes reached a session: every=" + std::to_string(modes[0]) + " latest=" + std::to_string(modes[1]));
+        MIB_EXPECT(service.config().bufferPartCount == 3 && service.config().numBuffers == 33, "the sizing is still the one set");
+    }
+
+    // A change while a session runs applies at the next start: the running session keeps what it started with.
+    {
+        auto obs = std::make_shared<mib::test::FakeLifecycleCamera::Observations>();
+        CaptureService service;
+        service.setCameraFactory([obs]() -> std::unique_ptr<camera::common::ICamera> {
+            return std::make_unique<mib::test::FakeLifecycleCamera>(mib::test::FakeLifecycleCamera::Script{}, obs.get());
+        });
+        service.setDeliveryMode(FrameDeliveryMode::EveryFrame);
+        MIB_REQUIRE(service.start(), "start");
+        MIB_REQUIRE(pollUntil([&] { return service.lifecycleSnapshot().state == backend::services::CaptureLifecycleState::Running; }, 5000ms), "runs");
+        service.setDeliveryMode(FrameDeliveryMode::LatestFrame);
+        MIB_EXPECT(service.config().deliveryMode == FrameDeliveryMode::LatestFrame, "the configuration changed");
+        MIB_EXPECT(obs->appliedConfigs().size() == 1 && obs->appliedConfigs()[0].deliveryMode == FrameDeliveryMode::EveryFrame,
+                   "the running session kept the mode it started with");
+        MIB_EXPECT(service.activeDeliveryMode() == FrameDeliveryMode::EveryFrame, "the camera-confirmed mode is the running one");
+        service.stop();
+        MIB_REQUIRE(service.start(), "restart");
+        MIB_REQUIRE(pollUntil([&] { return service.lifecycleSnapshot().state == backend::services::CaptureLifecycleState::Running; }, 5000ms), "runs again");
+        MIB_EXPECT(obs->appliedConfigs().size() == 2 && obs->appliedConfigs()[1].deliveryMode == FrameDeliveryMode::LatestFrame,
+                   "the next start used the new mode");
+        service.stop();
+    }
+}
+
 } // namespace
 
 int main()
@@ -72,6 +200,21 @@ int main()
     mock.mockFrameIntervalMs = 2;
     mock.mockLoopFiles = true;
     MIB_REQUIRE(facade.dispatch(mock).ok, "mock configured while stopped");
+
+    configUnderConcurrentChange();
+
+    // The camera source and the delivery mode are held by a run that is starting, running or saving; a Failed run (waiting
+    // for its fault to be acknowledged) and an idle one hold nothing, so the Tauri buttons (which only look at the three
+    // in-flight states) and the backend agree.
+    {
+        using backend::app::ExperimentRunState;
+        using backend::app::experimentHoldsCamera;
+        MIB_EXPECT(!experimentHoldsCamera(ExperimentRunState::Idle) && !experimentHoldsCamera(ExperimentRunState::Failed),
+                   "Idle and Failed hold no camera");
+        MIB_EXPECT(experimentHoldsCamera(ExperimentRunState::Starting) && experimentHoldsCamera(ExperimentRunState::Active) &&
+                       experimentHoldsCamera(ExperimentRunState::Stopping),
+                   "Starting, Active and Stopping hold the camera");
+    }
 
     // ---- delivery mode ---------------------------------------------------------------
     {
