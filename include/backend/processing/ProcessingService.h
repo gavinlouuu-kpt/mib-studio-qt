@@ -231,6 +231,12 @@ public:
         uint64_t index{0};
         double area{0.0}; // pixels
         double deformability{0.0};
+        // The rest of the row's identity (#866 PR E): the run and the capture it entered
+        // processing with (MonitoringRowTag) and its object id. The tag is a slot's own 24-byte
+        // store, copied here under the same lock hold.
+        uint64_t startGeneration{0};
+        uint64_t captureEpoch{0};
+        int32_t objectId{-1};
     };
     std::vector<MonitoringPoint> getMonitoringValidPoints() const;
     // Live cell images (#716 A6a, bridge ABI 41). Every monitoring ring slot

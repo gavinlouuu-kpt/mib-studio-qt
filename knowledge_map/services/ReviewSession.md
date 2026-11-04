@@ -376,6 +376,18 @@ waited for with `ReviewJobsTestAccess::waitIdle` (the release's own
 condition). The facade's side by `backend.facade_review_jobs`
 (`BackendFacadeTestAccess::reviewJobs` reaches its lanes).
 
+## Reference contour from a file (`KdeReference.h`, bridge ABI 46, #866 PR E)
+
+`readKdeReference(path)` (`include/backend/review/KdeReference.h`, same library) reads the stored KDE
+core record of an experiment file with a short-lived `Hdf5Service` reader of its own, never in the
+session: the full-run analysis record first, the live (provisional) one as the fallback, Qt's reason
+words, at most 20000 vertices. HDF5 is not thread-safe (#722), so the call is serialized as every other
+read of an arbitrary file: `ReviewSession::readKdeReference` holds the session mutex and
+`ReviewJobs::readKdeReference` the lanes' lock (refused while a review job runs); the facade calls it
+only inside `ExperimentCoordinator::withIdleConfiguration` with no raw recording writing, as the run
+quick look does. The bridge command is `fetch_kde_reference_from_file` ([[../architecture/Rust-Bridge]]
+ABI 46).
+
 ## Charts JSON and saved overlay (`ReviewCharts.h`, #512 S4)
 
 **Source:** `src/backend/review/ReviewCharts.cpp` +

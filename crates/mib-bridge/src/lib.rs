@@ -123,6 +123,26 @@ pub mod ffi {
         pub valid_fps1s: f64,
         pub invalid_fps1s: f64,
         pub pixel_to_micron: f64,
+        /// ABI 46 (#866 PR E; MON-095): the last published algorithm time per frame (1 s window, µs)
+        /// and its age in ms; `algo_avg_published` is false until the realtime metrics publish one.
+        pub algo_avg_published: bool,
+        pub algo_avg_us: f64,
+        pub algo_avg_age_ms: f64,
+        /// ABI 46 (MON-008): the realtime processing mode, "inline" or "async_batch".
+        pub realtime_mode: String,
+        /// ABI 46 (MON-098): the capture session is running, and the device/SDK frame rate and data
+        /// rate (MB/s) as Qt's Statistics panel shows them. `*_state` is a TelemetrySample.h
+        /// MetricValidity name ("valid", "stale", "unavailable", "unsupported", "error"); the value and
+        /// age (ms) are meaningful only when `*_has_value` (valid or stale).
+        pub camera_running: bool,
+        pub camera_frame_rate_state: String,
+        pub camera_frame_rate_has_value: bool,
+        pub camera_frame_rate: f64,
+        pub camera_frame_rate_age_ms: f64,
+        pub camera_data_rate_state: String,
+        pub camera_data_rate_has_value: bool,
+        pub camera_data_rate_mbps: f64,
+        pub camera_data_rate_age_ms: f64,
     }
 
     /// Pollable experiment lifecycle snapshot (schema v5, BE-4; shared
@@ -1388,6 +1408,34 @@ pub mod ffi {
         /// cache miss is computed only while the instrument is idle and no review job runs,
         /// otherwise deferred. `{"ok": false, ...}` before init and for a refused request.
         fn run_quick_look(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
+
+        /// ABI 46 (#866 PR E; bridge-contract.json `monitoring_density`): the live Monitoring density
+        /// (KDE). Settings go to the backend's MonitoringDensityService (clamped there); the reply is
+        /// JSON `{ok, message, settings}` with the clamped settings applied. Nothing is computed in the
+        /// call: the service's own lowest-priority worker does.
+        #[allow(clippy::too_many_arguments)] // one argument per setting; the facade takes the same eight
+        fn monitoring_density_set_settings(
+            self: Pin<&mut BackendBridge>,
+            enabled: bool,
+            interval_ms: i32,
+            bandwidth_factor: f64,
+            core_fraction: f64,
+            x0: f64,
+            x1: f64,
+            y0: f64,
+            y1: f64,
+        ) -> String;
+        /// Wake the density worker now (a no-op while disabled).
+        fn monitoring_density_request_update(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        /// The last density estimate as JSON: `{valid, generation, unchanged: true}` when nothing is
+        /// newer than `since_generation`, else the result with a density per monitoring row. A read.
+        fn fetch_monitoring_density(self: Pin<&mut BackendBridge>, since_generation: u64) -> String;
+        /// A reference core contour from an experiment file (read only; refused while a run is active):
+        /// JSON `{ok, path, file_name, error, reason, source, core_fraction, core_percent, loops, contours}`.
+        fn fetch_kde_reference_from_file(self: Pin<&mut BackendBridge>, path: &str) -> String;
+        /// The loaded E-modulus table as JSON `{valid, loaded, identity, unchanged, info, lut}`; `lut` (the
+        /// grid) only when `known_identity` differs from the table's.
+        fn fetch_emodulus_lut(self: Pin<&mut BackendBridge>, known_identity: &str) -> String;
 
         /// Set the sorter trigger pulse duration in microseconds.
         fn trigger_set_pulse_duration(self: Pin<&mut BackendBridge>, pulse_us: i32)

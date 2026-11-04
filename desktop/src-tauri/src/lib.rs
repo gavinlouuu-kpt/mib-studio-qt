@@ -635,6 +635,55 @@ fn fetch_monitoring_cell_packet(state: State<AppState>, start_generation: String
     cmds::fetch_monitoring_cell_packet(&state, start_generation, capture_epoch, frame_index, object_id, layer).map(Response::new)
 }
 
+// ABI 46 (#866 PR E): the live Monitoring density (KDE), the reference contour from a file and the
+// E-modulus table. A u64 generation travels as a canonical decimal string. Omitted settings take the
+// backend defaults (interval 2000 ms, bandwidth factor 1, core fraction 0.9, axes 0 = the data range).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn monitoring_density_set_settings(
+    state: State<AppState>,
+    enabled: bool,
+    interval_ms: Option<i32>,
+    bandwidth_factor: Option<f64>,
+    core_fraction: Option<f64>,
+    x0: Option<f64>,
+    x1: Option<f64>,
+    y0: Option<f64>,
+    y1: Option<f64>,
+) -> Result<serde_json::Value, String> {
+    cmds::monitoring_density_set_settings(
+        &state,
+        enabled,
+        interval_ms.unwrap_or(2000),
+        bandwidth_factor.unwrap_or(1.0),
+        core_fraction.unwrap_or(0.9),
+        x0.unwrap_or(0.0),
+        x1.unwrap_or(0.0),
+        y0.unwrap_or(0.0),
+        y1.unwrap_or(0.0),
+    )
+}
+
+#[tauri::command]
+fn monitoring_density_request_update(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::monitoring_density_request_update(&state)
+}
+
+#[tauri::command]
+fn fetch_monitoring_density(state: State<AppState>, since_generation: Option<String>) -> Result<serde_json::Value, String> {
+    cmds::fetch_monitoring_density(&state, since_generation)
+}
+
+#[tauri::command]
+fn fetch_kde_reference_from_file(state: State<AppState>, path: String) -> Result<serde_json::Value, String> {
+    cmds::fetch_kde_reference_from_file(&state, path)
+}
+
+#[tauri::command]
+fn fetch_emodulus_lut(state: State<AppState>, known_identity: Option<String>) -> Result<serde_json::Value, String> {
+    cmds::fetch_emodulus_lut(&state, known_identity)
+}
+
 // ABI 42 (#716 A4a): calibration records. The list and get are reads; apply is the one explicit
 // compare-and-set of the pixel-to-micron factor.
 #[tauri::command]
@@ -941,6 +990,11 @@ pub fn run() {
             calibration_record_get,
             calibration_apply,
             run_quick_look,
+            monitoring_density_set_settings,
+            monitoring_density_request_update,
+            fetch_monitoring_density,
+            fetch_kde_reference_from_file,
+            fetch_emodulus_lut,
             trigger_set_pulse_duration,
             trigger_manual_pulse,
             trigger_periodic_start,

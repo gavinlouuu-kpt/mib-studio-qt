@@ -354,6 +354,12 @@ set_tests_properties(backend.monitoring_cell_store PROPERTIES LABELS "backend;mo
 mib_add_backend_test_executable(monitoring_cells_facade_test backend/monitoring_cells_facade_test.cpp)
 add_test(NAME e2e.monitoring_cells_facade COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cells_facade_test)
 set_tests_properties(e2e.monitoring_cells_facade PROPERTIES LABELS "backend;bridge;e2e;monitoring;safety" TIMEOUT 180)
+
+# The live Monitoring density, the reference contour from a file, the E-modulus table and the stats telemetry
+# through the facade the bridge calls (#866 PR E, bridge ABI 46).
+mib_add_backend_test_executable(monitoring_density_facade_test backend/monitoring_density_facade_test.cpp)
+add_test(NAME e2e.monitoring_density_facade COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_facade_test)
+set_tests_properties(e2e.monitoring_density_facade PROPERTIES LABELS "backend;bridge;e2e;monitoring" TIMEOUT 240)
 # #716 A6a: the store over the real ring while the realtime loop appends (TSan lane: concurrency/stress).
 mib_add_backend_test_executable(monitoring_cell_concurrency_test processing/monitoring_cell_concurrency_test.cpp)
 mib_backend_test_link(monitoring_cell_concurrency_test PRIVATE Threads::Threads)

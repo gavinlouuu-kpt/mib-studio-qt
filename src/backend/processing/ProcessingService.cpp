@@ -865,8 +865,11 @@ std::vector<ProcessingService::MonitoringPoint> ProcessingService::getMonitoring
     std::vector<MonitoringPoint> out;
     out.reserve(MAX_MONITORING_FRAMES);
     std::scoped_lock lk(monitoringFramesMutex_);
-    monitoringValidFrames_.forEach([&out](const ProcessedFrame& f) {
-        if (f.validation.isValid) out.push_back({f.index, f.validation.area, f.validation.deformability});
+    monitoringValidFrames_.forEachNewest(monitoringValidFrames_.size(),
+                                         [&out](const ProcessedFrame& f, const MonitoringRowTag& tag) {
+        if (f.validation.isValid)
+            out.push_back({f.index, f.validation.area, f.validation.deformability, tag.runGeneration,
+                           tag.captureEpoch, static_cast<int32_t>(f.validation.objectId)});
     });
     return out;
 }

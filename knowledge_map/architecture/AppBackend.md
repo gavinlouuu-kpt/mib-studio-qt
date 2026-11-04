@@ -502,6 +502,19 @@ inside the coordinator's idle transaction). See [[../services/CalibrationRecords
 fills it at close (finalization step 6b); `BackendFacade::runQuickLookJson` reads it and fills it on
 an idle miss. See [[../services/RunQuickLook]].
 
+## Density, reference contour and E-modulus table (bridge ABI 46, #866 PR E)
+
+`BackendFacade` serves the [[../services/MonitoringDensityService]] to the bridge:
+`setMonitoringDensitySettingsJson` / `requestMonitoringDensityUpdate` (control),
+`fetchMonitoringDensityJson(since, out)` (read; a point per ring row, each named by the row's
+`(start_generation, capture_epoch, frame_index, object_id)`, taken from the ring slot's tag in the
+density input provider this class wires), `fetchKdeReferenceFromFileJson(path)` (a reference core
+contour from an experiment file, inside the coordinator's non-waiting idle transaction through
+`ReviewJobs::readKdeReference`, refused while a run is active or a raw recording writes HDF5) and
+`fetchEModulusLutJson(knownIdentity)` (the table loaded at bootstrap, once per identity).
+`fetchProcessingStats` adds the algorithm time, the realtime mode and the camera's frame/data rate with
+a validity state (`CaptureService::telemetrySnapshot`). Shapes in [[Rust-Bridge]] (ABI 46).
+
 ## Live cell store (bridge ABI 41, #716 A6a)
 
 `initialize()` builds [[../services/MonitoringCellStore]] right after the

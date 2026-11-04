@@ -630,6 +630,68 @@ Start check). Contract section `calibration_records`, enums `calibration_record_
   `calibration_records_over_the_websocket`; `calibrationRecords.test.ts`; C++
   `backend.calibration_record`, `e2e.calibration_run`.
 
+## ABI 46: live density, reference contour, E-modulus table, stats telemetry (#866 PR E)
+
+Additive over ABI 45: five commands and new fields on `fetch_processing_stats`, so a later frontend PR
+can close the Monitoring rows that need the backend (MON-043, 058-064, 066, 068, 077, 083-086, 095,
+098, 008). Contract text: `bridge-contract.json` sections `monitoring_density`,
+`kde_reference_from_file`, `emodulus_lut`, `processing_stats`. Layering as every command: TS
+`bridge.ts` -> Tauri command (`desktop/src-tauri/src/lib.rs`) or WebSocket dispatch ->
+`mib-app-commands` (`lib.rs`, `dispatch.rs`) -> cxx (`monitoring_density_set_settings`,
+`monitoring_density_request_update`, `fetch_monitoring_density`, `fetch_kde_reference_from_file`,
+`fetch_emodulus_lut`; `shim.cpp`) -> `BackendFacade` -> `MonitoringDensityService` /
+`ReviewJobs` / `ProcessingService`. See [[../services/MonitoringDensityService]].
+
+- **Control (VIEWER_ONLY on the WebSocket server, `CONTROL_COMMANDS`):**
+  `monitoring_density_set_settings {enabled, intervalMs?, bandwidthFactor?, coreFraction?, x0?, x1?, y0?,
+  y1?}` -> `{ok, message, settings: {enabled, interval_ms, bandwidth_factor, core_fraction, x0, x1, y0, y1}}`
+  (the settings as the service clamps them: interval 500..60000 default 2000, factor 0.2..5 default 1,
+  fraction 0.05..1 default 0.9, axes not all finite -> 0; `settings: null` before init), and
+  `monitoring_density_request_update` (no args) -> the usual command result. The Tauri function takes the
+  optional numbers with those defaults.
+- **Reads (every client):**
+  - `fetch_monitoring_density {sinceGeneration?}` (canonical decimal string, absent = 0) ->
+    `{valid: false}` before init; `{valid, generation, unchanged: true}` when the generation equals
+    `sinceGeneration`; else `{valid, generation, unchanged: false, settings, stats: {next_interval_ms,
+    refresh_ms, estimates, skipped_unchanged, skipped_under_load, busy, priority_lowered}, result}`.
+    `result` is `null` when the service holds no estimate, else `{points: {count, contexts:
+    [{start_generation, capture_epoch}], context: [i], frame_index: ["n"], object_id: [i], density:
+    [0..1 | null]}, bandwidth: {x, y}, bandwidth_factor, core_fraction, core_level, core_count, contours:
+    (closed loops of [x, y] vertices), pixel_to_micron, grid: {x0, x1, y0, y1, nx, ny}, compute_ms, compute_us, wall_ms,
+    computed_at_ns}`. At most 1000 points, parallel arrays, oldest -> newest. **Identity:** a frontend
+    matches a point to a `fetch_monitoring_snapshot` row by `(start_generation, capture_epoch,
+    frame_index, object_id)`; the frame index alone is ambiguous (it restarts per capture, a frame can hold
+    several objects).
+  - `fetch_kde_reference_from_file {path}` -> `{ok, path, file_name, error, reason, source, core_fraction,
+    core_percent, loops, contours}`; not ok has `error` "No reference contour loaded from <path>:
+    <reason>", `source`/`core_fraction`/`core_percent` null, `contours: []`. Read only, never opens the
+    file in Review, and refused with plain text while an experiment runs or starts (HDF5 is not
+    thread-safe, #722: the read takes the review lanes' lock and the session mutex inside the
+    coordinator's non-waiting idle transaction, as the run quick look does). Path 1..4096 bytes.
+  - `fetch_emodulus_lut {knownIdentity?}` (at most 8192 bytes) -> `{valid, loaded, identity, unchanged,
+    info, lut}`: `identity` is `"<sha256>|<path>"`; `lut` is `{area_min, area_step, area_bins,
+    deform_min, deform_step, deform_bins, values}` (row-major `[deform * area_bins + area]`, kPa, `null`
+    for NaN) only when `identity != knownIdentity`; `loaded: false` carries no table.
+  - `fetch_processing_stats` gains `algo_avg_us`, `algo_avg_age_ms` (null until the realtime path publishes
+    one), `realtime_mode` (`"inline"` | `"async_batch"`) and `camera: {running, frame_rate: sample,
+    data_rate_mbps: sample}` with `sample = {state, value, age_ms}`, `state` one of `valid`, `stale`,
+    `unavailable`, `unsupported`, `error` (the `MetricValidity` names; a value only for valid or stale,
+    never a 0 for an unknown rate). The PR #877 decoder reads `algo_avg_us` and `algo_avg_age_ms`; the TS
+    decoder for the rest is `decodeProcessingTelemetry` in `desktop/src/monitoringDensity.ts`.
+- **Threading:** no command computes; the estimate stays on the service's idle-priority worker, nothing
+  is added to the acquisition or processing path, the E-modulus table is copied under the identity
+  double-read (it is loaded once at bootstrap).
+- **Touched:** `bridge-contract.json` (abi_version 46, the four sections), `scripts/gen_bridge_contract.py`
+  (renders the bounds into `desktop/src/bridgeContract.ts` and `frame_packet_contract.rs`, extends
+  `check_bridge`), `shim.cpp` (`static_assert`s on the bounds, `bridge_abi_version` 46),
+  `BridgeProcessingStats` (new fields), `CONTROL_COMMANDS`, the ABI pins in `dispatch.rs`,
+  `runQuickLook.test.ts`, `eventAdapter.test.ts`.
+- **Tests:** C++ `backend.monitoring_density_service` (row identity), `e2e.monitoring_density_facade`;
+  Rust `contract.rs` `abi_version_is_stable` (46), `monitoring_density_is_described`,
+  `monitoring_density_end_to_end`; `dispatch.rs` `monitoring_density_through_dispatch`;
+  `mib-bridge-server` `monitoring_density_settings_are_control_only_but_reads_are_not`;
+  `monitoringDensity.test.ts`.
+
 ## ABI 45: the invalid-cell strip and rejection reasons (#866 MON-052/053)
 
 Additive over ABI 44, no new command: `fetch_monitoring_cells` gains `invalid_strip` beside `strip`

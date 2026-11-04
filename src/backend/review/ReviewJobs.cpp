@@ -708,6 +708,22 @@ namespace backend::review
         return impl_->session.runStatistics(path, computedAt);
     }
 
+    KdeReferenceResult ReviewJobs::readKdeReference(const std::string &path)
+    {
+        // The probe's rule (lock order: the lanes' mutex, then the session's).
+        std::scoped_lock lock(impl_->mutex);
+        for (const auto &lane : impl_->lanes)
+        {
+            if (lane.busy)
+            {
+                KdeReferenceResult r;
+                r.reason = "a review job is running; the file can be read when it finishes";
+                return r;
+            }
+        }
+        return impl_->session.readKdeReference(path);
+    }
+
     bool ReviewJobs::reprocessRecord(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessResult &out,
                                      std::string *error)
     {
