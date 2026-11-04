@@ -748,6 +748,12 @@ export interface CameraGeometry {
   /** MindVision: the saved profile is illuminated-live (no auto-start on Overview), and why it cannot be read. */
   illuminated_live?: boolean;
   profile_error?: string;
+  /** MindVision (#863 A2): the profile's ISP mirroring. The stored `roi` stays in sensor coordinates; the Overview box and
+   *  the drag direction are mirrored to match the delivered image. */
+  flip_horizontal?: boolean;
+  flip_vertical?: boolean;
+  /** The camera's measured frame rate (CaptureStats::lastFrameRate), 0 while stopped. Absent before #863 A2. */
+  capture_fps?: number;
   /** Last camera read-back (Aravis): applied window, sensor rate and the delivered rate. */
   session: {
     overview?: boolean;

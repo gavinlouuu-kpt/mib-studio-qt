@@ -19,7 +19,7 @@ import { MonitoringPanel } from "./MonitoringPanel";
 
 export function ExperimentTab() {
   const {
-    ssdConfigured, ssd, expTab, setExpTab, roiFields, onStartExperiment, startExperimentReason, onStopExperiment, expState,
+    ssdConfigured, ssd, expTab, setExpTab, roiSummaryText, roiSummaryTitle, onStartExperiment, startExperimentReason, onStopExperiment, expState,
     instrumentModes, runFpsStatus, cameraWin, modeError, setTab, setModeRetry, readinessMessage, expActive, runOutcome,
     expStatus, startNotice, tab, instrument,
   } = useStudio();
@@ -42,9 +42,7 @@ export function ExperimentTab() {
           </button>
         </div>
         <div className="right">
-          <span className="mono">
-            ROI: {Number(roiFields.w) > 0 ? `${roiFields.w} × ${roiFields.h} @ (${roiFields.x}, ${roiFields.y})` : "full frame"}
-          </span>
+          <span className="mono" title={roiSummaryTitle}>{roiSummaryText}</span>
           <ViewerGate>
           <button onClick={onStartExperiment} disabled={!!startExperimentReason} title={startExperimentReason}>
             Start Experiment

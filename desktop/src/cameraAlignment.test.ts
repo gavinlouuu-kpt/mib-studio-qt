@@ -1,6 +1,6 @@
 import {describe, expect, it} from "vitest";
 import type {CameraGeometry} from "./bridge";
-import {egrabberWindowLine, initialWindow, rateSummary, snapRunWindow, snapWindow, windowInputLimits} from "./cameraAlignment";
+import {displayedWindow, dragStoredWindow, egrabberWindowLine, initialWindow, mirrorOf, NO_MIRROR, pointInDisplayedWindow, rateSummary, snapRunWindow, snapWindow, windowInputLimits} from "./cameraAlignment";
 
 const pz: CameraGeometry = {
   supported: true, overview: true, camera: "aravis", sensor_width: 816, sensor_height: 624,
@@ -91,5 +91,65 @@ describe("eGrabber camera window (#846, Qt Overview snapping)", () => {
     expect(egrabberWindowLine({...eg, roi, window_source: "script", experiment_script_path: "C:\\MIBTest\\include\\egrabberConfig.js"}))
       .toBe("Window 1216×208 at (368, 616): from the Experiment script egrabberConfig.js.");
     expect(egrabberWindowLine(eg)).toContain("No camera window is saved yet");
+  });
+});
+
+describe("MindVision mirroring (#863 A2, Qt SimpleImageCanvas::setRoiTransform)", () => {
+  const mv: CameraGeometry = {...pz, camera: "mindvision", min_width: 16, min_height: 4, width_increment: 1, height_increment: 1,
+    offset_x_increment: 1, offset_y_increment: 1, flip_horizontal: true, flip_vertical: false};
+  const image = {width: 816, height: 624};
+  const stored = {x: 100, y: 120, width: 256, height: 128};
+
+  it("reads the mirroring from a MindVision geometry only", () => {
+    expect(mirrorOf(mv)).toEqual({flipHorizontal: true, flipVertical: false});
+    expect(mirrorOf({...mv, flip_horizontal: false})).toBe(NO_MIRROR);
+    expect(mirrorOf({...pz, flip_horizontal: true})).toBe(NO_MIRROR); // Aravis has no profile mirroring
+    expect(mirrorOf(null)).toBe(NO_MIRROR);
+    expect(mirrorOf({...mv, flip_horizontal: undefined, flip_vertical: undefined})).toBe(NO_MIRROR); // a backend without the members
+  });
+
+  it("draws the stored window mirrored across the image on a flipped axis only", () => {
+    expect(displayedWindow(stored, image, NO_MIRROR)).toEqual(stored);
+    expect(displayedWindow(stored, image, {flipHorizontal: true, flipVertical: false})).toEqual({x: 460, y: 120, width: 256, height: 128}); // 816 - 256 - 100
+    expect(displayedWindow(stored, image, {flipHorizontal: false, flipVertical: true})).toEqual({x: 100, y: 376, width: 256, height: 128}); // 624 - 128 - 120
+    expect(displayedWindow(stored, image, {flipHorizontal: true, flipVertical: true})).toEqual({x: 460, y: 376, width: 256, height: 128});
+  });
+
+  it("is its own inverse, so a displayed window gives back the stored (sensor) one", () => {
+    for (const mirror of [{flipHorizontal: true, flipVertical: false}, {flipHorizontal: false, flipVertical: true}, {flipHorizontal: true, flipVertical: true}]) {
+      expect(displayedWindow(displayedWindow(stored, image, mirror), image, mirror)).toEqual(stored);
+    }
+    // a window that fills the axis does not move
+    expect(displayedWindow({x: 0, y: 0, width: 816, height: 624}, image, {flipHorizontal: true, flipVertical: true})).toEqual({x: 0, y: 0, width: 816, height: 624});
+  });
+
+  it("moves the stored offset against the pointer on a mirrored axis (the box moves with the pointer on screen)", () => {
+    const delta = {x: 40, y: 10};
+    expect(dragStoredWindow(stored, delta, NO_MIRROR)).toEqual({...stored, x: 140, y: 130});
+    expect(dragStoredWindow(stored, delta, {flipHorizontal: true, flipVertical: false})).toEqual({...stored, x: 60, y: 130});
+    expect(dragStoredWindow(stored, delta, {flipHorizontal: true, flipVertical: true})).toEqual({...stored, x: 60, y: 110});
+    // the displayed box really followed the pointer to the right
+    const before = displayedWindow(stored, image, {flipHorizontal: true, flipVertical: false});
+    const after = displayedWindow(dragStoredWindow(stored, delta, {flipHorizontal: true, flipVertical: false}), image, {flipHorizontal: true, flipVertical: false});
+    expect(after.x - before.x).toBe(40);
+  });
+
+  it("hits the box where it is drawn", () => {
+    const flipped = {flipHorizontal: true, flipVertical: false};
+    expect(pointInDisplayedWindow({x: 150, y: 150}, stored, image, flipped)).toBe(false); // the unmirrored place
+    expect(pointInDisplayedWindow({x: 500, y: 150}, stored, image, flipped)).toBe(true);
+    expect(pointInDisplayedWindow({x: 150, y: 150}, stored, image, NO_MIRROR)).toBe(true);
+    expect(pointInDisplayedWindow({x: 500, y: 300}, stored, image, flipped)).toBe(false); // below the box
+  });
+
+  it("limits the MindVision boxes like Qt's: the SDK minimum up to the sensor, step 1, offsets that keep the window on it", () => {
+    expect(windowInputLimits(mv, "width", stored)).toEqual({min: 16, max: 816, step: 1});
+    expect(windowInputLimits(mv, "height", stored)).toEqual({min: 4, max: 624, step: 1});
+    expect(windowInputLimits(mv, "x", stored)).toEqual({min: 0, max: 560, step: 1});
+    expect(windowInputLimits(mv, "y", stored)).toEqual({min: 0, max: 496, step: 1});
+    // the sensor is not known before the first start: Qt allows up to 65535, and a minimum of at least 1
+    const unknown = {...mv, sensor_width: 0, sensor_height: 0, min_width: 0, min_height: 0};
+    expect(windowInputLimits(unknown, "width", null)).toEqual({min: 1, max: 65535, step: 1});
+    expect(windowInputLimits(unknown, "height", null)).toEqual({min: 1, max: 65535, step: 1});
   });
 });

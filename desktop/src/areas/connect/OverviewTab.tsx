@@ -7,15 +7,18 @@ import { ViewerGate, viewerReason } from "../../components/ViewerGate";
 import { GATE_STATUS_LABEL } from "../../quality";
 import { useStudio } from "../../studio/StudioContext";
 import { CameraStageNotice } from "./CameraStageNotice";
+import { cameraModeLead, mindVisionModeLabel } from "./overviewInfo";
 import { OverviewScriptEditor } from "./OverviewScriptEditor";
 import { RecordingCapacityPanel } from "./RecordingCapacityPanel";
+import { ROI_OVERLAY_TITLE, roiOverlayLabel } from "./roiOverlay";
 
 export function OverviewTab() {
   const {
     instrumentModes, cameraWin, modeError, setTab, setModeRetry, runFrozen, ring, resumeFromBanner, experimentRequestBusy,
     viewerOnly, setFitWindow, fitWindow, cameraGeometry, cameraWindow, expActive, saveCameraWindow, ready, capacity,
     hostProcessing, roiFields, setRoiFields, onApplyRoi, lastMeta, liveCanvasRef, onWindowPointerDown, onWindowPointerMove,
-    onWindowPointerUp, quality, qualityInput, alignBestRef, setAlignImage, caps, overviewScript,
+    onWindowPointerUp, quality, qualityInput, alignBestRef, setAlignImage, caps, overviewScript, roiOverlay, toggleRoiOverlay,
+    previewFpsLimit,
   } = useStudio();
   return (
     <>
@@ -31,6 +34,10 @@ export function OverviewTab() {
       )}
       <div className="toolbar">
         <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
+        {/* Qt's ROI Overlay toggle: off until a camera is connected; the PZ7035 always shows its Run window. */}
+        {cameraGeometry?.supported && !instrumentModes && (
+          <button onClick={toggleRoiOverlay} aria-pressed={roiOverlay} title={ROI_OVERLAY_TITLE}>{roiOverlayLabel(roiOverlay)}</button>
+        )}
 
         <ViewerGate>{cameraGeometry?.supported ? (
           <>
@@ -83,17 +90,24 @@ export function OverviewTab() {
       <CameraStageNotice stage="overview" />
       {cameraGeometry?.supported && (
         <div className="camera-alignment-status" aria-label="Camera mode">
-          <strong>
-            {cameraGeometry.overview
-              ? `Full sensor ${cameraGeometry.sensor_width || "?"}×${cameraGeometry.sensor_height || "?"}`
-              : "Experiment window"}
-          </strong>
-          {cameraGeometry.overview && cameraGeometry.camera !== "egrabber" && " — drag the yellow box or edit X/Y/W/H, then save; Experiment uses it."}
-          {cameraGeometry.camera === "egrabber" && (
-            <span>{cameraGeometry.overview ? " — drag the yellow box or edit W/H: each change is snapped and saved to the Experiment script (and to the profile's camera.window when it has one). " : " — "}{egrabberWindowLine(cameraGeometry)}</span>
+          {cameraGeometry.camera === "mindvision" ? (
+            // Qt's MindVision mode label (CONNECT-055): the mode, the camera's measured rate, the display limit.
+            <>
+              <strong data-testid="mindvision-mode-label">{mindVisionModeLabel(cameraGeometry, previewFpsLimit)}</strong>
+              {cameraGeometry.sensor_width > 0 && ` Sensor ${cameraGeometry.sensor_width}×${cameraGeometry.sensor_height}.`}
+            </>
+          ) : (
+            <>
+              <strong>{cameraModeLead(cameraGeometry)}</strong>
+              {cameraGeometry.overview && cameraGeometry.camera !== "egrabber" && " — drag the yellow box or edit X/Y/W/H, then save; Experiment uses it."}
+              {cameraGeometry.camera === "egrabber" && (
+                <span>{cameraGeometry.overview ? " — drag the yellow box or edit W/H: each change is snapped and saved to the Experiment script (and to the profile's camera.window when it has one). " : " — "}{egrabberWindowLine(cameraGeometry)}</span>
+              )}
+              {cameraGeometry.overview && instrumentModes && ` The run window is ${RUN_WINDOW.width}×${RUN_WINDOW.height}: x a multiple of ${RUN_WINDOW.xStep}, y a multiple of ${RUN_WINDOW.yStep} (the producer's offset check).`}
+              {rateSummary(cameraGeometry) && <span> {rateSummary(cameraGeometry)}</span>}
+            </>
           )}
-          {cameraGeometry.overview && instrumentModes && ` The run window is ${RUN_WINDOW.width}×${RUN_WINDOW.height}: x a multiple of ${RUN_WINDOW.xStep}, y a multiple of ${RUN_WINDOW.yStep} (the producer's offset check).`}
-          {rateSummary(cameraGeometry) && <span> {rateSummary(cameraGeometry)}</span>}
+          {cameraGeometry.overview && !roiOverlay && !instrumentModes && <span data-testid="roi-overlay-hint"> The ROI box is hidden: switch ROI Overlay on to see and drag it.</span>}
         </div>
       )}
       <div className="canvas-wrap">

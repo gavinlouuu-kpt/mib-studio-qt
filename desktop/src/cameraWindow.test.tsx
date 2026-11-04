@@ -260,8 +260,8 @@ describe("the eGrabber box on the Overview", () => {
     expect(api.window?.x).toBe(368);
   });
 
-  it("keeps the Aravis / MindVision behaviour: the explicit save writes the ROI and edits do not auto-save", async () => {
-    geometryRef.current = geometry({ camera: "mindvision", roi: { x: 100, y: 120, width: 256, height: 128 } } as Partial<CameraGeometry>);
+  it("keeps the Aravis behaviour: the explicit save writes the ROI and edits do not auto-save", async () => {
+    geometryRef.current = geometry({ camera: "aravis", roi: { x: 100, y: 120, width: 256, height: 128 } } as Partial<CameraGeometry>);
     await act(async () => root.render(<Harness instrumentModes={false} />));
     act(() => api.showDefault(geometryRef.current!));
     act(() => api.edit("width", 300));
@@ -270,5 +270,124 @@ describe("the eGrabber box on the Overview", () => {
     expect(saveCameraWindow).not.toHaveBeenCalled();
     await act(async () => { await api.save(api.windowRef.current!); });
     expect(saveCameraRoi).toHaveBeenCalledTimes(1);
+  });
+
+});
+
+
+// ---- the MindVision window (#863 A2, CONNECT-049 / 051): saved on every change, restored when refused, mirrored ----
+const mindvision = (over: Partial<CameraGeometry> = {}): CameraGeometry => ({
+  supported: true, overview: true, camera: "mindvision", sensor_width: 816, sensor_height: 624, min_width: 16, min_height: 4,
+  width_increment: 1, height_increment: 1, offset_x_increment: 1, offset_y_increment: 1,
+  roi: { x: 100, y: 120, width: 256, height: 128 }, session: {}, flip_horizontal: false, flip_vertical: false, ...over,
+} as CameraGeometry);
+
+describe("the MindVision box on the Overview", () => {
+  beforeEach(() => { vi.useFakeTimers(); saveCameraRoi.mockClear(); saveCameraRoi.mockImplementation(async () => ({ ok: true, message: "ROI saved" })); });
+  afterEach(() => { vi.useRealTimers(); });
+  const open = async (g: CameraGeometry, overlay?: { current: boolean }) => {
+    geometryRef.current = g;
+    await act(async () => root.render(<MvHarness overlay={overlay} />));
+    act(() => api.showDefault(g));
+  };
+  function MvHarness({ overlay }: { overlay?: { current: boolean } }) {
+    api = useCameraWindow({ instrumentModes: false, geometryRef, expActive: false, append: (l) => log.push(l), refreshGeometry: async () => { refreshed++; }, overlayRef: overlay });
+    return null;
+  }
+
+  it("saves a W/H edit on its own after a short pause (Qt saves on every change), clamped to the sensor", async () => {
+    await open(mindvision());
+    act(() => api.edit("width", 900)); // beyond the 816 px sensor
+    expect(saveCameraRoi).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(WINDOW_SAVE_DELAY_MS + 50); });
+    expect(saveCameraRoi).toHaveBeenCalledTimes(1);
+    expect(saveCameraRoi).toHaveBeenCalledWith(0, 120, 816, 128); // size to the sensor, the offset pulled back to fit
+    expect(api.window).toEqual({ x: 0, y: 120, width: 816, height: 128 });
+    expect(api.notice).toBeNull();
+  });
+
+  it("puts the old window back and keeps 'ROI was not saved: <reason>' until a save works", async () => {
+    await open(mindvision());
+    saveCameraRoi.mockImplementationOnce(async () => ({ ok: false, message: "ROI is outside the camera sensor bounds" }));
+    act(() => api.edit("height", 200));
+    await act(async () => { await vi.advanceTimersByTimeAsync(WINDOW_SAVE_DELAY_MS + 50); });
+    expect(saveCameraRoi).toHaveBeenCalledWith(100, 120, 256, 200);
+    expect(api.window).toEqual({ x: 100, y: 120, width: 256, height: 128 }); // restored
+    expect(api.notice).toEqual({ level: "error", text: "ROI was not saved: ROI is outside the camera sensor bounds" });
+    expect(log.join(" ")).toContain("Camera ROI not saved: ROI is outside the camera sensor bounds");
+    // the line stays while the operator changes nothing, and goes with the next successful save
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(api.notice?.text).toContain("ROI was not saved");
+    act(() => api.edit("height", 160));
+    await act(async () => { await vi.advanceTimersByTimeAsync(WINDOW_SAVE_DELAY_MS + 50); });
+    expect(api.window).toEqual({ x: 100, y: 120, width: 256, height: 160 });
+    expect(api.notice).toBeNull();
+    // and the window restored next time is the one just saved, not the first one
+    saveCameraRoi.mockImplementationOnce(async () => ({ ok: false, message: "no" }));
+    act(() => api.edit("height", 20));
+    await act(async () => { await vi.advanceTimersByTimeAsync(WINDOW_SAVE_DELAY_MS + 50); });
+    expect(api.window?.height).toBe(160);
+  });
+
+  it("restores the old window when the drag's save is refused as well, and when the call itself fails", async () => {
+    await open(mindvision());
+    saveCameraRoi.mockImplementationOnce(async () => { throw new Error("backend gone"); });
+    act(() => api.onPointerDown(fakeEvent(150, 150)));
+    act(() => api.onPointerMove(fakeEvent(170, 170)));
+    await act(async () => api.onPointerUp());
+    expect(api.window).toEqual({ x: 100, y: 120, width: 256, height: 128 });
+    expect(api.notice?.text).toBe("ROI was not saved: Error: backend gone");
+  });
+
+  it("mirrors the box and the drag direction for a profile that flips the image, and stores sensor coordinates", async () => {
+    await open(mindvision({ flip_horizontal: true, flip_vertical: false }));
+    // stored x 100, width 256 on an 816 px sensor: drawn at 816 - 256 - 100 = 460..716
+    act(() => api.onPointerDown(fakeEvent(150, 150)));          // where the unmirrored box would be: not grabbed
+    await act(async () => api.onPointerUp());
+    expect(saveCameraRoi).not.toHaveBeenCalled();
+    act(() => api.onPointerDown(fakeEvent(500, 150)));          // inside the drawn box
+    act(() => api.onPointerMove(fakeEvent(540, 160)));          // 40 px right, 10 down: the stored x goes down, y goes down
+    expect(api.window).toEqual({ x: 60, y: 130, width: 256, height: 128 });
+    await act(async () => api.onPointerUp());
+    expect(saveCameraRoi).toHaveBeenCalledWith(60, 130, 256, 128);
+  });
+
+  it("mirrors vertically too, and does not move a box that is pressed on its mirrored side only", async () => {
+    await open(mindvision({ flip_horizontal: true, flip_vertical: true }));
+    // y: 624 - 128 - 120 = 376..504
+    act(() => api.onPointerDown(fakeEvent(500, 400)));
+    act(() => api.onPointerMove(fakeEvent(480, 380)));          // 20 left, 20 up: stored x +20, stored y +20
+    expect(api.window).toEqual({ x: 120, y: 140, width: 256, height: 128 });
+    await act(async () => api.onPointerUp());
+  });
+
+  it("is not grabbed while the ROI overlay is off", async () => {
+    const overlay = { current: false };
+    await open(mindvision(), overlay);
+    act(() => api.onPointerDown(fakeEvent(150, 150)));
+    act(() => api.onPointerMove(fakeEvent(190, 150)));
+    await act(async () => api.onPointerUp());
+    expect(saveCameraRoi).not.toHaveBeenCalled();
+    expect(api.window?.x).toBe(100);
+    overlay.current = true;
+    act(() => api.onPointerDown(fakeEvent(150, 150)));
+    act(() => api.onPointerMove(fakeEvent(190, 150)));
+    await act(async () => api.onPointerUp());
+    expect(saveCameraRoi).toHaveBeenCalledWith(140, 120, 256, 128);
+  });
+
+  it("follows the profile's window when it changes in the backend, unless an edit is in progress", async () => {
+    await open(mindvision());
+    const gen = api.saveGeneration();
+    act(() => api.syncFromGeometry(mindvision({ roi: { x: 300, y: 200, width: 512, height: 96 } }), gen));
+    expect(api.window).toEqual({ x: 300, y: 200, width: 512, height: 96 });
+    act(() => api.edit("x", 310));
+    act(() => api.syncFromGeometry(mindvision({ roi: { x: 10, y: 10, width: 512, height: 96 } }), api.saveGeneration()));
+    expect(api.window?.x).toBe(310);
+    await act(async () => api.flush());
+    expect(api.window?.x).toBe(304); // saved, kept on the 816 px sensor
+    // an unreadable profile has no window: the box stays
+    act(() => api.syncFromGeometry(mindvision({ roi: { x: 0, y: 0, width: 0, height: 0 }, profile_error: "Cannot read" }), api.saveGeneration()));
+    expect(api.window?.x).toBe(304);
   });
 });

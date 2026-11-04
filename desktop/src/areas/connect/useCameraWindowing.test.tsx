@@ -2,14 +2,14 @@
 // #863 (CONNECT-053, App.tsx:1096): the Overview polls the Recording capacity once a second with the camera
 // window box as the planned window, keeps the last view while the backend is busy, stops during an
 // experiment; and a geometry the backend cannot give is an error line, not a silent null.
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CameraGeometry, RecordingCapacity } from "../../bridge";
+import type { CameraGeometry, CameraSelection, RecordingCapacity } from "../../bridge";
 import { NO_SOURCES } from "./cameraStage";
 
 const bridgeMock = vi.hoisted(() => ({
-  fetchCameraGeometry: vi.fn(), fetchRecordingCapacity: vi.fn(), fetchRunFps: vi.fn(), saveCameraWindow: vi.fn(),
+  fetchCameraGeometry: vi.fn(), fetchRecordingCapacity: vi.fn(), fetchRunFps: vi.fn(), saveCameraWindow: vi.fn(), fetchFrame: vi.fn(),
 }));
 vi.mock("../../bridge", () => ({ bridge: bridgeMock }));
 vi.mock("../../transport", () => ({ invoke: vi.fn() }));
@@ -37,6 +37,8 @@ function Harness({ tab, expActive = false, hostProcessing = true, instrumentMode
     setCameraGeometry: (g: CameraGeometry | null) => { if (g) geometries.push(g); }, setRunFpsStatus: () => undefined, expActive,
     scriptSourcesRef: { current: NO_SOURCES }, setGeometryError: (text: string) => geometryErrors.push(text),
     setCapacity: (view: RecordingCapacity | null) => { if (view) capacities.push(view); },
+    camSelection: null, roiOverlay: false, setRoiOverlay: () => undefined, roiOverlayRef: { current: false },
+    framePulls: { current: { request: () => undefined } },
   } as never);
   return null;
 }
@@ -131,5 +133,70 @@ describe("a geometry the backend cannot give (App.tsx:1096 swallowed it)", () =>
     bridgeMock.fetchCameraGeometry.mockRejectedValue(new Error("backend busy"));
     await act(async () => { await windowing!.refreshCameraGeometry(); });
     expect(log.length).toBe(2); // a new failure after a good read is logged again
+  });
+});
+
+
+// ---- CONNECT-047: the Overview's ROI Overlay toggle ----
+const selected = (over: Partial<CameraSelection> = {}): CameraSelection => ({
+  valid: true, configured: true, mode: 2, running: false, interface_index: 0, device_index: 0, label: "MC2066", mindvision_index: -1,
+  mindvision_config_path: "", camera_script_path: "", mock_frame_dir: "", mock_interval_ms: 0, mock_loop: false, ...over,
+});
+let overlayRef: { current: boolean }, overlayOn: boolean, pulls: string[];
+function OverlayHarness({ selection, instrumentModes = false }: { selection: CameraSelection | null; instrumentModes?: boolean }) {
+  const [on, setOn] = useState(false);
+  overlayOn = on;
+  windowing = useCameraWindowing({
+    ready: true, tab: "overview" as never, hostProcessing: true, instrumentModes, append: (line: string) => log.push(line),
+    cameraGeometryRef: geometryRef, cameraWindowRef: windowRef, refreshCameraGeometryRef: { current: async () => undefined },
+    setCameraGeometry: () => undefined, setRunFpsStatus: () => undefined, expActive: false, scriptSourcesRef: { current: NO_SOURCES },
+    setGeometryError: () => undefined, setCapacity: () => undefined, camSelection: selection, roiOverlay: on, setRoiOverlay: setOn, roiOverlayRef: overlayRef,
+    framePulls: { current: { request: (id: string) => pulls.push(id) } },
+  } as never);
+  return null;
+}
+const renderOverlay = async (props: { selection: CameraSelection | null; instrumentModes?: boolean }) => { await act(async () => { root.render(<OverlayHarness {...props} />); }); };
+
+describe("the ROI Overlay (CONNECT-047)", () => {
+  beforeEach(() => { overlayRef = { current: false }; pulls = []; });
+
+  it("is off with no camera, switches on when a camera is connected, and stays as the operator left it on the next polls", async () => {
+    await renderOverlay({ selection: null });
+    expect(overlayOn).toBe(false);
+    expect(overlayRef.current).toBe(false);
+    await renderOverlay({ selection: selected({ configured: false }) });
+    expect(overlayOn).toBe(false);
+    await renderOverlay({ selection: selected() });
+    expect(overlayOn).toBe(true);
+    expect(overlayRef.current).toBe(true);        // what draw() and the drag read
+    await act(async () => { windowing!.toggleRoiOverlay(); });
+    expect(overlayOn).toBe(false);
+    expect(overlayRef.current).toBe(false);
+    await renderOverlay({ selection: selected({ running: true }) });  // the poll after Start Camera: the same camera
+    expect(overlayOn).toBe(false);
+    await renderOverlay({ selection: selected({ running: true, device_index: 1, label: "MC2067" }) }); // another camera
+    expect(overlayOn).toBe(true);
+  });
+
+  it("keeps the choice when the camera disconnects", async () => {
+    await renderOverlay({ selection: selected() });
+    await renderOverlay({ selection: null });
+    expect(overlayOn).toBe(true);
+    await act(async () => { windowing!.toggleRoiOverlay(); });
+    await renderOverlay({ selection: null });
+    expect(overlayOn).toBe(false);
+  });
+
+  it("asks for the last frame when it is toggled, so a stopped camera shows the box at once", async () => {
+    await renderOverlay({ selection: selected() });
+    expect(pulls).toEqual([]);
+    await act(async () => { windowing!.toggleRoiOverlay(); });
+    expect(pulls).toEqual(["live"]);
+  });
+
+  it("always shows the PZ7035's Run window: there is no toggle for it", async () => {
+    await renderOverlay({ selection: null, instrumentModes: true });
+    expect(overlayOn).toBe(false);
+    expect(overlayRef.current).toBe(true);
   });
 });

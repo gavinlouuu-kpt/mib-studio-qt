@@ -22,8 +22,10 @@ import {
   isEgrabber, NO_SOURCES, resolveExperimentScript, runEgrabberStage, runOverviewAutoStart,
   type ScriptSources, type StageIo, type StageName, type StageNotice,
 } from "./cameraStage";
+import { roiSummary } from "./overviewInfo";
 import { ensureOverviewDefault } from "./overviewScript";
 import type { OverviewScriptModel } from "./useOverviewScript";
+import { connectedCameraKey, overlaySwitchesOn } from "./roiOverlay";
 
 export function useConnectState() {
   const [running, setRunning] = useState(false);
@@ -65,6 +67,10 @@ export function useConnectState() {
   const [geometryError, setGeometryError] = useState("");
   const [capacity, setCapacity] = useState<RecordingCapacity | null>(null);
   const scriptSourcesRef = useRef<ScriptSources>(NO_SOURCES);
+  // The Overview's "ROI Overlay: On/Off" (Qt roiOverlayBtn, #863 CONNECT-047): off until a camera is connected. The ref is what the
+  // preview's draw() and the drag read (effective visibility, set in useCameraWindowing); PZ7035 always shows its Run window.
+  const [roiOverlay, setRoiOverlay] = useState(false);
+  const roiOverlayRef = useRef(false);
   return {
     running, setRunning, camStatus, setCamStatus, connectTab, setConnectTab,
     discovery, setDiscovery, camSelection, setCamSelection, pickedDevice, setPickedDevice,
@@ -73,6 +79,7 @@ export function useConnectState() {
     cameraGeometry, setCameraGeometry, cameraGeometryRef, cameraWindowRef, refreshCameraGeometryRef,
     modeError, setModeError, modeRetry, setModeRetry, runFpsStatus, setRunFpsStatus,
     stageNotice, setStageNotice, geometryError, setGeometryError, capacity, setCapacity, scriptSourcesRef,
+    roiOverlay, setRoiOverlay, roiOverlayRef,
   };
 }
 export type ConnectState = ReturnType<typeof useConnectState>;
@@ -217,8 +224,8 @@ export type CameraConnectionModel = ReturnType<typeof useCameraConnection>;
 
 type WindowingDeps = Pick<ShellState, "ready" | "tab" | "hostProcessing" | "instrumentModes" | "append">
   & Pick<ConnectState, "cameraGeometryRef" | "cameraWindowRef" | "refreshCameraGeometryRef" | "setCameraGeometry" | "setRunFpsStatus"
-    | "scriptSourcesRef" | "setGeometryError" | "setCapacity">
-  & Pick<MonitoringState, "expActive">;
+    | "scriptSourcesRef" | "setGeometryError" | "setCapacity" | "camSelection" | "roiOverlay" | "setRoiOverlay" | "roiOverlayRef">
+  & Pick<PreviewState, "framePulls"> & Pick<MonitoringState, "expActive">;
 
 /** Whether a script file can be read: an existing .js file the camera document command opens. */
 export async function scriptExists(path: string): Promise<boolean> {
@@ -233,10 +240,12 @@ export async function scriptExists(path: string): Promise<boolean> {
 // The camera window (ROI 1 on the full sensor), the Recording capacity of the next run and the PZ7035 Run frame rate.
 export function useCameraWindowing({
   ready, tab, hostProcessing, instrumentModes, append, cameraGeometryRef, cameraWindowRef, refreshCameraGeometryRef, setCameraGeometry,
-  setRunFpsStatus, expActive, scriptSourcesRef, setGeometryError, setCapacity,
+  setRunFpsStatus, expActive, scriptSourcesRef, setGeometryError, setCapacity, camSelection, roiOverlay, setRoiOverlay, roiOverlayRef, framePulls,
 }: WindowingDeps) {
+  // The box is drawn and grabbed only while the overlay is on; the PZ7035 has no toggle and always shows its Run window.
+  roiOverlayRef.current = instrumentModes || roiOverlay;
   const cameraWin = useCameraWindow({
-    instrumentModes, geometryRef: cameraGeometryRef, expActive, append, windowRef: cameraWindowRef,
+    instrumentModes, geometryRef: cameraGeometryRef, expActive, append, windowRef: cameraWindowRef, overlayRef: roiOverlayRef,
     refreshGeometry: () => refreshCameraGeometryRef.current(),
     // An eGrabber window is written into the Experiment script (#846): the operator's current choice.
     resolveScriptPath: async () => (await resolveExperimentScript(scriptSourcesRef.current, scriptExists))?.path ?? "",
@@ -292,7 +301,20 @@ export function useCameraWindowing({
     const id = window.setInterval(() => void refreshRunFps(), 3000);
     return () => window.clearInterval(id);
   }, [ready, instrumentModes, refreshRunFps]);
-  return { cameraWin, cameraWindow, setCameraWindow, refreshCameraGeometry };
+  // CONNECT-047: connecting a camera switches the overlay on, once per camera (Qt: ConnectTab::connected).
+  const connectedKey = connectedCameraKey(camSelection);
+  const lastConnectedKey = useRef("");
+  useEffect(() => {
+    const previous = lastConnectedKey.current;
+    lastConnectedKey.current = connectedKey;
+    if (overlaySwitchesOn(previous, connectedKey)) setRoiOverlay(true);
+  }, [connectedKey]);
+  const toggleRoiOverlay = useCallback(() => {
+    setRoiOverlay((on) => !on);
+    // The box is painted with the frame: pull the last one so a stopped camera shows the change at once.
+    framePulls.current.request("live", bridge.fetchFrame, false);
+  }, []);
+  return { cameraWin, cameraWindow, setCameraWindow, refreshCameraGeometry, toggleRoiOverlay };
 }
 export type CameraWindowingModel = ReturnType<typeof useCameraWindowing>;
 
@@ -436,14 +458,15 @@ export function syncScriptSources({ scriptSourcesRef, cameraScript, scriptDocume
 }
 
 type ConnectModelDeps = Pick<ShellState, "ready" | "caps" | "instrument" | "pz7035" | "instrumentModes">
-  & Pick<ConnectState, "camSelection" | "running" | "alignImage"> & Pick<ConfigState, "coreStatus" | "stats">
+  & Pick<ConnectState, "camSelection" | "running" | "alignImage" | "cameraGeometry"> & Pick<CameraWindowingModel, "cameraWindow">
+  & Pick<ConfigState, "coreStatus" | "stats">
   & Pick<HardwareState, "afStatus" | "samplePump" | "sheathPump" | "trigStatus">
   & Pick<PreviewState, "backgroundSet" | "roiFields" | "lastMeta"> & CoresModel & Pick<CameraSetupModel, "cameraScript">;
 
 // Render-time values: the Start Camera gate, the UX-3 preflight checklist and the UX-4 quality gates.
 export function connectModel({
   ready, caps, instrument, pz7035, instrumentModes, camSelection, running, alignImage, coreStatus, stats, afStatus,
-  samplePump, sheathPump, trigStatus, backgroundSet, roiFields, lastMeta, cores, cameraScript,
+  samplePump, sheathPump, trigStatus, backgroundSet, roiFields, lastMeta, cores, cameraScript, cameraGeometry, cameraWindow,
 }: ConnectModelDeps) {
   const cameraConfigured = camSelection?.configured ?? false;
   const startCameraReason = cores.appUpdateBusy ? "Application update is pending" : cameraScript.busy ? "Camera setup is in progress" : !ready
@@ -516,7 +539,9 @@ export function connectModel({
       : undefined,
   };
   const quality = deriveQualityGates(qualityInput);
-  return { cameraConfigured, startCameraReason, preflight, qualityInput, quality };
+  // The "ROI: W x H @ (x, y)" label of the Experiment header follows the Overview rectangle (Qt roiLabel_, CONNECT-064).
+  const roi = roiSummary({ geometry: cameraGeometry, window: cameraWindow, instrumentModes, processing: roiFields });
+  return { cameraConfigured, startCameraReason, preflight, qualityInput, quality, roiSummaryText: roi.text, roiSummaryTitle: roi.title };
 }
 export type ConnectModel = ReturnType<typeof connectModel>;
 

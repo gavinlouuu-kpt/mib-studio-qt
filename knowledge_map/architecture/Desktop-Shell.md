@@ -350,7 +350,7 @@ errors and save results are lines in the Overview (`CameraStageNotice`). The Ove
 backend's Recording capacity (`fetch_recording_capacity` once a second with the box as the planned window,
 frozen during an experiment; `recordingCapacity.ts`, `RecordingCapacityPanel.tsx`).
 
-### Overview script editor (#863 A2)
+### Overview script, ROI overlay and MindVision details (#863 A2)
 
 - **Overview script editor** (`OverviewScriptEditor.tsx`, state in `useOverviewScript.ts`, rules in
   `overviewScript.ts`; Qt `OverviewTab` `onReloadJs`/`onSaveJs`/`onApplyJs`/`onBrowseJs`/`onClearJs`): a text
@@ -369,6 +369,21 @@ frozen during an experiment; `recordingCapacity.ts`, `RecordingCapacityPanel.tsx
   change applies the file the operator edits. The whole area is hidden for a MindVision camera (Qt hides it).
   Config > Camera script (`cameraScript.tsx`) is unchanged and still points a MindVision camera to the JSON
   editor below it, which is true there.
+- **ROI Overlay** (`roiOverlay.ts`, `useCameraWindowing`): "ROI Overlay: Off/On", off until a camera is
+  connected (a new valid, configured selection switches it on once; the operator's choice survives polls).
+  `roiOverlayRef` is what `usePreview.ts` `draw()` and the drag read: off = no box and no grab (Qt). The
+  PZ7035 has no toggle and always shows its Run window.
+- **MindVision** (`cameraAlignment.ts` `mirrorOf`/`displayedWindow`/`dragStoredWindow`, `overviewInfo.ts`): the
+  geometry carries the profile's `flip_horizontal`/`flip_vertical` (via `readMindVisionOverviewProfile`) and the
+  box and drag direction are mirrored as `SimpleImageCanvas::setRoiTransform` does, the stored offset staying in
+  sensor coordinates. W/H have the SDK minimum..sensor limits in steps of 1 and save after each change
+  (`useCameraWindow.edit`, same pause as eGrabber); a refused save puts the old window back and keeps "ROI
+  was not saved: <reason>" (`cameraWin.notice`) until a save works. The mode label is Qt's: "[Trigger: 400 Hz | ]Full
+  sensor overview | Capture: N fps | Display: up to D fps. Drag the ROI for the experiment." (`capture_fps`
+  from the geometry, D the preview limit), or the profile error.
+- **ROI summary:** the Experiment header's "ROI: W × H @ (x, y)" shows the Overview rectangle (Qt
+  `roiLabel_`); without a camera window it is the processing ROI as before, which is also given in the tooltip.
+  The Overview rectangle does not set the processing ROI (see the recent note for why).
 
 ## Command layer
 

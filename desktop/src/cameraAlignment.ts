@@ -4,6 +4,45 @@ import type {CameraGeometry} from "./bridge";
 
 export interface Rect {x: number; y: number; width: number; height: number}
 
+/** The ISP mirroring a MindVision profile applies to the image (the profile's flip_horizontal / flip_vertical). */
+export interface Mirror {flipHorizontal: boolean; flipVertical: boolean}
+export const NO_MIRROR: Mirror = {flipHorizontal: false, flipVertical: false};
+
+/** The mirroring of the selected camera's image: only a MindVision geometry carries it. */
+export function mirrorOf(g: Pick<CameraGeometry, "camera" | "flip_horizontal" | "flip_vertical"> | null | undefined): Mirror {
+  if (g?.camera !== "mindvision" || (!g.flip_horizontal && !g.flip_vertical)) return NO_MIRROR;
+  return {flipHorizontal: !!g.flip_horizontal, flipVertical: !!g.flip_vertical};
+}
+
+/** Where the stored window is drawn on the live image (Qt SimpleImageCanvas::displayedRoiPosition, set up by
+ *  setRoiTransform). The window is stored in sensor coordinates, as the camera takes it; the camera mirrors the
+ *  image it delivers, so the box is mirrored across the image to sit on the same pixels. The mirror is its own
+ *  inverse: the same call turns a displayed window back into the stored one. */
+export function displayedWindow(stored: Rect, image: {width: number; height: number}, mirror: Mirror): Rect {
+  return {
+    ...stored,
+    x: mirror.flipHorizontal ? image.width - stored.width - stored.x : stored.x,
+    y: mirror.flipVertical ? image.height - stored.height - stored.y : stored.y,
+  };
+}
+
+/** The stored window after the pointer moved by `delta` image pixels (Qt SimpleImageCanvas::mouseMoveEvent): on a
+ *  mirrored axis the box moves on the screen with the pointer, so its stored offset moves the other way. The
+ *  caller snaps and clamps the result. */
+export function dragStoredWindow(start: Rect, delta: {x: number; y: number}, mirror: Mirror): Rect {
+  return {
+    ...start,
+    x: start.x + (mirror.flipHorizontal ? -delta.x : delta.x),
+    y: start.y + (mirror.flipVertical ? -delta.y : delta.y),
+  };
+}
+
+/** Whether an image point lies inside the box as it is drawn (the drag starts only on the box). */
+export function pointInDisplayedWindow(point: {x: number; y: number}, stored: Rect, image: {width: number; height: number}, mirror: Mirror): boolean {
+  const box = displayedWindow(stored, image, mirror);
+  return point.x >= box.x && point.y >= box.y && point.x <= box.x + box.width && point.y <= box.y + box.height;
+}
+
 const snap = (value: number, step: number) => Math.round(value / Math.max(1, step)) * Math.max(1, step);
 
 /** The window the Qt Overview starts from when an eGrabber script says nothing
@@ -93,6 +132,7 @@ export function snapRunWindow(rect: Pick<Rect, "x" | "y">): Rect {
  *  in steps of 4; the offsets in their own steps and on the sensor). Undefined for the other cameras, whose boxes
  *  keep the browser's defaults. */
 export function windowInputLimits(g: CameraGeometry, key: keyof Rect, window: Rect | null): {min: number; max: number; step: number} | undefined {
+  if (g.camera === "mindvision") return mindVisionInputLimits(g, key, window);
   if (g.camera !== "egrabber") return undefined;
   const sw = g.sensor_width > 0 ? g.sensor_width : 1920, sh = g.sensor_height > 0 ? g.sensor_height : 1080;
   switch (key) {
@@ -100,6 +140,18 @@ export function windowInputLimits(g: CameraGeometry, key: keyof Rect, window: Re
     case "height": return {min: g.min_height, max: Math.max(g.min_height, floorTo(sh, g.height_increment)), step: g.height_increment};
     case "x": return {min: 0, max: floorTo(Math.max(0, sw - (window?.width ?? g.min_width)), g.offset_x_increment), step: g.offset_x_increment};
     default: return {min: 0, max: floorTo(Math.max(0, sh - (window?.height ?? g.min_height)), g.offset_y_increment), step: g.offset_y_increment};
+  }
+}
+
+/** Qt's MindVision spin boxes (OverviewTab::updateMindVisionBounds): the SDK's minimum size up to the sensor (65535 while the
+ *  sensor is not known yet), in steps of 1 because the SDK reports no increment; the offsets keep the window on the sensor. */
+function mindVisionInputLimits(g: CameraGeometry, key: keyof Rect, window: Rect | null): {min: number; max: number; step: number} {
+  const sw = g.sensor_width > 0 ? g.sensor_width : 65535, sh = g.sensor_height > 0 ? g.sensor_height : 65535;
+  switch (key) {
+    case "width": return {min: Math.max(1, g.min_width), max: sw, step: 1};
+    case "height": return {min: Math.max(1, g.min_height), max: sh, step: 1};
+    case "x": return {min: 0, max: Math.max(0, sw - (window?.width ?? 0)), step: 1};
+    default: return {min: 0, max: Math.max(0, sh - (window?.height ?? 0)), step: 1};
   }
 }
 
