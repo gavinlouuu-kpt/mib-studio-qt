@@ -35,7 +35,9 @@ namespace backend::review
             auto &v = f.validation;
             v.isValid = !(i == 5 || i == 12 || i == 19 || i == 23);
             v.area = i == 2 ? kNaN : 200.0 + 4.0 * i;
-            v.deformability = i == 7 ? kNaN : 0.02 + 0.003 * i;
+            // k/1000 in one correctly rounded division: 0.02 + 0.003 * i rounds twice on
+            // x86-64 but once where the compiler fuses it (arm64), so the golden reply differed.
+            v.deformability = i == 7 ? kNaN : (20 + 3 * i) / 1000.0;
             v.youngsModulus = (i % 7 == 3) ? kNaN : (i % 7 == 6) ? 0.0 : 1.0 + 0.25 * i;
             v.isTargetGroup = v.isValid && i % 3 == 0;
             v.ringRatio = 0.5;
