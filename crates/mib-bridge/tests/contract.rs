@@ -127,7 +127,8 @@ fn abi_version_is_stable() {
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
     // v45 (#863) fetch_frame_delivery_mode / set_frame_delivery_mode: the Connect stage's delivery mode
-    // (Every Frame / Latest Frame), applied at the next capture start.
+    // (Every Frame / Latest Frame), applied at the next capture start; configure_mock_camera_fps: the
+    // mock camera by frame rate (1 to 10000 fps, whole-microsecond interval).
     assert_eq!(ffi::bridge_abi_version(), 45);
 }
 

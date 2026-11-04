@@ -39,6 +39,7 @@ pub const COMMANDS: &[&str] = &[
     "abi_version",
     "is_initialized",
     "configure_mock",
+    "configure_mock_fps",
     "start_capture",
     "stop_capture",
     "seek_latest",
@@ -220,6 +221,16 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             }
             let a: A = args(value)?;
             crate::configure_mock(state, a.frame_dir, a.frame_interval_ms, a.loop_files).and_then(json)
+        }
+        "configure_mock_fps" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "frameDir")] frame_dir: String,
+                #[serde(rename = "fps")] fps: f64,
+                #[serde(rename = "loopFiles")] loop_files: bool,
+            }
+            let a: A = args(value)?;
+            crate::configure_mock_fps(state, a.frame_dir, a.fps, a.loop_files).and_then(json)
         }
         "start_capture" => crate::start_capture(state).and_then(json),
         "stop_capture" => crate::stop_capture(state).and_then(json),
@@ -1600,6 +1611,18 @@ mod tests {
         let mock = json!({ "frameDir": frames.to_string_lossy(), "frameIntervalMs": 5, "loopFiles": true });
         assert_eq!(json_of("configure_mock", mock.clone())["ok"], json!(true));
 
+        // The mock by frame rate (ABI 45, CONNECT-016): Qt's spin box, 1 to 10000 fps; a rate outside it never reaches the backend.
+        let by_rate = |fps: Value| json!({ "frameDir": frames.to_string_lossy(), "fps": fps, "loopFiles": true });
+        assert_eq!(json_of("configure_mock_fps", by_rate(json!(5000))) ["ok"], json!(true));
+        assert_eq!(json_of("configure_mock_fps", by_rate(json!(1)))["ok"], json!(true));
+        assert_eq!(json_of("configure_mock_fps", by_rate(json!(10000)))["ok"], json!(true));
+        for bad in [json!(0), json!(0.5), json!(10001), json!(-5), json!("fast"), json!(null)] {
+            let e = dispatch(&state, &host, "configure_mock_fps", by_rate(bad.clone())).unwrap_err();
+            assert!(e.starts_with("INVALID_ARGUMENTS") || e.contains("1 to 10000"), "{bad}: {e}");
+        }
+        assert!(dispatch(&state, &host, "configure_mock_fps", json!({ "frameDir": "/x", "loopFiles": true })).unwrap_err().starts_with("INVALID_ARGUMENTS"));
+        assert_eq!(json_of("configure_mock", mock.clone())["ok"], json!(true), "back to the 5 ms mock for the capture below");
+
         // The delivery mode: Every Frame by default; the setter validates and says when it applies.
         let mode = json_of("fetch_frame_delivery_mode", Value::Null);
         assert_eq!((mode["valid"].clone(), mode["mode"].clone(), mode["capturing"].clone()), (json!(true), json!("everyFrame"), json!(false)), "{mode}");
@@ -1615,6 +1638,9 @@ mod tests {
         let refused = json_of("configure_mock", mock.clone());
         assert_eq!(refused["ok"], json!(false), "{refused}");
         assert!(refused["message"].as_str().unwrap().contains("camera is running"), "{refused}");
+        let refused_rate = json_of("configure_mock_fps", by_rate(json!(5000)));
+        assert_eq!(refused_rate["ok"], json!(false), "{refused_rate}");
+        assert!(refused_rate["message"].as_str().unwrap().contains("camera is running"), "{refused_rate}");
         let Err(err) = crate::select_hardware_camera(&state, 0, 0, "EGrabber 0".into()) else { panic!("selecting a camera under a running capture must be refused") };
         assert!(err.starts_with("Stop capture and finalize the experiment"), "{err}");
         let while_running = json_of("set_frame_delivery_mode", json!({ "mode": "everyFrame" }));

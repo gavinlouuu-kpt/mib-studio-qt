@@ -67,6 +67,7 @@ public:
     BridgeCommandResult configure_mock_camera(rust::Str frame_dir,
                                               std::int32_t frame_interval_ms,
                                               bool loop_files);
+    BridgeCommandResult configure_mock_camera_fps(rust::Str frame_dir, double frames_per_second, bool loop_files);
     BridgeCommandResult start_capture();
     BridgeCommandResult stop_capture();
     BridgeCommandResult start_frame_recording(rust::Str file_path);

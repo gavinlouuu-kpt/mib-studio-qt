@@ -1,11 +1,13 @@
 // Connect stage rules (epic #863, B1): the wording is Qt's (ConnectTab.cpp showDiscoveryResults, DeviceInitManager.cpp).
 import { describe, expect, it } from "vitest";
-import type { CameraDiscovery, CameraSelection, DiscoveredCamera, DiscoveredDevice, DiscoveredFramegrabber, DiscoverySnapshot } from "../../bridge";
-import { CAMERA_SELECTION_MODES, DISCOVERY_ERROR_KINDS, DISCOVERY_JOB_STATES } from "../../bridgeContract";
+import type { CameraDiscovery, CameraSelection, CaptureLifecycle, DiscoveredCamera, DiscoveredDevice, DiscoveredFramegrabber, DiscoverySnapshot } from "../../bridge";
+import { CAMERA_SELECTION_MODES, DISCOVERY_ERROR_KINDS, DISCOVERY_JOB_STATES, EXPERIMENT_STATES } from "../../bridgeContract";
 import {
   cameraKey, cameraSourceBlockReason, connectBlockReason, connectedNote, connectStatusLine, discoveryProblemText, discoveryStatusText,
   deviceRows, foundLine, framegrabberKey, isDecidable, NO_PICK, pickedRow, preselectDevices, refreshBlockReason, rowOfSelection,
   selectionSuffix, startupCameraOutcome, SCANNING_TEXT,
+  cameraPhase, defaultMockFolder, loadMockSettings, MOCK_STORAGE_KEY, mockFpsProblem, parseMockFps, saveMockSettings, spaceTogglesCamera,
+  spaceCameraAction, startCameraBlockReason, STOP_WHILE_RECORDING, stopCameraBlockReason,
 } from "./connectFlow";
 
 const cam = (p: Partial<DiscoveredCamera>): DiscoveredCamera => ({
@@ -158,5 +160,141 @@ describe("the startup scan's outcome (CONNECT-025/026)", () => {
     expect(isDecidable(missing)).toBe(true);
     expect(startupCameraOutcome(missing).kind).toBe("none");
     expect(isDecidable(snap({ complete: false, errors: [err("mindvision", DISCOVERY_ERROR_KINDS.MissingSdk), err("egrabber", DISCOVERY_ERROR_KINDS.Timeout)] }))).toBe(false);
+  });
+});
+
+// ---- Start / Stop Camera (B2) ----
+
+const lifecycle = (p: Partial<CaptureLifecycle> = {}): CaptureLifecycle => ({
+  valid: true, state: "idle", generation: "3", camera_ready: false, failure: "none", message: "", failure_generation: "0", ...p,
+});
+
+describe("the camera's phase text (CONNECT-034, Qt CameraController::project)", () => {
+  it("names each lifecycle state", () => {
+    expect(cameraPhase(lifecycle(), true, false)).toMatchObject({ phase: "idle", text: "Camera idle" });
+    expect(cameraPhase(lifecycle({ state: "starting" }), true, false)).toMatchObject({ phase: "starting", text: "Camera starting\u2026" });
+    expect(cameraPhase(lifecycle({ state: "running", camera_ready: true }), true, true)).toMatchObject({ phase: "running", text: "Camera running" });
+    expect(cameraPhase(lifecycle({ state: "stopping" }), true, false)).toMatchObject({ phase: "stopping", text: "Camera stopping\u2026" });
+  });
+  it("a faulted worker, or an idle one whose failure belongs to this session, is 'Camera failed' with the reason", () => {
+    expect(cameraPhase(lifecycle({ state: "faulted", failure: "streamEnded", message: "camera ended its stream" }), true, false))
+      .toEqual({ phase: "failed", text: "Camera failed", failureMessage: "camera ended its stream" });
+    expect(cameraPhase(lifecycle({ failure: "cameraStartFailed", message: "open failed", failure_generation: "3" }), true, false).phase).toBe("failed");
+    // a failure kept from an earlier session is not this one's
+    expect(cameraPhase(lifecycle({ failure: "cameraStartFailed", message: "open failed", failure_generation: "2" }), true, false)).toMatchObject({ phase: "idle", failureMessage: "" });
+    expect(cameraPhase(lifecycle({ state: "faulted", failure: "exception", message: "" }), true, false).failureMessage).toBe("exception");
+  });
+  it("nothing active and no camera chosen is 'Camera not configured'", () => {
+    expect(cameraPhase(lifecycle(), false, false)).toMatchObject({ phase: "notConfigured", text: "Camera not configured" });
+    expect(cameraPhase(lifecycle({ state: "running" }), false, true).phase).toBe("running");
+  });
+  it("without a lifecycle reading the running flag decides", () => {
+    expect(cameraPhase(null, true, true).phase).toBe("running");
+    expect(cameraPhase(null, true, false).phase).toBe("idle");
+    expect(cameraPhase({ ...lifecycle(), valid: false }, false, false).phase).toBe("notConfigured");
+  });
+});
+
+describe("one camera command at a time and why a command is blocked (CONNECT-033/038)", () => {
+  const go = { updateBusy: false, scriptBusy: false, ready: true, configured: true, running: false, phase: "idle" as const, commandInFlight: false };
+  it("Start names its reason in Qt's words", () => {
+    expect(startCameraBlockReason(go)).toBeUndefined();
+    expect(startCameraBlockReason({ ...go, configured: false })).toBe("No camera is configured. Please connect to a camera or configure a mock camera first.");
+    expect(startCameraBlockReason({ ...go, running: true })).toBe("Camera is already running");
+    expect(startCameraBlockReason({ ...go, commandInFlight: true })).toBe("A camera command is already in progress.");
+    expect(startCameraBlockReason({ ...go, phase: "stopping" })).toBe("The camera is still stopping; try again in a moment.");
+    expect(startCameraBlockReason({ ...go, phase: "starting" })).toBe("Camera is starting");
+    expect(startCameraBlockReason({ ...go, updateBusy: true })).toBe("Application update is pending");
+    expect(startCameraBlockReason({ ...go, scriptBusy: true, configured: false })).toBe("Camera setup is in progress");
+    expect(startCameraBlockReason({ ...go, ready: false })).toBe("Backend is not initialized");
+  });
+  it("Stop is blocked during an experiment and while its data is being saved, with the reason", () => {
+    const stop = { running: true, expState: EXPERIMENT_STATES.Idle, commandInFlight: false };
+    expect(stopCameraBlockReason(stop)).toBeUndefined();
+    expect(stopCameraBlockReason({ ...stop, running: false })).toBe("Camera is not running");
+    expect(stopCameraBlockReason({ ...stop, expState: EXPERIMENT_STATES.Failed })).toBeUndefined();
+    expect(stopCameraBlockReason({ ...stop, expState: EXPERIMENT_STATES.Active })).toBe("Cannot stop camera while experiment is active. Please stop the experiment first.");
+    expect(stopCameraBlockReason({ ...stop, expState: EXPERIMENT_STATES.Stopping })).toBe("Cannot stop camera while experiment data is being saved. Wait for the save to finish.");
+    expect(stopCameraBlockReason({ ...stop, expState: EXPERIMENT_STATES.Starting })).toBe("Cannot stop camera while an experiment is starting.");
+    expect(stopCameraBlockReason({ ...stop, commandInFlight: true })).toBe("A camera command is already in progress.");
+  });
+});
+
+describe("the space bar (CONNECT-041)", () => {
+  const ctx = { tab: "overview", expActive: false, ready: true };
+  const space = (over: Record<string, unknown> = {}) => ({ key: " ", code: "Space", target: { tagName: "BODY" }, ...over });
+  it("toggles the camera on the live-view stages when nothing else owns the key", () => {
+    expect(spaceTogglesCamera(space(), ctx)).toBe(true);
+    expect(spaceTogglesCamera(space(), { ...ctx, tab: "experiment" })).toBe(true);
+    expect(spaceTogglesCamera(space({ target: null }), ctx)).toBe(true);
+    expect(spaceTogglesCamera(space({ key: "Spacebar", code: "Space" }), ctx)).toBe(true);
+    expect(spaceTogglesCamera(space({ target: { tagName: "DIV", role: "presentation" } }), ctx)).toBe(true);
+  });
+  it("never during an experiment, on other stages, or before the backend is ready", () => {
+    expect(spaceTogglesCamera(space(), { ...ctx, expActive: true })).toBe(false);
+    expect(spaceTogglesCamera(space(), { ...ctx, tab: "connect" })).toBe(false);
+    expect(spaceTogglesCamera(space(), { ...ctx, tab: "review" })).toBe(false);
+    expect(spaceTogglesCamera(space(), { ...ctx, ready: false })).toBe(false);
+  });
+  it("not when the focus is in a text field, a button, a list or a dialog", () => {
+    for (const tagName of ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A", "SUMMARY"]) expect(spaceTogglesCamera(space({ target: { tagName } }), ctx), tagName).toBe(false);
+    expect(spaceTogglesCamera(space({ target: { tagName: "DIV", isContentEditable: true } }), ctx)).toBe(false);
+    expect(spaceTogglesCamera(space({ target: { tagName: "DIV", role: "checkbox" } }), ctx)).toBe(false);
+    expect(spaceTogglesCamera(space({ target: { tagName: "DIV", role: "listbox" } }), ctx)).toBe(false);
+    expect(spaceTogglesCamera(space({ target: { tagName: "DIV", inDialog: true } }), ctx)).toBe(false);
+  });
+  it("only a plain, first press of the space bar", () => {
+    expect(spaceTogglesCamera(space({ key: "a", code: "KeyA" }), ctx)).toBe(false);
+    for (const mod of ["ctrlKey", "altKey", "metaKey", "shiftKey", "repeat", "defaultPrevented"]) expect(spaceTogglesCamera(space({ [mod]: true }), ctx), mod).toBe(false);
+  });
+});
+
+describe("what the space bar does (CONNECT-041, decision CONNECT-039)", () => {
+  const idle = { running: false, recording: false, commandInFlight: false };
+  it("starts a stopped camera and stops a running one", () => {
+    expect(spaceCameraAction(idle)).toEqual({ kind: "start" });
+    expect(spaceCameraAction({ ...idle, running: true })).toEqual({ kind: "stop" });
+  });
+  it("says why Start is refused, in Qt's words", () => {
+    expect(spaceCameraAction({ ...idle, startReason: "The camera is still stopping; try again in a moment." }))
+      .toEqual({ kind: "refuse", message: "The camera is still stopping; try again in a moment." });
+  });
+  it("never ends a raw recording: Stop is refused with Qt's text", () => {
+    expect(spaceCameraAction({ ...idle, running: true, recording: true })).toEqual({ kind: "refuse", message: STOP_WHILE_RECORDING });
+    expect(STOP_WHILE_RECORDING).toBe("Cannot stop camera while frame recording is active. Stop recording first.");
+  });
+  it("a press while a command is in flight is ignored, silently", () => {
+    expect(spaceCameraAction({ ...idle, commandInFlight: true, startReason: "x" })).toEqual({ kind: "none" });
+    expect(spaceCameraAction({ ...idle, commandInFlight: true, running: true })).toEqual({ kind: "none" });
+  });
+});
+
+describe("the mock camera dialog's defaults (CONNECT-014/016)", () => {
+  it("the frame rate is fps from 1 to 10000, the rig's 5000 by default", () => {
+    expect(parseMockFps("5000")).toBe(5000);
+    expect(parseMockFps(" 1 ")).toBe(1);
+    expect(parseMockFps("10000")).toBe(10000);
+    expect(parseMockFps("33.5")).toBe(33.5);
+    for (const bad of ["", "  ", "0", "0.5", "10001", "-3", "abc", "NaN", "Infinity"]) expect(parseMockFps(bad), bad).toBeNull();
+    expect(mockFpsProblem("5000")).toBeUndefined();
+    expect(mockFpsProblem("0")).toBe("Frame rate must be 1 to 10000 fps");
+  });
+  it("the folder: the one used last time, else the backend's mock folder, else Documents; trimmed", () => {
+    expect(defaultMockFolder(" /last ", "/backend", "/docs")).toBe("/last");
+    expect(defaultMockFolder("", " /backend ", "/docs")).toBe("/backend");
+    expect(defaultMockFolder("  ", "", " /docs ")).toBe("/docs");
+    expect(defaultMockFolder("", "", "")).toBe("");
+  });
+  it("is remembered across sessions, trimmed, and a bad stored value is ignored", () => {
+    const store = new Map<string, string>();
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
+    expect(loadMockSettings(storage)).toEqual({});
+    expect(saveMockSettings(storage, { dir: "  /frames ", fps: " 2500 ", loop: false })).toBe(true);
+    expect(loadMockSettings(storage)).toEqual({ dir: "/frames", fps: "2500", loop: false });
+    store.set(MOCK_STORAGE_KEY, JSON.stringify({ dir: 5, fps: "99999", loop: "yes" }));
+    expect(loadMockSettings(storage)).toEqual({});
+    store.set(MOCK_STORAGE_KEY, "{broken");
+    expect(loadMockSettings(storage)).toEqual({});
+    expect(saveMockSettings({ setItem: () => { throw new Error("quota"); } }, { dir: "/x", fps: "1", loop: true })).toBe(false);
   });
 });

@@ -8,7 +8,10 @@
 //    mode, and says when it applies: at the next capture start while a capture runs (the running
 //    capture is never restarted);
 //  - the applied-config provenance follows the mode (a run's method records what ran);
-//  - a configuration apply sets the mode from camera.frame_delivery_mode (missing = Every Frame).
+//  - a configuration apply sets the mode from camera.frame_delivery_mode (missing = Every Frame);
+//  - (B2) the mock camera is configurable by frame rate in whole microseconds (5000 fps = 200 us, CONNECT-016);
+//  - (B2) a Stop whose device teardown is not confirmed is a failed command carrying the camera's message
+//    (CONNECT-040); the experiment-phase refusals are in backend_facade_boundary_test.
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ConfigDocumentApply.h"
@@ -24,6 +27,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <memory>
 #include <thread>
@@ -279,6 +283,75 @@ int main()
         stop.action = CameraCommandAction::StopCapture;
         MIB_REQUIRE(facade.dispatch(stop).ok, "capture stops");
         MIB_EXPECT(facade.dispatch(mock).ok, "the mock is configurable again once stopped");
+    }
+
+    // ---- the mock camera by frame rate (CONNECT-016) ----------------------------------------------
+    {
+        CameraCommand byRate = mock;
+        byRate.mockFrameIntervalMs = 33; // ignored when a rate is given
+        const auto interval = [&](double fps) {
+            byRate.mockFramesPerSecond = fps;
+            MIB_REQUIRE(facade.dispatch(byRate).ok, "mock configured at " + std::to_string(fps) + " fps");
+            return backend.mockFrameIntervalUs();
+        };
+        MIB_EXPECT(interval(5000) == 200, "5000 fps is 200 us, below the 1 ms floor of the millisecond field");
+        MIB_EXPECT(interval(1) == 1'000'000, "1 fps is a second");
+        MIB_EXPECT(interval(30) == 33'333, "30 fps rounds to whole microseconds");
+        MIB_EXPECT(interval(20000) == 100, "the rate clamps to the spin box's 10000 fps");
+        MIB_EXPECT(interval(0.2) == 1'000'000, "the rate clamps to 1 fps");
+        byRate.mockFramesPerSecond = 0; // no rate: the millisecond field, floored at 1 ms
+        byRate.mockFrameIntervalMs = 0;
+        MIB_REQUIRE(facade.dispatch(byRate).ok, "millisecond path");
+        MIB_EXPECT(backend.mockFrameIntervalUs() == 1000, "the millisecond field floors at 1 ms");
+        byRate.mockFramesPerSecond = std::nan("");
+        byRate.mockFrameIntervalMs = 7;
+        MIB_REQUIRE(facade.dispatch(byRate).ok, "NaN rate falls back to the millisecond field");
+        MIB_EXPECT(backend.mockFrameIntervalUs() == 7000, "NaN is not a rate");
+        // the same refusal as the millisecond path
+        byRate.mockFramesPerSecond = 5000;
+        MIB_REQUIRE(facade.dispatch(byRate).ok, "mock at 5000 fps");
+        CameraCommand start;
+        start.action = CameraCommandAction::StartCapture;
+        MIB_REQUIRE(facade.dispatch(start).ok, "capture starts");
+        const auto refused = facade.dispatch(byRate);
+        MIB_EXPECT(!refused.ok && refused.message.find("camera is running") != std::string::npos,
+                   "a rate change is refused while the camera runs: " + refused.message);
+        MIB_EXPECT(backend.mockFrameIntervalUs() == 200, "the refused command changed nothing");
+        CameraCommand stop;
+        stop.action = CameraCommandAction::StopCapture;
+        MIB_REQUIRE(facade.dispatch(stop).ok, "capture stops");
+    }
+
+    // ---- a teardown the device did not confirm (CONNECT-040) ----------------------------------------
+    {
+        mib::test::FakeLifecycleCamera::Observations obs;
+        mib::test::FakeLifecycleCamera::Script script;
+        script.stopFailureCode = "aravis.acquisition_stop";
+        script.stopFailureMessage = "AcquisitionStop was not confirmed by the generator";
+        backend.capture().setCameraFactory([&obs, script]() -> std::unique_ptr<camera::common::ICamera> {
+            return std::make_unique<mib::test::FakeLifecycleCamera>(script, &obs);
+        });
+        CameraCommand start;
+        start.action = CameraCommandAction::StartCapture;
+        MIB_REQUIRE(facade.dispatch(start).ok, "capture starts on the fake camera");
+        MIB_REQUIRE(pollUntil([&] { return backend.capture().isRunning(); }, 5000ms), "fake camera runs");
+        CameraCommand stop;
+        stop.action = CameraCommandAction::StopCapture;
+        const auto failed = facade.dispatch(stop);
+        MIB_EXPECT(!failed.ok && failed.message == "AcquisitionStop was not confirmed by the generator",
+                   "a shutdown failure is a failed command with the camera's message: " + failed.message);
+        MIB_EXPECT(!backend.capture().isRunning(), "the capture is stopped all the same");
+        // a Stop with nothing running is a plain success, not the earlier session's failure again
+        const auto again = facade.dispatch(stop);
+        MIB_EXPECT(again.ok, "Stop with nothing running does not repeat the old failure: " + again.message);
+        // a camera whose teardown is confirmed stops cleanly
+        script.stopFailureCode.clear();
+        backend.capture().setCameraFactory([&obs, script]() -> std::unique_ptr<camera::common::ICamera> {
+            return std::make_unique<mib::test::FakeLifecycleCamera>(script, &obs);
+        });
+        MIB_REQUIRE(facade.dispatch(start).ok, "capture restarts");
+        MIB_REQUIRE(pollUntil([&] { return backend.capture().isRunning(); }, 5000ms), "fake camera runs again");
+        MIB_EXPECT(facade.dispatch(stop).ok, "a confirmed teardown is a successful stop");
     }
 
     facade.shutdown();

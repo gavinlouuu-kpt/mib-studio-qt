@@ -2,11 +2,11 @@
 // which row Connect acts on, why a button is blocked, and what the startup selection found. Pure functions:
 // the wording is Qt's (src/frontend/tabs/ConnectTab.cpp, src/frontend/system/DeviceInitManager.cpp).
 import type {
-  CameraDiscovery, CameraSelection, DiscoveredCamera, DiscoveredFramegrabber, DiscoverySnapshot, FrameDeliveryMode,
+  CameraDiscovery, CameraSelection, CaptureLifecycle, DiscoveredCamera, DiscoveredFramegrabber, DiscoverySnapshot, FrameDeliveryMode,
 } from "../../bridge";
 import {
   CAMERA_SELECTION_MODES, CAMERA_TYPES, DISCOVERY_DEVICE_KINDS, DISCOVERY_ERROR_KINDS,
-  DISCOVERY_IDENTIFICATION_STATUSES, DISCOVERY_JOB_STATES,
+  DISCOVERY_IDENTIFICATION_STATUSES, DISCOVERY_JOB_STATES, EXPERIMENT_STATES,
 } from "../../bridgeContract";
 
 export type DeviceTab = "cameras" | "mindvision" | "framegrabbers";
@@ -228,3 +228,162 @@ export const DELIVERY_MODES: ReadonlyArray<{ value: FrameDeliveryMode; label: st
   { value: "everyFrame", label: "Every Frame (preserves sequence)" },
   { value: "latestFrame", label: "Latest Frame (lowest latency, may drop)" },
 ];
+
+// ---- Start / Stop Camera (B2) ----------------------------------------------------------------------------------------
+
+export type CameraPhase = "idle" | "starting" | "running" | "stopping" | "failed" | "notConfigured";
+export interface CameraPhaseView {
+  phase: CameraPhase;
+  /** Qt's `CameraActionState::phaseText()`. */
+  text: string;
+  /** Why the last session failed, when the lifecycle holds a failure of this session (or the worker faulted). */
+  failureMessage: string;
+}
+
+const PHASE_TEXT: Record<CameraPhase, string> = {
+  idle: "Camera idle", starting: "Camera starting\u2026", running: "Camera running", stopping: "Camera stopping\u2026",
+  failed: "Camera failed", notConfigured: "Camera not configured",
+};
+
+/** Qt `CameraController::project()` over the bridge's capture lifecycle: Idle, Starting, Running, Stopping, Failed (a
+ *  faulted worker, or an idle one whose last failure belongs to this session) and NotConfigured (nothing active and no
+ *  camera chosen). Without a lifecycle reading yet the running flag and the selection decide. */
+export function cameraPhase(lifecycle: CaptureLifecycle | null, configured: boolean, running: boolean): CameraPhaseView {
+  let phase: CameraPhase;
+  if (!lifecycle?.valid) {
+    phase = running ? "running" : "idle";
+  } else {
+    switch (lifecycle.state) {
+      case "starting": phase = "starting"; break;
+      case "running": phase = "running"; break;
+      case "stopping": phase = "stopping"; break;
+      case "faulted": phase = "failed"; break;
+      default: phase = lifecycle.failure !== "none" && lifecycle.failure_generation === lifecycle.generation ? "failed" : "idle";
+    }
+  }
+  const active = phase === "starting" || phase === "running";
+  if (!active && !configured) phase = "notConfigured";
+  const failureMessage = lifecycle?.valid && (phase === "failed" || lifecycle.failure !== "none")
+    ? lifecycle.message || lifecycle.failure : "";
+  return { phase, text: PHASE_TEXT[phase], failureMessage: phase === "failed" ? failureMessage : "" };
+}
+
+/** Why Start Camera cannot be sent now: the shell's own gates, then Qt's (`startEnabled`, `doRequestStart`'s messages). */
+export function startCameraBlockReason(i: {
+  updateBusy: boolean; scriptBusy: boolean; ready: boolean; configured: boolean; running: boolean; phase: CameraPhase; commandInFlight: boolean;
+}): string | undefined {
+  if (i.updateBusy) return "Application update is pending";
+  if (i.scriptBusy) return "Camera setup is in progress";
+  if (!i.ready) return "Backend is not initialized";
+  if (!i.configured) return "No camera is configured. Please connect to a camera or configure a mock camera first.";
+  if (i.running) return "Camera is already running";
+  if (i.commandInFlight) return "A camera command is already in progress.";
+  if (i.phase === "starting") return "Camera is starting";
+  if (i.phase === "stopping") return "The camera is still stopping; try again in a moment.";
+  return undefined;
+}
+
+/** Why Stop Camera cannot be sent now: the camera does not stop underneath an experiment, nor while its data is being
+ *  saved (Qt's operation guard, `CameraController::doRequestStop`). The backend refuses the same cases. */
+export function stopCameraBlockReason(i: { running: boolean; expState: number; commandInFlight: boolean }): string | undefined {
+  if (!i.running) return "Camera is not running";
+  if (i.commandInFlight) return "A camera command is already in progress.";
+  if (i.expState === EXPERIMENT_STATES.Active) return "Cannot stop camera while experiment is active. Please stop the experiment first.";
+  if (i.expState === EXPERIMENT_STATES.Stopping) return "Cannot stop camera while experiment data is being saved. Wait for the save to finish.";
+  if (i.expState === EXPERIMENT_STATES.Starting) return "Cannot stop camera while an experiment is starting.";
+  return undefined;
+}
+
+export interface KeyTarget {
+  tagName: string;
+  isContentEditable?: boolean;
+  role?: string | null;
+  /** Inside a dialog (the no-camera dialog, a modal warning, the mock dialog): the keys belong to it. */
+  inDialog?: boolean;
+}
+export interface SpaceKeyEvent {
+  key: string;
+  code?: string;
+  repeat?: boolean;
+  ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean; shiftKey?: boolean;
+  defaultPrevented?: boolean;
+  target: KeyTarget | null;
+}
+const KEY_OWNERS = new Set(["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A", "SUMMARY", "OPTION"]);
+const KEY_OWNER_ROLES = new Set(["button", "checkbox", "radio", "switch", "tab", "textbox", "combobox", "listbox", "option", "slider", "spinbutton", "menuitem"]);
+
+/** Qt: the space bar in the preview toggles the camera through the same guarded path (#360, CONNECT-041). Only on the
+ *  stages that show the live view, never during an experiment, never while a control that uses the space bar itself
+ *  has the focus (a text field, a button, a checkbox, a list) or a dialog is open. */
+export function spaceTogglesCamera(e: SpaceKeyEvent, ctx: { tab: string; expActive: boolean; ready: boolean }): boolean {
+  if (e.key !== " " && e.code !== "Space") return false;
+  if (e.repeat || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return false;
+  if (!ctx.ready || ctx.expActive || (ctx.tab !== "overview" && ctx.tab !== "experiment")) return false;
+  const t = e.target;
+  if (!t) return true;
+  if (t.isContentEditable || t.inDialog) return false;
+  if (KEY_OWNERS.has(t.tagName.toUpperCase())) return false;
+  if (t.role && KEY_OWNER_ROLES.has(t.role.toLowerCase())) return false;
+  return true;
+}
+
+export const STOP_WHILE_RECORDING = "Cannot stop camera while frame recording is active. Stop recording first.";
+
+export type SpaceAction = { kind: "none" } | { kind: "start" } | { kind: "stop" } | { kind: "refuse"; message: string };
+
+/** What the space bar does once `spaceTogglesCamera` let it through (Qt `CameraController::requestToggle`): stop a running
+ *  camera, start a stopped one, and say why when Start is refused. A second press while a command is in flight is ignored
+ *  (Qt answers it silently). Decision (CONNECT-039): the Stop Camera button finishes a raw recording and then stops, but the
+ *  space bar, which is easy to hit, never ends a take: it is refused with Qt's text. */
+export function spaceCameraAction(i: { running: boolean; recording: boolean; commandInFlight: boolean; startReason?: string }): SpaceAction {
+  if (i.commandInFlight) return { kind: "none" };
+  if (i.running) return i.recording ? { kind: "refuse", message: STOP_WHILE_RECORDING } : { kind: "stop" };
+  return i.startReason ? { kind: "refuse", message: i.startReason } : { kind: "start" };
+}
+
+// ---- Configure Mock Camera (B2) ----------------------------------------------------------------------------------------
+
+export const MOCK_FPS_DEFAULT = 5000; // Qt: the rig's rate
+export const MOCK_FPS_MIN = 1;
+export const MOCK_FPS_MAX = 10000;
+export const MOCK_STORAGE_KEY = "mib.mock-camera.v1";
+
+export interface MockSettings { dir: string; fps: string; loop: boolean }
+
+/** The frame rate typed in the dialog, or null when it is not a number from 1 to 10000. */
+export function parseMockFps(text: string): number | null {
+  if (!text.trim()) return null;
+  const n = Number(text);
+  return Number.isFinite(n) && n >= MOCK_FPS_MIN && n <= MOCK_FPS_MAX ? n : null;
+}
+export const mockFpsProblem = (text: string): string | undefined =>
+  parseMockFps(text) === null ? `Frame rate must be ${MOCK_FPS_MIN} to ${MOCK_FPS_MAX} fps` : undefined;
+
+/** Qt `defaultMockFolder()`: the mock frames next to the app, else Documents. The desktop app ships no mock folder and the
+ *  shell cannot test that a folder exists, so: the folder used last time, else the one the backend's mock holds (the
+ *  MIB_MOCK_CAMERA_DIR source), else Documents. */
+export function defaultMockFolder(remembered: string, backendFolder: string, documents: string): string {
+  return remembered.trim() || backendFolder.trim() || documents.trim();
+}
+
+export function loadMockSettings(storage: Pick<Storage, "getItem">): Partial<MockSettings> {
+  try {
+    const v = JSON.parse(storage.getItem(MOCK_STORAGE_KEY) ?? "null") as Partial<MockSettings> | null;
+    if (!v || typeof v !== "object") return {};
+    return {
+      ...(typeof v.dir === "string" ? { dir: v.dir } : {}),
+      ...(typeof v.fps === "string" && parseMockFps(v.fps) !== null ? { fps: v.fps } : {}),
+      ...(typeof v.loop === "boolean" ? { loop: v.loop } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+export function saveMockSettings(storage: Pick<Storage, "setItem">, settings: MockSettings): boolean {
+  try {
+    storage.setItem(MOCK_STORAGE_KEY, JSON.stringify({ dir: settings.dir.trim(), fps: settings.fps.trim(), loop: settings.loop }));
+    return true;
+  } catch {
+    return false;
+  }
+}

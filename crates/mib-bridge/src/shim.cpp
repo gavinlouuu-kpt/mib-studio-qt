@@ -636,6 +636,23 @@ BridgeCommandResult BackendBridge::configure_mock_camera(rust::Str frame_dir,
     }
 }
 
+// ABI 45 (#863 CONNECT-016): the mock camera's rate in fps (1 to 10000), whole-microsecond interval.
+BridgeCommandResult BackendBridge::configure_mock_camera_fps(rust::Str frame_dir, double frames_per_second,
+                                                             bool loop_files) {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::ConfigureMockCamera;
+        cmd.mockFrameDirectory = toStd(frame_dir);
+        cmd.mockFramesPerSecond = frames_per_second;
+        cmd.mockLoopFiles = loop_files;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) {
+        return errorResult(std::string("configure_mock_camera_fps: ") + e.what());
+    } catch (...) {
+        return errorResult("configure_mock_camera_fps: unknown error");
+    }
+}
+
 BridgeCommandResult BackendBridge::start_capture() {
     try {
         backend::bridge::CameraCommand cmd;

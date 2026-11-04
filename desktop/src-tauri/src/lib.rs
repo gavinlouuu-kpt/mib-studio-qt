@@ -215,6 +215,11 @@ fn startup_discovery_status(state: State<AppState>) -> Result<serde_json::Value,
 }
 
 #[tauri::command]
+fn configure_mock_fps(state: State<AppState>, frame_dir: String, fps: f64, loop_files: bool) -> Result<cmds::CmdResult, String> {
+    cmds::configure_mock_fps(&state, frame_dir, fps, loop_files)
+}
+
+#[tauri::command]
 fn fetch_frame_delivery_mode(state: State<AppState>) -> Result<serde_json::Value, String> {
     cmds::fetch_frame_delivery_mode(&state)
 }
@@ -811,6 +816,7 @@ pub fn run() {
             is_initialized,
             init,
             configure_mock,
+            configure_mock_fps,
             start_capture,
             stop_capture,
             seek_latest,

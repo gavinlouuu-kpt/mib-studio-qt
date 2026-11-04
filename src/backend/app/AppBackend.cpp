@@ -1123,6 +1123,7 @@ namespace backend
                 mockFrameDir_ = options.folder.string();
                 mockIntervalMs_ = static_cast<int>(
                     std::chrono::duration_cast<std::chrono::milliseconds>(options.frameInterval).count());
+                mockIntervalUs_ = options.frameInterval.count();
                 mockLoop_ = options.loopFiles;
                 effectiveCameraSource_ = "mock";
             };
@@ -2431,6 +2432,7 @@ namespace backend
         mockFrameDir_ = options.folder.string();
         mockIntervalMs_ = static_cast<int>(
             std::chrono::duration_cast<std::chrono::milliseconds>(options.frameInterval).count());
+        mockIntervalUs_ = options.frameInterval.count();
         mockLoop_ = options.loopFiles;
     }
 

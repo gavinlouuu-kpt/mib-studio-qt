@@ -4,9 +4,10 @@
 // studio/useStudioController.ts calls these hooks in App.tsx's original effect order.
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  bridge, type CameraDiscovery, type CameraGeometry, type CameraSelection, type FrameDeliveryMode, type FrameDeliveryModeStatus,
+  bridge, type CameraDiscovery, type CameraGeometry, type CameraSelection, type CaptureLifecycle, type FrameDeliveryMode,
+  type FrameDeliveryModeStatus, type RecordingTargetState,
 } from "../../bridge";
-import { PUMP_IDS } from "../../bridgeContract";
+import { CAMERA_SELECTION_MODES, PUMP_IDS } from "../../bridgeContract";
 import { snapRunWindow, type Rect } from "../../cameraAlignment";
 import { runModeBlockReason, useCameraWindow, type CameraModeError } from "../../cameraWindow";
 import { DiscoveryRefusedError } from "../../discovery";
@@ -21,9 +22,14 @@ import type { LiveFramesModel, PreviewState } from "../preview/usePreview";
 import type { ReviewState } from "../review/useReview";
 import type { ShellState, StatePollingModel } from "../shell/useShell";
 import {
-  connectedNote, discoveryProblemText, discoveryStatusText, isClickEvent, MOCK_CONFIGURED_NOTE, NO_PICK, pickedRow, preselectDevices,
-  VANISHED_NOTE, type DeviceTab, type PickedDevices,
+  cameraPhase, connectedNote, defaultMockFolder, rowOfSelection, discoveryProblemText, discoveryStatusText, isClickEvent, loadMockSettings,
+  MOCK_CONFIGURED_NOTE, MOCK_FPS_DEFAULT, NO_PICK, parseMockFps, pickedRow, preselectDevices, saveMockSettings,
+  startCameraBlockReason, stopCameraBlockReason, VANISHED_NOTE, type DeviceTab, type PickedDevices,
 } from "./connectFlow";
+
+// The autofocus staleness the Overview focus gate uses until the configured one is read: the autofocus config's own
+// ring_ratio_stale_ms default (AutofocusService.h; the gate used a hard-coded 1000 before, App.tsx:1306).
+const DEFAULT_FOCUS_STALE_MS = 1500;
 
 export function useConnectState() {
   const [running, setRunning] = useState(false);
@@ -46,12 +52,23 @@ export function useConnectState() {
   // The capture delivery mode (CONNECT-019); the operator's startup auto-select choice (null = not chosen: the default).
   const [deliveryModeStatus, setDeliveryModeStatus] = useState<FrameDeliveryModeStatus | null>(null);
   const [autoSelectStored, setAutoSelectStored] = useState<boolean | null>(() => readAutoSelect(localStorage));
+  // Start / Stop Camera: one command in flight (CONNECT-033) and the capture lifecycle behind the phase text (CONNECT-034).
+  const [cameraCommand, setCameraCommand] = useState<"start" | "stop" | null>(null);
+  const cameraCommandRef = useRef<"start" | "stop" | null>(null);
+  const [lifecycle, setLifecycle] = useState<CaptureLifecycle | null>(null);
+  // What the preflight and the quality gates need from outside the backend's camera state: the camera the active profile was
+  // made for (App.tsx:1237), the data directory's storage on the desktop (preflight.ts:360-363) and the autofocus staleness
+  // the operator configured (App.tsx:1306).
+  const [expectedCamera, setExpectedCamera] = useState("");
+  const [desktopStorage, setDesktopStorage] = useState<RecordingTargetState | null>(null);
+  const [focusStaleMs, setFocusStaleMs] = useState(DEFAULT_FOCUS_STALE_MS);
 
   // Mock camera configuration modal.
   const [showMockConfig, setShowMockConfig] = useState(false);
-  const [frameDir, setFrameDir] = useState("");
-  const [intervalMs, setIntervalMs] = useState("33");
-  const [loopFiles, setLoopFiles] = useState(true);
+  // The dialog's fields start from what the operator used last time (Qt's frame rate default is the rig's 5000 fps).
+  const [frameDir, setFrameDir] = useState(() => loadMockSettings(localStorage).dir ?? "");
+  const [mockFps, setMockFps] = useState(() => loadMockSettings(localStorage).fps ?? String(MOCK_FPS_DEFAULT));
+  const [loopFiles, setLoopFiles] = useState(() => loadMockSettings(localStorage).loop ?? true);
   const liveCanvasRef = useRef<HTMLCanvasElement>(null);
   // ---- Camera & Alignment (ABI 20): the whole sensor and the experiment window on it ----
   // PZ7035 Align (#501): the live frame's focus and brightness in the Run window, with the best
@@ -75,7 +92,9 @@ export function useConnectState() {
     discovery, setDiscovery, camSelection, setCamSelection, pickedDevices, setPickedDevices, scanning, setScanning,
     scanNote, setScanNote, actionNote, setActionNote, noCameraDialog, setNoCameraDialog, cameraNotice, setCameraNotice,
     deliveryModeStatus, setDeliveryModeStatus, autoSelectStored, setAutoSelectStored,
-    showMockConfig, setShowMockConfig, frameDir, setFrameDir, intervalMs, setIntervalMs, loopFiles, setLoopFiles,
+    showMockConfig, setShowMockConfig, frameDir, setFrameDir, mockFps, setMockFps, loopFiles, setLoopFiles,
+    cameraCommand, setCameraCommand, cameraCommandRef, lifecycle, setLifecycle, expectedCamera, setExpectedCamera,
+    desktopStorage, setDesktopStorage, focusStaleMs, setFocusStaleMs,
     liveCanvasRef, alignImage, setAlignImage, alignBestRef, alignImageMs,
     cameraGeometry, setCameraGeometry, cameraGeometryRef, cameraWindowRef, refreshCameraGeometryRef,
     modeError, setModeError, modeRetry, setModeRetry, runFpsStatus, setRunFpsStatus,
@@ -94,19 +113,21 @@ export function useAlignPeakReset({ instrumentModeName, alignBestRef, setAlignIm
 }
 
 type ConnectionDeps = Pick<ShellState, "ready" | "tab" | "setTab" | "append">
-  & Pick<ConnectState, "setDiscovery" | "setCamSelection" | "setShowMockConfig" | "setCamStatus" | "frameDir" | "intervalMs"
-    | "loopFiles" | "pickedDevices" | "setPickedDevices" | "connectTab" | "discovery" | "running" | "setRunning" | "setScanning" | "setScanNote"
-    | "setActionNote" | "setCameraNotice" | "setDeliveryModeStatus">
+  & Pick<ConnectState, "setDiscovery" | "setCamSelection" | "setShowMockConfig" | "showMockConfig" | "setCamStatus" | "frameDir"
+    | "setFrameDir" | "mockFps" | "loopFiles" | "pickedDevices" | "setPickedDevices" | "connectTab" | "discovery" | "camSelection" | "running"
+    | "setRunning" | "setScanning" | "setScanNote" | "setActionNote" | "setCameraNotice" | "setDeliveryModeStatus" | "setDesktopStorage"
+    | "cameraCommandRef" | "setCameraCommand">
+  & Pick<MonitoringState, "expState">
   & Pick<ConfigState, "setCoreStatus"> & Pick<HardwareState, "setAfStatus" | "setSamplePump" | "setSheathPump" | "setTrigStatus">
   & Pick<ReviewState, "setReviewing"> & Pick<PreviewState, "recording" | "setRecording">
   & Pick<StatePollingModel, "tick"> & Pick<LiveFramesModel, "stopLoop">;
 
 // Discovery and selection, the Preflight polling, the mock camera and Start/Stop Camera.
 export function useCameraConnection({
-  ready, tab, setTab, append, setDiscovery, setCamSelection, setShowMockConfig, setCamStatus, frameDir, intervalMs,
-  loopFiles, pickedDevices, setPickedDevices, connectTab, discovery, running, setRunning, setCoreStatus, setAfStatus, setSamplePump,
-  setSheathPump, setTrigStatus, setReviewing, recording, setRecording, tick, stopLoop, setScanning, setScanNote,
-  setActionNote, setCameraNotice, setDeliveryModeStatus,
+  ready, tab, setTab, append, setDiscovery, setCamSelection, setShowMockConfig, showMockConfig, setCamStatus, frameDir, setFrameDir,
+  mockFps, loopFiles, pickedDevices, setPickedDevices, connectTab, discovery, camSelection, running, setRunning, setCoreStatus,
+  setAfStatus, setSamplePump, setSheathPump, setTrigStatus, setReviewing, recording, setRecording, tick, stopLoop, setScanning,
+  setScanNote, setActionNote, setCameraNotice, setDeliveryModeStatus, setDesktopStorage, cameraCommandRef, setCameraCommand, expState,
 }: ConnectionDeps) {
   // ---- Camera discovery/selection (BE-2) + camera actions ----
 
@@ -161,7 +182,7 @@ export function useCameraConnection({
   // capture loop so preflight works before the camera is started.
   const refreshPreflight = useCallback(async () => {
     try {
-      const [sel, core, af, sample, sheath, trig, delivery] = await Promise.all([
+      const [sel, core, af, sample, sheath, trig, delivery, instrumentStatus] = await Promise.all([
         bridge.fetchCameraSelection(),
         bridge.fetchProcessingCoreStatus(),
         bridge.fetchAutofocusStatus(),
@@ -170,8 +191,11 @@ export function useCameraConnection({
         bridge.fetchTriggerStatus(),
         // The delivery mode follows a profile apply within one poll; a bridge without it leaves the control off.
         bridge.fetchFrameDeliveryMode().catch(() => null),
+        // The recording target of the data directory (every server answers it, not only the PZ7035): the Storage check.
+        bridge.fetchInstrumentStatus().catch(() => null),
       ]);
       setDeliveryModeStatus(delivery?.valid ? delivery : null);
+      setDesktopStorage(instrumentStatus?.storage ?? null);
       setCamSelection(sel);
       setCoreStatus(core);
       setAfStatus(af);
@@ -207,13 +231,37 @@ export function useCameraConnection({
     }
   }, [append]);
 
+  // The dialog opens on the folder used last time, else the folder the backend's mock holds, else Documents (Qt:
+  // ../data/mock_frames next to the app, else Documents: the desktop app ships no mock folder, CONNECT-014).
+  const camSelectionRef = useRef(camSelection);
+  camSelectionRef.current = camSelection;
+  useEffect(() => {
+    if (!showMockConfig || frameDir.trim()) return;
+    let alive = true;
+    void (async () => {
+      let documents = "";
+      try { documents = (await bridge.appPaths()).documents; } catch { /* no Documents folder: the field stays empty */ }
+      const held = camSelectionRef.current;
+      const backendFolder = held?.mode === CAMERA_SELECTION_MODES.Mock ? held.mock_frame_dir : "";
+      if (alive) setFrameDir((now) => now.trim() ? now : defaultMockFolder(loadMockSettings(localStorage).dir ?? "", backendFolder, documents));
+    })();
+    return () => { alive = false; };
+  }, [showMockConfig]);
+
+  // The frame rate is Qt's spin box: fps, 1 to 10000, default 5000; the backend turns it into a whole-microsecond
+  // interval (ABI 45), so the mock is no longer capped at 1000 fps (CONNECT-016). The folder is trimmed.
   const onConfigureMock = useCallback(async () => {
+    const dir = frameDir.trim();
+    const fps = parseMockFps(mockFps);
+    if (!dir || fps === null) return;
     try {
-      const cfg = await bridge.configureMock(frameDir, Number(intervalMs) || 33, loopFiles);
+      const cfg = await bridge.configureMockFps(dir, fps, loopFiles);
       if (!cfg.ok) return refuse("Configure Mock Camera", cfg.message);
+      if (!saveMockSettings(localStorage, { dir, fps: mockFps, loop: loopFiles })) append("The mock camera settings could not be remembered.");
+      setFrameDir(dir);
       setShowMockConfig(false);
       setCamStatus("configured (mock)");
-      append(`mock camera configured (${frameDir})`);
+      append(`mock camera configured (${dir}, ${fps} fps)`);
       await adoptSelection();
       // Qt: "Mock camera configured (not capturing)" and the stage moves to Overview (CONNECT-017); the Overview stage
       // applies its script and starts the live view.
@@ -224,7 +272,7 @@ export function useCameraConnection({
       setShowMockConfig(false);
       refuse("Configure Mock Camera", String(e));
     }
-  }, [frameDir, intervalMs, loopFiles, append, adoptSelection, refreshCameraState, refuse, setTab]);
+  }, [frameDir, mockFps, loopFiles, append, adoptSelection, refreshCameraState, refuse, setTab]);
 
   // Connect acts on the row picked in the shown sub-tab; a framegrabber row selects that interface/device
   // (CONNECT-003). A picked row that a rescan removed says so instead of doing nothing (App.tsx:703).
@@ -280,37 +328,64 @@ export function useCameraConnection({
     }
   }, [append]);
 
+  // One camera command at a time, as Qt's controller (CONNECT-033): a second click, key press or shortcut while the first is
+  // in flight sends nothing. A refused or failed command is a modal warning titled "Camera" and status text (CONNECT-036).
+  const expStateRef = useRef(expState);
+  expStateRef.current = expState;
+  const runningRef2 = useRef(running);
+  runningRef2.current = running;
+  const beginCommand = (kind: "start" | "stop") => {
+    if (cameraCommandRef.current) return false;
+    cameraCommandRef.current = kind;
+    setCameraCommand(kind);
+    return true;
+  };
+  const endCommand = () => { cameraCommandRef.current = null; setCameraCommand(null); };
+
   const onStartCamera = useCallback(async () => {
+    if (!beginCommand("start")) return;
     try {
       setReviewing(false);
       const res = await bridge.startCapture();
-      if (!res.ok) return append(`start failed: ${res.message}`);
+      if (!res.ok) return refuse("Camera", res.message);
       setRunning(true);
       append("capture start requested; waiting for camera-ready confirmation");
 
       // Parity with Qt: a successful start lands the operator on Overview.
       setTab((t) => (t === "connect" ? "overview" : t));
     } catch (e) {
-      append(`start error: ${e}`);
+      refuse("Camera", String(e));
+    } finally {
+      endCommand();
     }
-  }, [tick, append, stopLoop]);
+  }, [tick, append, stopLoop, refuse, setTab]);
 
   const onStopCamera = useCallback(async () => {
+    if (!runningRef2.current) return;
+    const blocked = stopCameraBlockReason({ running: true, expState: expStateRef.current, commandInFlight: !!cameraCommandRef.current });
+    if (blocked) { if (!cameraCommandRef.current) refuse("Camera", blocked); return; }
+    if (!beginCommand("stop")) return;
     try {
+      // Decision (CONNECT-039): Qt refuses Stop while raw recording is active ("Stop recording first"); here Stop Camera
+      // closes the recording first, so the file is finalised and nothing is lost, then stops the camera.
+      const wasRecording = recording;
       if (recording) {
         const stopped = await bridge.stopRecording();
-        if (!stopped.ok) return append(`stop recording failed: ${stopped.message}`);
+        if (!stopped.ok) return refuse("Camera", `Stop recording failed: ${stopped.message}`);
         setRecording(false);
       }
       const stopped = await bridge.stopCapture();
-      if (!stopped.ok) return append(`stop capture failed: ${stopped.message}`);
+      // A teardown the device did not confirm is a failed command with the camera's message (CONNECT-040).
+      if (!stopped.ok) return refuse("Camera", stopped.message);
       setRunning(false);
-      append("capture stopped");
+      append(wasRecording ? "recording finalised; capture stopped" : "capture stopped");
     } catch (e) {
-      append(`stop error: ${e}`);
+      refuse("Camera", String(e));
+    } finally {
+      endCommand();
     }
-  }, [recording, stopLoop, append]);
-  return { refreshCameraState, refreshPreflight, onConfigureMock, onConnectPicked, onDeliveryModeChange, onStartCamera, onStopCamera };
+  }, [recording, stopLoop, append, refuse]);
+  return { refreshCameraState, refreshPreflight, onConfigureMock, onConnectPicked, onDeliveryModeChange, onStartCamera, onStopCamera, refuse };
 }
 export type CameraConnectionModel = ReturnType<typeof useCameraConnection>;
 
@@ -426,23 +501,30 @@ export function useCameraModeSwitch({
 }
 
 type ConnectModelDeps = Pick<ShellState, "ready" | "caps" | "instrument" | "pz7035" | "instrumentModes">
-  & Pick<ConnectState, "camSelection" | "running" | "alignImage"> & Pick<ConfigState, "coreStatus" | "stats">
+  & Pick<ConnectState, "camSelection" | "running" | "alignImage" | "discovery" | "lifecycle" | "cameraCommand" | "expectedCamera"
+    | "desktopStorage" | "focusStaleMs"> & Pick<ConfigState, "coreStatus" | "stats">
   & Pick<HardwareState, "afStatus" | "samplePump" | "sheathPump" | "trigStatus">
   & Pick<PreviewState, "backgroundSet" | "roiFields" | "lastMeta"> & CoresModel & Pick<CameraSetupModel, "cameraScript">;
 
 // Render-time values: the Start Camera gate, the UX-3 preflight checklist and the UX-4 quality gates.
 export function connectModel({
   ready, caps, instrument, pz7035, instrumentModes, camSelection, running, alignImage, coreStatus, stats, afStatus,
-  samplePump, sheathPump, trigStatus, backgroundSet, roiFields, lastMeta, cores, cameraScript,
+  samplePump, sheathPump, trigStatus, backgroundSet, roiFields, lastMeta, cores, cameraScript, discovery, lifecycle, cameraCommand,
+  expectedCamera, desktopStorage, focusStaleMs,
 }: ConnectModelDeps) {
   const cameraConfigured = camSelection?.configured ?? false;
-  const startCameraReason = cores.appUpdateBusy ? "Application update is pending" : cameraScript.busy ? "Camera setup is in progress" : !ready
-    ? "Backend is not initialized"
-    : !cameraConfigured
-      ? "No camera configured — select a device in the Connect tab"
-      : running
-        ? "Camera is already running"
-        : undefined;
+  const phase = cameraPhase(lifecycle, cameraConfigured, running);
+  const startCameraReason = startCameraBlockReason({
+    updateBusy: cores.appUpdateBusy, scriptBusy: cameraScript.busy, ready, configured: cameraConfigured, running, phase: phase.phase,
+    commandInFlight: cameraCommand !== null,
+  });
+  // The camera the profile was made for (camera.window.camera_model) against the one selected; a mock source has no model
+  // to compare, so it is skipped (App.tsx:1237). The vendor is not compared: discovery reports none.
+  const selectedRow = rowOfSelection(discovery, camSelection);
+  const cameraModel = selectedRow && selectedRow.tab !== "framegrabbers" ? selectedRow.camera.model_name : "";
+  const expectedIdentity = camSelection?.mode === CAMERA_SELECTION_MODES.Mock ? "" : expectedCamera;
+  // The storage the preflight shows: the PZ7035's recording target, else the data directory the backend reports on every server.
+  const storage = instrument?.storage ?? desktopStorage ?? undefined;
 
   // ---- UX-3 profile-aware hardware preflight (issue #307) ----
   const preflightInput: PreflightInput = {
@@ -450,7 +532,8 @@ export function connectModel({
     cameraConfigured,
     cameraRunning: running,
     cameraIdentity: camSelection?.label || (camSelection?.mode === 1 ? "Mock camera" : ""),
-    cameraExpected: "", // profile-declared expected identity — UX-2 (#306) follow-up
+    cameraExpected: expectedIdentity,
+    cameraModel,
     coreValid: coreStatus?.valid ?? false,
     corePinSatisfied: coreStatus?.pin_satisfied ?? false,
     coreVersion: coreStatus?.active_version ?? "",
@@ -472,27 +555,25 @@ export function connectModel({
     },
     trigger: { valid: trigStatus?.valid ?? false, cameraAttached: trigStatus?.camera_attached ?? false },
     // The PZ7035 reports its recording target (#501); the desktop's check stays informational.
-    storageKnown: !!instrument?.storage,
-    storageWritable: instrument?.storage?.writable ?? false,
-    storageFreeOk: (instrument?.storage?.free_bytes ?? 0) >= 1e9,
-    storagePath: instrument?.storage?.path ?? "",
-    storageWarning: instrument?.storage?.warning ?? "",
+    storageKnown: !!storage,
+    storageWritable: storage?.writable ?? false,
+    storageFreeOk: (storage?.free_bytes ?? 0) >= 1e9,
+    storagePath: storage?.path ?? "",
+    storageWarning: storage?.warning ?? "",
     capabilities: caps,
     instrument,
   };
   const preflight = derivePreflight(preflightInput);
 
   // ---- UX-4 Camera & Alignment quality gates (issue #308) ----
-  // Focus staleness threshold: the autofocus config's ring_ratio_stale_ms is
-  // not polled into the shell yet, so use a conservative default until it is.
-  const FOCUS_STALE_MS = 1000;
+  // Focus staleness threshold: the autofocus config's ring_ratio_stale_ms (read by useProfileCameraContext), 1000 ms until then.
   const qualityInput: QualityInput = {
     cameraRunning: running,
     focusConnected: afStatus?.connected ?? false,
     focusMetric: afStatus?.median_ring_ratio ?? 0,
     focusUpdatedUs: afStatus?.last_ring_ratio_update_us ?? 0,
     focusAgeMs: afStatus ? afStatus.ring_ratio_age_us / 1000 : 0,
-    focusStaleMs: FOCUS_STALE_MS,
+    focusStaleMs,
     backgroundSet,
     roiW: Number(roiFields.w) || 0,
     roiH: Number(roiFields.h) || 0,
@@ -506,7 +587,7 @@ export function connectModel({
       : undefined,
   };
   const quality = deriveQualityGates(qualityInput);
-  return { cameraConfigured, startCameraReason, preflight, qualityInput, quality };
+  return { cameraConfigured, startCameraReason, cameraPhase: phase, preflight, qualityInput, quality };
 }
 export type ConnectModel = ReturnType<typeof connectModel>;
 

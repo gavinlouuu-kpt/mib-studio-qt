@@ -4,6 +4,7 @@ import { useCameraSetup, useConfigDocuments, useConfigState, useConfigSync, useC
 import {
   connectModel, useAlignPeakReset, useCameraConnection, useCameraModeSwitch, useCameraWindowing, useConnectState,
 } from "../areas/connect/useConnect";
+import { useCameraPhase, useCameraShortcut, useProfileCameraContext } from "../areas/connect/useCameraActions";
 import { useStartupSelection } from "../areas/connect/useStartupSelection";
 import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
 import {
@@ -49,6 +50,7 @@ export function useStudioController() {
   const configSync = useConfigSync(states); // config
   const connection = useCameraConnection({ ...states, ...liveFrames, ...polling }); // connect
   const startup = useStartupSelection(states); // connect: the startup camera step's outcome, the no-camera dialog
+  useCameraPhase(states); // connect: the capture lifecycle behind the Start / Stop phase text
   const livePreview = useLivePreview({ ...states, ...liveFrames, ...configSync }); // preview
   const ssd = useSsdStatus(states); // monitoring
   const reviewSource = useReviewSource({ ...states, ...liveFrames, ...polling }); // review
@@ -74,7 +76,9 @@ export function useStudioController() {
   const closeGuard = useShellCloseGuard(composed); // shell
   // Render-time values (no hooks).
   const startExperiment = experimentModel(composed); // monitoring
+  useProfileCameraContext(composed); // connect: the profile's expected camera, the configured focus staleness
   const connectView = connectModel(composed); // connect: Start Camera gate, preflight, quality gates
+  useCameraShortcut({ ...composed, ...connectView }); // connect: the space bar toggles the camera
   const workflow = shellWorkflow({ ...composed, ...connectView }); // shell: workflow stages, context bar
   const telemetry = shellTelemetry(composed); // shell: sidebar and status-bar rates
   const serviceMode = useServiceMode(composed); // hardware

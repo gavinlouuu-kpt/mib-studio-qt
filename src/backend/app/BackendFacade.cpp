@@ -719,7 +719,15 @@ namespace backend::bridge
             }
             ::camera::mock::MockCameraOptions options;
             options.folder = std::filesystem::path(command.mockFrameDirectory);
-            options.frameInterval = std::chrono::milliseconds(std::max(1, command.mockFrameIntervalMs));
+            if (command.mockFramesPerSecond > 0)
+            {
+                const double fps = std::clamp(command.mockFramesPerSecond, 1.0, 10000.0);
+                options.frameInterval = std::chrono::microseconds(static_cast<long long>(std::llround(1'000'000.0 / fps)));
+            }
+            else
+            {
+                options.frameInterval = std::chrono::milliseconds(std::max(1, command.mockFrameIntervalMs));
+            }
             options.loopFiles = command.mockLoopFiles;
             backend_.configureMockCamera(options);
             emitEvent(makeCameraStatus(CameraState::Configured, "mock"));
@@ -856,19 +864,41 @@ namespace backend::bridge
             emitEvent(makeCameraStatus(CameraState::Running));
             return {true, BackendCommandType::Camera, "Capture started"};
         case CameraCommandAction::StopCapture:
-            // Qt-parity precondition: the camera cannot stop underneath an
-            // active experiment — stop the experiment first (BE-4).
-            if (backend_.experiment().state() == app::ExperimentRunState::Active)
+        {
+            // Qt-parity precondition: the camera cannot stop underneath an experiment — stop the
+            // experiment first (BE-4) — nor while its data is still being saved (Qt flushInProgress_,
+            // #863 CONNECT-038): Stopping is the final flush, Starting has not got its camera yet.
+            const auto experimentState = backend_.experiment().state();
+            if (app::experimentHoldsCamera(experimentState))
             {
                 const std::string message =
-                    "Cannot stop camera while experiment is active. Please stop the experiment first.";
+                    experimentState == app::ExperimentRunState::Active
+                        ? "Cannot stop camera while experiment is active. Please stop the experiment first."
+                    : experimentState == app::ExperimentRunState::Stopping
+                        ? "Cannot stop camera while experiment data is being saved. Wait for the save to finish."
+                        : "Cannot stop camera while an experiment is starting.";
                 emitEvent(BackendErrorEvent{BackendErrorSource::Camera,
                                             BackendCommandType::Camera, message});
                 return {false, BackendCommandType::Camera, message};
             }
+            const bool wasRunning = backend_.capture().isRunning();
             backend_.capture().stop();
             emitEvent(makeCameraStatus(CameraState::Stopped));
+            // #863 CONNECT-040: a teardown the device did not confirm (rig generator / LED / acquisition
+            // stop) is a failed command carrying the camera's message, as Qt's CameraController reports it.
+            const auto stopped = backend_.capture().lifecycleSnapshot();
+            if (wasRunning && stopped.lastFailure == services::CaptureFailureKind::ShutdownFailed &&
+                stopped.lastFailureGeneration == stopped.generation)
+            {
+                const std::string message = stopped.lastFailureMessage.empty()
+                                                ? "Camera shutdown was not confirmed"
+                                                : stopped.lastFailureMessage;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera,
+                                            BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
             return {true, BackendCommandType::Camera, "Capture stopped"};
+        }
         }
 
         emitEvent(BackendErrorEvent{BackendErrorSource::Camera,

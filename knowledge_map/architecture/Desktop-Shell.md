@@ -367,6 +367,53 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
   the run's method records it as a change after apply, and the control's tooltip says to edit
   `camera.frame_delivery_mode` in the profile to keep it.
 
+## Start / Stop Camera and the Mock dialog (Qt parity, epic #863 B2)
+
+`useCameraConnection` (`useConnect.ts`) holds the camera commands, `useCameraActions.ts` what surrounds them,
+`CameraActions.tsx` the buttons and the phase text, `MockCameraDialog.tsx` the mock dialog.
+
+- **One command at a time** (CONNECT-033, Qt `commandInFlight_`): a click, key press or shortcut while Start or
+  Stop is in flight sends no second backend command (`cameraCommandRef`, so two calls in one tick are caught);
+  Start/Stop name the reason they are blocked (`startCameraBlockReason`, `stopCameraBlockReason`) in Qt's words.
+- **Phase text** (CONNECT-034): `useCameraPhase` reads `fetch_capture_lifecycle` every 250 ms (60 ms while the
+  session is Starting/Stopping or a command is in flight); `cameraPhase` projects it as Qt's
+  `CameraController::project()` ("Camera idle/starting.../running/stopping.../failed/not configured") beside the
+  buttons, with the failure message of this session.
+- **Refusals** (CONNECT-036): a refused or failed Start or Stop is a modal warning titled "Camera" and the
+  Connect status line, not only the log. The backend refuses Stop while an experiment is Starting, Active or
+  Stopping (data being saved, CONNECT-038) and reports a device teardown that was not confirmed
+  (`ShutdownFailed` of this session) as a failed command with the camera's message (CONNECT-040).
+- **Raw recording** (CONNECT-039, decision): Qt refuses Stop while a raw recording runs. The Stop Camera button
+  finishes the recording first (the file is closed, nothing is lost) and then stops; if the recording cannot be
+  closed the camera keeps running. The space bar, which is easy to hit, never ends a take: Qt's refusal, "Cannot
+  stop camera while frame recording is active. Stop recording first.".
+- **Space bar** (CONNECT-041): `useCameraShortcut` toggles the camera on the Overview and Experiment stages
+  through the same guarded commands; not during an experiment, not while a text field, button, list or dialog
+  has the key, not with a modifier or a repeat (`spaceTogglesCamera`, `spaceCameraAction`).
+- **Display rate** (CONNECT-045, decision): the live view draws at the profile's `display_fps` (default 30, 1 to
+  240), not Qt's fixed up-to-50 fps: the camera's 50 fps full-sensor stream is 104 MB/s over IPC, a 50 fps
+  default would nearly double the 60 MB/s the pulls cost now, and a bench that wants 50 sets `display_fps` in
+  its profile. The canvas hint "No frame yet - configure a camera and press Start Camera" is Tauri-only and
+  stays (it is the empty state of a canvas Qt leaves black).
+- **Mock dialog** (CONNECT-014/016): the frame rate is Qt's spin box in fps, 1 to 10000, 5000 by default (the
+  rig's rate); `configure_mock_fps` turns it into a whole-microsecond interval (the millisecond field of
+  `configure_mock` floors at 1 ms, 1000 fps). The folder is trimmed and starts from the one used last time
+  (`mib.mock-camera.v1` in localStorage), else the folder the backend's mock holds (`MIB_MOCK_CAMERA_DIR`), else
+  Documents (the desktop app ships no `../data/mock_frames`, and the shell cannot test that a folder exists).
+- **Expected camera** (App.tsx:1237): `useProfileCameraContext` reads the active profile's
+  `camera.window.camera_model` (#833) as the preflight's expected identity; the connected camera matches by its
+  discovered model or by its label, without case; a mock source is skipped. The vendor is not compared:
+  discovery reports none.
+- **Storage** (preflight.ts:360-363): the preflight's Storage check reads `fetch_instrument_status.storage` (the
+  recording target, answered on every server) with the preflight poll; the Start gates still check the file
+  chosen at Start.
+- **Focus staleness** (App.tsx:1306): the Overview focus gate uses the autofocus config's `ring_ratio_stale_ms`
+  (read when the Overview or Connect stage opens), 1500 ms (the config's default) until then.
+- **Not changed here** (App.tsx:1229, `experimentCompleted` in `areas/shell/workflowModel.ts`): the constant
+  `false` is the shell's (#862) and the experiment epic's. The retained terminal outcome its comment waits for now
+  exists in `fetch_experiment_status` (`terminal`, `finalization_ok`, `cancelled`, `completion`); deriving Complete
+  from it for the current run is a small change there, with the question when Complete resets for a new run.
+
 ## Command layer
 
 Thin wrappers over the bridge (all take the managed `AppState`; bodies in
