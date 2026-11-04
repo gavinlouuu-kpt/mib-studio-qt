@@ -26,6 +26,7 @@ import {
   repeatReason,
   queueClosedRuns,
   followSingleRun,
+  framesSeen,
   upcomingIndex,
   OPERATION_ENDS_KEPT,
   SINGLE_OUTCOME_UNKNOWN,
@@ -794,5 +795,24 @@ describe("what the page observed of a run (#716 A7c, O5's checklist): recorded, 
     q = run([{ type: "confirm-closed", ref: "S1" }], q);
     expect(upcomingIndex(ORDER, q)).toBe(1);
     expect(upcomingIndex(["S1"], run([{ type: "status", status: active("1") }, { type: "status", status: closed("1") }], started()))).toBe(-1);
+  });
+});
+
+// The status counters the first-frame observation reads (the backend has no first-frame event; the E04 tour waits on this
+// and says so): any nonzero frame or object counter, and nothing for dropped frames or an idle status.
+describe("framesSeen", () => {
+  it("is false for a status with every frame and object counter at zero, whatever else it says", () => {
+    expect(framesSeen(status())).toBe(false);
+    expect(framesSeen(active("1"))).toBe(false);
+    expect(framesSeen(status({ dropped_valid: "5", dropped_invalid: "2", persistence_committed: "3", persistence_failed: "1" }))).toBe(false);
+  });
+  it("is true once a valid or invalid frame is buffered or saved, or a persistence request was admitted", () => {
+    for (const field of ["valid_buffered", "invalid_buffered", "valid_saved", "invalid_saved", "persistence_admitted"] as const) {
+      expect(framesSeen(status({ [field]: "1" })), field).toBe(true);
+      expect(framesSeen(status({ [field]: "18446744073709551615" })), field).toBe(true);   // 64-bit counters arrive as strings
+    }
+  });
+  it("reads only plain decimal strings: an empty, signed or odd counter is not a frame", () => {
+    for (const odd of ["", "-1", "0x10", "1.5", "00"]) expect(framesSeen(status({ valid_buffered: odd })), odd).toBe(false);
   });
 });

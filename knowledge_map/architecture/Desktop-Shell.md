@@ -2027,6 +2027,25 @@ and scientific validation awaits #808. Design proposal:
 `docs/design/ique-workflow/WORKSPACE-CONTRACT.md`.
 
 
+
+## Guided tours (Driver.js, 2026-11-03)
+
+`desktop/src/tours/` holds a generic Driver.js 1.3.1 tour module (shared with the ZU15EG
+Studio patch in `zu15eg-linux`): `registry.ts` (entries, flowchart specs, evidence,
+`validateEntries`), `runner.ts` (Back/Next/Skip/Restart, missing-target recovery, action steps
+with a timeout and recovery, the feedback checkpoint), `FlowchartView.tsx`, `WhatsNew.tsx`,
+`TourHost.tsx` and `feedback.ts` (localStorage behind try/catch, exported from the Tours list).
+`desktop/src/tours/mib/` is MIB Studio's host: `MibTours` is mounted once in `App`, opened from
+Help ▸ "Tours and what's new" and the workspace header's "Tours" button, and never auto-starts.
+Its navigation only sets view state (never a bridge command, never the landing preference).
+Action steps wait on facts that components report from backend replies (`mib/facts.ts`) and are
+blocked while an experiment runs, something records or the camera acquires (a `needsCamera` step, the
+feature write, is not blocked by the camera acquiring; a step marked `interactive` leaves its read or preview control
+usable). The first six tours
+cover the fold-in goals E01, E02, E04/E06, I02, F04/F05/F08 and I12/F12; F09 has no tour (no
+production view). How to add one: `docs/howto/adding-a-tour.md`. Browser drive and
+screenshots: `scripts/tours/drive_tours.py`, `docs/evidence/2026-11-03-fold-in-tours/`.
+
 ## Recipe library (#807 I02, ABI 50)
 
 Experiment → Plan mounts `RecipeLibrary` (`desktop/src/workspace/RecipeLibrary.tsx`) under

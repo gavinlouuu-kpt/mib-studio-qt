@@ -1,0 +1,125 @@
+// Tour: E01 discovery and source generation (Connect tab). Backend tour: before and after flowcharts, evidence, then Refresh.
+import type { TourEntry } from "../../registry";
+import { classicView } from "../views";
+import { FACTS } from "../facts";
+import { before, CLASS, DEMONSTRATED_LABEL, DRIVE_DATE, E2E_STEPS, E2E_TEST, EVIDENCE_DOC, GOALS_DOC, INTRODUCED, PLAN_DOC } from "../sources";
+
+const S = {
+  goals: GOALS_DOC,
+  plan: PLAN_DOC,
+  evidence: EVIDENCE_DOC,
+  e2e: E2E_TEST,
+  doc: "knowledge_map/services/DeviceDiscoveryService.md",
+  svc: "src/backend/discovery/DeviceDiscoveryService.cpp",
+  provider: "src/backend/discovery/providers/CameraEnumerationProvider.cpp",
+  client: "desktop/src/discovery.ts",
+  app: "desktop/src/App.tsx",
+  nativeTest: "tests/backend/device_discovery_service_test.cpp",
+  rustTest: "crates/mib-bridge-server/tests/camera_features.rs",
+  tsTest: "desktop/src/discovery.test.ts",
+  bClient: before("e47efe93", "desktop/src/discovery.ts"),
+  bSvc: before("e47efe93", "src/backend/discovery/DeviceDiscoveryService.cpp"),
+  bTypes: before("e47efe93", "include/backend/discovery/DeviceDiscoveryTypes.h"),
+  bDispatch: before("e47efe93", "crates/mib-app-commands/src/dispatch.rs"),
+} as const;
+
+export const e01Discovery: TourEntry = {
+  id: "fold-in-e01-discovery",
+  title: "Discovery and source generation (E01)",
+  summary: "How Refresh finds cameras, and how every reply names the backend that sent it, so an old reply is refused.",
+  kind: "backend",
+  introduced: INTRODUCED,
+  source: Object.values(S),
+  when: () => true,
+  flows: {
+    before: {
+      title: "A job ID alone named the scan",
+      cols: 2,
+      nodes: [
+        { id: "ui", label: "Refresh", sub: "asks for a scan", col: 0, row: 0, tone: "b" },
+        { id: "start", label: "Start job", sub: "reply: job_id only", col: 1, row: 0, tone: "a" },
+        { id: "poll", label: "Poll by job ID", sub: "fetch(jobId) only", col: 0, row: 1, tone: "b" },
+        { id: "job", label: "Job record", sub: "id counts from 1", col: 1, row: 1, tone: "a" },
+        { id: "restart", label: "Backend restarts", sub: "ids start at 1 again", col: 1, row: 2, tone: "d" },
+        { id: "mix", label: "Old ID, new job?", sub: "no stale check", col: 0, row: 2, tone: "warn" },
+      ],
+      edges: [
+        { from: "ui", to: "start", label: "start" },
+        { from: "start", to: "job" },
+        { from: "ui", to: "poll" },
+        { from: "poll", to: "job", label: "job id" },
+        { from: "job", to: "restart" },
+        { from: "restart", to: "mix", label: "same id" },
+      ],
+      legend: "Before e47efe93. Grey: the browser. Blue: the backend. Orange: what the discovery documentation says could happen.",
+    },
+    after: {
+      title: "Every reply names its backend instance",
+      cols: 2,
+      nodes: [
+        { id: "ui", label: "Refresh", sub: "discoverCameras", col: 0, row: 0, tone: "b" },
+        { id: "start", label: "Start job", sub: "reply has instance", col: 1, row: 0, tone: "a" },
+        { id: "poll", label: "Poll + instance", sub: "job id and instance", col: 0, row: 1, tone: "b" },
+        { id: "svc", label: "Discovery", sub: "service, UUID at start", col: 1, row: 1, tone: "c" },
+        { id: "done", label: "Finished job", sub: "state, candidates", col: 0, row: 2, tone: "a" },
+        { id: "stale", label: "Stale reply", sub: "valid false, job 0", col: 1, row: 2, tone: "warn" },
+        { id: "stop", label: "Client stops", sub: "scan again", col: 0, row: 3, tone: "b" },
+      ],
+      edges: [
+        { from: "ui", to: "start" },
+        { from: "start", to: "svc", label: "instance" },
+        { from: "ui", to: "poll" },
+        { from: "poll", to: "svc", label: "checked fetch" },
+        { from: "svc", to: "done", label: "same instance" },
+        { from: "svc", to: "stale", label: "other instance" },
+        { from: "stale", to: "stop" },
+      ],
+      legend: "After the E stack (0a65ff5e). Missing SDK, busy and open-failed stay separate error kinds; stale is its own flag, not an error kind.",
+    },
+  },
+  evidence: {
+    demonstratedLabel: DEMONSTRATED_LABEL,
+    demonstrated: [
+      { text: `Connect ▸ Refresh ends the tour's wait with a finished discovery job and the backend's instance ID (${CLASS.mock}, ${CLASS.real}).`, date: DRIVE_DATE, source: S.app },
+      { text: `The device list shows the mock camera as the candidate the job found (${CLASS.mock}, ${CLASS.real}).`, date: DRIVE_DATE, source: S.app },
+    ],
+    tested: [
+      { text: "Discovery returns a finished job with the backend's instance ID (mock camera, real backend).", source: S.evidence, test: `fold_in_e2e: ${E2E_STEPS.e01}` },
+      { text: "After a restart on the same data directory the old discovery job is refused as stale and its cancel returns false; the new instance ID differs.", source: S.evidence, test: `fold_in_e2e: ${E2E_STEPS.i12Restart}` },
+      { text: "A new service that reuses the job ID and generation refuses the old job's fetch and cancel; the new job keeps running.", source: S.nativeTest, test: "backend.device_discovery_service (section: restart reuses job id)" },
+      { text: "The same refusal through the real server, with two backend instances in turn.", source: S.rustTest, test: "tokens_from_before_a_backend_restart_are_refused" },
+      { text: "The client stops on a stale reply instead of polling another job.", source: S.tsTest, test: "stops on a stale reply after a backend restart instead of polling another job" },
+    ],
+    uncertain: [
+      { text: "The goal asks for a rig log of missing producer, busy and disconnected. None exists: every proof on this branch uses the mock camera or a fake, never hardware.", source: S.goals },
+      { text: "MissingSdk means the camera SDK is compiled out of the build, not that a GenTL producer is missing at run time. A disconnected camera has no error kind of its own; it is simply not a candidate.", source: S.provider },
+      { text: "The snapshot's generation field is still the job ID. The source generation of an open camera lives in the capture lifecycle and in the feature token (see the feature-tree tour).", source: S.svc },
+      { text: "Hardware qualification on the Windows rig (plan slice E-5) is not done.", source: S.plan },
+    ],
+  },
+  steps: [
+    { target: { flow: "before", node: "job" }, title: "Before: a job ID named the scan", cite: [S.bSvc, S.bClient],
+      text: "A camera scan is a backend job. Before the fold-in the client asked for it by job ID alone, and the backend counted job IDs up from 1." },
+    { target: { flow: "before", node: "mix" }, title: "A restart could mix up jobs", cite: [S.doc, S.bSvc, S.bTypes],
+      text: "After a backend restart the count starts at 1 again, so an old job ID could name a different job. Nothing in the reply said which backend it came from." },
+    { target: { flow: "after", node: "svc" }, title: "After: every reply names its backend", cite: [S.doc, S.svc],
+      text: "The discovery service draws a random instance ID when it starts. The start reply and every job snapshot carry it." },
+    { target: { flow: "after", edge: "svc->stale" }, title: "A reply from another backend is stale", cite: [S.doc, S.client],
+      text: "If the instance does not match, the backend answers 'stale' with job 0 and no data, and a cancel does nothing. The client stops and asks you to scan again." },
+    { target: { evidence: true }, title: "What is proven, and what is not", cite: [S.evidence, S.goals],
+      text: "Tested lists the headless run and the native tests. Uncertain lists what is not proven, including the rig log. Demonstrated lists what the browser drive showed on the mock camera." },
+    { target: { ui: "connect-devices", view: classicView("connect") }, title: "Available devices", cite: [S.app, S.evidence],
+      text: "This list shows the candidates of the last discovery job. On a build without a camera SDK the mock camera is the candidate." },
+    { target: { ui: "connect-refresh" }, title: "Press Refresh", cite: [S.client, S.app],
+      text: "Refresh starts a new discovery job and waits for the backend to finish it. The tour then shows the instance ID the backend named.",
+      action: {
+        await: FACTS.discovery,
+        prompt: "Press Refresh.",
+        success: "the backend finished a discovery job ({detail}).",
+        recovery: "No finished job arrived. A stale reply means the backend restarted: press Refresh again.",
+        timeoutMs: 70_000,
+      } },
+    { target: { ui: "connect-found" }, title: "What the job found", cite: [S.app],
+      text: "This line counts what the job found and says which camera is selected. Refresh only reads: it never connects or selects a camera." },
+  ],
+};

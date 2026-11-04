@@ -82,7 +82,7 @@ export function BindingReadback({ id, resolution: r, reply, fallback }: {
       {d && rangeText(d) ? <span className="ws-detail">{rangeText(d)}</span> : null}
       {!d && fallback ? <span className="ws-detail">camera report, not from the node map</span> : null}
       {w ? (
-        <span className="ws-detail" data-testid={`align-write-${id}`} data-tone={w.tone} title={w.reason || undefined}>
+        <span className="ws-detail" data-testid={`align-write-${id}`} data-tour="align-write-reply" data-tone={w.tone} title={w.reason || undefined}>
           {`${w.label} · requested ${w.requested} · ${w.readback}${w.reason ? ` · ${w.reason}` : ""}`}
         </span>
       ) : null}
@@ -122,6 +122,7 @@ export function FeatureTreeBrowser({ tree, loading, onRefresh }: { tree: CameraF
       title="Feature tree · camera (remote device)"
       subtitle="Read-only · categories and features as the camera's GenApi node map describes them"
       data-testid="align-feature-tree"
+      data-tour="align-feature-tree"
       status={<StateChip size="small" tone={tree?.outcome === "read" ? "neutral" : "unknown"} data-testid="align-feature-tree-status">
         {loading ? "Reading…" : status}
       </StateChip>}

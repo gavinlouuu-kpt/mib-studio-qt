@@ -15,7 +15,8 @@ import type {
   CameraFeatureValue,
   CameraFeatureWriteRequest,
 } from "../bridge";
-import { resolveBinding, writeFailure, type FeatureWriteResult } from "./cameraFeatures";
+import { isWriteFailure, resolveBinding, writeFailure, writeSummary, type FeatureWriteResult } from "./cameraFeatures";
+import { FACTS, reportFact, reportFactRefused } from "../tours/mib/facts";
 
 export interface CameraFeatureApi {
   tree: (request: CameraFeatureTreeRequest) => Promise<CameraFeatureTreeReply>;
@@ -87,6 +88,10 @@ export function useCameraFeatures(api: CameraFeatureApi | undefined, epoch: unkn
     if (!mounted.current) return;
     setReplies((all) => ({ ...all, [key]: reply }));
     setPending((p) => ({ ...p, [key]: false }));
+    // Tours (E02): what the backend answered, as the write summary words it. Only a reply with a readback counts as done.
+    const summary = writeSummary(reply);
+    if (!isWriteFailure(reply) && reply.outcome === "readback") reportFact(FACTS.featureWrite, `${feature}: ${summary.label} · requested ${summary.requested} · ${summary.readback}`);
+    else reportFactRefused(FACTS.featureWrite, `${feature}: ${summary.label}${summary.reason ? ` · ${summary.reason}` : ""}`);
     // After every write reply: access and values may have moved (the write itself, dependent
     // nodes, a new session), and a refusal re-reads the descriptor the backend refused against.
     void refresh();

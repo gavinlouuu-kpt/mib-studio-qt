@@ -8,6 +8,7 @@ import { RecipePairing } from "./RecipePairing";
 import { AnnotationGroups } from "./AnnotationGroups";
 import { mintExperimentId, type PlanDraft } from "./planModel";
 import { decodeSavedPlan, decodeWorkspaceDocument } from "./savedPlanModel";
+import { FACTS, reportFact, reportFactRefused } from "../tours/mib/facts";
 
 export const PENDING_SAVE_KEY = "mib.workspace.pending-save.v1";
 const recovered = () => { try { return sessionStorage.getItem(PENDING_SAVE_KEY); } catch { return null; } };
@@ -53,6 +54,7 @@ export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObserva
         // Storage failures may have committed. Keep the exact idempotent command for reconciliation.
         if (write && ["conflict", "invalid", "not_found", "unavailable"].includes(String(r.status))) clearPending();
         setSnapshot(null);
+        if (write && JSON.parse(payload).action === "commit") reportFactRefused(FACTS.workspaceSaved, `${String(r.status)}: ${typeof r.message === "string" ? r.message : "Workspace was not saved"}`);
         setMessage(`${String(r.status)}: ${typeof r.message === "string" ? r.message : "Workspace was not read or saved"}. Reopen before editing an existing revision.`);
         return;
       }
@@ -95,6 +97,7 @@ export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObserva
       setMethodResolution(null); setRecipe(decodedRecipe);
       setSnapshot({ workspace_id: r.workspace_id as string, revision: r.revision, document: { ...decodedDocument, schema_version: 1, plan, ...(decodedRecipe ? { recipe: decodedRecipe } : {}) } });
       if (write) clearPending();
+      if (write && q.action === "commit") reportFact(FACTS.workspaceSaved, `${r.workspace_id} · revision ${r.revision}`);
       setMessage(`${write ? "Saved" : "Opened"} revision ${r.revision}. This is a recorded plan, not proof of acquisition or scientific compatibility.`);
     } catch (e) {
       setSnapshot(null);
@@ -108,9 +111,9 @@ export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObserva
     void request(true, JSON.stringify({ action: "commit", workspace_id: id, expected_revision: snapshot?.revision ?? null,
       command_id: mintExperimentId(), document }));
   };
-  return <Card title="Saved workspace plan" data-testid="saved-plan">
+  return <Card title="Saved workspace plan" data-testid="saved-plan" data-tour="saved-plan">
     <p>Save the sample sheet and declared operator to the app metadata database. Reopen to inspect annotations. Opening only inspects. Load as new experiment explicitly replaces the editable sheet with a fresh experiment identity; nothing is applied or started.</p>
-    <details><summary>Workspace library</summary>
+    <details><summary data-tour="saved-plan-library">Workspace library</summary>
       <Button disabled={busy || !!retry} onClick={() => void request(false,JSON.stringify({action:"list",limit:100}))}>List workspaces</Button>
       {listCursor && <Button disabled={busy || !!retry} onClick={() => void request(false,JSON.stringify({action:"list",limit:100,after:listCursor}))}>More workspaces</Button>}
       <ul>{library.filter(w=>!w.kind||w.kind==="workspace").map(w=><li key={w.workspace_id}><Button disabled={busy || !!retry} onClick={() => {setHistory([]);setManifest(null);void request(false,JSON.stringify({action:"read",workspace_id:w.workspace_id}));}}>{w.title || w.workspace_id} · revision {w.revision}{w.archived ? " · archived" : ""}</Button></li>)}</ul>
@@ -120,8 +123,8 @@ export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObserva
     <label>Workspace ID <input aria-label="Saved workspace ID" value={id} disabled={busy || !!retry}
       onChange={e => { setId(e.target.value); setSnapshot(null); setRecipe(null); setHistory([]); setTarget(""); setMessage(""); }} /></label>
     <Button disabled={busy || !!retry || !id.trim()} onClick={() => void request(false, JSON.stringify({ action: "read", workspace_id: id }))}>Open saved plan</Button>
-    <Button disabled={busy || !!retry || !controlHeld || !id.trim()} onClick={save}>{snapshot ? "Save new revision" : "Save new workspace"}</Button>
-    <Button disabled={busy || !!retry || !id.trim()} onClick={() => void request(false, JSON.stringify({ action: "history", workspace_id: id, limit: 1000 }))}>Read revision history</Button>
+    <Button disabled={busy || !!retry || !controlHeld || !id.trim()} onClick={save} data-tour="saved-plan-save">{snapshot ? "Save new revision" : "Save new workspace"}</Button>
+    <Button disabled={busy || !!retry || !id.trim()} data-tour="saved-plan-history" onClick={() => void request(false, JSON.stringify({ action: "history", workspace_id: id, limit: 1000 }))}>Read revision history</Button>
     {history.length > 0 && <><label>Historical revision <select aria-label="Historical revision" value={target} onChange={e => setTarget(e.target.value)}><option value="">Choose revision</option>{history.map(r => <option key={r} value={r}>{r}</option>)}</select></label>
       <p>{history.length} revisions loaded. Restore appends a revision; it never deletes history.</p>
       {history.length % 1000 === 0 && <Button disabled={busy || !!retry} onClick={() => void request(false,JSON.stringify({action:"history",workspace_id:id,limit:1000,after:history[history.length-1]}))}>More revisions</Button>}
@@ -160,7 +163,7 @@ export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObserva
       onSaveFinding={finding=>void request(true,JSON.stringify({action:"commit",workspace_id:id,expected_revision:snapshot.revision,command_id:mintExperimentId(),document:{...snapshot.document,findings:[...(Array.isArray(snapshot.document.findings)?snapshot.document.findings:[]),finding]}}))}/>}
     {Array.isArray(snapshot?.document.findings)&&snapshot.document.findings.length>0&&<details><summary>Saved findings ({snapshot.document.findings.length})</summary><ul>{snapshot.document.findings.map((f,i)=><li key={i}>{typeof f==="object"&&f!==null?String((f as Record<string,unknown>).interpretation??(f as Record<string,unknown>).id??"Finding"):"Unsupported finding"}<details><summary>Immutable finding evidence</summary><pre>{JSON.stringify(f,null,2)}</pre></details></li>)}</ul></details>}
     {snapshot?.document.run_observation!==undefined&&<details><summary>Recorded run observations</summary><p>Historical client observations, not current instrument state. Opening or loading a plan never resumes this queue or reuses its run identity.</p><pre>{JSON.stringify(snapshot.document.run_observation,null,2)}</pre></details>}
-    {message && <Notice tone="info" title="Workspace persistence">{message}</Notice>}
+    {message && <Notice tone="info" title="Workspace persistence" data-tour="saved-plan-message">{message}</Notice>}
     {snapshot && <><p>Workspace {snapshot.workspace_id} · immutable revision {snapshot.revision}</p><AnnotationGroups draft={snapshot.document.plan} selectedLayer={annotationLayer} onSelectLayer={controlHeld && !busy && !retry ? setAnnotationLayer : undefined} /></>}
   </Card>;
 }

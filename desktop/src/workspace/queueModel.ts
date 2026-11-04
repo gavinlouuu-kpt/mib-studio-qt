@@ -300,12 +300,17 @@ function interrupted(ref: string, row: QueueRow, last: RunAttempt, s: Experiment
 
 const nonzero = (v: string) => /^\d+$/.test(v) && /[1-9]/.test(v);
 
+/** A status showed a nonzero frame or object counter: the first frame of its run was seen (the page's own observation; the backend
+ *  has no first-frame event). */
+export const framesSeen = (s: ExperimentStatus): boolean =>
+  [s.valid_buffered, s.invalid_buffered, s.valid_saved, s.invalid_saved, s.persistence_admitted].some(nonzero);
+
 /** The attempt with what this status (of its own run) shows: Active, a first frame, Stopping or a
  *  drain. Only adds; returns the attempt itself when nothing is new. */
 function withSeen(a: RunAttempt, s: ExperimentStatus): RunAttempt {
   const seen: RunSeen = { ...(a.seen ?? {}) };
   if (s.state === EXPERIMENT_STATES.Active && !s.terminal) seen.active = true;
-  if ([s.valid_buffered, s.invalid_buffered, s.valid_saved, s.invalid_saved, s.persistence_admitted].some(nonzero)) seen.frame = true;
+  if (framesSeen(s)) seen.frame = true;
   if (!s.terminal && (s.state === EXPERIMENT_STATES.Stopping || s.flushing)) seen.stopping = true;
   const before = a.seen ?? {};
   const changed = (Object.keys(seen) as (keyof RunSeen)[]).some((k) => !before[k]);

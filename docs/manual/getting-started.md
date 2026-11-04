@@ -84,3 +84,15 @@ edition. After an upgrade, Qt shows What's New once; a fresh installation stays
 quiet. **Help ▸ Software Updates…** displays the selected version's notes when
 included in the update catalog. The **Release Notes** button opens the release
 page when online access is available.
+
+## Guided tours
+
+In the React desktop shell and the browser, **Help ▸ Tours and what's new** (or the
+**Tours** button in the workspace header) lists the guided tours. A tour walks through the
+real views, shows how a backend change works with before and after flowcharts, and keeps
+what was demonstrated, what is tested and what is still uncertain apart. When a step asks
+you to use a control (Refresh, Write, Start), the tour waits until the instrument confirms
+the result; the tour itself never sends a command. Steps that act are disabled while an
+experiment runs or the camera acquires. Each tour ends with a short "was this clear?"
+question; the answers stay in this browser and can be exported from the Tours list. A small
+notice says when new tours arrive; it never starts one by itself.

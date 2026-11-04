@@ -115,6 +115,10 @@ import type { FrameSink } from "./workspace/AlignView";
 import { alignLockedReason, type RoiKind } from "./workspace/alignControls";
 import type { WriteResult } from "./workspace/quickControlModel";
 import { VIEWER_ONLY_REASON, ViewerGate, useViewerOnly, viewerReason } from "./components/ViewerGate";
+import { MibTours } from "./tours/mib/MibTours";
+import { FACTS, reportFact, reportFactRefused } from "./tours/mib/facts";
+import { SUB_TITLES, type ClassicTab, type ExperimentSubName } from "./tours/mib/views";
+import { framesSeen } from "./workspace/queueModel";
 import "./App.css";
 
 // Align's SFNC quick controls and feature tree (#806 E-3): the bridge's GenApi node-map commands.
@@ -239,6 +243,8 @@ export default function App() {
   const [showAbout, setShowAbout] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showCentralMethods, setShowCentralMethods] = useState(false);
+  // The Tours list (tours/mib): opened by the Help menu entry or the workspace header's Tours button. Nothing starts a tour by itself.
+  const [toursOpen, setToursOpen] = useState(false);
 
   // Camera discovery/selection (bridge schema v7, BE-2). The selection
   // snapshot from the backend is authoritative — no local mirror of it.
@@ -727,10 +733,14 @@ export default function App() {
 
   const refreshCameraState = useCallback(async () => {
     try {
-      setDiscovery(await bridge.discoverCameras());
+      const found = await bridge.discoverCameras();
+      setDiscovery(found);
+      // Tours (E01): a finished job that named its backend instance, as the reply said it.
+      if (found.instance) reportFact(FACTS.discovery, `job ${found.job_id}, instance ${found.instance}`);
       setCamSelection(await bridge.fetchCameraSelection());
     } catch (e) {
       append(`discovery error: ${e}`);
+      reportFactRefused(FACTS.discovery, String(e));
     }
   }, [append]);
 
@@ -1017,9 +1027,10 @@ export default function App() {
         catch (e) { append(`experiment status refresh error: ${e}`); return String(e); }
       };
       if (outcome.kind === "withdrawn") { append("experiment start withdrawn: control was lost while it was pending; nothing was sent"); return outcome; }
-      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return outcome; }
+      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); reportFactRefused(FACTS.runStart, outcome.message); return outcome; }
       if (outcome.kind === "refused") {
         setReadinessMessage(`${outcome.path}: ${outcome.message}`); append(`experiment start failed: ${outcome.message}`);
+        reportFactRefused(FACTS.runStart, outcome.message);
         const refreshError = await refreshStatus();
         return refreshError ? { ...outcome, refreshError } : outcome;
       }
@@ -1039,6 +1050,8 @@ export default function App() {
         try { status = await bridge.fetchExperimentStatus(); setExpStatus(status); }
         catch (e) { append(`experiment status refresh error: ${e}`); refreshError = String(e); }
         append(`experiment started → ${status?.output_path || outcome.path}`);
+        // Tours (E04): the backend accepted the start. Whether a first frame arrived is a separate fact (below).
+        reportFact(FACTS.runStart, `run generation ${status?.start_generation ?? "not read yet"} · ${status?.output_path || outcome.path}`);
         if (outcome.notice) { setStartNotice(outcome.notice); append(outcome.notice); }
         return refreshError ? { ...outcome, refreshError } : outcome;
       }
@@ -1147,13 +1160,15 @@ export default function App() {
     setMetricsPage(null);
       const res = await bridge.loadRecording(picked);
       if(sourceGeneration!==reviewSourceGeneration.current)return;
-      if (!res.ok) { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata);return append(`load failed: ${res.message}`); }
+      if (!res.ok) { reportFactRefused(FACTS.reviewOpened, res.message); const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata);return append(`load failed: ${res.message}`); }
       setReviewPath(picked);
       setReviewing(true);
       append(`loaded ${picked}`);
       applyEvents(await bridge.pollEvents().catch((e: unknown) => { noteEventLoss(); throw e; }));
       const meta = await bridge.fetchReviewMetadata();
       setReviewMeta(meta);
+      // Tours (F04): the backend opened a stored recording; the tour's next step needs one with object metadata.
+      if (meta.file_open) reportFact(FACTS.reviewOpened, `${meta.file_path.split(/[\\/]/).pop()} · ${meta.recording_file ? "raw recording" : "experiment file"} · valid ${meta.total_valid}, invalid ${meta.total_invalid}`);
       setReviewTab(meta.recording_file ? "raw" : "valid");
       setReviewImgIndex(0);
       await loadMetricsPage(true, 0, picked);
@@ -1208,6 +1223,11 @@ export default function App() {
       setRunAccounting(acc);
       const outcome = describeRunOutcome(status, acc);
       if (outcome) append(outcome.headline);
+      // Tours (E06): this run's accounting, as the backend reported it. Only `reconciled` decides; nothing is recomputed.
+      if (acc?.available && acc.recorded !== false && (acc.start_generation === undefined || String(acc.start_generation) === status?.start_generation)) {
+        if (acc.reconciled === true) reportFact(FACTS.runAccounting, `${acc.completion_name ?? "completion not named"} · ${acc.admitted ?? "?"} admitted frames, reconciled`);
+        else if (acc.reconciled === false) reportFactRefused(FACTS.runAccounting, `the accounting does not reconcile (${acc.completion_name ?? "unknown"}${acc.completion_reason ? `: ${acc.completion_reason}` : ""})`);
+      }
     });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1225,6 +1245,13 @@ export default function App() {
   const elapsedWallSeconds = expStatus?.valid && BigInt(expStatus.start_time_ns) > 0n
     ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
   const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
+  // Tours (E04): the status of an active run shows a nonzero frame counter. This reads the counters the page's own lifecycle
+  // checklist reads (queueModel framesSeen); the backend has no first-frame event, and start-accepted is reported apart.
+  useEffect(() => {
+    if (expStatus?.valid && expStatus.state === EXPERIMENT_STATES.Active && !expStatus.terminal && framesSeen(expStatus)) {
+      reportFact(FACTS.runFirstFrame, `run generation ${expStatus.start_generation} · ${expStatus.valid_buffered} valid and ${expStatus.invalid_buffered} invalid frames buffered`);
+    }
+  }, [expStatus]);
 
   useEffect(() => {
     if (!ready) return;
@@ -1400,6 +1427,15 @@ export default function App() {
   // The workspace's "Classic view" is the operator's choice: the next start opens the classic view.
   // Task jumps (Prepare's setup buttons, Open in Review) use exitWorkspace and change nothing.
   const chooseClassic = useCallback(() => { setWorkspaceStage(null); writeLanding("classic"); }, []);
+  // The tours' navigation (tours/mib/MibTours): view state only. Like exitWorkspace it never writes the landing preference, and the
+  // ref is set before the render so a classic tab change still awaiting its read acts on nothing (openWorkspace does the same).
+  const tourNav = useMemo(() => ({
+    showWorkspace: (stage: number, sub: ExperimentSubName | null) => {
+      workspaceStageRef.current = stage; setWorkspaceStage(stage);
+      if (sub) setExperimentView(SUB_TITLES[sub]);
+    },
+    showClassic: (classicTab: ClassicTab) => { setTab(classicTab); setWorkspaceStage(null); },
+  }), []);
   // The workspace Quick look's Open in Review (#716 A7b): the classic Review tab with the run's file. It
   // loads the file there (`load_recording`, a control command: a viewer's button is disabled), and
   // never during a run. While a file is open in Review the backend refuses Start (D1 (a), #722).
@@ -1741,6 +1777,7 @@ export default function App() {
           label="Help"
           items={[
             ...offlineHelpMenu(openOfflineHelp),
+            { label: "Tours and what's new", onClick: () => setToursOpen(true) },
             { label: "About", onClick: () => setShowAbout(true) },
             {
               label: "Documentation",
@@ -1795,6 +1832,7 @@ export default function App() {
             stage={workspaceStage}
             onStage={setWorkspaceStage}
             onExit={chooseClassic}
+            onTours={() => setToursOpen(true)}
             serviceMode={operatingMode === "service"}
             align={{
               facts: {
@@ -2055,7 +2093,7 @@ export default function App() {
                   </button>}
                 </div>
                 <div className="subtab-body">
-                  <div className="devices-list" role="listbox" aria-label="Discovered devices">
+                  <div className="devices-list" role="listbox" aria-label="Discovered devices" data-tour="connect-devices">
                     {connectTab !== "framegrabbers" &&
                       (discovery?.cameras ?? [])
                         .filter((c) => (connectTab === "mindvision" ? c.camera_type === 1 : c.camera_type !== 1))
@@ -2089,7 +2127,7 @@ export default function App() {
                     )}
                   </div>
                   <div className="toolbar" style={{ marginTop: 8 }}><ViewerGate>
-                    <button onClick={refreshCameraState} disabled={!ready}>Refresh</button>
+                    <button onClick={refreshCameraState} disabled={!ready} data-tour="connect-refresh">Refresh</button>
                     <button
                       onClick={onConnectPicked}
                       disabled={!ready || !pickedDevice || cameraScript.busy || running || expActive}
@@ -2103,7 +2141,7 @@ export default function App() {
                       </button>
                     </div>
                   </ViewerGate></div>
-                  <p className="path-label">
+                  <p className="path-label" data-tour="connect-found">
                     Found {(discovery?.framegrabbers ?? []).length} framegrabber(s),{" "}
                     {(discovery?.cameras ?? []).filter((c) => c.camera_type === 0).length} eGrabber camera(s),{" "}
                     {(discovery?.cameras ?? []).filter((c) => c.camera_type === 1).length} MindVision camera(s)
@@ -2715,7 +2753,7 @@ export default function App() {
               <>
                 <div className="toolbar">
                   <ViewerGate>
-                  <button onClick={onSelectHdf} disabled={!ready || reviewSourceBusy} title={ready ? undefined : "Backend is not initialized"}>
+                  <button onClick={onSelectHdf} disabled={!ready || reviewSourceBusy} data-tour="review-open-file" title={ready ? undefined : "Backend is not initialized"}>
                     Select HDF File…
                   </button>
                   <button disabled={!reviewMeta?.file_open || expActive || recording || reviewSourceBusy} onClick={async () => {
@@ -3028,6 +3066,8 @@ export default function App() {
           </div>
         </div>
       )}
+      <MibTours listOpen={toursOpen} onListClose={() => setToursOpen(false)} nav={tourNav}
+        app={{ workspaceStage, experimentView, classicTab: tab, experimentActive: expActive || experimentRequestBusy, recording, acquiring: running }} />
       {showAbout && (
         <div className="modal-backdrop" onClick={() => setShowAbout(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="About">

@@ -160,7 +160,7 @@ function OutcomeCard({ run, q, loading, experimentId }: { run: PlanRun; q: RunQu
         {run.confirmed ? null : <StateChip tone="info" data-testid="summary-awaiting">Awaiting your close confirmation</StateChip>}
         <StateChip tone={chip.tone} data-testid="summary-status">{chip.text}</StateChip>
       </>}>
-      <ol className="ws-o5__checklist" data-testid="o5-lifecycle">
+      <ol className="ws-o5__checklist" data-testid="o5-lifecycle" data-tour="run-summary-lifecycle">
         {steps.map((s) => (
           <li key={s.key} className={`ws-o5__step ws-o5__step--${s.state}`} data-state={s.state} data-testid={`o5-step-${s.key}`} title={s.detail}>
             <span className="ws-o5__mark" aria-hidden="true">{STEP_MARK[s.state]}</span>
@@ -181,7 +181,7 @@ function OutcomeCard({ run, q, loading, experimentId }: { run: PlanRun; q: RunQu
         { label: "Experiment / run", value: <span data-testid="o5-experiment-run">{id
           ? `${id.experiment_id ?? NOT_RECORDED} · run ${id.run_index ?? NOT_RECORDED} · sample ${id.sample_ref ?? NOT_RECORDED}`
           : `${experimentId} · run ${run.runIndex} · sample ${run.ref || NOT_RECORDED} (as planned; the file's identity is read with its quick look)`}</span> },
-        { label: "Writer", value: <span data-testid="o5-writer">{`${writerText(run)}${q?.status === "computed" && q.statistics?.accounting ? ` · accounting ${q.statistics.accounting.completion}` : ""}`}</span> },
+        { label: "Writer", value: <span data-testid="o5-writer" data-tour="run-summary-writer">{`${writerText(run)}${q?.status === "computed" && q.statistics?.accounting ? ` · accounting ${q.statistics.accounting.completion}` : ""}`}</span> },
       ]} />
     </Card>
   );
@@ -190,7 +190,7 @@ function OutcomeCard({ run, q, loading, experimentId }: { run: PlanRun; q: RunQu
 function CountsCard({ q }: { q: RunQuickLookRun | null }) {
   const s = q?.status === "computed" ? q.statistics : null;
   return (
-    <Card title="Counts" data-testid="o5-counts" subtitle="The file's counts and accounting, read by the backend · shown as sent"
+    <Card title="Counts" data-testid="o5-counts" data-tour="run-summary-counts" subtitle="The file's counts and accounting, read by the backend · shown as sent"
       status={s ? <Chips s={s} q={null} /> : undefined}>
       <NoNumbers q={q} testId="summary" />
       {s ? (

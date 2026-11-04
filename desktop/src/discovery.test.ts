@@ -84,6 +84,12 @@ describe("toCameraDiscovery", () => {
     expect(out.complete).toBe(true);
   });
 
+  it("carries the backend instance that produced the snapshot (the discovery tour names it, and a reply from another instance is stale)", () => {
+    const out = toCameraDiscovery(snapshot({ state: DISCOVERY_JOB_STATES.Completed, complete: true, instance: "c9b79788", job_id: "3" }));
+    expect(out.instance).toBe("c9b79788");
+    expect(out.job_id).toBe("3");
+  });
+
   it("marks an incomplete or cancelled snapshot so the UI never treats it as authoritative", () => {
     const partial = toCameraDiscovery(snapshot({ state: DISCOVERY_JOB_STATES.Completed, complete: false }));
     expect(partial.complete).toBe(false);
