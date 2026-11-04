@@ -45,7 +45,7 @@ function Menu(props: {
 export function MenuBar() {
   const {
     openReviewFromMenu, viewerOnly, append, requestClose, setTab, setExpTab, setConfigTab, setShowDiagnostics,
-    setShowCentralMethods, openOfflineHelp, setShowAbout,
+    setShowCentralMethods, openOfflineHelp, setShowAbout, setShowMonitoringSettings,
   } = useStudio();
   return (
     <nav className="menubar" aria-label="Main menu">
@@ -71,7 +71,7 @@ export function MenuBar() {
         items={[
           { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
           { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
-          { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
+          { label: "Monitoring Settings…", onClick: () => setShowMonitoringSettings(true) },
           // Board diagnostics (versions, log tail, download) are served by the instrument's server: browser only.
           ...(isRemote ? [{ label: "Diagnostics…", onClick: () => setShowDiagnostics(true) }] : []),
           // The central registry import and the application updater are desktop-shell features: in the
