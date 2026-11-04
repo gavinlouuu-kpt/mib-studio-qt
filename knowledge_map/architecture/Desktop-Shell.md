@@ -1073,6 +1073,46 @@ WebSocket server allows for the controlling client.
   endpoints 3 and 4); a syringe pump connects with `pump_connect_endpoint`, a peristaltic one with
   `pump_connect_model` and its calibration.
 
+## Nanopositioner / autofocus panel as Qt's tab (2026-11-05, #868 parity wave 1, PR3)
+
+`AutofocusControls.tsx` follows Qt's `NanopositionerTab`; its rules are in `autofocusControlModel.ts` (ranges, device
+list, connect target, command queue, remembered values) and `autofocusMessages.ts` (runtime messages).
+
+- **Operator controls (D2).** Enable autofocus is a check box (enabled when connected, it flips at once and then follows
+  the backend); the target ring width (1-100, 2 decimals, default 20) applies 500 ms after the last edit (Enter or
+  leaving the field at once) with a read-modify-write of the live configuration, also while autofocus runs and an
+  experiment is active; Jog is `-`/`+` with a Step of 1-100 whole volts, written into the configuration before every
+  jog as Qt does, usable while autofocus is enabled. None needs Service mode or the arm. A refused value says why and
+  sends nothing. Disable stays available whenever the backend is ready (D3) and calls `cancelActuation()` on the
+  panel's `AutofocusCommandQueue`: an Enable or Jog still queued, or between its own steps, is never sent afterwards
+  (Disconnect cancels too). The tuning editor (HW-035) no longer shows the setpoint and the jog step and applies only
+  its own fields on top of the live configuration, so it cannot overwrite them with a stale copy.
+- **Device list (HW-024/025/026).** Backend (Auto-detect | OEABT serial | CoreMOR) filters the list; Refresh runs the
+  nanopositioner discovery job (kinds `[2]`) and fills a device combo with Qt's labels ('OEABT candidate — name'), also
+  for endpoints not identified: identity is verified at connect. The backend of a row is the `vendor:` capability of
+  the discovered device. The backend refuses an Auto connect, so Auto resolves to the row's own backend before
+  `autofocus_connect_endpoint`; the baud (9600-115200, default 115200) and address (0-255, default 1) fields are sent
+  for every backend and enabled only for CoreMOR. Refresh, Backend, device, baud, address, Connect and Disconnect are
+  disabled while connected or scanning, and locked during an experiment. With no remembered choice the first
+  *identified* row is selected (Qt takes the first row, which may be the pumps' adapter).
+- **Runtime messages (HW-033).** `BackendError` events of command type Autofocus (see [[Rust-Bridge]]: a refused
+  connect's reason, a failed voltage write, a failed safe shutdown voltage) go to the event log as before and, through
+  `publishAutofocusMessage` in `useShell.applyEvents`, to the panel's status lines (the last three; a successful
+  connect clears them). Information and progress messages (`Connected to ...`, `Voltage: ...`) are not events: the
+  state line and the live voltage show them.
+- **Ring width (HW-034).** The shell reads `ring_ratio_stale_ms` with the autofocus status (every 10th tick,
+  `afStaleMs` in `useHardwareState`); the sidebar value dims with a 'Stale: last update N ms ago' tooltip past it
+  (Qt: a fixed 1000 ms), the status bar carries Qt's `Ring width=` value, and the Connect-stage focus quality gate
+  uses the same limit instead of the fixed 1000 ms.
+- **Remembered values (HW-036).** The manual selection (backend choice, endpoint identity, COM number for CoreMOR,
+  baud, address) is written on connect, on disconnect and on `pagehide` into the startup preference record
+  (`mib.startup.nanopositioner.v1`, the one the startup discovery reads; `StartupDiscoveryControls` follows through
+  `mib:nanopositioner-selection-saved`) and pushed to the backend's startup policy; it pre-fills the panel, and a
+  saved device not in the scan is offered as 'saved selection, not scanned'. The target ring width is kept in
+  `mib.autofocus.setpoint.v1` on every edit and written back into a fresh backend once at ready, with a log line (not
+  into a resumed session, not during an experiment). It is last-writer-wins like Qt's `config.json`: a profile or
+  method applied afterwards replaces it, and the field follows the backend.
+
 ## Remembered discovery and named pump endpoints (2026-09-23)
 
 Startup selection now installs validated, per-user remembered vendor/endpoint/baud/address preferences into the shared startup coordinator before optional automatic selection. Malformed persistence skips automatic selection; failed persistence is distinguished from a session-only applied preference. Preference changes do not connect hardware.

@@ -19,6 +19,8 @@ let host: HTMLDivElement, root: Root;
 const append = vi.fn(), onDisarm = vi.fn();
 const button = (name: string) => Array.from(host.querySelectorAll('button')).find(node => node.textContent === name)!;
 const click = async (node: HTMLElement) => act(async () => node.click());
+/** Qt's 'Enable Autofocus' check box. */
+const enableBox = () => Array.from(host.querySelectorAll('label')).find(node => node.textContent === 'Enable autofocus')!.querySelector('input') as HTMLInputElement;
 async function render(overrides = {}) {
   await act(async () => root.render(<HardwareControls ready experimentActive={false} append={append} mode="operator" armed={false} onDisarm={onDisarm} {...overrides} />));
 }
@@ -65,8 +67,8 @@ describe('device panel composition', () => {
 describe('autofocus operator controls (D2, D3)', () => {
   it('enables and jogs without Service mode or the arm, also during an experiment', async () => {
     await render({experimentActive: true});
-    expect(button('Enable autofocus').disabled).toBe(false);
-    await click(button('Enable autofocus'));
+    expect(enableBox().disabled).toBe(false);
+    await click(enableBox());
     expect(bridge.autofocusSetEnabled).toHaveBeenCalledWith(true);
     await click(button('Jog voltage +'));
     expect(bridge.autofocusJog).toHaveBeenCalledWith(true);
@@ -78,12 +80,12 @@ describe('autofocus operator controls (D2, D3)', () => {
     vi.mocked(bridge.fetchAutofocusStatus).mockResolvedValue({...focus, enabled: true});
     await render();
     expect(button('Jog voltage +').disabled).toBe(false);
-    expect(button('Enable autofocus').disabled).toBe(true);
+    expect(enableBox().checked).toBe(true);
   });
   it('needs a connected nanopositioner to enable or jog, but not to disable', async () => {
     vi.mocked(bridge.fetchAutofocusStatus).mockResolvedValue({...focus, connected: false});
     await render();
-    expect(button('Enable autofocus').disabled).toBe(true);
+    expect(enableBox().disabled).toBe(true);
     expect(button('Jog voltage +').disabled).toBe(true);
     expect(button('Disable autofocus').disabled).toBe(false);
   });
@@ -92,6 +94,7 @@ describe('autofocus operator controls (D2, D3)', () => {
     vi.mocked(bridge.autofocusJog).mockReturnValue(new Promise(resolve => { finish = resolve; }));
     await render();
     await click(button('Jog voltage +'));
+    await act(async () => { await Promise.resolve(); });
     expect(button('Jog voltage −').disabled).toBe(true);        // a non-stop command is in flight
     expect(button('Disable autofocus').disabled).toBe(false);
     await click(button('Disable autofocus'));

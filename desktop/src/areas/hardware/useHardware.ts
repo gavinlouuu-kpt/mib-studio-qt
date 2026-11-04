@@ -27,12 +27,15 @@ export function useHardwareState() {
 
   // Autofocus status (schema v11, BE-8).
   const [afStatus, setAfStatus] = useState<AutofocusStatus | null>(null);
+  // The configured staleness limit of the focus metric (config.ring_ratio_stale_ms; the shell reads it with the status).
+  // Until it is known, Qt's fixed 1000 ms (StatisticsPanel.cpp:202).
+  const [afStaleMs, setAfStaleMs] = useState(1000);
   // UX-3 preflight: pump/trigger snapshots polled while on the Preflight stage.
   const [samplePump, setSamplePump] = useState<PumpStatus | null>(null);
   const [sheathPump, setSheathPump] = useState<PumpStatus | null>(null);
   return {
     trigStatus, setTrigStatus, pulseUs, setPulseUs, periodicMs, setPeriodicMs, operatingMode, setOperatingMode,
-    triggerArmed, setTriggerArmed, afStatus, setAfStatus, samplePump, setSamplePump, sheathPump, setSheathPump,
+    triggerArmed, setTriggerArmed, afStatus, setAfStatus, afStaleMs, setAfStaleMs, samplePump, setSamplePump, sheathPump, setSheathPump,
   };
 }
 export type HardwareState = ReturnType<typeof useHardwareState>;

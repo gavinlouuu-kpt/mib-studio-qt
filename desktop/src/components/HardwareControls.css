@@ -8,3 +8,6 @@
 .hardware-controls .purge-button { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .hardware-controls .hardware-hint { margin: .2rem 0 .6rem; font-size: .85rem; color: #94a3b8; }
 .hardware-controls .hardware-hint-problem { color: #fcd34d; }
+/* Nanopositioner panel (PR3): the device list shows Qt's full endpoint names. */
+.hardware-controls .autofocus-controls .hardware-fields select[data-tour="autofocus-device"] { min-width: 16rem; max-width: 100%; }
+.hardware-controls .autofocus-controls [aria-label="Manual control"] { align-items: center; }

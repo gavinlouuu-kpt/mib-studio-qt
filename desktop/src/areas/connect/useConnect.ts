@@ -313,12 +313,12 @@ export function useCameraModeSwitch({
 
 type ConnectModelDeps = Pick<ShellState, "ready" | "caps" | "instrument" | "pz7035" | "instrumentModes">
   & Pick<ConnectState, "camSelection" | "running" | "alignImage"> & Pick<ConfigState, "coreStatus" | "stats">
-  & Pick<HardwareState, "afStatus" | "samplePump" | "sheathPump" | "trigStatus">
+  & Pick<HardwareState, "afStatus" | "afStaleMs" | "samplePump" | "sheathPump" | "trigStatus">
   & Pick<PreviewState, "backgroundSet" | "roiFields" | "lastMeta"> & CoresModel & Pick<CameraSetupModel, "cameraScript">;
 
 // Render-time values: the Start Camera gate, the UX-3 preflight checklist and the UX-4 quality gates.
 export function connectModel({
-  ready, caps, instrument, pz7035, instrumentModes, camSelection, running, alignImage, coreStatus, stats, afStatus,
+  ready, caps, instrument, pz7035, instrumentModes, camSelection, running, alignImage, coreStatus, stats, afStatus, afStaleMs,
   samplePump, sheathPump, trigStatus, backgroundSet, roiFields, lastMeta, cores, cameraScript,
 }: ConnectModelDeps) {
   const cameraConfigured = camSelection?.configured ?? false;
@@ -369,16 +369,14 @@ export function connectModel({
   const preflight = derivePreflight(preflightInput);
 
   // ---- UX-4 Camera & Alignment quality gates (issue #308) ----
-  // Focus staleness threshold: the autofocus config's ring_ratio_stale_ms is
-  // not polled into the shell yet, so use a conservative default until it is.
-  const FOCUS_STALE_MS = 1000;
+  // Focus staleness threshold: the autofocus config's ring_ratio_stale_ms, read by the shell (HW-034, #868).
   const qualityInput: QualityInput = {
     cameraRunning: running,
     focusConnected: afStatus?.connected ?? false,
     focusMetric: afStatus?.median_ring_ratio ?? 0,
     focusUpdatedUs: afStatus?.last_ring_ratio_update_us ?? 0,
     focusAgeMs: afStatus ? afStatus.ring_ratio_age_us / 1000 : 0,
-    focusStaleMs: FOCUS_STALE_MS,
+    focusStaleMs: afStaleMs,
     backgroundSet,
     roiW: Number(roiFields.w) || 0,
     roiH: Number(roiFields.h) || 0,

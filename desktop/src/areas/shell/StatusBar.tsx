@@ -37,8 +37,12 @@ export function ContextBar() {
 export function StatusBar() {
   const {
     abi, ready, reviewing, recording, setShowLog, showLog, log, displayFps, hostProcessing, algoFps, validFps, invalidFps,
-    running, camStatus, dataRate, expState, expActive, expStatus,
+    running, camStatus, dataRate, expState, expActive, expStatus, caps, afStatus, afStaleMs,
   } = useStudio();
+  // HW-034 (#868): Qt's status bar ends the camera part with the live median ring width ("Ring width=0.000"). Here it reads
+  // an em dash until a first sample exists, and carries the staleness note the sidebar shows.
+  const ringKnown = !!afStatus?.valid && afStatus.last_ring_ratio_update_us > 0;
+  const ringStale = ringKnown && afStatus.ring_ratio_age_us / 1000 > afStaleMs;
   return (
     <>
       <footer className="statusbar">
@@ -53,7 +57,7 @@ export function StatusBar() {
         <span className="metrics">
           Display={metricNumber(displayFps, 1)} fps | {hostProcessing
             ? <>Algo={metricNumber(algoFps)}/s | Valid={metricNumber(validFps)}/s | Invalid={metricNumber(invalidFps)}/s</>
-            : <>Science=PL</>} | Camera={running ? "running" : camStatus}, {metricNumber(dataRate, 1)} MB/s | Experiment:{" "}
+            : <>Science=PL</>} | Camera={running ? "running" : camStatus}, {metricNumber(dataRate, 1)} MB/s | {caps.autofocus && <>Ring width=<span title={ringStale ? `Stale: last update ${Math.round(afStatus.ring_ratio_age_us / 1000)} ms ago` : undefined}>{ringKnown ? metricNumber(afStatus.median_ring_ratio, 3) : "—"}</span> | </>}Experiment:{" "}
           {(EXPERIMENT_STATE_NAMES[expState] ?? "Inactive").toLowerCase()}
           {expActive ? ` (buffered ${String(BigInt(expStatus?.valid_buffered ?? "0") + BigInt(expStatus?.invalid_buffered ?? "0"))})` : ""}
         </span>

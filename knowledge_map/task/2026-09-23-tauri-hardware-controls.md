@@ -42,3 +42,6 @@ Update 2026-11-04: the Service-mode/arm/experiment gating described above for pu
 a wiring choice, not a product decision, and is removed (Tauri parity wave 1, #868, #855). Pump connect, rate,
 direction, volume, Start, Purge and autofocus Enable/Jog are operator controls as in Qt; Stop and Disable are
 available whenever the backend is ready. See [[architecture/Desktop-Shell]].
+
+Update 2026-11-05: the autofocus panel now also follows Qt's NanopositionerTab for the target ring width, jog step,
+device list, runtime messages and remembered selection (PR3 of the same stream). See [[architecture/Desktop-Shell]].
