@@ -674,6 +674,36 @@ polling and discovery do not write. Disconnect does not stop a generator's physi
 pulse output, and the UI explains that distinction. Hardware acceptance remains a
 separate deferred bench run.
 
+**Pulse generator panel, Qt parity (#868, HW-048..057).** `components/PulseGeneratorControls.tsx`
+with the pure `pulseGeneratorModel.ts`, `pulseGeneratorSettings.ts` and `pulseGeneratorRig.ts`:
+- *Start / Stop.* One **Start** (one arm) writes frequency, duty, then enable for the chosen
+  channel and stops at the first failure, naming the step and what was already written; **Set**
+  writes frequency and duty only; **Stop** disables the channel and is never arm-gated (only
+  "not ready", a command in flight, or live-view ownership disable it).
+- *Connection.* Port, baud (4800–115200, default 9600), data bits 8/7, parity N/E/O and stop bits
+  1/2 are all sent on connect; the Modbus address is 1–247, the range the backend enforces (Qt's
+  spin allows up to 255). **Scan** is the read-only probe of addresses 1–16 on the selected port
+  (the `pulse-generator` discovery job with an explicit serial scope), lists every responder with the
+  backend's wording and fills the address with the first identified generator.
+- *Status.* The label is Qt's: `Scanning…`, `Disconnected`, `Disconnected — <error>`,
+  `Verified addr N — ChX: f Hz, d% duty, output ON/off`.
+- *Persistence.* Port, serial settings, address, channel, frequency and duty are saved to the
+  `pulseGenerator` key of the preferences file on a successful connect, Set and Start, and restored
+  on mount (localStorage in the browser, where there is no preferences file).
+- *Rig preset.* **Use XGC + R5D preset for Live View** edits the file the selected MindVision camera
+  was applied from (`camera_document` read, revision-checked save), merges the rig camera settings and a
+  `live_view` block for this generator, then applies it with `select_mindvision_camera`. It needs a
+  stopped MindVision camera with a config file and an idle experiment, asks first, and never starts
+  hardware. The camera document editor keeps its own copy, so it must reload the file afterwards.
+- *Limits.* Channel count, frequency range and address range live once in `PULSE_LIMITS`; a test
+  compares them with `PulseGeneratorService.h` and `BackendFacade.cpp`. The channel list follows
+  the status payload.
+- *Known gaps.* The bridge has no serial port enumeration, so the port is a text field with a list
+  of the ports already known (no description / S/N / VID:PID, no Refresh, no re-resolution of a
+  renamed port); it needs a read-only `list_serial_ports` command over `serialbus::availablePorts()`.
+  The sort-trigger counters of the Qt status bar (targets, conversion, served, dropped, latency) are
+  not in `TriggerStatus` and need a status extension.
+
 Native workflow verification uses Tauri's supported tauri-driver/WebKitWebDriver
 protocol with embedded production assets (`custom-protocol` Cargo feature).
 A development-URL process-alive launch is not sufficient to verify the UI loads.
