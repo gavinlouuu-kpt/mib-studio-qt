@@ -14,6 +14,8 @@ export interface StageNotice { stage: StageName; level: "info" | "warn" | "error
 
 export const NO_EXPERIMENT_SCRIPT = "No Experiment camera script: the camera keeps its current window";
 export const NO_OVERVIEW_SCRIPT = "No Overview camera script: the camera keeps its current mode. Choose one in Camera & Alignment (overviewConfig.js).";
+/** The Overview editor's file is gone (Qt: "Script file does not exist", nothing applied). */
+export const overviewScriptMissing = (path: string) => `Overview camera script not found: ${path}. The camera keeps its current mode.`;
 /** Qt's wording when the Overview's auto-start fails (MainWindow::onTabChanged). */
 export const START_FAILED = "Failed to start camera. Please check camera connection and try again.";
 export const OVERVIEW_DISABLED_TITLE = "Overview tab is disabled while an experiment is active. Please stop the experiment first.";
@@ -29,11 +31,15 @@ export interface ScriptSources {
   cameraDocumentPath: string;
   /** The applied profile's config.json (its folder holds egrabberConfig.js and overviewConfig.js); "" when none. */
   profileConfigPath: string;
-  /** The Overview script editor's resolved path (Camera & Alignment); "" until it knows. */
+  /** The Overview script editor's resolved path (Camera & Alignment; Qt OverviewTab::currentJsPath): the external file the
+   *  operator browsed to, else the default; "" until the editor knows it. */
   overviewScriptPath: string;
+  /** The editor's default path (<profile folder>/overviewConfig.js, else the app config folder): the one file that is made
+   *  from the bundled default when it is missing (Qt ensureDefaultsFile). */
+  overviewDefaultPath: string;
 }
 
-export const NO_SOURCES: ScriptSources = { cameraScriptPath: "", cameraDocumentPath: "", profileConfigPath: "", overviewScriptPath: "" };
+export const NO_SOURCES: ScriptSources = { cameraScriptPath: "", cameraDocumentPath: "", profileConfigPath: "", overviewScriptPath: "", overviewDefaultPath: "" };
 
 const separatorOf = (path: string) => (path.includes("\\") && !path.includes("/") ? "\\" : "/");
 
@@ -69,12 +75,19 @@ export async function resolveExperimentScript(
   return null;
 }
 
-/** The Overview script: the Overview editor's resolved path (it creates the default file when it is
- *  missing), else the active profile's overviewConfig.js if it exists. */
+/** The Overview script: the Overview editor's resolved path (Qt `currentJsPath`) when the file is there, or when it is the
+ *  default path and can be made from the bundled default (Qt `ensureDefaultsFile`, which the Overview tab runs when it is
+ *  built); an external file that is gone is not replaced. Without an editor path, the active profile's overviewConfig.js
+ *  if it exists. */
 export async function resolveOverviewScript(
-  sources: ScriptSources, exists: (path: string) => Promise<boolean>,
+  sources: ScriptSources, exists: (path: string) => Promise<boolean>, createDefault?: (path: string) => Promise<boolean>,
 ): Promise<ResolvedScript | null> {
-  if (sources.overviewScriptPath) return { path: sources.overviewScriptPath, source: "overview-editor" };
+  const editor = sources.overviewScriptPath;
+  if (editor) {
+    if (await exists(editor)) return { path: editor, source: "overview-editor" };
+    if (createDefault && editor === sources.overviewDefaultPath && await createDefault(editor)) return { path: editor, source: "overview-editor" };
+    return null;
+  }
   const profile = profileFile(sources.profileConfigPath, "overviewConfig.js");
   if (profile && await exists(profile)) return { path: profile, source: "profile" };
   return null;
@@ -114,6 +127,8 @@ export interface StageIo {
   applyScript(path: string, overview: boolean): Promise<CmdLike>;
   refreshGeometry(): Promise<CameraGeometry | null>;
   scriptExists(path: string): Promise<boolean>;
+  /** Make the default Overview script from the bundled default; true when the file is there afterwards. */
+  createOverviewDefault?(path: string): Promise<boolean>;
   /** The camera is running (true) or stopped (false) now. */
   setRunning(running: boolean): void;
   log(line: string): void;
@@ -145,13 +160,14 @@ export async function runEgrabberStage(input: StageInput, io: StageIo): Promise<
     }
     const selection = await io.fetchSelection();
     if (!selection.valid || !selection.configured || selection.mode !== CAMERA_SELECTION_MODES.Hardware) return null;
-    const script = overview ? await resolveOverviewScript(input.sources, io.scriptExists) : await resolveExperimentScript(input.sources, io.scriptExists);
+    const script = overview ? await resolveOverviewScript(input.sources, io.scriptExists, io.createOverviewDefault) : await resolveExperimentScript(input.sources, io.scriptExists);
     const wasRunning = selection.running;
     const autoStart = overviewAutoStart(input.geometry, selection, false);
 
     if (!script) {
       // Qt logs it and leaves the camera as it is; Overview still starts a stopped camera.
-      const notice: StageNotice = { stage, level: "warn", text: overview ? NO_OVERVIEW_SCRIPT : NO_EXPERIMENT_SCRIPT };
+      const missing = overview && input.sources.overviewScriptPath ? overviewScriptMissing(input.sources.overviewScriptPath) : NO_OVERVIEW_SCRIPT;
+      const notice: StageNotice = { stage, level: "warn", text: overview ? missing : NO_EXPERIMENT_SCRIPT };
       io.log(notice.text);
       if (overview && autoStart) return (await startCamera(io, stage, false)) ?? notice;
       return notice;

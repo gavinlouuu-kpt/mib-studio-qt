@@ -22,6 +22,8 @@ import {
   isEgrabber, NO_SOURCES, resolveExperimentScript, runEgrabberStage, runOverviewAutoStart,
   type ScriptSources, type StageIo, type StageName, type StageNotice,
 } from "./cameraStage";
+import { ensureOverviewDefault } from "./overviewScript";
+import type { OverviewScriptModel } from "./useOverviewScript";
 
 export function useConnectState() {
   const [running, setRunning] = useState(false);
@@ -363,6 +365,7 @@ export function useCameraModeSwitch({
           applyScript: (path, overview) => bridge.applyCameraScriptWithRole(path, overview),
           refreshGeometry: () => refreshCameraGeometry(),
           scriptExists,
+          createOverviewDefault: ensureOverviewDefault,
           setRunning,
           log: append,
         };
@@ -418,13 +421,17 @@ export function useCameraModeSwitch({
 // Where the camera scripts may come from, read from the config area's state each render (no hook): the
 // stage change and the window save read the operator's current choice through scriptSourcesRef, which the
 // connect hooks above own but the config hooks, called later, fill.
-export function syncScriptSources({ scriptSourcesRef, cameraScript, scriptDocument, profiles }:
-  Pick<ConnectState, "scriptSourcesRef"> & Pick<CameraSetupModel, "cameraScript" | "scriptDocument"> & Pick<ConfigDocumentsModel, "profiles">) {
+export function syncScriptSources({ scriptSourcesRef, cameraScript, scriptDocument, profiles, overviewScript }:
+  Pick<ConnectState, "scriptSourcesRef"> & Pick<CameraSetupModel, "cameraScript" | "scriptDocument"> & Pick<ConfigDocumentsModel, "profiles">
+  & { overviewScript: Pick<OverviewScriptModel, "path" | "defaultPath"> }) {
   scriptSourcesRef.current = {
     ...scriptSourcesRef.current,
     cameraScriptPath: cameraScript.path,
     cameraDocumentPath: scriptDocument.doc?.path ?? "",
     profileConfigPath: profiles.activeProfile?.path ?? "",
+    // The Overview editor's resolved path (Qt currentJsPath), so the stage change applies the file the operator edits.
+    overviewScriptPath: overviewScript.path,
+    overviewDefaultPath: overviewScript.defaultPath,
   };
 }
 

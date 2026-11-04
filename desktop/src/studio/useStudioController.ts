@@ -4,6 +4,7 @@ import { useCameraSetup, useConfigDocuments, useConfigState, useConfigSync, useC
 import {
   connectModel, syncScriptSources, useAlignPeakReset, useCameraConnection, useCameraModeSwitch, useCameraWindowing, useConnectState,
 } from "../areas/connect/useConnect";
+import { overviewScriptContext, useOverviewScript } from "../areas/connect/useOverviewScript";
 import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
 import {
   experimentModel, useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useSsdStatus,
@@ -64,11 +65,12 @@ export function useStudioController() {
   const viewerOnly = useViewerOnly();
   const documents = useConfigDocuments({ ...states, ...configSync, ...cores }); // config
   const reviewJobs = useReviewJobs(states); // review
-  syncScriptSources({ ...states, ...cameraSetup, ...documents }); // connect: the camera scripts the stage change and the window save use
+  const overviewScript = useOverviewScript(overviewScriptContext({ ...states, ...connection, ...windowing, ...documents })); // connect: the Overview's overviewConfig.js editor
+  syncScriptSources({ ...states, ...cameraSetup, ...documents, overviewScript }); // connect: the camera scripts the stage change and the window save use
   const composed = {
     ...states, ...liveFrames, ...polling, ...monitoringPolling, ...preferences, ...configSync, ...connection,
     ...livePreview, ...ssd, ...reviewSource, ...experiment, ...windowing, ...modeSwitch, ...cameraSetup,
-    ...previewBuffer, ...cores, viewerOnly, ...documents, ...reviewJobs,
+    ...previewBuffer, ...cores, viewerOnly, ...documents, ...reviewJobs, overviewScript,
   };
   const closeGuard = useShellCloseGuard(composed); // shell
   // Render-time values (no hooks).

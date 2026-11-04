@@ -36,8 +36,25 @@ describe("script paths (#846)", () => {
     expect(await resolveOverviewScript(profile, present("C:\\MIBTest\\include\\overviewConfig.js")))
       .toEqual({ path: "C:\\MIBTest\\include\\overviewConfig.js", source: "profile" });
     expect(await resolveOverviewScript(profile, present())).toBeNull();
-    expect(await resolveOverviewScript({ ...profile, overviewScriptPath: "/x/overviewConfig.js" }, present()))
+    expect(await resolveOverviewScript({ ...profile, overviewScriptPath: "/x/overviewConfig.js" }, present("/x/overviewConfig.js")))
       .toEqual({ path: "/x/overviewConfig.js", source: "overview-editor" });
+  });
+
+  it("makes the default Overview script from the bundled one when it is missing, but never replaces a missing external file (#863 A2)", async () => {
+    const editor = sources({ profileConfigPath: "/p/lab/config.json", overviewScriptPath: "/p/lab/overviewConfig.js", overviewDefaultPath: "/p/lab/overviewConfig.js" });
+    const create = vi.fn(async () => true);
+    expect(await resolveOverviewScript(editor, present(), create)).toEqual({ path: "/p/lab/overviewConfig.js", source: "overview-editor" });
+    expect(create).toHaveBeenCalledWith("/p/lab/overviewConfig.js");
+    // an existing file is used as it is
+    create.mockClear();
+    expect(await resolveOverviewScript(editor, present("/p/lab/overviewConfig.js"), create)).toEqual({ path: "/p/lab/overviewConfig.js", source: "overview-editor" });
+    expect(create).not.toHaveBeenCalled();
+    // an external file that is gone is not replaced by the default: Qt skips the apply
+    const external = { ...editor, overviewScriptPath: "/usb/overview.js" };
+    expect(await resolveOverviewScript(external, present(), create)).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+    // a default that cannot be made is no script
+    expect(await resolveOverviewScript(editor, present(), async () => false)).toBeNull();
   });
 });
 

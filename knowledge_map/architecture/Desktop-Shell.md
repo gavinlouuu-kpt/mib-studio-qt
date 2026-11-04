@@ -339,8 +339,9 @@ stopped, configured camera ("Failed to start camera. Please check camera connect
 it fails; never a MindVision camera, as in Qt, whose MindVision branch returns first). Script paths (`ScriptSources`, filled each
 render by `syncScriptSources` from the config area's state): Experiment = Config > Camera script selection,
 else the EGrabber script editor's file, else the active profile folder's `egrabberConfig.js` if it exists
-("No Experiment camera script: the camera keeps its current window" otherwise); Overview = the profile
-folder's `overviewConfig.js` if it exists. The window box is the geometry's `roi` (profile, else script);
+("No Experiment camera script: the camera keeps its current window" otherwise); Overview = the Overview
+script editor's resolved path (below), made from the bundled default when it is the default file and
+missing. The window box is the geometry's `roi` (profile, else script);
 Qt's snapping (`snapEgrabberWindow`: offsets rounded then snapped down, sizes snapped down) runs while
 dragging and the backend repeats it when `save_camera_window` writes the script and the profile, on release
 and a moment after each W/H/X/Y edit (`useCameraWindow.edit`); a window that changed in the backend (a
@@ -348,6 +349,26 @@ profile applied or reloaded) redraws the box unless an edit is in progress (`syn
 errors and save results are lines in the Overview (`CameraStageNotice`). The Overview also shows the
 backend's Recording capacity (`fetch_recording_capacity` once a second with the box as the planned window,
 frozen during an experiment; `recordingCapacity.ts`, `RecordingCapacityPanel.tsx`).
+
+### Overview script editor (#863 A2)
+
+- **Overview script editor** (`OverviewScriptEditor.tsx`, state in `useOverviewScript.ts`, rules in
+  `overviewScript.ts`; Qt `OverviewTab` `onReloadJs`/`onSaveJs`/`onApplyJs`/`onBrowseJs`/`onClearJs`): a text
+  area for `overviewConfig.js` with the path and Qt's "Unsaved changes – click Save to apply." Reset reloads
+  (the default file is made from the bundled `resources/defaults/overviewConfig.js` when missing, Qt
+  `ensureDefaultsFile`); Save writes the file (revision-checked, CRLF kept) and says "Saved." inline; Apply to
+  Camera saves, stops a running camera (the Rust guard refuses a running one) and applies with the Overview
+  role (`applyCameraScriptWithRole(path, true)`), then "Applied to camera. Capture remains stopped."; failures
+  use Qt's "Failed to load/save/save script/apply script: ..." texts. Browse... keeps the external path in
+  `localStorage` `mib.overview.script-path` (Qt `Config/ExternalOverviewScriptPath`); Clear removes it and asks
+  Qt's Yes/No question. The default path is `<active profile folder>/overviewConfig.js` (the file is not part
+  of the profile's revision), else `<app config dir>/overviewConfig.js`. It uses `camera_document` kind
+  `overview` (a `.js` document whose `default` is the bundled script; the server refuses it like `js`). The
+  hook is called by `useStudioController` after the config documents (the editor needs the active profile) and
+  fills `ScriptSources.overviewScriptPath` / `overviewDefaultPath` through `syncScriptSources`, so the stage
+  change applies the file the operator edits. The whole area is hidden for a MindVision camera (Qt hides it).
+  Config > Camera script (`cameraScript.tsx`) is unchanged and still points a MindVision camera to the JSON
+  editor below it, which is true there.
 
 ## Command layer
 

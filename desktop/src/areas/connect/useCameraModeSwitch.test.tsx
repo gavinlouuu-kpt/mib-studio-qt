@@ -20,7 +20,7 @@ vi.mock("../../transport", () => ({
   invoke: invokeMock,
   transport: { session: { subscribe: () => () => undefined, get: () => sessionState.current } },
 }));
-import { useCameraModeSwitch } from "./useConnect";
+import { syncScriptSources, useCameraModeSwitch } from "./useConnect";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -35,7 +35,7 @@ const geometry = (over: Partial<CameraGeometry> = {}): CameraGeometry => ({
 } as CameraGeometry);
 
 let host: HTMLDivElement, root: Root;
-let current: CameraGeometry | null, sel: CameraSelection, notices: Array<StageNotice | null>, running: boolean[], exists: Set<string>;
+let current: CameraGeometry | null, sel: CameraSelection, notices: Array<StageNotice | null>, running: boolean[], exists: Set<string>, created: string[];
 let sources: { current: ScriptSources };
 let tabRef: { current: string };
 
@@ -55,7 +55,7 @@ const STABLE_REFRESH = async () => current;
 
 beforeEach(() => {
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
-  current = geometry(); sel = selection(); notices = []; running = [];
+  current = geometry(); sel = selection(); notices = []; running = []; created = [];
   exists = new Set(["/p/lab/overviewConfig.js", "/p/lab/egrabberConfig.js"]);
   sources = { current: { ...NO_SOURCES, profileConfigPath: "/p/lab/config.json" } };
   tabRef = { current: "connect" };
@@ -66,7 +66,9 @@ beforeEach(() => {
   bridgeMock.startCapture.mockImplementation(async () => { sel = { ...sel, running: true }; return { ok: true, message: "started" }; });
   bridgeMock.applyCameraScriptWithRole.mockResolvedValue({ ok: true, message: "applied" });
   bridgeMock.setCameraOverview.mockResolvedValue({ ok: true, message: "mode" });
-  invokeMock.mockImplementation(async (_command: string, args: { path: string }) => {
+  invokeMock.mockImplementation(async (_command: string, args: { action: string; path: string; kind: string; text: string }) => {
+    if (args.action === "default") return { path: "", text: "// bundled overviewConfig.js", revision: "" };
+    if (args.action === "create") { exists.add(args.path); created.push(`${args.kind} ${args.path}: ${args.text}`); return { path: args.path, text: args.text, revision: "r" }; }
     if (!exists.has(args.path)) throw new Error("not found");
     return { path: args.path, text: "", revision: "r" };
   });
@@ -83,6 +85,31 @@ describe("entering a stage with an eGrabber camera", () => {
     expect(bridgeMock.startCapture).toHaveBeenCalledTimes(1);
     expect(bridgeMock.setCameraOverview).not.toHaveBeenCalled(); // no preset for this camera
     expect(notices[notices.length - 1]).toBeNull();
+  });
+
+  it("applies the Overview editor's file (#863 A2): the external script the operator browsed to, not the profile's", async () => {
+    exists.add("/usb/overview.js");
+    sources.current = { ...sources.current, overviewScriptPath: "/usb/overview.js", overviewDefaultPath: "/p/lab/overviewConfig.js" };
+    await render({ tab: "overview" });
+    expect(bridgeMock.applyCameraScriptWithRole).toHaveBeenCalledWith("/usb/overview.js", true);
+    expect(created).toEqual([]);
+  });
+
+  it("makes the default Overview script from the bundled one when its file is missing, then applies it (Qt ensureDefaultsFile)", async () => {
+    exists.delete("/p/lab/overviewConfig.js");
+    sources.current = { ...sources.current, overviewScriptPath: "/p/lab/overviewConfig.js", overviewDefaultPath: "/p/lab/overviewConfig.js" };
+    await render({ tab: "overview" });
+    expect(created).toEqual(["overview /p/lab/overviewConfig.js: // bundled overviewConfig.js"]);
+    expect(bridgeMock.applyCameraScriptWithRole).toHaveBeenCalledWith("/p/lab/overviewConfig.js", true);
+  });
+
+  it("applies nothing and says so when the external Overview script is gone, and still starts a stopped camera", async () => {
+    sources.current = { ...sources.current, overviewScriptPath: "/usb/gone.js", overviewDefaultPath: "/p/lab/overviewConfig.js" };
+    await render({ tab: "overview" });
+    expect(bridgeMock.applyCameraScriptWithRole).not.toHaveBeenCalled();
+    expect(created).toEqual([]);
+    expect(bridgeMock.startCapture).toHaveBeenCalledTimes(1);
+    expect(notices[notices.length - 1]).toEqual({ stage: "overview", level: "warn", text: "Overview camera script not found: /usb/gone.js. The camera keeps its current mode." });
   });
 
   it("applies once per entry, not on every re-render, and again after leaving and coming back", async () => {
@@ -170,5 +197,27 @@ describe("the other cameras", () => {
     await render({ tab: "overview" });
     expect(bridgeMock.startCapture).toHaveBeenCalledTimes(1);
     expect(notices[notices.length - 1]).toEqual({ stage: "overview", level: "error", text: "Failed to start camera. Please check camera connection and try again." });
+  });
+});
+
+
+describe("where the stage change finds the scripts (#863 A2)", () => {
+  it("fills the Overview slots with the editor's resolved path and its default, beside the Config choices", () => {
+    const ref = { current: NO_SOURCES };
+    syncScriptSources({
+      scriptSourcesRef: ref, cameraScript: { path: "/sel.js" }, scriptDocument: { doc: { path: "/doc.js" } }, profiles: { activeProfile: { path: "/p/lab/config.json" } },
+      overviewScript: { path: "/usb/overview.js", defaultPath: "/p/lab/overviewConfig.js" },
+    } as never);
+    expect(ref.current).toEqual({
+      cameraScriptPath: "/sel.js", cameraDocumentPath: "/doc.js", profileConfigPath: "/p/lab/config.json",
+      overviewScriptPath: "/usb/overview.js", overviewDefaultPath: "/p/lab/overviewConfig.js",
+    });
+    // and follows the editor each render: the default again once the external path is cleared
+    syncScriptSources({
+      scriptSourcesRef: ref, cameraScript: { path: "" }, scriptDocument: { doc: null }, profiles: { activeProfile: null },
+      overviewScript: { path: "/home/u/.config/app/overviewConfig.js", defaultPath: "/home/u/.config/app/overviewConfig.js" },
+    } as never);
+    expect(ref.current.overviewScriptPath).toBe("/home/u/.config/app/overviewConfig.js");
+    expect(ref.current.profileConfigPath).toBe("");
   });
 });

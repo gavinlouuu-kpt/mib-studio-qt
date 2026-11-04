@@ -1,12 +1,13 @@
 // Connect and Overview (epic #863): the Overview (Camera & Alignment) stage: the camera window on the
-// full sensor, the live canvas and the UX-4 quality gates. Moved from App.tsx without change (#869 wave 0).
+// full sensor, the live canvas, the UX-4 quality gates and the Overview's own camera script (overviewConfig.js).
+// Moved from App.tsx (#869 wave 0).
 import { egrabberWindowLine, rateSummary, RUN_WINDOW, windowInputLimits } from "../../cameraAlignment";
-import { CameraScriptControls } from "../../cameraScript";
 import { RunWindowNotice } from "../../components/RunWindowNotice";
 import { ViewerGate, viewerReason } from "../../components/ViewerGate";
 import { GATE_STATUS_LABEL } from "../../quality";
 import { useStudio } from "../../studio/StudioContext";
 import { CameraStageNotice } from "./CameraStageNotice";
+import { OverviewScriptEditor } from "./OverviewScriptEditor";
 import { RecordingCapacityPanel } from "./RecordingCapacityPanel";
 
 export function OverviewTab() {
@@ -14,7 +15,7 @@ export function OverviewTab() {
     instrumentModes, cameraWin, modeError, setTab, setModeRetry, runFrozen, ring, resumeFromBanner, experimentRequestBusy,
     viewerOnly, setFitWindow, fitWindow, cameraGeometry, cameraWindow, expActive, saveCameraWindow, ready, capacity,
     hostProcessing, roiFields, setRoiFields, onApplyRoi, lastMeta, liveCanvasRef, onWindowPointerDown, onWindowPointerMove,
-    onWindowPointerUp, quality, qualityInput, alignBestRef, setAlignImage, caps, cameraScript,
+    onWindowPointerUp, quality, qualityInput, alignBestRef, setAlignImage, caps, overviewScript,
   } = useStudio();
   return (
     <>
@@ -144,7 +145,8 @@ export function OverviewTab() {
         </div>
       </div>
 
-      {caps.egrabber_script && <ViewerGate><CameraScriptControls model={cameraScript} /></ViewerGate>}
+      {/* The Overview's own full-sensor camera script (Qt's script area under the canvas); hidden for a MindVision camera. */}
+      {caps.egrabber_script && <ViewerGate><OverviewScriptEditor model={overviewScript} /></ViewerGate>}
       <p className="mono">
         {lastMeta
           ? `#${lastMeta.frame_index} ${lastMeta.width}×${lastMeta.height} stride=${lastMeta.stride_bytes} bytes=${lastMeta.byte_len}`
