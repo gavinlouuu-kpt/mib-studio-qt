@@ -18,6 +18,8 @@ the combined tree:
   `review_workspace_scale_test` called glibc's `malloc_trim` without a guard. A `trimHeap()`
   helper now calls it only under `__GLIBC__`. Their memory bounds read `/proc/self/status`,
   so they are measured on Linux only.
+  `fcs_reader_test` and `flowjo_reference_test` call `popen` / `pclose` for the optional
+  comparator; on `_WIN32` these now map to `_popen` / `_pclose`.
 
 The bridge ABI numbers 48–50 still need confirming in #716. The macOS
 `run_statistics_twin_over_the_parity_fixture` last-bit failure fails on `develop` too, and
