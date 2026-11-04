@@ -106,6 +106,15 @@ int main(int argc, char** argv) {
     processing.setProcessingConfig(config);
     processing.setRealtimeRoi({0, 0, 96, 96});
     processing.setInvalidFrameSamplingRate(1);
+    // The mock delivers a frame every 2 ms (500 fps). Without this the default
+    // profile's target_fps (5000) is the requested rate, and storage.throughput
+    // then needs the runner's temp disk to sustain every 96x96 frame at 5000 fps
+    // (92 MB/s), which a CI runner does not always do (#833).
+    {
+        auto acquisition = backend.acquisitionProfile();
+        acquisition.targetFps = 500;
+        backend.setAcquisitionProfile(acquisition);
+    }
     // No automatic count flush while the test drives the flushes. #833: an
     // interval whose minimum hold (2 x the interval, plus the write queue) fits
     // in RAM on a CI runner; a million frames would fail storage.buffer.
