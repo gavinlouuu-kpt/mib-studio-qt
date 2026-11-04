@@ -4,3 +4,7 @@
 .hardware-fields label { display: flex; flex-direction: column; gap: .25rem; }
 .hardware-fields input, .hardware-fields select { max-width: 12rem; }
 .hardware-controls [role="alert"] { color: #fca5a5; }
+/* Hold-to-purge (Qt pressed/released): no text selection, no touch scrolling or callout while the control is held. */
+.hardware-controls .purge-button { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.hardware-controls .hardware-hint { margin: .2rem 0 .6rem; font-size: .85rem; color: #94a3b8; }
+.hardware-controls .hardware-hint-problem { color: #fcd34d; }

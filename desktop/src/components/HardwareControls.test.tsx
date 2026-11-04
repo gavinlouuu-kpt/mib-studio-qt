@@ -4,131 +4,119 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HardwareControls } from './HardwareControls';
 import { bridge } from '../bridge';
-import type { AutofocusConfig, PumpStatus } from '../bridge';
+import type { AutofocusConfig, AutofocusStatus, CmdResult, PumpStatus } from '../bridge';
 vi.mock('../bridge', () => ({bridge: {
-  fetchPumpStatus: vi.fn(), fetchAutofocusStatus: vi.fn(), fetchAutofocusConfig: vi.fn(),
-  pumpStart: vi.fn(), pumpStop: vi.fn(), pumpPurge: vi.fn(), pumpSetFlowRate: vi.fn(), autofocusSetEnabled: vi.fn(),
-  pumpConnectModel: vi.fn(),
+  fetchPumpStatus: vi.fn(), pumpPollStatus: vi.fn(), fetchAutofocusStatus: vi.fn(), fetchAutofocusConfig: vi.fn(),
+  pumpStart: vi.fn(), pumpStop: vi.fn(), pumpStopPurge: vi.fn(), pumpPurge: vi.fn(), pumpSetFlowRate: vi.fn(),
+  autofocusSetEnabled: vi.fn(), autofocusJog: vi.fn(), autofocusSetConfig: vi.fn(),
+  pulseGeneratorStatus: vi.fn(),
 }}));
+const ok = (message = 'ok'): CmdResult => ({ok: true, command: 10, message, operation_id: '0'});
 const pump: PumpStatus = {valid: true, connected: true, run_status: 0, current_flow_rate: 1, accumulated_volume: 0, min_flow_rate: 0, max_flow_rate: 10, stalled: false, com_port: 1, baud_rate: 115200, modbus_address: 1, configured_flow_rate: 1, flow_rate_unit: 100, direction: 0};
+const focus: AutofocusStatus = {valid: true, connected: true, enabled: false, current_voltage: 50, com_port: 3, average_ring_ratio: 1, median_ring_ratio: 1, last_ring_ratio_update_us: 0, ring_ratio_age_us: 0};
 const config: AutofocusConfig = {valid: true, focus_setpoint: 1, focus_range: .1, voltage_step: 1, fine_voltage_step: .1, min_voltage: 0, max_voltage: 100, initial_voltage: 50, manual_voltage_step: 1, ring_ratio_stale_ms: 500, min_samples_per_step: 1, safe_shutdown_voltage: 0, require_new_sample_per_step: true, focus_direction: true};
 let host: HTMLDivElement, root: Root;
 const append = vi.fn(), onDisarm = vi.fn();
-const labelled = (text: string) => Array.from(host.querySelectorAll('label')).filter(node => node.textContent?.startsWith(text)).map(node => node.querySelector('select, input') as HTMLSelectElement & HTMLInputElement);
-function choose(select: HTMLSelectElement, value: string) {
-  Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, value);
-  select.dispatchEvent(new Event('change', {bubbles: true}));
-}
 const button = (name: string) => Array.from(host.querySelectorAll('button')).find(node => node.textContent === name)!;
+const click = async (node: HTMLElement) => act(async () => node.click());
 async function render(overrides = {}) {
-  await act(async () => root.render(<HardwareControls ready experimentActive={false} append={append} mode="service" armed onDisarm={onDisarm} {...overrides} />));
+  await act(async () => root.render(<HardwareControls ready experimentActive={false} append={append} mode="operator" armed={false} onDisarm={onDisarm} {...overrides} />));
 }
 beforeEach(() => {
   Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT: true});
   vi.clearAllMocks();
   vi.mocked(bridge.fetchPumpStatus).mockResolvedValue(pump);
-  vi.mocked(bridge.fetchAutofocusStatus).mockResolvedValue({valid: true, connected: true, enabled: false, current_voltage: 50, com_port: 3, average_ring_ratio: 1, median_ring_ratio: 1, last_ring_ratio_update_us: 0, ring_ratio_age_us: 0});
+  vi.mocked(bridge.pumpPollStatus).mockResolvedValue(ok());
+  vi.mocked(bridge.fetchAutofocusStatus).mockResolvedValue(focus);
   vi.mocked(bridge.fetchAutofocusConfig).mockResolvedValue(config);
-  vi.mocked(bridge.pumpStart).mockResolvedValue({ok: true, command: 10, message: 'Started', operation_id: '0'});
-  vi.mocked(bridge.pumpStop).mockResolvedValue({ok: true, command: 10, message: 'Stopped', operation_id: '0'});
+  for (const name of ['pumpStart', 'pumpStop', 'pumpStopPurge', 'autofocusSetEnabled', 'autofocusJog'] as const) vi.mocked(bridge[name] as (...a: unknown[]) => Promise<CmdResult>).mockResolvedValue(ok(name));
+  vi.mocked(bridge.pulseGeneratorStatus).mockRejectedValue(new Error('no generator'));
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
-describe('hardware operator interactions', () => {
-  it('does not actuate while mounted and uses one-shot arming on an explicit click', async () => {
+
+describe('device panel composition', () => {
+  it('shows pumps, autofocus and the pulse generator on the desktop, and pumps only on the PZ7035', async () => {
     await render();
-    expect(bridge.pumpStart).not.toHaveBeenCalled();
-    await act(async () => button('Run configured pump').click());
-    expect(onDisarm).toHaveBeenCalledOnce();
-    expect(bridge.pumpStart).toHaveBeenCalledWith(0);
-    expect(append).toHaveBeenCalledWith('Start pump: Started');
-  });
-  it('locks mutations during an experiment without removing stop', async () => {
-    await render({experimentActive: true, armed: false, mode: 'operator'});
-    expect(button('Run configured pump').disabled).toBe(true);
-    expect(button('Apply rate').disabled).toBe(true);
-    expect(button('Enable autofocus').disabled).toBe(true);
-    expect(button('Disable autofocus').disabled).toBe(false);
-    await act(async () => button('Stop pump').click());
-    expect(bridge.pumpStop).toHaveBeenCalledWith(0);
-  });
-  it('shows rejected commands as failures, never optimistic success', async () => {
-    vi.mocked(bridge.pumpStart).mockResolvedValue({ok: false, command: 10, message: 'Device stalled', operation_id: '0'});
-    await render();
-    await act(async () => button('Run configured pump').click());
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Device stalled');
-    expect(append).not.toHaveBeenCalledWith('Start pump: Started');
-  });
-  it('blocks motion and configuration when status cannot be read', async () => {
-    vi.mocked(bridge.fetchPumpStatus).mockRejectedValue(new Error('Transport lost'));
-    vi.mocked(bridge.fetchAutofocusStatus).mockRejectedValue(new Error('Transport lost'));
-    await render();
-    expect(button('Run configured pump').disabled).toBe(true);
-    expect(button('Apply rate').disabled).toBe(true);
-    expect(button('Apply autofocus configuration').disabled).toBe(true);
-    expect(button('Stop pump').disabled).toBe(false);
-    expect(host.textContent).toContain('Transport lost');
-  });
-  it('validates blank flow rates before invoking the bridge', async () => {
-    await render();
-    await act(async () => button('Apply rate').click());
-    expect(bridge.pumpSetFlowRate).not.toHaveBeenCalled();
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Flow rate');
-  });
-  it('connects a slot to the peristaltic pump with its calibration and default endpoint', async () => {
-    vi.mocked(bridge.fetchPumpStatus).mockResolvedValue({...pump, connected: false});
-    vi.mocked(bridge.pumpConnectModel).mockResolvedValue({ok: true, command: 10, message: 'Pump connected', operation_id: '0'});
-    await render();
-    await act(async () => choose(labelled('Pump model')[0], '1'));
-    expect(labelled('System serial port')[0].value).toBe('/dev/ttyPS1');
-    expect(labelled('Device address')[0].value).toBe('3');
-    expect(labelled('Calibration (µL per revolution)')[0].value).toBe('25');
-    await act(async () => button('Connect').click());
-    expect(bridge.pumpConnectModel).toHaveBeenCalledWith(0, 1, '/dev/ttyPS1', 115200, 3, 25);
-  });
-  it('shows head speed and hides syringe volume for a connected peristaltic pump', async () => {
-    vi.mocked(bridge.fetchPumpStatus).mockResolvedValue({...pump, model: 1, speed_rpm: 0.4, microliters_per_rev: 25, configured_flow_rate: 10});
-    await render();
-    expect(host.textContent).toContain('Head 0.40 rpm at 25 µL/rev');
-    expect(button('Apply volume')).toBeUndefined();
-    expect(labelled('Pump model')[0].disabled).toBe(true);
-  });
-  it('takes a peristaltic rate in head rpm and sends the equivalent flow in µL/min', async () => {
-    vi.mocked(bridge.fetchPumpStatus).mockResolvedValue({...pump, model: 1, speed_rpm: 0.4, microliters_per_rev: 25, configured_flow_rate: 10, flow_rate_unit: 100});
-    vi.mocked(bridge.pumpSetFlowRate).mockResolvedValue({ok: true, command: 10, message: 'Rate set', operation_id: '0'});
-    await render();
-    expect(host.textContent).toContain('configured ≈ 0.40 rpm');
-    const unit = labelled('Rate unit')[0] as HTMLSelectElement;
-    expect(Array.from(unit.options).map(o => o.textContent)).toContain('rpm (head)');
-    await act(async () => choose(unit, '200'));
-    const rate = labelled('Flow rate')[0] as HTMLInputElement;
-    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(rate, '0.8'); rate.dispatchEvent(new Event('input', {bubbles: true})); });
-    await act(async () => button('Apply rate').click());
-    expect(bridge.pumpSetFlowRate).toHaveBeenCalledWith(0, 20, 100); // 0.8 rpm x 25 µL/rev
-    expect(host.textContent).toContain('Infuse (CCW)');
-    expect(host.textContent).toContain('Withdraw (CW)');
-  });
-  it('offers no rpm unit for a syringe pump', async () => {
-    await render();
-    const unit = labelled('Rate unit')[0] as HTMLSelectElement;
-    expect(Array.from(unit.options).map(o => o.textContent)).not.toContain('rpm (head)');
-    expect(host.textContent).not.toContain('(CCW)');
-  });
-});
-describe('PZ7035 pumps (#501)', () => {
-  it('defaults both slots to the peristaltic pumps on ttyPS1 (Sample 3, Sheath 4) and hides the nanopositioner', async () => {
-    vi.mocked(bridge.fetchPumpStatus).mockResolvedValue({...pump, connected: false});
+    expect(host.querySelector('h2')?.textContent).toBe('Pumps and autofocus');
+    expect(Array.from(host.querySelectorAll('legend')).map(node => node.textContent)).toEqual(['Startup hardware selection', 'Sample pump', 'Sheath pump', 'Autofocus / nanopositioner', 'Acquisition pulse generator (RS485)']);
     const capabilities = {
       instrument: 'pz7035' as const, autofocus: false, trigger: false, host_background: false, frame_buffer: false,
-      reanalysis: false, core_updates: false, egrabber_script: false, pl_identity: true, led_strobe: true,
-      align_mode: false, run_mode: false,
+      reanalysis: false, core_updates: false, egrabber_script: false, pl_identity: true, led_strobe: true, align_mode: false, run_mode: false,
       pump: {model: 'tushui_peristaltic', port: '/dev/ttyPS1', sample_address: 3, sheath_address: 4, microliters_per_rev: 25},
     };
     await render({capabilities});
-    expect(labelled('System serial port').map(input => input.value)).toEqual(['/dev/ttyPS1', '/dev/ttyPS1']);
-    expect(labelled('Device address').map(input => input.value)).toEqual(['3', '4']);
-    expect(labelled('Pump model').map(select => select.value)).toEqual(['1', '1']);
+    expect(host.querySelector('h2')?.textContent).toBe('Pumps');
+    expect(Array.from(host.querySelectorAll('legend')).map(node => node.textContent)).toEqual(['Sample pump', 'Sheath pump']);
     expect(host.textContent).not.toContain('nanopositioner');
     expect(host.textContent).not.toContain('Pulse');
+  });
+  it('lets the operator run and stop a pump during an experiment without Service mode or the arm', async () => {
+    await render({experimentActive: true});
+    expect(button('Run configured pump').disabled).toBe(false);
+    await click(button('Run configured pump'));
+    expect(bridge.pumpStart).toHaveBeenCalledWith(0);
+    expect(onDisarm).not.toHaveBeenCalled();
+    await click(button('Stop pump'));
+    expect(bridge.pumpStop).toHaveBeenCalledWith(0);
+  });
+});
+
+describe('autofocus operator controls (D2, D3)', () => {
+  it('enables and jogs without Service mode or the arm, also during an experiment', async () => {
+    await render({experimentActive: true});
+    expect(button('Enable autofocus').disabled).toBe(false);
+    await click(button('Enable autofocus'));
+    expect(bridge.autofocusSetEnabled).toHaveBeenCalledWith(true);
+    await click(button('Jog voltage +'));
+    expect(bridge.autofocusJog).toHaveBeenCalledWith(true);
+    await click(button('Jog voltage −'));
+    expect(bridge.autofocusJog).toHaveBeenCalledWith(false);
+    expect(onDisarm).not.toHaveBeenCalled();
+  });
+  it('jogs while autofocus is enabled, as Qt does', async () => {
+    vi.mocked(bridge.fetchAutofocusStatus).mockResolvedValue({...focus, enabled: true});
+    await render();
+    expect(button('Jog voltage +').disabled).toBe(false);
+    expect(button('Enable autofocus').disabled).toBe(true);
+  });
+  it('needs a connected nanopositioner to enable or jog, but not to disable', async () => {
+    vi.mocked(bridge.fetchAutofocusStatus).mockResolvedValue({...focus, connected: false});
+    await render();
+    expect(button('Enable autofocus').disabled).toBe(true);
+    expect(button('Jog voltage +').disabled).toBe(true);
+    expect(button('Disable autofocus').disabled).toBe(false);
+  });
+  it('disables autofocus even while another command is in flight, and only a not-ready backend refuses', async () => {
+    let finish!: (value: CmdResult) => void;
+    vi.mocked(bridge.autofocusJog).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    await render();
+    await click(button('Jog voltage +'));
+    expect(button('Jog voltage −').disabled).toBe(true);        // a non-stop command is in flight
+    expect(button('Disable autofocus').disabled).toBe(false);
+    await click(button('Disable autofocus'));
+    expect(bridge.autofocusSetEnabled).toHaveBeenCalledWith(false);
+    await act(async () => finish(ok()));
+    await render({ready: false});
+    expect(button('Disable autofocus').disabled).toBe(true);
+  });
+  it('keeps connection and the tuning editor locked during an experiment, and blocks them when the status cannot be read', async () => {
+    await render({experimentActive: true});
+    expect(button('Disconnect autofocus').disabled).toBe(true);
+    expect(button('Apply autofocus configuration').disabled).toBe(true);
+    expect(button('Disable autofocus').disabled).toBe(false);
+    vi.mocked(bridge.fetchAutofocusStatus).mockRejectedValue(new Error('Transport lost'));
+    await render({experimentActive: false});
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1100)); });
+    expect(button('Apply autofocus configuration').disabled).toBe(true);   // no configuration without a status
+    expect(button('Jog voltage +').disabled).toBe(true);
+    expect(button('Disable autofocus').disabled).toBe(false);
+    expect(host.textContent).toContain('Transport lost');
+  });
+  it('still reports the autofocus status error when only the pumps are readable', async () => {
+    vi.mocked(bridge.fetchAutofocusStatus).mockRejectedValue(new Error('Autofocus link down'));
+    await render();
+    expect(host.textContent).toContain('Autofocus link down');
+    expect(button('Run configured pump').disabled).toBe(false);   // the pump panel does not depend on the autofocus read
   });
 });

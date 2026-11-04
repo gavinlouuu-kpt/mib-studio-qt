@@ -17,8 +17,8 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
   return <section className="hardware-controls" aria-label={autofocus ? 'Pump and autofocus controls' : 'Pump controls'}>
     <h2>{autofocus ? 'Pumps and autofocus' : 'Pumps'}</h2>
     {autofocus && <StartupDiscoveryControls ready={ready} experimentActive={experimentActive} append={append} onSelectionChanged={onSelectionChanged} />}
-    <PumpControls ready={ready} experimentActive={experimentActive} append={append} mode={mode} armed={armed} onDisarm={onDisarm} capabilities={capabilities} />
-    {autofocus && <AutofocusControls ready={ready} experimentActive={experimentActive} append={append} mode={mode} armed={armed} onDisarm={onDisarm} />}
+    <PumpControls ready={ready} append={append} capabilities={capabilities} />
+    {autofocus && <AutofocusControls ready={ready} experimentActive={experimentActive} append={append} />}
     {capabilities.trigger && <PulseGeneratorControls ready={ready} experimentActive={experimentActive} mode={mode} armed={armed} onDisarm={onDisarm} append={append} />}
   </section>;
 }

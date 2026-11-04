@@ -6,7 +6,8 @@
 **Source:** `src/frontend/tabs/SyringePumpTab.cpp`,
 `include/frontend/tabs/SyringePumpTab.h`
 **Related:** [[../services/SyringePumpService]],
-[[Dialogs]] (`SyringePumpSettingsDialog`)
+[[Dialogs]] (`SyringePumpSettingsDialog`); the desktop (Tauri/React) counterpart is `PumpControls.tsx`,
+which follows this tab's behaviour (see [[../architecture/Desktop-Shell]], "Pump and autofocus operator controls")
 
 ## Responsibility
 
