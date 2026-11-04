@@ -46,6 +46,9 @@ This folder hosts living documentation as we build functionality. Keep content c
   [howto/dot-grid-mask-generation.md](howto/dot-grid-mask-generation.md)
 - Branching model & release pipeline (develop → main) — see
   [howto/branching-and-releases.md](howto/branching-and-releases.md)
+- Build a branch with the real eGrabber SDK on the Windows camera PC (bench-test
+  camera/capture PRs before merge) — see
+  [howto/win11-bench-build.md](howto/win11-bench-build.md)
 - Known debt — see [exec-plans/tech-debt-tracker.md](exec-plans/tech-debt-tracker.md)
 - Agent map — see [../AGENTS.md](../AGENTS.md)
 
