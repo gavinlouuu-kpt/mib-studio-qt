@@ -434,6 +434,12 @@ export const reviewBridge = {
   saveCoreRecord: (json: string, overwrite: boolean) => command("review_save_core_record", { json, overwrite }),
   // Jobs (tracked operations; outcomes through pollEvents).
   exportMetrics: (outputPath: string) => command("review_export_metrics", { outputPath }),
+  /** Export FCS 3.1 (review ABI 7, #867): `outputPath` is the `.fcs` file;
+   * its `<stem>_event_map.csv` is published beside it as one pair. */
+  exportFcs: (outputPath: string) => command("review_export_fcs", { outputPath }),
+  /** Batch Export FCS (review ABI 7): `<root>/<base>[_N].fcs` per source, each
+   * at its recorded factor; recordings refused (job kind BatchExport). */
+  batchExportFcs: (sources: string[], outputRoot: string) => command("review_batch_export_fcs", { sources, outputRoot }),
   /** Export All; chart snapshots staged beforehand (charts/chartExport.ts
    * `stageCharts`) are consumed by this call. */
   exportAll: (outputRoot: string, series: SeriesRange = ALL_SERIES) =>

@@ -4,6 +4,9 @@
 // See ExportEngine.h.
 #include "backend/review/ExportEngine.h"
 
+#include "backend/review/ReviewSession.h"
+#include "backend/recording/Hdf5Service.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -21,11 +24,21 @@ namespace backend::review
             for (const auto &file : files)
             {
                 const auto &result = file.result;
-                results.push_back(nlohmann::json{{"source_path", file.sourcePath},
-                                                 {"state", recording::toString(result.status)},
-                                                 {"final_path", result.finalPath},
-                                                 {"retained_partial_path", result.retainedPartialPath},
-                                                 {"error", result.error}});
+                nlohmann::json entry{{"source_path", file.sourcePath},
+                                     {"state", recording::toString(result.status)},
+                                     {"final_path", result.finalPath},
+                                     {"retained_partial_path", result.retainedPartialPath},
+                                     {"error", result.error}};
+                // Only for a request that named `conversion_factor_source` (#867): older
+                // clients keep the status byte for byte.
+                if (!file.conversionFactorSource.empty())
+                {
+                    entry["conversion_factor"] = file.conversionFactor;
+                    entry["conversion_factor_source"] = file.conversionFactorSource;
+                    entry["valid_count"] = std::to_string(result.validCount);
+                    entry["invalid_count"] = std::to_string(result.invalidCount);
+                }
+                results.push_back(std::move(entry));
             }
             return results;
         }
@@ -37,6 +50,7 @@ namespace backend::review
         using namespace backend::recording;
         HdfExportRequest request;
         std::vector<std::string> sources;
+        ExportSourcePolicy policy;
         try
         {
             const auto input = nlohmann::json::parse(json);
@@ -54,12 +68,21 @@ namespace backend::review
             if (request.outputRoot.empty() && !request.explicitDestination.empty())
                 request.outputRoot = ".";
             const auto format = input.value("format", std::string{"all"});
-            if (format != "metrics_csv" && format != "images" && format != "all" && format != "charts")
+            if (format != "metrics_csv" && format != "images" && format != "all" && format != "charts" &&
+                format != "fcs")
                 throw std::invalid_argument("Unknown export format");
             request.format = format == "metrics_csv" ? HdfExportFormat::MetricsCsv
                              : format == "images"    ? HdfExportFormat::Images
                              : format == "charts"    ? HdfExportFormat::Charts
+                             : format == "fcs"       ? HdfExportFormat::Fcs
                                                      : HdfExportFormat::All;
+            // FCS (#576, #867): accepted detections by default, as the Qt tab.
+            const auto fcsFrames = input.value("fcs_frames", std::string{"valid"});
+            if (fcsFrames != "valid" && fcsFrames != "invalid" && fcsFrames != "both")
+                throw std::invalid_argument("Unknown FCS frame selection");
+            request.fcsFrames = fcsFrames == "valid"   ? HdfExportFrames::Valid
+                                : fcsFrames == "invalid" ? HdfExportFrames::Invalid
+                                                         : HdfExportFrames::Both;
             request.generateReviewCharts = true;
             request.chartRingMin = defaults.chartRingMin;
             request.chartRingMax = defaults.chartRingMax;
@@ -90,6 +113,15 @@ namespace backend::review
             request.conversionFactor = input.value("conversion_factor", defaults.conversionFactor);
             if (!std::isfinite(request.conversionFactor) || request.conversionFactor <= 0)
                 throw std::invalid_argument("Conversion factor must be finite and positive");
+            if (input.contains("conversion_factor_source"))
+            {
+                const auto factorSource = input.at("conversion_factor_source").get<std::string>();
+                if (factorSource != "recorded" && factorSource != "request")
+                    throw std::invalid_argument("Unknown conversion factor source");
+                policy.recordedFactor = factorSource == "recorded";
+                policy.reportFactor = true;
+            }
+            policy.refuseRecordings = input.value("refuse_recordings", false);
             request.keepPartialOnFailure = input.value("keep_partial_on_failure", false);
             if (request.outputRoot.empty() && request.explicitDestination.empty())
                 throw std::invalid_argument("Export destination is empty");
@@ -101,6 +133,7 @@ namespace backend::review
         }
         out.request = std::move(request);
         out.sources = std::move(sources);
+        out.policy = policy;
         return true;
     }
 
@@ -146,6 +179,40 @@ namespace backend::review
         }
     } // namespace
 
+    namespace
+    {
+        // ExportSourcePolicy for one source (#867): the FCS pair name, the recorded factor, the
+        // recording refusal. false: skip the source with `skipped`.
+        bool applySourcePolicy(const ExportSourcePolicy &policy, recording::HdfExportRequest &request,
+                               std::string &factorSource, std::string &skipped)
+        {
+            using recording::HdfExportFormat;
+            const bool fcs = request.format == HdfExportFormat::Fcs;
+            if (fcs && request.explicitDestination.empty())
+                request.explicitDestination = recording::HdfExportService::nextAvailableFcsPath(
+                    request.outputRoot, recording::HdfExportService::sourceBaseName(request.sourcePath));
+            if (policy.reportFactor) factorSource = "request";
+            if (!policy.recordedFactor && !policy.refuseRecordings && !fcs) return true;
+            services::Hdf5Service probe;
+            if (!probe.loadFile(request.sourcePath)) return true; // the run reports why it cannot open it
+            const bool recordingFile = probe.isRecordingFile();
+            if (policy.recordedFactor)
+            {
+                const double recorded = ReviewSession::recordedPixelToMicron(probe);
+                if (recorded > 0.0) request.conversionFactor = recorded;
+                factorSource = recorded > 0.0 ? "recorded" : "fallback";
+            }
+            probe.closeFile();
+            if (recordingFile && (fcs || policy.refuseRecordings))
+            {
+                // As the Qt tab's batch: refused up front, not attempted.
+                skipped = "recording files do not contain metrics";
+                return false;
+            }
+            return true;
+        }
+    } // namespace
+
     ExportBatchOutcome exportBatchCancelledBeforeStart(std::size_t sourceCount)
     {
         ExportBatchOutcome outcome;
@@ -167,13 +234,17 @@ namespace backend::review
             recording::HdfExportRequest fileRequest = request;
             fileRequest.sourcePath = sources[index];
             std::string skipped;
-            if (options.prepare && !options.prepare(index, fileRequest, skipped))
+            std::string factorSource;
+            const bool policyOk = applySourcePolicy(options.policy, fileRequest, factorSource, skipped);
+            if (!policyOk || (options.prepare && !options.prepare(index, fileRequest, skipped)))
             {
                 ExportFileOutcome file;
                 file.sourcePath = fileRequest.sourcePath;
                 file.attempted = false;
                 file.result.status = HdfExportStatus::Failed;
                 file.result.error = skipped;
+                file.conversionFactor = fileRequest.conversionFactor;
+                file.conversionFactorSource = factorSource;
                 outcome.files.push_back(std::move(file));
                 outcome.failed = true;
                 continue;
@@ -184,7 +255,8 @@ namespace backend::review
                                          },
                                          options);
             outcome.failed = outcome.failed || outcome.last.status == HdfExportStatus::Failed;
-            outcome.files.push_back(ExportFileOutcome{fileRequest.sourcePath, true, outcome.last});
+            outcome.files.push_back(ExportFileOutcome{fileRequest.sourcePath, true, outcome.last,
+                                                      fileRequest.conversionFactor, factorSource});
             if (outcome.last.status == HdfExportStatus::Cancelled) break;
         }
         settleBatch(outcome);

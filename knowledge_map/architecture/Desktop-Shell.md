@@ -638,12 +638,17 @@ ROI/calibration/realtime/camera settings. The old live JSON editor remains a
 separate, non-persistent path. DOM tests cover conflict, partial outcomes, repeated
 saves, navigation, command failures and duplicate submissions.
 
-`exportControls.tsx` uses the shared export engine for CSV/images/all, retains
-status across navigation, and exposes cancellation and partial paths. Polls are
-single-flight and status errors do not erase command failures. Conversion uses
-known current calibration or delegates to the backend's current factor; no
-fabricated UI fallback value is sent. Chart images/series range controls remain
-unexposed. Config and export controls have interaction tests, not just codec tests.
+`exportControls.tsx` uses the shared export engine for CSV/images/all/charts and
+FCS (#867), retains status across navigation, and exposes cancellation and partial
+paths. Polls are single-flight and status errors do not erase command failures.
+Every export sends `conversion_factor_source: "recorded"`: each file is exported at
+the px→µm factor it records, and the live processing factor (when known; else the
+backend's) is only the fallback for a file that records none (#854, as Qt). Dialogs
+follow the Qt tab (`reviewExport.ts` `exportDialogPlan`: titles, `<base>_metrics.csv`
+and `<base>.fcs` defaults, HDF5 + All Files), the folder of the last successful export
+is remembered (`mib.review.lastExportDir`), batch metrics / FCS refuse recordings, and
+keep-partial is an option (default off). Config and export controls have interaction
+tests, not just codec tests.
 
 
 Monitoring placeholders are now bounded SVG plots over existing snapshot rows:

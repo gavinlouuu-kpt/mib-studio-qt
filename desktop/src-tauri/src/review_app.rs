@@ -66,6 +66,8 @@ pub fn run() {
             review::fetch_review_scatter,
             review::review_save_core_record,
             review::review_export_metrics,
+            review::review_export_fcs,
+            review::review_batch_export_fcs,
             review::review_export_all,
             review::review_export_charts,
             review::review_stage_chart,

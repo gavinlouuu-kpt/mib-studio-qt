@@ -651,6 +651,49 @@ int main()
     }
     wd.mark("batch factors");
 
+    // ---- Export FCS and Batch Export FCS (#867, review ABI 7) ----------------------
+    {
+        const fs::path out = td.path() / "fcs";
+        fs::create_directories(out);
+        const uint64_t id = jobs.startExportFcs((out / "chosen.fcs").string(), &err);
+        MIB_REQUIRE(id != 0, "start FCS: " + err);
+        MIB_REQUIRE(sink.terminal(id, done), "FCS terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Completed && done.kind == ReviewJobKind::ExportFcs &&
+                       done.message == (out / "chosen.fcs").string() + " (30 events: 30 valid, 0 invalid)",
+                   "FCS completes with the .fcs path: " + done.message);
+        MIB_EXPECT(fs::is_regular_file(out / "chosen.fcs") && fs::is_regular_file(out / "chosen_event_map.csv"),
+                   "the FCS file and its event map");
+        MIB_EXPECT(laneOf(ReviewJobKind::ExportFcs) == ReviewJobLane::Export, "FCS runs on the export lane");
+        // Never over an existing pair.
+        const uint64_t again = jobs.startExportFcs((out / "chosen.fcs").string(), &err);
+        MIB_REQUIRE(again != 0, "start FCS again: " + err);
+        MIB_REQUIRE(sink.terminal(again, done), "FCS again terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Failed && done.message.find("already exists") != std::string::npos,
+                   "an existing pair is refused: " + done.message);
+        MIB_EXPECT(jobs.startExportFcs("", &err) == 0 && err == "Export output path is empty", "empty path refused");
+
+        const fs::path quarter = td.path() / "quarter.h5";
+        const fs::path rec = td.path() / "rec.h5";
+        BatchExportRequest req;
+        req.sources = {experiment.string(), quarter.string(), rec.string()};
+        req.outputRoot = out.string();
+        req.fcs = true;
+        req.metricsOnly = true; // ignored with fcs
+        const uint64_t batch = jobs.startBatchExport(req, &err);
+        MIB_REQUIRE(batch != 0, "start FCS batch: " + err);
+        MIB_REQUIRE(sink.terminal(batch, done), "FCS batch terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Completed && done.kind == ReviewJobKind::BatchExport &&
+                       done.message.find("exported 2 of 3") != std::string::npos &&
+                       done.message.find("rec.h5: recording files do not contain metrics") != std::string::npos,
+                   "FCS batch summary: " + done.message);
+        MIB_EXPECT(fs::is_regular_file(out / "run.fcs") && fs::is_regular_file(out / "run_event_map.csv") &&
+                       fs::is_regular_file(out / "quarter.fcs") && fs::is_regular_file(out / "quarter_event_map.csv") &&
+                       !fs::exists(out / "rec.fcs"),
+                   "one pair per experiment file, none for the recording");
+        MIB_EXPECT(noPartials(out), "FCS leaves no partial");
+    }
+    wd.mark("fcs");
+
     // ---- regenerate masks (whole file, recorded config) --------------------------
     {
         RegenerateMasksRequest req;

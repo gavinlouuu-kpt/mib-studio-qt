@@ -60,12 +60,22 @@ pixel-to-micron factor in use.
 
 ## Export
 
-The toolbar has **Export Metrics to CSV…** and **Export All…**. **More…** holds
-**Batch Metrics**, **Batch Export All**, **Export Charts** and
-**Regenerate masks**.
+The toolbar has **Export Metrics to CSV…**, **Export FCS…** and **Export All…**.
+**More…** holds **Batch Metrics**, **Batch Export FCS**, **Batch Export All**,
+**Export Charts** and **Regenerate masks**.
 
 - **Export Metrics to CSV…** writes `<file>_metrics.csv`. Existing files are never
   overwritten: a `_2`, `_3`, … suffix is added instead.
+- **Export FCS…** saves a FlowJo-compatible FCS 3.1 file (one event per accepted
+  detection) and `<chosen name>_event_map.csv` beside it, which links each event to
+  its frame, object and timestamp. The proposed name is `<file>.fcs` (`<file>_2.fcs`
+  when that pair exists); `.fcs` is added when you leave it out. An existing FCS or
+  event-map file is never replaced. The export uses the px→µm factor recorded in the
+  file (the fallback preference when it records none). Raw recordings have no object
+  metrics, so the button is off for them.
+- **Batch Export FCS** asks for several HDF files, then a folder, and writes one
+  `<file>.fcs` + event-map pair per file, each at that file's own recorded factor.
+  Raw recordings are listed as failed in the summary.
 - **Export All…** writes a folder named after the file, containing
   `metrics.csv`, the frame TIFFs and the chart images. For multi-image
   series it first asks whether to export all series frames, a range (for

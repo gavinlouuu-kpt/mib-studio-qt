@@ -59,6 +59,7 @@ namespace backend::review
         ExportCharts = 6,
         Export = 7,
         Reanalysis = 8,
+        ExportFcs = 9, // YOFO Review's Export FCS (#576, #867; review ABI 7)
     };
 
     // D7 (#512): the two lanes of a session's jobs.
@@ -137,6 +138,9 @@ namespace backend::review
         std::vector<std::string> sources;
         std::string outputRoot;
         bool metricsOnly{false};
+        // FCS 3.1 + event map pair per source (`<root>/<base>[_N].fcs`, the Qt batch FCS rule,
+        // #867); recordings refused; ignores `metricsOnly` and `series`.
+        bool fcs{false};
         ExportSeriesRange series;
     };
 
@@ -284,6 +288,10 @@ namespace backend::review
         // request's fault, or "Another review job is still running" while a
         // job runs that the lane policy does not let this one run beside).
         std::uint64_t startExportMetrics(const std::string &outputPath, std::string *error = nullptr);
+        // FCS 3.1 at the open file's factor into `outputPath` (an explicit `.fcs`; its sibling
+        // `<stem>_event_map.csv` is published with it as one no-replace pair). Refused for a
+        // recording. The completed message is the `.fcs` path, then " (N events: V valid, I invalid)".
+        std::uint64_t startExportFcs(const std::string &outputPath, std::string *error = nullptr);
         std::uint64_t startExportAll(const ExportAllRequest &request, std::string *error = nullptr);
         std::uint64_t startBatchExport(const BatchExportRequest &request, std::string *error = nullptr);
         std::uint64_t startExportCharts(const ExportChartsRequest &request, std::string *error = nullptr);

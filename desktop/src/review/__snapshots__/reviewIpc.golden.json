@@ -595,6 +595,99 @@
   ]
  },
  {
+  "flow": "export fcs",
+  "calls": [
+   {
+    "cmd": "review_list_dir",
+    "args": {
+     "dir": "/data/out"
+    }
+   },
+   {
+    "cmd": "plugin:dialog|save",
+    "args": {
+     "options": {
+      "title": "Export FCS 3.1",
+      "filters": [
+       {
+        "name": "FCS 3.1 Files",
+        "extensions": [
+         "fcs"
+        ]
+       },
+       {
+        "name": "All Files",
+        "extensions": [
+         "*"
+        ]
+       }
+      ],
+      "defaultPath": "/data/out/run.fcs"
+     }
+    }
+   },
+   {
+    "cmd": "review_export_fcs",
+    "args": {
+     "outputPath": "/data/out/run_cells.fcs"
+    }
+   },
+   {
+    "cmd": "plugin:opener|reveal_item_in_dir",
+    "args": {
+     "paths": [
+      "/data/out/run_cells.fcs"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "flow": "batch export fcs",
+  "calls": [
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Select HDF Files for Batch FCS Export",
+      "filters": [
+       {
+        "name": "HDF5",
+        "extensions": [
+         "h5",
+         "hdf5"
+        ]
+       }
+      ],
+      "multiple": true,
+      "defaultPath": "/data"
+     }
+    }
+   },
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Select Directory for FCS Files",
+      "directory": true,
+      "multiple": false,
+      "defaultPath": "/data/out"
+     }
+    }
+   },
+   {
+    "cmd": "review_batch_export_fcs",
+    "args": {
+     "sources": [
+      "/data/a.h5",
+      "/data/b.h5"
+     ],
+     "outputRoot": "/data/out"
+    }
+   }
+  ]
+ },
+ {
   "flow": "charts and core contour",
   "calls": [
    {

@@ -13,7 +13,10 @@
 // #717 B1a (review ABI 2) added one call outside the panel: the identity
 // probe (`review_probe_runs`); no existing flow changed. #717 B3b (review ABI
 // 3) added two: the linked records of a track (`fetch_review_track_rows`)
-// and one record reprocessed (`review_reprocess_record`).
+// and one record reprocessed (`review_reprocess_record`). #867 (review ABI 7)
+// added two flows: Export FCS (`review_export_fcs`, the save dialog's Qt
+// title, filters and `<base>.fcs` default) and Batch Export FCS
+// (`review_batch_export_fcs`); no existing flow changed.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -231,6 +234,10 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
       return job(REVIEW_OPERATION_KINDS.ExportCharts, `exported 2 chart(s) to ${args.outputDir}`);
     case "review_batch_export":
       return job(REVIEW_OPERATION_KINDS.BatchExport, `exported 2 of 2 file(s)`);
+    case "review_export_fcs":
+      return job(REVIEW_OPERATION_KINDS.ExportFcs, `${args.outputPath} (3 events: 2 valid, 1 invalid)`);
+    case "review_batch_export_fcs":
+      return job(REVIEW_OPERATION_KINDS.BatchExport, `exported 2 of 2 file(s)`);
     case "review_regenerate_masks":
       if (existingOutputs.has(String(args.outputPath))) return { ok: false, command: 0, message: "Output already exists; choose a new file", operation_id: "0" };
       existingOutputs.add(String(args.outputPath));
@@ -258,6 +265,7 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
     case "plugin:dialog|save": {
       const o = args.options as { title?: string; defaultPath?: string };
       // Regenerate: the operator takes the proposed name unless told otherwise.
+      if (o.title === "Export FCS 3.1") return "/data/out/run_cells"; // no extension: the panel appends .fcs
       return o.title === "Save regenerated masks" ? (regenerateSaveAnswers.shift() ?? o.defaultPath) : "/data/out/run_metrics_2.csv";
     }
     case "plugin:dialog|message":
@@ -490,6 +498,23 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
       await click(button("Export", modal("Export multi-image series")));
       await settle(250);
       await click(button("Close", modal("Batch Export All")));
+    }),
+  );
+
+  flows.push(
+    await flow("export fcs", async () => {
+      await click(button("Export FCS…"));
+      await finishJob("Export FCS");
+    }),
+  );
+
+  flows.push(
+    await flow("batch export fcs", async () => {
+      await more("Batch Export FCS…");
+      await settle(250);
+      const text = modal("Batch Export FCS").textContent ?? "";
+      if (!text.includes("Exported all 2 file(s).")) throw new Error(`batch FCS summary: ${text}`);
+      await click(button("Close", modal("Batch Export FCS")));
     }),
   );
 

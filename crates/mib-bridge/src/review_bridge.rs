@@ -546,6 +546,19 @@ pub mod review_ffi {
         /// partial outputs never published, one job at a time). Each returns
         /// the operation id in `ReviewResult::operation_id` or `ok = false`.
         fn review_export_metrics(self: Pin<&mut ReviewBridge>, output_path: &str) -> ReviewResult;
+        /// Review ABI 7 (#867): FCS 3.1 at the open file's factor into an
+        /// explicit `.fcs` path, published with its `<stem>_event_map.csv`
+        /// as one no-replace pair (contract kind `ExportFcs`); refused for a
+        /// recording.
+        fn review_export_fcs(self: Pin<&mut ReviewBridge>, output_path: &str) -> ReviewResult;
+        /// Review ABI 7 (#867): one FCS pair per source as
+        /// `<root>/<base>[_N].fcs`, each at its recorded factor (the fallback
+        /// when it records none); recordings refused (kind `BatchExport`).
+        fn review_batch_export_fcs(
+            self: Pin<&mut ReviewBridge>,
+            sources: Vec<String>,
+            output_root: &str,
+        ) -> ReviewResult;
         fn review_export_all(
             self: Pin<&mut ReviewBridge>,
             output_root: &str,

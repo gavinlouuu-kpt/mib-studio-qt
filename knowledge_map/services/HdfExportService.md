@@ -39,7 +39,10 @@ native CLI: `hdf_export_cli`
   every artifact, image, series frame, FCS event, and the commit.
 - Generated names: `nextAvailableName()` lists the parent once and picks
   `<base>` or `<base>_<max suffix + 1>` — cost does not grow with the number
-  of previous exports. An explicit destination is honoured; an existing
+  of previous exports. `nextAvailableFcsPath(dir, base)` (#867) is the Qt FCS
+  rule instead: `<base>.fcs` while it and `<base>_event_map.csv` are both
+  free, else the first free `<base>_N.fcs` pair from N = 2 (the export
+  engine's FCS batches and default FCS destinations). An explicit destination is honoured; an existing
   *file* destination (already confirmed by a save dialog) is replaced
   atomically at commit for MetricsCsv; existing FCS files, their event-map
   siblings, and existing folders are refused. A destination equivalent
