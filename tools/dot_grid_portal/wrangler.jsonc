@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mib-dot-grid-portal",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {"directory": "dist", "binding": "ASSETS", "run_worker_first": true},
+  "vars": {"ACCESS_ISSUER": "https://configure-team.cloudflareaccess.com", "ACCESS_AUD": "configure-access-audience"},
+  "d1_databases": [{"binding": "DB", "database_name": "mib-dot-grid-portal", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations"}],
+  "r2_buckets": [{"binding": "FILES", "bucket_name": "mib-dot-grid-private"}],
+  "queues": {
+    "producers": [{"binding": "JOBS", "queue": "mib-dot-grid-jobs"}],
+    "consumers": [{"queue": "mib-dot-grid-jobs", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "mib-dot-grid-failed"}]
+  },
+  "containers": [{"class_name": "CadContainer", "image": "Dockerfile", "image_build_context": "../..", "max_instances": 2, "instance_type": "standard-2"}],
+  "durable_objects": {"bindings": [{"name": "CAD", "class_name": "CadContainer"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["CadContainer"]}],
+  "observability": {"enabled": true}
+}

@@ -102,3 +102,5 @@ verifies wikilink integrity (enforced in CI).
 - `knowledge_map/task/` — dated task records (historical design/debug notes)
 
 - [[services/ProfileRegistryService]] — central registry/cache foundation (#398); desktop integration pending.
+
+- Cloud CAD-to-map portal: [[services/DotGridPortal]].

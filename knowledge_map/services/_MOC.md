@@ -69,3 +69,5 @@
 [[../diagnostics/_MOC|Diagnostics MOC]]
 
 - [[ProfileRegistryService]] — central registry/cache foundation (#398).
+
+- [[DotGridPortal]] — invite-only CAD-to-map web preparation service.

@@ -1,0 +1,10 @@
+[
+  {
+    "date": "2026-11-04",
+    "job": "MIBQT-28",
+    "title": "Dot-grid portal local implementation",
+    "report": "2026-11-04-dot-grid-portal.md",
+    "status": "local-verified-production-pending",
+    "branch": "feat/dot-grid-portal-v1"
+  }
+]

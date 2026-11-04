@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Dot Grid · MIB Studio</title>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <div>
+          <span class="eyebrow">MIB STUDIO / DESIGN TOOLS</span>
+          <h1>Dot Grid</h1>
+        </div>
+        <div>
+          <span id="identity"></span> <button id="tour">Take a tour</button>
+        </div>
+      </header>
+      <main>
+        <section class="intro">
+          <span class="badge">PRIVATE DESIGN WORKSPACE</span>
+          <h2>Give your chip a coordinate system.</h2>
+          <p>
+            Upload your device drawing, inspect the geometry, and generate a
+            registered dot pattern that MIB Studio can recognize.
+          </p>
+          <div class="flow">
+            Upload CAD <span>→</span> Verify geometry <span>→</span> Generate &
+            register <span>→</span> Use in MIB Studio
+          </div>
+        </section>
+        <p id="message" role="status" aria-live="polite"></p>
+        <div class="columns">
+          <section class="card" id="upload-card">
+            <h3>1 · Upload a drawing</h3>
+            <form id="upload-form">
+              <label
+                >Design name<input
+                  id="name"
+                  maxlength="120"
+                  required
+                  placeholder="Sorter · revision 1" /></label
+              ><label
+                >CAD file<input
+                  id="file"
+                  type="file"
+                  accept=".dxf,.dwg"
+                  required /></label
+              ><label
+                >Drawing units<select id="units" required>
+                  <option value="">Choose explicitly…</option>
+                  <option value="um">Micrometres (µm)</option>
+                  <option value="mm">Millimetres (mm)</option>
+                  <option value="inch">Inches</option>
+                </select></label
+              >
+              <p class="hint">
+                DXF or DWG · up to 10 MiB. Planar lines, arcs, circles and
+                straight polylines. Unsupported geometry is rejected, not
+                silently dropped.
+              </p>
+              <button class="primary" id="upload" type="submit">
+                Upload & inspect
+              </button>
+            </form>
+          </section>
+          <section class="card" id="designs-card">
+            <div class="row">
+              <h3>Your designs</h3>
+              <button id="refresh">Refresh</button>
+            </div>
+            <div id="designs">Loading…</div>
+          </section>
+        </div>
+        <section class="card" id="review" hidden>
+          <h3>2 · Verify converted geometry</h3>
+          <div id="summary"></div>
+          <svg
+            id="preview"
+            role="img"
+            aria-label="Converted CAD geometry"
+          ></svg>
+          <div id="warnings"></div>
+          <label class="check"
+            ><input id="confirmed" type="checkbox" />I checked units,
+            dimensions, orientation and geometry in this preview.</label
+          ><button id="generate" class="primary" disabled>
+            Generate & register
+          </button>
+          <p class="hint">
+            Grid: 30 µm pitch · 12 µm dots · 5 µm displacement. A new revision
+            receives a permanent design identity.
+          </p>
+        </section>
+        <section class="card" id="downloads" hidden>
+          <h3>3 · Download your design</h3>
+          <div id="links"></div>
+          <p>
+            The GDS contains <strong>dots only</strong>. Use the combined DXF
+            for device + dot geometry. Registration is not fabrication approval.
+          </p>
+          <p>
+            Extract the MIB map package and configure
+            <code>dot_grid.registry_path</code> to its registry. Preserve and
+            merge any existing local registry; do not overwrite it.
+          </p>
+        </section>
+        <section class="card" id="members" hidden>
+          <h3>Invite a member</h3>
+          <p>
+            Members share this workspace’s designs. Invitations grant access to
+            an email address; no email is sent automatically.
+          </p>
+          <form id="invite-form">
+            <label>Email<input id="invite-email" type="email" required /></label
+            ><button type="submit">Grant workspace access</button>
+          </form>
+          <ul id="member-list"></ul>
+        </section>
+        <details class="card" id="verification">
+          <summary>How the workflow changes</summary>
+          <h3>Before</h3>
+          <p class="flow">
+            Local CAD → command-line generation → manual registry transfer
+          </p>
+          <h3>With this portal</h3>
+          <p class="flow">
+            Invited member → private upload → conversion + review → isolated
+            generation job → validation → registered files → MIB Studio
+          </p>
+          <p>
+            Package checks cover hashes, codec identity and synthetic design
+            discrimination. Real-wafer localization, fabrication clearances and
+            cloud deployment require separate verification. The map package
+            supports localization; a full CAD-overlay viewer is not added here.
+          </p>
+        </details>
+        <section class="card" id="feedback">
+          <h3>Anything unclear?</h3>
+          <form id="feedback-form">
+            <label
+              >Feedback<textarea
+                id="feedback-text"
+                maxlength="2000"
+                required
+                placeholder="Tell us what needs improving…"
+              ></textarea></label
+            ><button type="submit">Save feedback</button>
+          </form>
+        </section>
+      </main>
+      <footer>
+        Private by default · Original CAD preserved · Versioned design identity
+      </footer>
+    </div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>
