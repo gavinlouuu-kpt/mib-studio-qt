@@ -345,7 +345,9 @@ Qt's snapping (`snapEgrabberWindow`: offsets rounded then snapped down, sizes sn
 dragging and the backend repeats it when `save_camera_window` writes the script and the profile, on release
 and a moment after each W/H/X/Y edit (`useCameraWindow.edit`); a window that changed in the backend (a
 profile applied or reloaded) redraws the box unless an edit is in progress (`syncFromGeometry`); geometry
-errors and save results are lines in the Overview (`CameraStageNotice`).
+errors and save results are lines in the Overview (`CameraStageNotice`). The Overview also shows the
+backend's Recording capacity (`fetch_recording_capacity` once a second with the box as the planned window,
+frozen during an experiment; `recordingCapacity.ts`, `RecordingCapacityPanel.tsx`).
 
 ## Command layer
 

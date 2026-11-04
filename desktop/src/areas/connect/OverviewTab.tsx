@@ -7,11 +7,12 @@ import { ViewerGate, viewerReason } from "../../components/ViewerGate";
 import { GATE_STATUS_LABEL } from "../../quality";
 import { useStudio } from "../../studio/StudioContext";
 import { CameraStageNotice } from "./CameraStageNotice";
+import { RecordingCapacityPanel } from "./RecordingCapacityPanel";
 
 export function OverviewTab() {
   const {
     instrumentModes, cameraWin, modeError, setTab, setModeRetry, runFrozen, ring, resumeFromBanner, experimentRequestBusy,
-    viewerOnly, setFitWindow, fitWindow, cameraGeometry, cameraWindow, expActive, saveCameraWindow, ready,
+    viewerOnly, setFitWindow, fitWindow, cameraGeometry, cameraWindow, expActive, saveCameraWindow, ready, capacity,
     hostProcessing, roiFields, setRoiFields, onApplyRoi, lastMeta, liveCanvasRef, onWindowPointerDown, onWindowPointerMove,
     onWindowPointerUp, quality, qualityInput, alignBestRef, setAlignImage, caps, cameraScript,
   } = useStudio();
@@ -105,6 +106,9 @@ export function OverviewTab() {
           onPointerCancel={onWindowPointerUp}
         />
       </div>
+
+      {/* ---- Recording capacity of the next run (#833): the backend's gates, polled once a second ---- */}
+      {hostProcessing && !instrumentModes && <RecordingCapacityPanel view={capacity} />}
 
       {/* ---- UX-4 image quality gates ---- */}
       <div className="quality-panel" aria-label="Image quality gates">

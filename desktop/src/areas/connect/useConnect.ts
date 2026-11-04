@@ -3,7 +3,7 @@
 // and the Overview quality gates. Moved from App.tsx without change (#869 wave 0);
 // studio/useStudioController.ts calls these hooks in App.tsx's original effect order.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { bridge, type CameraDiscovery, type CameraGeometry, type CameraSelection } from "../../bridge";
+import { bridge, type CameraDiscovery, type CameraGeometry, type CameraSelection, type RecordingCapacity } from "../../bridge";
 import { PUMP_IDS } from "../../bridgeContract";
 import { snapRunWindow, type Rect } from "../../cameraAlignment";
 import { runModeBlockReason, useCameraWindow, type CameraModeError } from "../../cameraWindow";
@@ -58,9 +58,10 @@ export function useConnectState() {
   // The Run frame rate and exposure (ABI 38): polled on a PZ7035; set by the PZ7035 camera document (Config → Camera document), which re-enters Run when the instrument is in it.
   const [runFpsStatus, setRunFpsStatus] = useState<RunFpsStatus | null>(null);
   // What entering the Overview / Experiment stage did to the camera (#846), why the geometry could not be
-  // read and where the camera scripts may come from.
+  // read, the Recording capacity of the next run (#863) and where the camera scripts may come from.
   const [stageNotice, setStageNotice] = useState<StageNotice | null>(null);
   const [geometryError, setGeometryError] = useState("");
+  const [capacity, setCapacity] = useState<RecordingCapacity | null>(null);
   const scriptSourcesRef = useRef<ScriptSources>(NO_SOURCES);
   return {
     running, setRunning, camStatus, setCamStatus, connectTab, setConnectTab,
@@ -69,7 +70,7 @@ export function useConnectState() {
     liveCanvasRef, alignImage, setAlignImage, alignBestRef, alignImageMs,
     cameraGeometry, setCameraGeometry, cameraGeometryRef, cameraWindowRef, refreshCameraGeometryRef,
     modeError, setModeError, modeRetry, setModeRetry, runFpsStatus, setRunFpsStatus,
-    stageNotice, setStageNotice, geometryError, setGeometryError, scriptSourcesRef,
+    stageNotice, setStageNotice, geometryError, setGeometryError, capacity, setCapacity, scriptSourcesRef,
   };
 }
 export type ConnectState = ReturnType<typeof useConnectState>;
@@ -212,9 +213,9 @@ export function useCameraConnection({
 }
 export type CameraConnectionModel = ReturnType<typeof useCameraConnection>;
 
-type WindowingDeps = Pick<ShellState, "ready" | "instrumentModes" | "append">
+type WindowingDeps = Pick<ShellState, "ready" | "tab" | "hostProcessing" | "instrumentModes" | "append">
   & Pick<ConnectState, "cameraGeometryRef" | "cameraWindowRef" | "refreshCameraGeometryRef" | "setCameraGeometry" | "setRunFpsStatus"
-    | "scriptSourcesRef" | "setGeometryError">
+    | "scriptSourcesRef" | "setGeometryError" | "setCapacity">
   & Pick<MonitoringState, "expActive">;
 
 /** Whether a script file can be read: an existing .js file the camera document command opens. */
@@ -227,10 +228,10 @@ export async function scriptExists(path: string): Promise<boolean> {
   }
 }
 
-// The camera window (ROI 1 on the full sensor) and the PZ7035 Run frame rate.
+// The camera window (ROI 1 on the full sensor), the Recording capacity of the next run and the PZ7035 Run frame rate.
 export function useCameraWindowing({
-  ready, instrumentModes, append, cameraGeometryRef, cameraWindowRef, refreshCameraGeometryRef, setCameraGeometry,
-  setRunFpsStatus, expActive, scriptSourcesRef, setGeometryError,
+  ready, tab, hostProcessing, instrumentModes, append, cameraGeometryRef, cameraWindowRef, refreshCameraGeometryRef, setCameraGeometry,
+  setRunFpsStatus, expActive, scriptSourcesRef, setGeometryError, setCapacity,
 }: WindowingDeps) {
   const cameraWin = useCameraWindow({
     instrumentModes, geometryRef: cameraGeometryRef, expActive, append, windowRef: cameraWindowRef,
@@ -259,6 +260,25 @@ export function useCameraWindowing({
     }
   }, [cameraWin.showDefault, cameraWin.syncFromGeometry, cameraWin.saveGeneration, append]);
   refreshCameraGeometryRef.current = refreshCameraGeometry;
+
+  // Recording capacity (#833, Qt MainWindow::refreshRecordingCapacity): once a second on the Overview, with the
+  // box as the planned window; frozen while an experiment runs; the last view is kept when the backend is busy.
+  useEffect(() => {
+    if (!ready || tab !== "overview" || !hostProcessing || instrumentModes || expActive) return;
+    let live = true;
+    const poll = async () => {
+      try {
+        const box = cameraGeometryRef.current?.supported ? cameraWindowRef.current : null;
+        const view = await bridge.fetchRecordingCapacity(box ?? undefined);
+        if (live && !view.busy) setCapacity(view);
+      } catch {
+        /* keep the last view; the next poll tries again */
+      }
+    };
+    void poll();
+    const id = window.setInterval(() => void poll(), 1000);
+    return () => { live = false; window.clearInterval(id); };
+  }, [ready, tab, hostProcessing, instrumentModes, expActive]);
 
   const refreshRunFps = useCallback(async () => {
     if (!instrumentModes) return;
