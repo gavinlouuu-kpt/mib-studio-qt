@@ -37,7 +37,7 @@ export function ContextBar() {
 export function StatusBar() {
   const {
     abi, ready, reviewing, recording, setShowLog, showLog, log, displayFps, hostProcessing, algoFps, validFps, invalidFps,
-    running, camStatus, dataRate, expState, expActive, expStatus,
+    running, camStatus, dataRate, expState, expActive, expStatus, hardwarePanelNotice,
   } = useStudio();
   return (
     <>
@@ -50,6 +50,8 @@ export function StatusBar() {
         <button className="log-toggle" onClick={() => setShowLog((s) => !s)}>
           Log {showLog ? "▾" : "▸"} ({log.length})
         </button>
+        {/* HW-042: shown while the hardware panel is hidden for lack of room (always rendered: a live region). */}
+        <span className="hw-panel-notice" role="status">{hardwarePanelNotice}</span>
         <span className="metrics">
           Display={metricNumber(displayFps, 1)} fps | {hostProcessing
             ? <>Algo={metricNumber(algoFps)}/s | Valid={metricNumber(validFps)}/s | Invalid={metricNumber(invalidFps)}/s</>

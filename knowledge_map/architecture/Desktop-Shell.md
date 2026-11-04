@@ -71,7 +71,7 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
 `areas/connect/ConnectTab`, `OverviewTab`, `CameraActions`, `MockCameraDialog`;
 `areas/monitoring/ExperimentTab`, `MonitoringPanel`; `areas/preview/PreviewPanel`;
 `areas/config/ConfigPanel`; `areas/review/ReviewTab`; `areas/hardware/ServiceMode`,
-`HardwarePanel`, `TriggerTestControls`, `InstrumentLedPanel`). Each area keeps its state in
+`HardwareDock`, `HardwarePanel`, `TriggerTestControls`, `InstrumentLedPanel`). Each area keeps its state in
 `use<Area>State()` (state and render-time values, no effects) and its callbacks and effects in named
 hooks in `areas/<area>/use<Area>.ts`; `studio/useStudioController.ts` calls them all, in the order the
 effects had in the single component, because React runs effects in registration order (for
@@ -625,9 +625,11 @@ selection, duplicate commands, errors and disabled setup states.
 ## September 23 operator integrations (ABI 15)
 
 `HardwareControls` stays mounted across tabs so pending command ownership and
-hardware form drafts survive navigation. Connect exposes existing numeric-COM
+hardware form drafts survive navigation. It exposes existing numeric-COM
 pump/autofocus APIs; manual actuation requires the shared service-mode arm,
-which clears on one action. Typed endpoints remain follow-up work.
+which clears on one action. Typed endpoints remain follow-up work. Since
+2026-11-04 it is no longer part of the Connect tab: see
+[Hardware panel beside every stage tab](#hardware-panel-beside-every-stage-tab-hw-018-hw-042).
 
 `configDocument.tsx` owns a saved processing-document draft in App. Open/reload
 are explicit; changed-field patches avoid resubmitting unknown additive keys.
@@ -1197,3 +1199,34 @@ Issue #570: Review keeps unreadable run accounting as Unknown, displaying the
 existing `completion_reason` field rather than promoting `reconciled=false` to
 Failed when the outcome is Unknown. Known outcomes with unreconciled counters
 still show Failed. No bridge ABI or JSON field changes.
+
+### Hardware panel beside every stage tab (HW-018, HW-042)
+
+The device panel (pumps, autofocus, pulse generator, Z stage: `areas/hardware/HardwarePanel.tsx`) is a
+collapsible, resizable right-hand panel, `areas/hardware/HardwareDock.tsx`, placed by `App.tsx` beside `<main>`
+in `.body` and shown with every stage tab (Connect, Overview, Experiment, Review), as Qt's hardware sidebar
+(`SidebarWidget`, `MainWindow::setupSidebar`). It is not in `.tab-body` any more. The panel stays mounted when it
+is collapsed or hidden, so command ownership and form drafts survive; it keeps its own `ViewerGate`, and the Z
+stage stays hidden on the PZ7035.
+
+- **State and behaviour.** `useHardwareState()` holds `hwPanelOpen` (the operator's intent), `hwPanelPreferredWidth`,
+  `hwViewportWidth` and `hwNarrowOverride`; `useHardwarePanel()` (`useHardware.ts`, called last in
+  `studio/useStudioController.ts`) derives and returns `hardwarePanelOpen`, `hardwarePanelVisible`,
+  `hardwarePanelHiddenForSpace`, `hardwarePanelWidth`, `hardwarePanelBounds`, `hardwarePanelNotice` and the actions
+  `toggleHardwarePanel` (the shell's menu item and Ctrl+Shift+H, SHELL-012 #862, call this), `setHardwarePanelVisible`,
+  `resizeHardwarePanel(width, commit)` and `resetHardwarePanelWidth`. The geometry is pure
+  (`areas/hardware/hardwarePanelLayout.ts`): default 360 px, preferred width 280-720 px, compact 240 px, the main
+  area keeps 560 px (Qt: 300 / 200-1000 / 160 / 640).
+- **Persistence.** Collapsed flag and preferred width go to localStorage (`mib.hardwarePanel.collapsed`, `mib.hardwarePanel.width`)
+  and to the shell preferences file (`hardwarePanelCollapsed`, `hardwarePanelWidth`, BE-9; read at boot, the file wins, as for the
+  left sidebar). A missing, non-numeric, non-positive or absurd width is the default; others are clamped. Preference writes
+  are queued (the file is written whole) and width writes wait 300 ms after the last drag step or key press, as Qt.
+- **Narrow window.** When the main area would drop below its minimum the panel narrows down to its compact width; below
+  that it hides and `StatusBar` shows Qt's notice ("Window too narrow for the hardware panel; enlarge the window to show
+  it."). Hiding for space is not the operator's choice and is never stored; the panel returns by itself when space returns
+  (also when the telemetry sidebar is hidden), and expanding it by hand in a narrow window shows it at the compact width
+  until the window has room again.
+- **Resize.** Drag the handle on the panel's left edge (the width is set on the element and committed once on release, so the
+  view does not re-render per pointer move), the arrow keys on the focused handle (16 px, Shift 64 px; Home/End = bounds), or
+  double-click for the default. The edge tab toggles the panel. Tests: `hardwarePanel.app.test.tsx` (the real `App`),
+  `hardwarePanelLayout.test.ts`, `HardwarePanel.test.tsx`.
