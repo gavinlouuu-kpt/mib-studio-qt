@@ -505,12 +505,10 @@ export interface CameraTelemetry {
   data_rate_mbps: MetricSample;
 }
 
-/** The ABI 46 additions to the processing stats. `algo_avg_*` are the optional fields PR #877's
- *  `decodeProcessingStats` reads under the same names; this decodes them with the others from the
- *  one `fetch_processing_stats` reply. */
+/** The ABI 46 additions to the processing stats that this module owns: the realtime mode and the
+ *  camera telemetry. `algo_avg_us` and `algo_avg_age_ms`, also new in ABI 46, are decoded by PR #877's
+ *  `decodeProcessingStats` under those names (not here, to leave that decoder to that PR). */
 export interface ProcessingTelemetry {
-  algo_avg_us: number | null;
-  algo_avg_age_ms: number | null;
   /** null when the backend is not initialized or too old to report it. */
   realtime_mode: RealtimeMode | null;
   /** null when the backend is not initialized or too old to report it. */
@@ -545,13 +543,7 @@ export function decodeProcessingTelemetry(raw: unknown): ProcessingTelemetry {
       data_rate_mbps: decodeMetricSample(raw.camera.data_rate_mbps, "camera.data_rate_mbps"),
     };
   }
-  const optionalNumber = (key: string): number | null => {
-    const v = raw[key];
-    return v === undefined ? null : finiteOrNull(v, key);
-  };
   return {
-    algo_avg_us: optionalNumber("algo_avg_us"),
-    algo_avg_age_ms: optionalNumber("algo_avg_age_ms"),
     realtime_mode: typeof mode === "string" ? (mode as RealtimeMode) : null,
     camera,
   };

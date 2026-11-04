@@ -249,10 +249,10 @@ const statsReply = (extra: Record<string, unknown> = {}) => ({
   camera: { running: true, frame_rate: sample("valid", 5000, 120), data_rate_mbps: sample("stale", 235, 4100) }, ...extra,
 });
 
-it("decodes the telemetry of the processing stats, under the names PR #877's decoder reads", async () => {
+it("decodes the realtime mode and the camera telemetry of the processing stats (not the algo_avg_* PR #877 reads)", async () => {
   const t = decodeProcessingTelemetry(statsReply());
   expect(t).toEqual({
-    algo_avg_us: 182.5, algo_avg_age_ms: 40, realtime_mode: "async_batch",
+    realtime_mode: "async_batch",
     camera: { running: true, frame_rate: sample("valid", 5000, 120), data_rate_mbps: sample("stale", 235, 4100) },
   });
   invoke.mockResolvedValueOnce(statsReply({ realtime_mode: "inline" }));
@@ -260,10 +260,10 @@ it("decodes the telemetry of the processing stats, under the names PR #877's dec
   expect(invoke).toHaveBeenLastCalledWith("fetch_processing_stats");
   // Not published yet, or not initialized: null, never a 0.
   expect(decodeProcessingTelemetry(statsReply({ algo_avg_us: null, algo_avg_age_ms: null, realtime_mode: null, camera: null })))
-    .toEqual({ algo_avg_us: null, algo_avg_age_ms: null, realtime_mode: null, camera: null });
+    .toEqual({ realtime_mode: null, camera: null });
   // An older backend sends none of it.
   expect(decodeProcessingTelemetry({ transport_version: 1, valid: true, algo_fps1s: 1 }))
-    .toEqual({ algo_avg_us: null, algo_avg_age_ms: null, realtime_mode: null, camera: null });
+    .toEqual({ realtime_mode: null, camera: null });
   // A stopped session: unavailable samples with no value.
   const stopped = decodeProcessingTelemetry(statsReply({ camera: { running: false, frame_rate: sample("unavailable", null, null), data_rate_mbps: sample("unavailable", null, null) } }));
   expect(stopped.camera?.running).toBe(false);
@@ -275,7 +275,6 @@ it("refuses telemetry that breaks the contract", () => {
   // An unknown rate is never a 0: a value exists exactly for a valid or stale sample.
   expect(() => decodeProcessingTelemetry(statsReply({ camera: { running: true, frame_rate: sample("unsupported", 0, 0), data_rate_mbps: sample("valid", 1, 1) } }))).toThrow("exactly");
   expect(() => decodeProcessingTelemetry(statsReply({ camera: { running: true, frame_rate: sample("valid", null, null), data_rate_mbps: sample("valid", 1, 1) } }))).toThrow("exactly");
-  expect(() => decodeProcessingTelemetry(statsReply({ algo_avg_us: "182" }))).toThrow("algo_avg_us");
 });
 
 it("formats a sample as Qt's Statistics panel does", () => {
