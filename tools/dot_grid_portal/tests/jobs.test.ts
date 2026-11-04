@@ -10,7 +10,7 @@ it("runs real Python inspection and generation through job orchestration, publis
   const folder = mkdtempSync(join(tmpdir(), "mib-portal-e2e-"));
   execFileSync(".venv/bin/python", [
     "-c",
-    `import ezdxf\nd=ezdxf.new('R2010')\nd.header['$INSUNITS']=13\nd.modelspace().add_lwpolyline([(0,0),(6000,0),(6000,6000),(0,6000)],close=True)\nd.modelspace().add_line((1000,3000),(5000,3000))\nd.saveas(${JSON.stringify(join(folder, "source.dxf"))})`,
+    `import ezdxf\nd=ezdxf.new('R2010')\nd.header['$INSUNITS']=13\nd.modelspace().add_lwpolyline([(0,0),(6000,0),(6000,6000),(0,6000)],close=True)\nd.modelspace().add_line((1000,3000),(5000,3000))\nd.layers.new('NO_DOT')\nd.modelspace().add_lwpolyline([(1000,2900),(5000,2900),(5000,3100),(1000,3100)],close=True,dxfattribs={'layer':'NO_DOT'})\nd.saveas(${JSON.stringify(join(folder, "source.dxf"))})`,
   ]);
   const server = spawn(
     ".venv/bin/python",

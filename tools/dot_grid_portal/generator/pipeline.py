@@ -14,6 +14,10 @@ import ezdxf
 from ezdxf import bbox
 from ezdxf.math import Matrix44
 import numpy as np
+try:
+    from .regions import regions, outside_regions
+except ImportError:
+    from regions import regions, outside_regions
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts/dot_grid"))
@@ -129,10 +133,12 @@ def inspect(source: Path, units: str, out: Path) -> dict:
     doc.header["$INSUNITS"] = 13
     doc.header["$EXTMIN"] = (0, 0, 0)
     doc.header["$EXTMAX"] = (width, height, 0)
+    areas = regions(doc)
     target = out / "normalized.dxf"
     doc.saveas(target)
     # Numeric preview paths only: never expose embedded CAD XML, scripts or URLs.
     paths = []
+    no_dot_paths = []
     for e in doc.modelspace():
         typ = e.dxftype()
         if typ == "LINE":
@@ -155,7 +161,10 @@ def inspect(source: Path, units: str, out: Path) -> dict:
                 )
                 for a in angles
             ]
-        paths.append([[round(float(x), 3), round(float(y), 3)] for x, y in p])
+        path = [[round(float(x), 3), round(float(y), 3)] for x, y in p]
+        paths.append(path)
+        if e.dxf.layer.upper() == "NO_DOT":
+            no_dot_paths.append(path)
     # Preview bounded separately from parser and source limits.
     if sum(len(p) for p in paths) > 20000:
         raise ValueError("Preview exceeds 20,000 vertices; simplify drawing")
@@ -166,11 +175,14 @@ def inspect(source: Path, units: str, out: Path) -> dict:
         "transform": {"scale_to_um": factor, "translation_um": offset},
         "extent_um": [width, height],
         "entity_count": len(entities),
+        "no_dot_regions": len(areas),
+        "no_dot_contract": 1,
         "converter": converter,
         "paths": paths,
+        "no_dot_paths": no_dot_paths,
         "warnings": [
             "Preview uses mask coordinates in micrometres. Confirm orientation and dimensions.",
-            "Keep-outs use the existing sampled-geometry engine; this is not fabrication approval.",
+            "Filled NO_DOT areas exclude entire dots with 50 µm edge clearance. Confirm every channel, chamber and port is included; this is not fabrication approval.",
         ],
     }
     if len(json.dumps(result)) > 512000:
@@ -211,7 +223,9 @@ def generate(source: Path, meta: dict, out: Path) -> dict:
     ko = KeepOut(
         channel_um=50, dicing_um=200, wafer_edge_um=3000, existing_marks_um=300
     )
+    areas = regions(doc)
     dots = build_pattern(cb, pts, chips, marks, wafer, ko)
+    dots = dots[outside_regions(dots[:, 2:4], areas, ko.channel_um + cb.dot_diameter_um / 2)]
     # Keep whole displaced dots within the confirmed rectangular extent as well.
     dots = dots[
         (dots[:, 2] >= 6)

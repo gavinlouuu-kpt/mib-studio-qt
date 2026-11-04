@@ -137,3 +137,15 @@ Extract `mib-map.zip`. Its `registry.json` loads through the existing
 already exists, merge entries with ID/seed validation rather than replace that file.
 The decoder reports **mask** coordinates; `manifest.json` records the translation/scaling
 from the uploaded drawing. The map ZIP contains no other customer's registry entries.
+
+## Superseding customer-delivery / no-dot contract (2026-11-04)
+
+Earlier map-download and sampled-only descriptions above describe the original implementation.
+Customer endpoints now serve only combined DXF and dots GDS. Map ZIP remains internal for
+integration; no customer role can download it. Seeds/registry records are not customer data.
+Old ready outputs without `inspection.no_dot_contract = 1` are blocked pending reinspection.
+New inputs require explicit closed `NO_DOT` polylines or circles. Filled interiors plus
+whole-dot radius and 50 µm edge clearance are excluded; declared coverage must be confirmed
+in the shaded preview. Missing/open/self-intersecting regions fail closed. Region semantics
+are explicit, not inferred from layer-0 wall lines. See the current report for the actual
+Wafer_soRT conversion/REGION blocker and the corrected illustrative sample.

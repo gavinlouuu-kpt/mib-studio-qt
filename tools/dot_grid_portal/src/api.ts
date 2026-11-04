@@ -17,6 +17,10 @@ export const FILES = [
   "dotgrid_layer.gds",
   "mib-map.zip",
 ] as const;
+const CUSTOMER_FILES = [
+  "design_with_dotgrid.dxf",
+  "dotgrid_layer.gds",
+] as const;
 const MAX_UPLOAD = 10 * 1024 * 1024;
 async function body(req: Request) {
   const reader = req.body?.getReader();
@@ -68,11 +72,22 @@ export async function api(
     return Response.json(
       (
         await env.DB.prepare(
-          "SELECT id,name,status,error,created_at FROM designs WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100",
+          "SELECT id,name,status,error,created_at,json_extract(inspection,'$.no_dot_contract') AS no_dot_contract FROM designs WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100",
         )
           .bind(member.tenant_id)
           .all()
-      ).results,
+      ).results.map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        status:
+          row.status === "ready" && row.no_dot_contract !== 1
+            ? "needs_review"
+            : row.status,
+        error: row.error
+          ? "Processing failed. Check closed no-dot areas and supported geometry, then retry inspection."
+          : null,
+        created_at: row.created_at,
+      })),
     );
   if (path === "/api/members") {
     if (member.role !== "admin")
@@ -210,8 +225,16 @@ export async function api(
     const d = await owned(env, match[1], member);
     if (!match[2] && req.method === "GET")
       return Response.json({
-        ...d,
-        registry_entry: undefined,
+        id: d.id,
+        name: d.name,
+        status:
+          d.status === "ready" &&
+          JSON.parse(d.inspection || "null")?.no_dot_contract !== 1
+            ? "needs_review"
+            : d.status,
+        error: d.error
+          ? "Processing failed. Review the drawing and retry inspection."
+          : null,
         inspection: d.inspection ? JSON.parse(d.inspection) : null,
       });
     if (match[2] === "confirm" && req.method === "POST") {
@@ -258,7 +281,11 @@ export async function api(
     }
     if (match[2] === "files" && req.method === "GET") {
       const filename = match[3];
-      if (!FILES.some((f) => f === filename) || d.status !== "ready")
+      if (
+        !CUSTOMER_FILES.some((f) => f === filename) ||
+        d.status !== "ready" ||
+        JSON.parse(d.inspection || "null")?.no_dot_contract !== 1
+      )
         throw new HttpError(404, "File not available");
       const file = await env.FILES.get(
         `${member.tenant_id}/${d.id}/${filename}`,

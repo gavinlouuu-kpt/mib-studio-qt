@@ -1,24 +1,18 @@
-# Realistic example: microfluidic sorter concept
+# Illustrative microfluidic concept — corrected no-dot regions
 
-Original illustrative CAD authored for this portal, not a customer design, reproduced
-published design, validated fluidic device or fabrication-ready layout. Source units are
-millimetres, overall extent 12 × 8 mm. Ports, mixer walls, an observation region, outlet
-branches and corner alignment crosses make the workflow recognizable.
+Original 12 × 8 mm concept, not a customer file or fabrication-qualified fluidic device.
+`create_sample.py` uses the existing gdstk polygon union to build one connected filled
+fluid domain (inlets, serpentine, observation chamber, branches and outlets) on `NO_DOT`.
+The same closed boundary is displayed as the device and used for interior exclusion.
+All generated dots remain outside it with 50 µm edge clearance.
 
-`create_sample.py` authors the DXF using the existing ezdxf dependency. Upload
-`web/public/demo/sorter-concept.dxf` with units `mm` through the real portal, confirm the
-normalized 12000 × 8000 micrometre preview, then download combined DXF and map ZIP.
-`render_sample.py <combined.dxf> <mib-map.zip>` derives the overview and cropped before/after
-SVGs and manifest summary. Orange dots are actual exported circles; no aesthetic grid is
-invented. The display keeps the same XY orientation for both images (positive Y downward).
+`render_sample.py <combined.dxf> <internal-map.zip>` produces illustrations from actual
+exported geometry. Public metadata includes only count, dimensions, source hash and caveat;
+no seed, codec or registry record is served. The internal map is not a customer download.
+`validate_sample.py <combined.dxf> <dots.gds>` independently verifies exported dot positions
+using gdstk polygon offsets, checks clearance and compares DXF/GDS locations.
 
-Verified 2026-11-04 through the tailnet review API: design
-`dg-b20850c7-f5af-4f6c-9886-c7a9be90c4af`, review seed 11, 87,907 dots, codec 1.
-The original CAD hash is recorded in `web/public/demo/sample.json`. All three exports
-remain downloadable from the ready review workspace design. These review identities are
-not production registry reservations. The example may be used under the repository license.
-
-Keep-outs are the current sampled-geometry implementation, not whole-channel interior
-exclusion or manufacturing DRC. This example makes the real behavior visible, including
-dots in sufficiently wide open regions. Optical readability and fluidic performance have
-not been tested. No real-camera localization claim is made.
+The previous 87,907-dot example is superseded: it excluded sampled wall edges, not entire
+channel interiors. Its data is retained internally but customer downloads are blocked.
+The actual Wafer_soRT DWG has not passed conversion/inspection; do not represent this concept
+as evidence that the customer's source file works.

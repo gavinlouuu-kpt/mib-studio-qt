@@ -14,6 +14,7 @@ type Inspection = {
   source_units: string;
   converter: string | null;
   paths: number[][][];
+  no_dot_paths?: number[][][];
   warnings: string[];
 };
 type Detail = Row & { inspection: Inspection | null };
@@ -92,7 +93,7 @@ async function open(id: string) {
     const svg = el("preview");
     svg.replaceChildren();
     svg.setAttribute("viewBox", `0 0 ${i.extent_um[0]} ${i.extent_um[1]}`);
-    for (const points of i.paths) {
+    for (const points of [...(i.no_dot_paths ?? []), ...i.paths]) {
       const p = document.createElementNS(
         "http://www.w3.org/2000/svg",
         "polyline",
@@ -103,7 +104,10 @@ async function open(id: string) {
           .map(([x, y]: number[]) => `${x},${i.extent_um[1] - y}`)
           .join(" "),
       );
-      p.setAttribute("fill", "none");
+      p.setAttribute(
+        "fill",
+        i.no_dot_paths?.includes(points) ? "#b9e1d4" : "none",
+      );
       p.setAttribute("stroke", "#326e60");
       p.setAttribute("stroke-width", "1.2");
       p.setAttribute("vector-effect", "non-scaling-stroke");
@@ -121,7 +125,6 @@ async function open(id: string) {
     for (const [name, label] of [
       ["design_with_dotgrid.dxf", "Device + dots · DXF"],
       ["dotgrid_layer.gds", "Dots only · GDS"],
-      ["mib-map.zip", "MIB Studio map · ZIP"],
     ]) {
       const a = document.createElement("a");
       a.href = `/api/designs/${id}/files/${name}`;
@@ -129,7 +132,7 @@ async function open(id: string) {
       el("links").append(a);
     }
     say(
-      "Generation complete. Registered files are ready; fabrication approval is separate.",
+      "Your device and proprietary dots are ready to download. Review the geometry before fabrication.",
     );
   } else
     say(
@@ -266,7 +269,7 @@ el("tour").onclick = () => {
         popover: {
           title: "Confirm the converted geometry",
           description:
-            "Check dimensions, orientation and units. Only a confirmed preview can be generated.",
+            "Check dimensions, orientation, units and shaded no-dot areas. Every channel and port must be covered before confirming.",
           onNextClick: () => {
             if (!ready) {
               say(
@@ -281,9 +284,9 @@ el("tour").onclick = () => {
       {
         element: "#downloads",
         popover: {
-          title: "Three distinct outputs",
+          title: "Device and dots",
           description:
-            "Combined DXF, dots-only GDS, and the registered MIB Studio map package. These are not fabrication approval.",
+            "Download the combined device + dots DXF or the separate dots-only GDS. The dot technology is proprietary.",
         },
       },
       {
@@ -370,11 +373,11 @@ el("demo-tour").onclick = () => {
         },
       },
       {
-        element: "#demo-map",
+        element: "#demo-output",
         popover: {
-          title: "Give MIB Studio a localization map",
+          title: "Download device and dots",
           description:
-            "The map package pairs the unique pattern identity with coordinates. Synthetic decoding passed; this does not claim a real camera or fabricated chip has been tested.",
+            "The combined DXF preserves the device with added proprietary dots. The GDS contains only the dots. Channels and ports are excluded.",
         },
       },
       {
@@ -400,5 +403,5 @@ void safely(async () => {
   if (!r.ok) throw new Error("Sample metadata unavailable");
   const sample = await r.json();
   el("demo-result").textContent =
-    `Verified example: ${Number(sample.dot_count).toLocaleString()} generated dots · 30 µm pitch · 12 µm diameter · codec ${sample.codec_contract}. These illustrations are cropped from its actual exported DXF.`;
+    `Verified example: ${Number(sample.dot_count).toLocaleString()} generated dots · proprietary dot technology. These illustrations are cropped from its actual exported DXF.`;
 });

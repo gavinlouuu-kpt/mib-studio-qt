@@ -174,7 +174,7 @@ createServer(async (req, res) => {
             .toString()
             .replace(
               "<body>",
-              '<body><aside style="padding:12px;background:#fff0c2;color:#402b00;text-align:center">Tailnet review · shared workspace · real CAD processing · not production login. Review maps are not production registrations.</aside>',
+              '<body><aside style="padding:12px;background:#fff0c2;color:#402b00;text-align:center">Tailnet review · shared workspace · real CAD processing · not production login. Proprietary dot technology.</aside>',
             ),
         );
       response = new Response(data, {

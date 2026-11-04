@@ -52,3 +52,66 @@ archive; conversion must pass strict DXF audit, normalization and map generation
    establish optical readability, manufacturing DRC, mask compensation or fabrication approval.
 
 There is no running background deployment or promise of automatic production completion.
+
+## Superseding review correction — 2026-11-04
+
+Gavin identified dots inside the illustrative chip's channel. Prior workflow/decoder checks
+were not sufficient evidence of fluidic exclusion: the old engine measured proximity to
+sampled edges but did not fill the channel interior. The earlier demo is superseded and its
+customer downloads are blocked, with original files retained for audit.
+
+New inputs must declare closed NO_DOT polygons/circles covering channels, chambers and ports.
+Open, missing, degenerate or self-intersecting no-dot boundaries fail closed. The generator
+uses filled domains and exact segment distance against displaced dot centres, including the
+6 µm radius plus 50 µm clearance. User confirmation includes shaded no-dot coverage. This
+requires complete input semantics; it does not automatically infer fluid interiors from
+unlabelled walls. Existing sampled edge exclusion remains supplementary, not manufacturing DRC.
+
+Customer surface: device+dots DXF / dots GDS only. Map ZIP URLs now return 404 for all roles;
+seeds and internal registry records are omitted from detail responses. No pattern implementation,
+registration or decoder explanation remains in the customer tour or public sample metadata.
+
+Actual design attempted: Drive file 1EvWd4mMUWA88gVdpO9u1pi6qoWnjK4c5,
+Wafer_soRT-DC chip_channel layer_height 30 um_1.5% enlarged.dwg (333918 bytes).
+The converter emitted structural/handle errors. Parsed output has 5180 LINE, 2202 CIRCLE,
+1620 ARC, 88 REGION, 80 LWPOLYLINE and 1 MTEXT, all on layer 0; units header is mm.
+Inspection rejects REGION/MTEXT. We did not flatten/drop these objects or generate a
+purportedly safe original-wafer export. Full-wafer node bounds also remain unresolved.
+A reliable CAD export and verified fluid-domain interpretation are required for this source.
+
+Project context: master index, playbook, ENG-MIBQT Overview/Actions/Files read live at about
+14:43–14:45 HKT. The project tracker has no accessible `Operating guide` tab (range read
+returned INVALID_ARGUMENT); do not treat that guide as reviewed. MIBQT-28 remains in progress.
+
+### Changed flow and observed verification
+
+```mermaid
+flowchart LR
+  A[Before: CAD walls] --> B[Sample edge points]
+  B --> C[Distance from walls only]
+  C --> D[Wide channel interiors can retain dots]
+```
+
+```mermaid
+flowchart LR
+  A[CAD with explicit closed no-dot areas] --> B[Validate closed non-self-crossing domains]
+  B --> C[Shade domains for coverage confirmation]
+  C --> D[Exclude filled areas plus entire-dot radius and clearance]
+  D --> E[Device DXF and dot GDS]
+  E --> F[Independent exported-geometry intersection check]
+```
+
+Live review design `dg-56fdf57d-4613-4895-aadc-7eaad3a306c8`: real HTTPS upload,
+inspection, confirmation, generation and both downloads passed. Independent gdstk offset
+check of all 85,060 exported dots found zero channel/port/50 µm-clearance intersections;
+DXF and GDS positions matched. This checks the declared illustrative fluid domain, not
+fluid performance or customer CAD semantics. Demo SVGs were regenerated from these exports.
+Live Driver.js example tour: all four steps passed; two customer download links and no
+registration/codec wording. Screenshot inspected. Map endpoint denied with 404.
+Local Python tests: 9 passed, one container-only DWG fixture skipped locally; API/job/runtime
+tests: 10 passed; browser fixture tests: 2 passed; TypeScript checks/build and docs check passed.
+Deployment uses a derived image from the existing locally built LibreDWG image with only
+updated generator code, preserving the old stopped container for rollback. No routing or
+other services changed. Source customer DWG and debug artifacts remain local, not public assets.
+
+Container-only real DWG fixture check: 1 passed (rejects missing explicit no-dot domain after conversion). This is not the customer DWG acceptance test.

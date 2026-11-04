@@ -200,3 +200,36 @@ describe("Access JWT cryptography", () => {
     ).rejects.toMatchObject({ status: 401 });
   });
 });
+
+it("never exposes proprietary maps or seeds and blocks unverified legacy exports", async () => {
+  await env.DB.prepare(
+    "INSERT INTO designs(id,tenant_id,name,extension,units,status,inspection,registry_entry) VALUES('dg-cccc','a','Device','dxf','um','ready',?,?)",
+  )
+    .bind(JSON.stringify({ no_dot_contract: 1 }), JSON.stringify({ seed: 123 }))
+    .run();
+  const detail = await (await api(req("/designs/dg-cccc"), env, admin)).json();
+  expect(detail).not.toHaveProperty("seed");
+  expect(detail).not.toHaveProperty("registry_entry");
+  for (const role of ["admin", "member"] as const) {
+    await expect(
+      api(req("/designs/dg-cccc/files/mib-map.zip"), env, { ...admin, role }),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(
+      (
+        await api(req("/designs/dg-cccc/files/design_with_dotgrid.dxf"), env, {
+          ...admin,
+          role,
+        })
+      ).status,
+    ).toBe(200);
+  }
+  await env.DB.prepare(
+    "UPDATE designs SET inspection=NULL WHERE id='dg-cccc'",
+  ).run();
+  await expect(
+    api(req("/designs/dg-cccc/files/design_with_dotgrid.dxf"), env, admin),
+  ).rejects.toMatchObject({ status: 404 });
+  expect(
+    (await (await api(req("/designs/dg-cccc"), env, admin)).json()).status,
+  ).toBe("needs_review");
+});

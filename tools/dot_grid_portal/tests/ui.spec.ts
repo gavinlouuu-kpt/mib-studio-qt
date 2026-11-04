@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-test("guided click-through gates actions and exposes all three exports", async ({
+test("guided click-through gates actions and exposes only device and dot exports", async ({
   page,
 }) => {
   let state = "empty";
@@ -72,7 +72,7 @@ test("guided click-through gates actions and exposes all three exports", async (
   await page.locator("#confirmed").check();
   await page.locator("#generate").click();
   await expect(page.locator("#downloads")).toBeVisible();
-  await expect(page.locator("#links a")).toHaveCount(3);
+  await expect(page.locator("#links a")).toHaveCount(2);
   await page.getByRole("button", { name: "Take a tour" }).click();
   for (let n = 0; n < 4; n++)
     await page.locator(".driver-popover-next-btn").click();
@@ -101,7 +101,7 @@ test("realistic example compares exported geometry and loads source units", asyn
     }),
   );
   await page.goto("http://127.0.0.1:4178");
-  await expect(page.locator("#demo-result")).toContainText("87,907");
+  await expect(page.locator("#demo-result")).toContainText("generated dots");
   await page.getByRole("button", { name: "Hide added dots" }).click();
   await expect(page.locator("#demo-image")).toHaveAttribute(
     "src",
@@ -116,7 +116,7 @@ test("realistic example compares exported geometry and loads source units", asyn
   for (const title of [
     "Start with recognizable device CAD",
     "See exactly what gets added",
-    "Give MIB Studio a localization map",
+    "Download device and dots",
     "Try the real workflow",
   ]) {
     await expect(page.locator(".driver-popover-title")).toHaveText(title);
