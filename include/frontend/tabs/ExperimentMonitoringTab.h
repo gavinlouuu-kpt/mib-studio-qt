@@ -1,6 +1,8 @@
 #pragma once
 
 #include "frontend/models/ProcessingConfigDraft.h"
+#include "frontend/models/TargetGatePreview.h"
+#include "backend/processing/EModulusLut.h"
 #include "backend/processing/MonitoringDensity.h"
 #include "backend/services/MonitoringDensityService.h"
 #include "frontend/utils/OverlayRenderer.h"
@@ -14,7 +16,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <map>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -24,7 +28,7 @@ namespace backend::services { struct ProcessedFrame; struct FilterResult; }
 
 class QTimer;
 class QChartView;
-namespace frontend { class ZoomableChartView; class FrameViewerDialog; }
+namespace frontend { class ZoomableChartView; class FrameViewerDialog; class GateOverlayItem; }
 class QScatterSeries;
 class QLineSeries;
 class QBarSeries;
@@ -172,6 +176,33 @@ public:
     QPointF scatterPointViewPosForTests(std::size_t point) const;
     void stepScatterSelectionForTests(int delta) { stepScatterSelection(delta); }
 
+    // Target-group gate on the scatter (see "Gate overlay" below). Everything
+    // here reads or drives the overlay the way an operator would.
+    struct GateOverlayInfo {
+        bool shown{false};            // overlay item visible (draft gate on)
+        QString label;                // "Target group" / "Target group (unapplied)"
+        QString notice;               // E gate on without a table; empty otherwise
+        QRectF plotPx;                // plot rectangle, chart coordinates
+        QRectF boxPx;                 // area/deformability box, chart coordinates (may overhang the plot)
+        int maskCells{0};             // sampled cells over the plot
+        int maskOn{0};                // ... that the draft gate would accept
+        QStringList contourLabels;    // "E ≥ 1.00 kPa", "E ≤ 3.00 kPa"
+        int contourLines{0};          // polylines drawn
+        gate::HandleKind hovered{gate::HandleKind::None};
+        gate::HandleKind dragging{gate::HandleKind::None};
+    };
+    GateOverlayInfo gateOverlayInfoForTests() const;
+    QLabel* gatePreviewLabelForTests() const { return gatePreviewLabel_; }
+    // The E-modulus table the overlay uses (a private copy); null when none is loaded.
+    const backend::EModulusLut* gateLutForTests() const { return lutSnapshot_.get(); }
+    // Representative position of a handle in scatter-view coordinates (NaN
+    // coordinates when it is not visible).
+    QPointF gateHandleViewPosForTests(gate::HandleKind kind) const;
+    // The handle under a scatter-view position (None when there is none).
+    gate::HandleKind gateHandleAtForTests(QPointF viewPos) const;
+    // Scatter-view position of a data point (area um^2, deformability).
+    QPointF scatterDataViewPosForTests(double areaUm, double deformability) const;
+
 public slots:
     void updateRoiDisplay(int offsetX, int offsetY, int width, int height);
 
@@ -257,6 +288,39 @@ private:
     void onScatterDoubleClicked(QPointF viewPos);
     void onScatterHover(QPointF viewPos);
     std::optional<std::size_t> scatterPointAt(QPointF viewPos) const;
+
+    // Gate overlay: the draft target-group gate drawn on the scatter and edited
+    // there. The overlay (GateOverlayItem, a child item of the chart) is drawn
+    // from the tune draft, so an unapplied edit previews live; dragging a box
+    // edge or an iso-E contour writes the same spin box the panel has, so the
+    // draft, the `*` markers and the footer follow and Apply stays required.
+    void setupGateOverlay();
+    void refreshGateOverlay();
+    void refreshGatePreview();
+    void refreshLutSnapshot();
+    std::shared_ptr<const gate::Contour> contourFor(double level) const;
+    gate::GateSpec gateSpec() const; // the gate of the tune draft
+    // The draft gate with what is needed to hit-test or draw it right now.
+    struct GateGeometry {
+        gate::GateSpec spec;
+        gate::Viewport viewport;
+        const backend::EModulusLut* lut{nullptr};
+        std::shared_ptr<const gate::Contour> eMin, eMax; // only with the E gate on and a table
+        gate::EContours contours() const { return {eMin.get(), eMax.get()}; }
+    };
+    GateGeometry gateGeometry() const;
+    QPointF chartPosFromView(QPointF viewPos) const;
+    gate::HandleHit gateHandleHit(QPointF viewPos) const;
+    bool gateHandleEditable(gate::HandleKind kind) const;
+    bool beginGateEdit(const QPointF& viewPos);
+    void onGateDragStarted();
+    void onGateDragMoved(const QPointF& viewPos);
+    void onGateDragFinished(const QPointF& viewPos, bool completed);
+    void setGateHover(gate::HandleKind kind);
+    bool writeGateField(TuneField field, double value);
+    gate::Limits gateLimits(TuneField field) const;
+    QString gateHandleToolTip(gate::HandleKind kind, bool dragging) const;
+    bool showGateHover(QPointF viewPos);
     scatterhit::Viewport scatterViewport() const;
     const backend::services::ProcessedFrame* recentValidFrame(uint64_t frameIndex) const;
     void selectFrame(const backend::services::ProcessedFrame& frame);
@@ -287,7 +351,28 @@ private:
     // so it works the same with KDE level series or the plain ones.
     std::vector<scatterhit::Point> scatterPoints_;
     std::vector<uint64_t> scatterPointFrames_;
+    std::vector<double> scatterPointE_; // stored Young's modulus per plotted point (NaN = none)
     QScatterSeries* scatterHighlight_ = nullptr; // the selected cell, drawn on top
+
+    // Gate overlay state (see setupGateOverlay).
+    QWidget* scatterContainer_ = nullptr;   // scatter view + preview label
+    QLabel* gatePreviewLabel_ = nullptr;
+    GateOverlayItem* gateOverlay_ = nullptr; // owned by the chart
+    // Private copy of the processing service's E-modulus table (it is loaded once
+    // at backend bootstrap and read-only afterwards; the copy is taken on the GUI
+    // thread and re-taken only when the service's lock-protected table identity
+    // changes), so the GUI never reads the live object while it is being loaded.
+    std::shared_ptr<const backend::EModulusLut> lutSnapshot_;
+    std::string lutSnapshotKey_;
+    uint64_t lutGeneration_ = 0;
+    mutable std::map<double, std::shared_ptr<const gate::Contour>> contourCache_; // by level; cleared with the table
+    struct GatePress {
+        gate::HandleHit hit;
+        gate::DragSession session;
+    };
+    std::optional<GatePress> gatePress_; // a claimed press (drag not necessarily started)
+    bool gateDragging_ = false;
+    gate::HandleKind gateHover_ = gate::HandleKind::None;
 
     // Frame pane (over the histogram) showing the selected cell.
     QSplitter* chartsRightSplitter_ = nullptr;

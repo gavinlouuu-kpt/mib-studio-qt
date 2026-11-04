@@ -44,6 +44,9 @@ const FieldInfo kFields[] = {
     {TuneField::TargetAreaMax, "TargetAreaMax", TuneGroup::TargetGroup, QT_TRANSLATE_NOOP("TuneField", "Target group area maximum (µm²)"), " µm²", 0, false, "image_processing/target_group/area_max"},
     {TuneField::TargetDeformabilityMin, "TargetDeformabilityMin", TuneGroup::TargetGroup, QT_TRANSLATE_NOOP("TuneField", "Target group deformability minimum"), "", 2, false, "image_processing/target_group/deformability_min"},
     {TuneField::TargetDeformabilityMax, "TargetDeformabilityMax", TuneGroup::TargetGroup, QT_TRANSLATE_NOOP("TuneField", "Target group deformability maximum"), "", 2, false, "image_processing/target_group/deformability_max"},
+    {TuneField::TargetEmodulusEnabled, "TargetEmodulusEnabled", TuneGroup::TargetGroup, QT_TRANSLATE_NOOP("TuneField", "Target group Young's modulus gate enabled"), "", 0, true, "image_processing/target_group/emodulus_enabled"},
+    {TuneField::TargetEmodulusMin, "TargetEmodulusMin", TuneGroup::TargetGroup, QT_TRANSLATE_NOOP("TuneField", "Target group Young's modulus minimum (kPa)"), " kPa", 2, false, "image_processing/target_group/emodulus_min"},
+    {TuneField::TargetEmodulusMax, "TargetEmodulusMax", TuneGroup::TargetGroup, QT_TRANSLATE_NOOP("TuneField", "Target group Young's modulus maximum (kPa)"), " kPa", 2, false, "image_processing/target_group/emodulus_max"},
     {TuneField::MultiImageEnabled, "MultiImageEnabled", TuneGroup::MultiImage, QT_TRANSLATE_NOOP("TuneField", "Multi-image acquisition enabled"), "", 0, true, "image_processing/multi_image/enabled"},
     {TuneField::MultiImageCount, "MultiImageCount", TuneGroup::MultiImage, QT_TRANSLATE_NOOP("TuneField", "Images per trigger"), "", 0, false, "image_processing/multi_image/count"},
 };
@@ -96,6 +99,9 @@ QVariant readTuneField(const ProcessingConfig& c, TuneField f)
     case TuneField::TargetAreaMax: return c.target_group_area_max;
     case TuneField::TargetDeformabilityMin: return c.target_group_deformability_min;
     case TuneField::TargetDeformabilityMax: return c.target_group_deformability_max;
+    case TuneField::TargetEmodulusEnabled: return c.enable_target_group_emodulus;
+    case TuneField::TargetEmodulusMin: return c.target_group_emodulus_min;
+    case TuneField::TargetEmodulusMax: return c.target_group_emodulus_max;
     case TuneField::MultiImageEnabled: return c.multi_image_enabled;
     case TuneField::MultiImageCount: return c.multi_image_count;
     }
@@ -123,6 +129,9 @@ void writeTuneField(ProcessingConfig& c, TuneField f, const QVariant& v)
     case TuneField::TargetAreaMax: c.target_group_area_max = v.toInt(); break;
     case TuneField::TargetDeformabilityMin: c.target_group_deformability_min = v.toDouble(); break;
     case TuneField::TargetDeformabilityMax: c.target_group_deformability_max = v.toDouble(); break;
+    case TuneField::TargetEmodulusEnabled: c.enable_target_group_emodulus = v.toBool(); break;
+    case TuneField::TargetEmodulusMin: c.target_group_emodulus_min = v.toDouble(); break;
+    case TuneField::TargetEmodulusMax: c.target_group_emodulus_max = v.toDouble(); break;
     case TuneField::MultiImageEnabled: c.multi_image_enabled = v.toBool(); break;
     case TuneField::MultiImageCount: c.multi_image_count = std::max(1, v.toInt()); break;
     }
@@ -186,6 +195,8 @@ QStringList validateTuneConfig(const ProcessingConfig& c)
             issues << QObject::tr("Target group: area minimum exceeds maximum");
         if (c.target_group_deformability_min > c.target_group_deformability_max)
             issues << QObject::tr("Target group: deformability minimum exceeds maximum");
+        if (c.enable_target_group_emodulus && c.target_group_emodulus_min > c.target_group_emodulus_max)
+            issues << QObject::tr("Target group: Young's modulus minimum exceeds maximum");
     }
     if (c.multi_image_enabled && c.multi_image_count < 1)
         issues << QObject::tr("Multi-image: at least one image per trigger is required");

@@ -53,6 +53,9 @@ enum class TuneField {
     TargetAreaMax,
     TargetDeformabilityMin,
     TargetDeformabilityMax,
+    TargetEmodulusEnabled,
+    TargetEmodulusMin,
+    TargetEmodulusMax,
     MultiImageEnabled,
     MultiImageCount,
 };

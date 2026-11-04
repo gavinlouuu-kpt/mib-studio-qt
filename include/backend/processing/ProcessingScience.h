@@ -108,9 +108,23 @@ std::vector<InvalidReasonCode> classifyInvalidReasons(const services::FilterResu
 
 cv::Rect2d resultBbox(const services::FilterResult& result);
 
+// Target-group membership of a *valid* cell: false unless config.enable_target_group, then
+// area box AND deformability box AND the Young's-modulus layer. The E layer filters only when
+// config.enable_target_group_emodulus is on AND an E-modulus table is loaded (non-null, isLoaded());
+// without a table no cell has an E, so the group is the box alone ("two-layer filter"), whatever
+// emodulus_min / emodulus_max say. With a table the layer needs E not NaN (a lookup outside the table
+// fails it) and emodulus_min <= E <= emodulus_max. `youngsModulus` is the cell's looked-up E; it is not
+// read when the layer does not filter. Every place that decides the target group (the bundled
+// science, the ABI v2 loader's host-side LUT step) calls this, so they cannot drift.
+bool isTargetGroupMember(const services::ProcessingConfig& config,
+                         const backend::EModulusLut* eModulusLut,
+                         double areaUm,
+                         double deformability,
+                         double youngsModulus);
+
 // Full per-frame object analysis over an already-generated mask.
-// eModulusLut may be null (Young's modulus stays 0 and emodulus target
-// gating treats the lookup as unavailable, matching an unloaded LUT).
+// eModulusLut may be null (Young's modulus stays 0 and the target group's E layer is skipped:
+// the group is the area/deformability box alone, see isTargetGroupMember).
 std::vector<services::FilterResult> filterProcessedObjects(
     const cv::Mat& processedImage,
     const cv::Rect& roi,

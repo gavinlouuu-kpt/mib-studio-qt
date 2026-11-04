@@ -119,8 +119,8 @@ fields with the same semantics:
 | `target_group.enabled` | `enable_target_group` | bool | Enable the second (target-group) gate within valid frames. |
 | `target_group.area_min` / `area_max` | `target_group_area_min` / `target_group_area_max` | int (µm²) | Target-group area range. |
 | `target_group.deformability_min` / `deformability_max` | `target_group_deformability_min` / `target_group_deformability_max` | double | Target-group deformability range. |
-| `target_group.emodulus_enabled` | `enable_target_group_emodulus` | bool | Gate target-group membership on Young's-modulus LUT lookup. |
-| `target_group.emodulus_min` / `emodulus_max` | `target_group_emodulus_min` / `target_group_emodulus_max` | double | Target-group Young's-modulus range (kPa). |
+| `target_group.emodulus_enabled` | `enable_target_group_emodulus` | bool | Gate target-group membership on Young's-modulus LUT lookup. Ignored when no E-modulus LUT is loaded: the group is then the area/deformability box alone, whatever `emodulus_min`/`emodulus_max` say. With a LUT loaded, a cell whose lookup is outside the table fails the gate. |
+| `target_group.emodulus_min` / `emodulus_max` | `target_group_emodulus_min` / `target_group_emodulus_max` | double | Target-group Young's-modulus range (kPa); read only when `emodulus_enabled` is on and an E-modulus LUT is loaded. |
 | `multi_image.enabled` | `multi_image_enabled` | bool | Capture a series of frames per valid detection. |
 | `multi_image.count` | `multi_image_count` | int | Frames per series (1 = disabled). |
 | `pixel_to_micron_factor` (top-level, not under `image_processing`) | passed separately to `computeProcessedFrame`/`processBatch` | double | Pixel→micron conversion; default `0.4886`. Also the `pixel_to_micron` field of this metrics format. |

@@ -16,6 +16,7 @@
 #include <QLabel>
 #include <QPixmap>
 #include <QPainter>
+#include <QPolygonF>
 #include <QChartView>
 #include <QScatterSeries>
 #include <QLineSeries>
@@ -35,8 +36,10 @@
 #else
 #include <QBarCategoryAxis>
 #endif
+#include <QFontMetricsF>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGraphicsItem>
 #include <QGroupBox>
 #include <QMetaMethod>
 #include <QPushButton>
@@ -67,6 +70,7 @@
 #include <QPixmap>
 #include <QFileDialog>
 
+#include "frontend/models/TargetGatePreview.h"
 #include "frontend/widgets/ZoomableChartView.h"
 #include "frontend/dialogs/FrameViewerDialog.h"
 #include "backend/app/AppBackend.h"
@@ -192,7 +196,324 @@ private:
     bool wasVisible_;
 };
 
+// Same for an overlay item (the operator's gate preview is editing UI, not data).
+class HiddenItemWhileGrabbing {
+public:
+    explicit HiddenItemWhileGrabbing(QGraphicsItem* item) : item_(item), wasVisible_(item && item->isVisible())
+    {
+        if (wasVisible_) item_->setVisible(false);
+    }
+    ~HiddenItemWhileGrabbing()
+    {
+        if (wasVisible_) item_->setVisible(true);
+    }
+    HiddenItemWhileGrabbing(const HiddenItemWhileGrabbing&) = delete;
+    HiddenItemWhileGrabbing& operator=(const HiddenItemWhileGrabbing&) = delete;
+
+private:
+    QGraphicsItem* item_;
+    bool wasVisible_;
+};
+
 } // anonymous namespace
+namespace frontend
+{
+
+// The draft target-group gate drawn over the Deformability-vs-Area scatter: a
+// tinted "would be target" region, the dashed area/deformability box and, with
+// the E gate on and a table loaded, the dashed-dotted iso-E contours with value
+// labels. A child item of the chart (chart coordinates = plot-area coordinates),
+// transparent to the mouse. All geometry comes from the live axes and plot area
+// at paint time; the tab only hands it the gate, the table and the contours.
+// Lines carry dash patterns and text, never colour alone.
+class GateOverlayItem : public QGraphicsItem {
+public:
+    struct Params {
+        gate::GateSpec spec;
+        const backend::EModulusLut* lut = nullptr;
+        std::uint64_t lutGeneration = 0;
+        std::shared_ptr<const gate::Contour> eMin, eMax;
+        QString label;
+        QString notice;
+    };
+
+    static constexpr double kMaskStepPx = 3.0;
+
+    GateOverlayItem(QChart* chart, QValueAxis* x, QValueAxis* y) : QGraphicsItem(chart), chart_(chart), x_(x), y_(y)
+    {
+        setZValue(4.5); // above the series (4), below the legend (5)
+        setAcceptedMouseButtons(Qt::NoButton);
+    }
+
+    void setParams(Params p)
+    {
+        params_ = std::move(p);
+        update();
+    }
+    void setHover(gate::HandleKind k)
+    {
+        if (hover_ == k) return;
+        hover_ = k;
+        update();
+    }
+    void setDragging(gate::HandleKind k)
+    {
+        if (dragging_ == k) return;
+        dragging_ = k;
+        update();
+    }
+    gate::HandleKind hover() const { return hover_; }
+    gate::HandleKind dragging() const { return dragging_; }
+    void plotAreaChanged()
+    {
+        prepareGeometryChange();
+        update();
+    }
+
+    gate::Viewport viewport() const
+    {
+        gate::Viewport v;
+        const QRectF plot = chart_->plotArea();
+        v.x0 = x_->min();
+        v.x1 = x_->max();
+        v.y0 = y_->min();
+        v.y1 = y_->max();
+        v.left = plot.left();
+        v.top = plot.top();
+        v.width = plot.width();
+        v.height = plot.height();
+        return v;
+    }
+
+    QRectF boundingRect() const override { return chart_->plotArea(); }
+
+    ExperimentMonitoringTab::GateOverlayInfo info()
+    {
+        ExperimentMonitoringTab::GateOverlayInfo i;
+        i.shown = isVisible();
+        i.label = params_.label;
+        i.notice = params_.notice;
+        i.hovered = hover_;
+        i.dragging = dragging_;
+        const gate::Viewport vp = viewport();
+        i.plotPx = QRectF(vp.left, vp.top, vp.width, vp.height);
+        if (!gate::viewportValid(vp)) return i;
+        i.boxPx = boxRect(vp);
+        const gate::Mask& m = mask(vp);
+        for (int r = 0; r < m.rows; ++r) {
+            for (int c = 0; c < m.cols; ++c) {
+                const double cx = vp.left + (c + 0.5) * m.stepPx;
+                const double cy = vp.top + (r + 0.5) * m.stepPx;
+                if (cx > vp.left + vp.width || cy > vp.top + vp.height) continue;
+                ++i.maskCells;
+                if (m.at(c, r)) ++i.maskOn;
+            }
+        }
+        for (const auto& drawn : drawnContours(vp)) {
+            i.contourLabels << drawn.text;
+            i.contourLines += static_cast<int>(drawn.contour->size());
+        }
+        return i;
+    }
+
+    void paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) override
+    {
+        const gate::GateSpec& spec = params_.spec;
+        const gate::Viewport vp = viewport();
+        if (!spec.enabled || !gate::viewportValid(vp)) return;
+        const QRectF plot(vp.left, vp.top, vp.width, vp.height);
+        const QRectF box = boxRect(vp);
+        const QRectF boxVisible = box.intersected(plot);
+
+        p->save();
+        p->setClipRect(plot);
+        p->setRenderHint(QPainter::Antialiasing, true);
+        p->setFont(chart_->font());
+
+        // 1. Tinted region: exact rectangle when the E layer does not filter (no E
+        //    gate, or no table loaded: the group is the box alone); otherwise the
+        //    sampled predicate (box ^ E range), clipped to the exact box.
+        if (!boxVisible.isEmpty()) {
+            if (!gate::eLayerFilters(spec, gate::lutLoaded(params_.lut))) {
+                p->fillRect(boxVisible, tintColor());
+            } else {
+                const gate::Mask& m = mask(vp);
+                if (m.onCount() > 0) {
+                    if (maskImage_.isNull()) {
+                        maskImage_ = QImage(m.cols, m.rows, QImage::Format_ARGB32_Premultiplied);
+                        maskImage_.fill(0);
+                        const QRgb px = qPremultiply(tintColor().rgba());
+                        for (int r = 0; r < m.rows; ++r)
+                            for (int c = 0; c < m.cols; ++c)
+                                if (m.at(c, r)) maskImage_.setPixel(c, r, px);
+                    }
+                    p->save();
+                    p->setClipRect(boxVisible);
+                    p->setRenderHint(QPainter::SmoothPixmapTransform, true);
+                    p->drawImage(QRectF(vp.left, vp.top, m.cols * m.stepPx, m.rows * m.stepPx), maskImage_);
+                    p->restore();
+                }
+            }
+        }
+
+        // 2. Dashed box. A hovered or dragged edge is drawn solid and heavier.
+        auto drawEdge = [&](gate::HandleKind k, const QLineF& line) {
+            const bool active = hover_ == k || dragging_ == k;
+            QPen pen(active ? activeColor() : edgeColor(), active ? 3.5 : 2.0, active ? Qt::SolidLine : Qt::DashLine);
+            pen.setCosmetic(true);
+            p->setPen(pen);
+            p->drawLine(line);
+        };
+        drawEdge(gate::HandleKind::AreaMin, QLineF(box.left(), box.top(), box.left(), box.bottom()));
+        drawEdge(gate::HandleKind::AreaMax, QLineF(box.right(), box.top(), box.right(), box.bottom()));
+        drawEdge(gate::HandleKind::DeformMax, QLineF(box.left(), box.top(), box.right(), box.top()));
+        drawEdge(gate::HandleKind::DeformMin, QLineF(box.left(), box.bottom(), box.right(), box.bottom()));
+
+        // 3. Name (and unapplied state) of the gate and the E-gate notice sit in the
+        //    plot's top-left corner; their rectangles are reserved first so the
+        //    contour labels can move out of their way.
+        const qreal maxPill = std::max(60.0, plot.width() - 12.0);
+        const QFontMetricsF fm(p->font());
+        std::vector<QRectF> reserved;
+        QRectF labelRect, noticeRect;
+        QPointF cursor(plot.left() + 6.0, plot.top() + 6.0);
+        if (!params_.label.isEmpty()) {
+            labelRect = QRectF(cursor, pillSize(fm, params_.label, maxPill));
+            reserved.push_back(labelRect);
+            cursor.setY(labelRect.bottom() + 4.0);
+        }
+        if (!params_.notice.isEmpty()) {
+            noticeRect = QRectF(cursor, pillSize(fm, params_.notice, maxPill));
+            reserved.push_back(noticeRect);
+        }
+
+        // 4. Iso-E contours and their value labels.
+        for (const auto& drawn : drawnContours(vp)) {
+            const bool active = hover_ == drawn.kind || dragging_ == drawn.kind;
+            QPen pen(active ? activeColor() : emodColor(), active ? 3.5 : 2.0, active ? Qt::SolidLine : Qt::DashDotLine);
+            pen.setCosmetic(true);
+            p->setPen(pen);
+            for (const gate::Polyline& line : *drawn.contour) {
+                QPolygonF poly;
+                poly.reserve(static_cast<qsizetype>(line.size()));
+                for (const QPointF& d : line) poly << gate::toPixel(vp, d);
+                p->drawPolyline(poly);
+            }
+        }
+        for (const auto& drawn : drawnContours(vp)) {
+            const bool active = hover_ == drawn.kind || dragging_ == drawn.kind;
+            const QSizeF sz = pillSize(fm, drawn.text, maxPill);
+            QRectF r(QPointF(drawn.labelAt.x() - sz.width() - 4.0, drawn.labelAt.y() - sz.height() - 2.0), sz);
+            auto collides = [&](const QRectF& c) {
+                for (const QRectF& other : reserved)
+                    if (other.intersects(c)) return true;
+                return false;
+            };
+            for (int tries = 0; tries < 6 && collides(r); ++tries) r.translate(0.0, sz.height() + 2.0);
+            r.moveLeft(std::clamp(r.left(), plot.left() + 2.0, std::max(plot.left() + 2.0, plot.right() - sz.width() - 2.0)));
+            r.moveTop(std::clamp(r.top(), plot.top() + 2.0, std::max(plot.top() + 2.0, plot.bottom() - sz.height() - 2.0)));
+            reserved.push_back(r);
+            drawPill(p, r, drawn.text, active ? activeColor() : emodColor());
+        }
+        if (!labelRect.isEmpty()) drawPill(p, labelRect, params_.label, edgeColor());
+        if (!noticeRect.isEmpty()) drawPill(p, noticeRect, params_.notice, warnColor());
+        p->restore();
+    }
+
+private:
+    struct DrawnContour {
+        gate::HandleKind kind;
+        const gate::Contour* contour;
+        QString text;
+        QPointF labelAt;
+    };
+
+    static QColor tintColor() { return QColor(0, 120, 255, 44); }
+    static QColor edgeColor() { return QColor(0, 70, 180); }
+    static QColor emodColor() { return QColor(150, 40, 170); }
+    static QColor activeColor() { return QColor(220, 110, 0); }
+    static QColor warnColor() { return QColor(170, 30, 30); }
+
+    // A text pill, word-wrapped to maxWidth.
+    static QSizeF pillSize(const QFontMetricsF& fm, const QString& text, qreal maxWidth)
+    {
+        const QRectF text2 = fm.boundingRect(QRectF(0, 0, maxWidth - 10.0, 10000.0), Qt::AlignLeft | Qt::TextWordWrap, text);
+        return QSizeF(text2.width() + 10.0, text2.height() + 4.0);
+    }
+    static void drawPill(QPainter* p, const QRectF& r, const QString& text, const QColor& color)
+    {
+        p->save();
+        p->setPen(QPen(color, 1.0));
+        p->setBrush(QColor(255, 255, 255, 225));
+        p->drawRoundedRect(r, 3.0, 3.0);
+        p->setPen(color);
+        p->drawText(r.adjusted(5.0, 2.0, -5.0, -2.0), Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, text);
+        p->restore();
+    }
+
+    QRectF boxRect(const gate::Viewport& vp) const
+    {
+        const QPointF a = gate::toPixel(vp, QPointF(params_.spec.areaMin, params_.spec.deformMax));
+        const QPointF b = gate::toPixel(vp, QPointF(params_.spec.areaMax, params_.spec.deformMin));
+        return QRectF(a, b).normalized();
+    }
+
+    std::vector<DrawnContour> drawnContours(const gate::Viewport& vp) const
+    {
+        std::vector<DrawnContour> out;
+        const gate::GateSpec& s = params_.spec;
+        if (!s.enabled || !s.emodEnabled || !params_.lut) return out;
+        auto add = [&](gate::HandleKind kind, const std::shared_ptr<const gate::Contour>& c, const QString& text) {
+            if (!c || c->empty()) return;
+            const auto at = gate::contourLabelAnchor(*c, vp);
+            if (!at) return;
+            out.push_back({kind, c.get(), text, *at});
+        };
+        add(gate::HandleKind::EmodMin, params_.eMin, QObject::tr("E ≥ %1 kPa").arg(s.emodMin, 0, 'f', 2));
+        add(gate::HandleKind::EmodMax, params_.eMax, QObject::tr("E ≤ %1 kPa").arg(s.emodMax, 0, 'f', 2));
+        return out;
+    }
+
+    // The sampled predicate, recomputed only when the gate, the table or the
+    // geometry changed (a pan or zoom recomputes it: ~10-20k lookups).
+    const gate::Mask& mask(const gate::Viewport& vp)
+    {
+        const MaskKey key{params_.spec, params_.lutGeneration, params_.lut != nullptr, vp.x0, vp.x1, vp.y0, vp.y1,
+                          vp.left, vp.top, vp.width, vp.height};
+        if (!maskKey_ || !(*maskKey_ == key)) {
+            mask_ = gate::computeMask(params_.spec, params_.lut, vp, kMaskStepPx);
+            maskImage_ = QImage(); // rebuilt on the next paint
+            maskKey_ = key;
+        }
+        return mask_;
+    }
+
+    struct MaskKey {
+        gate::GateSpec spec;
+        std::uint64_t lutGeneration;
+        bool hasLut;
+        double x0, x1, y0, y1, left, top, width, height;
+        bool operator==(const MaskKey& o) const
+        {
+            return spec == o.spec && lutGeneration == o.lutGeneration && hasLut == o.hasLut && x0 == o.x0 &&
+                   x1 == o.x1 && y0 == o.y0 && y1 == o.y1 && left == o.left && top == o.top && width == o.width &&
+                   height == o.height;
+        }
+    };
+
+    QChart* chart_;
+    QValueAxis* x_;
+    QValueAxis* y_;
+    Params params_;
+    gate::HandleKind hover_ = gate::HandleKind::None;
+    gate::HandleKind dragging_ = gate::HandleKind::None;
+    std::optional<MaskKey> maskKey_;
+    gate::Mask mask_;
+    QImage maskImage_; // the mask as a tint image (E gate on), cached with it
+};
+
+} // namespace frontend
+
 
 namespace frontend
 {
@@ -467,12 +788,32 @@ namespace frontend
                    tr("Applied to valid cells only: selects which of them fire the sort trigger. Never changes validity."));
         {
             auto* box = makeCriterion(tr("Target group gate"), QStringLiteral("targetGroupBox"), TuneField::TargetGroupEnabled,
-                                      tr("When enabled, a valid cell inside both ranges is reported as target group and fires the sort trigger."));
+                                      tr("When enabled, a valid cell inside every enabled range is reported as target group and fires the sort trigger."));
             auto* form = makeForm(box);
             addIntField(form, tr("Area minimum"), TuneField::TargetAreaMin, QStringLiteral("targetAreaMinSpin"), 0, 100000, 10);
             addIntField(form, tr("Area maximum"), TuneField::TargetAreaMax, QStringLiteral("targetAreaMaxSpin"), 0, 100000, 10);
             addDoubleField(form, tr("Deformability minimum"), TuneField::TargetDeformabilityMin, QStringLiteral("targetDeformMinSpin"), 0.0, 1.0, 0.01);
             addDoubleField(form, tr("Deformability maximum"), TuneField::TargetDeformabilityMax, QStringLiteral("targetDeformMaxSpin"), 0.0, 1.0, 0.01);
+            // Optional third range inside the gate: Young's modulus from the
+            // E-modulus LUT lookup on (area, deformability). Nested checkable
+            // box so its enable state sits with its values, like the others.
+            auto* emodBox = new QGroupBox(tr("Young's modulus"), box);
+            emodBox->setObjectName(QStringLiteral("targetEmodulusBox"));
+            emodBox->setCheckable(true);
+            emodBox->setToolTip(tr("When enabled, a target cell must also have a Young's modulus (kPa, looked up in the loaded E-modulus table) inside this range. "
+                                   "A cell whose lookup falls outside the table is never target group. "
+                                   "When no table is loaded this range is skipped and the target group is the area and deformability box alone."));
+            bindTuneField(TuneField::TargetEmodulusEnabled, emodBox, nullptr,
+                          [emodBox]() { return QVariant(emodBox->isChecked()); },
+                          [emodBox](const QVariant& v) { emodBox->setChecked(v.toBool()); });
+            connect(emodBox, &QGroupBox::toggled, this, [this](bool on) { onTuneFieldEdited(TuneField::TargetEmodulusEnabled, on); });
+            form->addRow(emodBox);
+            auto* emodForm = makeForm(emodBox);
+            // Nested inside the target box: no extra side margins, so the
+            // compact (220 px) panel width still fits without scrolling.
+            emodForm->setContentsMargins(0, 2, 0, 4);
+            addDoubleField(emodForm, tr("Minimum"), TuneField::TargetEmodulusMin, QStringLiteral("targetEmodMinSpin"), 0.0, 1000.0, 0.1);
+            addDoubleField(emodForm, tr("Maximum"), TuneField::TargetEmodulusMax, QStringLiteral("targetEmodMaxSpin"), 0.0, 1000.0, 0.1);
         }
 
         // --- Multi-image acquisition -------------------------------------
@@ -599,6 +940,9 @@ namespace frontend
         // Enabled/disabled criteria must not be inferred from editability
         // while applying: controls are read-only for the duration.
         if (tunePanelContent_) tunePanelContent_->setEnabled(!draft_.applying());
+        // Every draft change ends here (edit, load, revert, apply result): the
+        // scatter's gate overlay and preview count follow the draft.
+        refreshGateOverlay();
     }
 
     void ExperimentMonitoringTab::onTuneFieldEdited(TuneField field, const QVariant& value)
@@ -728,10 +1072,24 @@ namespace frontend
         scatterplotView_->setRenderHint(QPainter::Antialiasing);
         scatterplotView_->setDefaultRange(scatterXAxis_, scatterXMin_, scatterXMax_);
         scatterplotView_->setDefaultRange(scatterYAxis_, scatterYMin_, scatterYMax_);
-        // Replace placeholder with actual chart view
+        // Replace placeholder with the chart view and, under it, the gate preview
+        // count (hidden while the draft gate is off).
         ui->gridLayout->removeWidget(ui->scatterplotViewPlaceholder);
         delete ui->scatterplotViewPlaceholder;
-        ui->gridLayout->addWidget(scatterplotView_, 1, 0);
+        scatterContainer_ = new QWidget(this);
+        scatterContainer_->setObjectName(QStringLiteral("monitoringScatterContainer"));
+        auto* scatterLayout = new QVBoxLayout(scatterContainer_);
+        scatterLayout->setContentsMargins(0, 0, 0, 0);
+        scatterLayout->setSpacing(2);
+        scatterLayout->addWidget(scatterplotView_, 1);
+        gatePreviewLabel_ = new QLabel(scatterContainer_);
+        gatePreviewLabel_->setObjectName(QStringLiteral("gatePreviewLabel"));
+        gatePreviewLabel_->setTextFormat(Qt::PlainText);
+        gatePreviewLabel_->setWordWrap(true);
+        gatePreviewLabel_->setAccessibleName(tr("Target group preview count"));
+        gatePreviewLabel_->setVisible(false);
+        scatterLayout->addWidget(gatePreviewLabel_, 0);
+        ui->gridLayout->addWidget(scatterContainer_, 1, 0);
 
         // Load isoelastic curves overlay
         loadIsoelasticCurves();
@@ -756,6 +1114,7 @@ namespace frontend
         connect(scatterplotView_, &ZoomableChartView::plotDoubleClicked, this,
                 &ExperimentMonitoringTab::onScatterDoubleClicked);
         connect(scatterplotView_, &ZoomableChartView::hoverMoved, this, &ExperimentMonitoringTab::onScatterHover);
+        setupGateOverlay();
 
         // Panel 2: Histogram (top-right)
         histogramChart_ = new QChart();
@@ -925,8 +1284,10 @@ namespace frontend
         // level (unknown density = sparsest level until the next estimate).
         scatterPoints_.clear();
         scatterPointFrames_.clear();
+        scatterPointE_.clear();
         scatterPoints_.reserve(validFrames.size());
         scatterPointFrames_.reserve(validFrames.size());
+        scatterPointE_.reserve(validFrames.size());
         QList<QPointF> scatterPoints;
         QList<QPointF> targetPoints;
         std::vector<QList<QPointF>> levelPoints(kdeEnabled_ ? kKdeLevels : 0);
@@ -942,6 +1303,7 @@ namespace frontend
             const QPointF point(frame.validation.area * factor * factor, frame.validation.deformability);
             scatterPoints_.push_back({point.x(), point.y(), static_cast<int>(scatterPoints_.size())});
             scatterPointFrames_.push_back(frame.index);
+            scatterPointE_.push_back(frame.validation.youngsModulus);
             if (kdeEnabled_)
             {
                 double density = 0.0;
@@ -968,6 +1330,7 @@ namespace frontend
             scatterYAxis_->setRange(scatterYMin_, scatterYMax_);
         }
         refreshScatterHighlight();
+        refreshGatePreview();
     }
 
     void ExperimentMonitoringTab::updateHistogram(const std::vector<backend::services::ProcessedFrame> &validFrames)
@@ -2085,6 +2448,7 @@ namespace frontend
         QPixmap scatterPlotPixmap;
         {
             HiddenWhileGrabbing hide(scatterHighlight_);
+            HiddenItemWhileGrabbing hideGate(gateOverlay_);
             scatterPlotPixmap = scatterplotView_->grab();
         }
         if (scatterPlotPixmap.isNull())
@@ -2135,6 +2499,7 @@ namespace frontend
         QPixmap pixmap;
         {
             HiddenWhileGrabbing hide(chartView == scatterplotView_ ? scatterHighlight_ : nullptr);
+            HiddenItemWhileGrabbing hideGate(chartView == scatterplotView_ ? gateOverlay_ : nullptr);
             pixmap = chartView->grab();
         }
         if (pixmap.isNull())
@@ -2282,10 +2647,24 @@ namespace frontend
 
     void ExperimentMonitoringTab::onScatterHover(QPointF viewPos)
     {
+        // A gate handle under the pointer wins: pressing there and dragging edits
+        // the gate (a click without travel still selects a cell).
+        if (showGateHover(viewPos)) return;
         const auto hit = scatterPointAt(viewPos);
         if (!hit) {
             scatterplotView_->unsetCursor();
-            QToolTip::hideText();
+            // Not on a cell or a handle: what the pointer is over.
+            const gate::Viewport vp = scatterViewport();
+            const QPointF chartPos = chartPosFromView(viewPos);
+            if (!gate::viewportValid(vp) || !scatterhit::insidePlot(vp, chartPos.x(), chartPos.y())) {
+                QToolTip::hideText();
+                return;
+            }
+            const QPointF data = gate::toData(vp, chartPos);
+            QString text = tr("Area %1 µm² · deformability %2").arg(data.x(), 0, 'f', 1).arg(data.y(), 0, 'f', 3);
+            const double e = gate::lookupE(lutSnapshot_.get(), data.x(), data.y());
+            if (std::isfinite(e)) text += tr(" · E %1 kPa").arg(e, 0, 'f', 2);
+            QToolTip::showText(scatterplotView_->mapToGlobal(viewPos.toPoint()), text, scatterplotView_);
             return;
         }
         scatterplotView_->setCursor(Qt::PointingHandCursor);
@@ -2428,6 +2807,272 @@ namespace frontend
         const auto& p = scatterPoints_.at(point);
         const QPointF chartPos = scatterplotChart_->mapToPosition(QPointF(p.x, p.y), scatterSeries_);
         return QPointF(scatterplotView_->mapFromScene(scatterplotChart_->mapToScene(chartPos)));
+    }
+
+    // ---- Gate overlay: the draft target-group gate on the scatter -----------------
+    //
+    // Drawn from the tune draft (an unapplied edit previews live), shown only
+    // while TargetGroupEnabled is on in the draft. The tint, box and E contours
+    // follow ProcessingScience exactly (gate::isTarget); editing goes through the
+    // tune panel's own spin boxes, so nothing here can bypass Apply.
+
+    void ExperimentMonitoringTab::setupGateOverlay()
+    {
+        gateOverlay_ = new GateOverlayItem(scatterplotChart_, scatterXAxis_, scatterYAxis_);
+        gateOverlay_->setVisible(false);
+        auto repaint = [this]() {
+            if (gateOverlay_) gateOverlay_->update();
+        };
+        connect(scatterXAxis_, &QValueAxis::rangeChanged, this, repaint);
+        connect(scatterYAxis_, &QValueAxis::rangeChanged, this, repaint);
+        connect(scatterplotChart_, &QChart::plotAreaChanged, this, [this](const QRectF&) {
+            if (gateOverlay_) gateOverlay_->plotAreaChanged();
+        });
+        scatterplotView_->setPressInterceptor([this](const QPointF& viewPos) { return beginGateEdit(viewPos); });
+        connect(scatterplotView_, &ZoomableChartView::interceptDragStarted, this,
+                [this](QPointF) { onGateDragStarted(); });
+        connect(scatterplotView_, &ZoomableChartView::interceptDragMoved, this,
+                [this](QPointF, QPointF viewPos) { onGateDragMoved(viewPos); });
+        connect(scatterplotView_, &ZoomableChartView::interceptDragFinished, this,
+                [this](QPointF, QPointF viewPos, bool completed) { onGateDragFinished(viewPos, completed); });
+        connect(scatterplotView_, &ZoomableChartView::hoverLeft, this, [this]() {
+            setGateHover(gate::HandleKind::None);
+            QToolTip::hideText();
+        });
+        refreshLutSnapshot();
+    }
+
+    gate::GateSpec ExperimentMonitoringTab::gateSpec() const { return gate::GateSpec::fromConfig(draft_.draft()); }
+
+    void ExperimentMonitoringTab::refreshLutSnapshot()
+    {
+        // The table identity is read under the service's lock; the table itself is
+        // loaded once at backend bootstrap and never mutated afterwards, so the
+        // one-off copy below (GUI thread) cannot overlap a write.
+        const auto identity = backend_.processing().eModulusLutIdentity();
+        if (!identity.loaded) {
+            if (lutSnapshot_) {
+                lutSnapshot_.reset();
+                lutSnapshotKey_.clear();
+                contourCache_.clear();
+                ++lutGeneration_;
+            }
+            return;
+        }
+        const std::string key = identity.sha256 + "|" + identity.path;
+        if (lutSnapshot_ && key == lutSnapshotKey_) return;
+        auto copy = std::make_shared<backend::EModulusLut>(backend_.processing().eModulusLut());
+        if (!copy->isLoaded()) return;
+        lutSnapshot_ = std::move(copy);
+        lutSnapshotKey_ = key;
+        contourCache_.clear();
+        ++lutGeneration_;
+    }
+
+    std::shared_ptr<const gate::Contour> ExperimentMonitoringTab::contourFor(double level) const
+    {
+        if (!lutSnapshot_) return nullptr;
+        const auto it = contourCache_.find(level);
+        if (it != contourCache_.end()) return it->second;
+        if (contourCache_.size() >= 8) contourCache_.clear(); // a drag walks through many levels
+        auto contour = std::make_shared<const gate::Contour>(gate::isoContour(*lutSnapshot_, level));
+        contourCache_[level] = contour;
+        return contour;
+    }
+
+    ExperimentMonitoringTab::GateGeometry ExperimentMonitoringTab::gateGeometry() const
+    {
+        GateGeometry g;
+        g.spec = gateSpec();
+        g.viewport = scatterViewport();
+        g.lut = lutSnapshot_.get();
+        if (g.spec.enabled && g.spec.emodEnabled && lutSnapshot_) {
+            g.eMin = contourFor(g.spec.emodMin);
+            g.eMax = contourFor(g.spec.emodMax);
+        }
+        return g;
+    }
+
+    void ExperimentMonitoringTab::refreshGateOverlay()
+    {
+        if (!gateOverlay_) return;
+        refreshLutSnapshot();
+        const GateGeometry geo = gateGeometry();
+        GateOverlayItem::Params params;
+        params.spec = geo.spec;
+        params.lut = geo.lut;
+        params.lutGeneration = lutGeneration_;
+        params.eMin = geo.eMin;
+        params.eMax = geo.eMax;
+        bool unapplied = false;
+        for (TuneField f : {TuneField::TargetGroupEnabled, TuneField::TargetAreaMin, TuneField::TargetAreaMax,
+                            TuneField::TargetDeformabilityMin, TuneField::TargetDeformabilityMax,
+                            TuneField::TargetEmodulusEnabled, TuneField::TargetEmodulusMin, TuneField::TargetEmodulusMax})
+            unapplied = unapplied || draft_.isChanged(f);
+        params.label = unapplied ? tr("Target group (unapplied)") : tr("Target group");
+        if (geo.spec.enabled && geo.spec.emodEnabled && !lutSnapshot_)
+            params.notice = tr("No E-modulus table loaded: the target group uses the box only");
+        gateOverlay_->setParams(std::move(params));
+        gateOverlay_->setVisible(geo.spec.enabled);
+        if (!geo.spec.enabled) setGateHover(gate::HandleKind::None);
+        refreshGatePreview();
+    }
+
+    void ExperimentMonitoringTab::refreshGatePreview()
+    {
+        if (!gatePreviewLabel_) return;
+        const gate::GateSpec spec = gateSpec();
+        gatePreviewLabel_->setVisible(spec.enabled);
+        if (!spec.enabled) return;
+        // Without a table the E layer is skipped (the stored E of a cell is a placeholder then): the
+        // count is the box alone, the same rule as the science.
+        gatePreviewLabel_->setText(
+            gate::previewText(gate::countTargets(spec, lutSnapshot_ != nullptr, scatterPoints_, scatterPointE_)));
+    }
+
+    QPointF ExperimentMonitoringTab::chartPosFromView(QPointF viewPos) const
+    {
+        return scatterplotChart_->mapFromScene(scatterplotView_->mapToScene(viewPos.toPoint()));
+    }
+
+    gate::Limits ExperimentMonitoringTab::gateLimits(TuneField field) const
+    {
+        gate::Limits limits = gate::defaultLimits(field);
+        QWidget* w = tuneFieldWidget(field);
+        if (auto* spin = qobject_cast<QSpinBox*>(w)) {
+            limits = {static_cast<double>(spin->minimum()), static_cast<double>(spin->maximum())};
+        } else if (auto* dspin = qobject_cast<QDoubleSpinBox*>(w)) {
+            limits = {dspin->minimum(), dspin->maximum()};
+        }
+        return limits;
+    }
+
+    bool ExperimentMonitoringTab::gateHandleEditable(gate::HandleKind kind) const
+    {
+        if (kind == gate::HandleKind::None || draft_.applying()) return false;
+        // The same lock the panel has: a disabled control cannot be edited here either.
+        QWidget* w = tuneFieldWidget(gate::handleField(kind));
+        return w && w->isEnabled();
+    }
+
+    gate::HandleHit ExperimentMonitoringTab::gateHandleHit(QPointF viewPos) const
+    {
+        const GateGeometry geo = gateGeometry();
+        if (!geo.spec.enabled) return {};
+        const QPointF chartPos = chartPosFromView(viewPos);
+        gate::HandleHit hit = gate::hitTest(geo.spec, geo.contours(), geo.viewport, chartPos.x(), chartPos.y());
+        if (hit && !gateHandleEditable(hit.kind)) return {};
+        return hit;
+    }
+
+    gate::HandleKind ExperimentMonitoringTab::gateHandleAtForTests(QPointF viewPos) const
+    {
+        return gateHandleHit(viewPos).kind;
+    }
+
+    ExperimentMonitoringTab::GateOverlayInfo ExperimentMonitoringTab::gateOverlayInfoForTests() const
+    {
+        return gateOverlay_ ? gateOverlay_->info() : GateOverlayInfo{};
+    }
+
+    QPointF ExperimentMonitoringTab::gateHandleViewPosForTests(gate::HandleKind kind) const
+    {
+        const GateGeometry geo = gateGeometry();
+        const auto anchor = gate::handleAnchor(kind, geo.spec, geo.contours(), geo.viewport);
+        if (!anchor) return QPointF(std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN());
+        return QPointF(scatterplotView_->mapFromScene(scatterplotChart_->mapToScene(*anchor)));
+    }
+
+    QPointF ExperimentMonitoringTab::scatterDataViewPosForTests(double areaUm, double deformability) const
+    {
+        const QPointF chartPos = gate::toPixel(scatterViewport(), QPointF(areaUm, deformability));
+        return QPointF(scatterplotView_->mapFromScene(scatterplotChart_->mapToScene(chartPos)));
+    }
+
+    QString ExperimentMonitoringTab::gateHandleToolTip(gate::HandleKind kind, bool dragging) const
+    {
+        const TuneField field = gate::handleField(kind);
+        const QString value = QString::number(draft_.field(field).toDouble(), 'f', tuneFieldDecimals(field)) + tuneFieldUnit(field);
+        return dragging ? tr("%1: %2").arg(tuneFieldLabel(field), value)
+                        : tr("%1: %2 — drag to change").arg(tuneFieldLabel(field), value);
+    }
+
+    void ExperimentMonitoringTab::setGateHover(gate::HandleKind kind)
+    {
+        if (gateHover_ == kind) return;
+        gateHover_ = kind;
+        if (gateOverlay_) gateOverlay_->setHover(kind);
+    }
+
+    bool ExperimentMonitoringTab::showGateHover(QPointF viewPos)
+    {
+        const gate::HandleHit hit = gateHandleHit(viewPos);
+        setGateHover(hit.kind);
+        if (!hit) return false;
+        scatterplotView_->setCursor(gate::isVerticalEdge(hit.kind)     ? Qt::SizeHorCursor
+                                    : gate::isHorizontalEdge(hit.kind) ? Qt::SizeVerCursor
+                                                                       : Qt::SizeAllCursor);
+        QToolTip::showText(scatterplotView_->mapToGlobal(viewPos.toPoint()), gateHandleToolTip(hit.kind, false),
+                           scatterplotView_);
+        return true;
+    }
+
+    bool ExperimentMonitoringTab::beginGateEdit(const QPointF& viewPos)
+    {
+        gatePress_.reset();
+        gateDragging_ = false;
+        const GateGeometry geo = gateGeometry();
+        if (!geo.spec.enabled) return false;
+        const QPointF chartPos = chartPosFromView(viewPos);
+        const gate::HandleHit hit = gate::hitTest(geo.spec, geo.contours(), geo.viewport, chartPos.x(), chartPos.y());
+        if (!hit || !gateHandleEditable(hit.kind)) return false;
+        gatePress_ = GatePress{hit, gate::beginDrag(hit, geo.spec, geo.lut, geo.viewport, chartPos)};
+        return true;
+    }
+
+    void ExperimentMonitoringTab::onGateDragStarted()
+    {
+        if (!gatePress_) return;
+        gateDragging_ = true;
+        if (gateOverlay_) gateOverlay_->setDragging(gatePress_->hit.kind);
+        QToolTip::hideText();
+    }
+
+    void ExperimentMonitoringTab::onGateDragMoved(const QPointF& viewPos)
+    {
+        if (!gateDragging_ || !gatePress_) return;
+        const gate::HandleKind kind = gatePress_->hit.kind;
+        if (!gateHandleEditable(kind)) return; // locked meanwhile (apply in flight)
+        const TuneField field = gate::handleField(kind);
+        const auto value = gate::dragValue(gatePress_->session, gateSpec(), lutSnapshot_.get(), scatterViewport(),
+                                           chartPosFromView(viewPos), gateLimits(field));
+        if (!value) return; // no E at this position: keep the last value
+        writeGateField(field, *value);
+        QToolTip::showText(scatterplotView_->mapToGlobal(viewPos.toPoint()), gateHandleToolTip(kind, true),
+                           scatterplotView_);
+    }
+
+    void ExperimentMonitoringTab::onGateDragFinished(const QPointF& viewPos, bool completed)
+    {
+        gateDragging_ = false;
+        gatePress_.reset();
+        if (gateOverlay_) gateOverlay_->setDragging(gate::HandleKind::None);
+        QToolTip::hideText();
+        if (completed) showGateHover(viewPos);
+        else setGateHover(gate::HandleKind::None);
+    }
+
+    bool ExperimentMonitoringTab::writeGateField(TuneField field, double value)
+    {
+        for (const auto& b : tuneBindings_) {
+            if (b.field != field) continue;
+            if (!b.widget->isEnabled() || draft_.applying()) return false;
+            // The bound spin box: its valueChanged runs onTuneFieldEdited, the
+            // very path of a typed edit (draft, `*` markers, footer).
+            b.write(tuneFieldDecimals(field) == 0 ? QVariant(static_cast<int>(std::lround(value))) : QVariant(value));
+            return true;
+        }
+        return false;
     }
 
 } // namespace frontend

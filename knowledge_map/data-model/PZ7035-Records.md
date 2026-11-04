@@ -269,6 +269,13 @@ the `EModulusLut`.
   checks. A value outside a field's range is a compile error, except
   deformability 1.0, which is held as 65535.
 - **Table format:** Q8.8 kPa, `0xFFFF` = no value.
+- **E gate without a table:** the target group's E layer needs a table (the host
+  rule, `science::isTargetGroupMember`). With no table loaded the compiler
+  writes `target_group_emodulus_enabled` clear (the PZ7035 ABI forbids enabling
+  E sorting without a table), so the PL sorts on the box, and adds a warning
+  naming `target_group.emodulus_enabled`; it is no longer a compile error. The
+  E range words are still written. The readiness gate then shows Warn
+  ([[2026-11-03-emodulus-gate-needs-lut]]).
 - **Board equality:** the host defaults compile to exactly the page the board
   ran (`page.bin`, 2026-10-03). The board's grid compiles to its `lut.bin`
   byte for byte (`MIB_PZ_BOARD_LUT=`).
@@ -277,10 +284,12 @@ the `EModulusLut`.
   preview off, the page, then `CONFIG_COMMIT`. It waits for ACKED, then loads
   the table through `TABLE_*`.
 - **Readiness:** gate `processing.profileCompile` fails with the compile
-  errors.
+  errors, and warns for settings the PL ignores (including an E range without a
+  table).
 - **Start:** compile, `configure`, then arm. Any failure rolls the Start back.
-- **Tests:** `processing.pz_profile_compiler`; `backend.pl_science_provider`
-  (gate pass and fail, profile committed before arming).
+- **Tests:** `processing.pz_profile_compiler` (also the E gate without a table:
+  flag clear, warning, no error); `backend.pl_science_provider` (gate pass and
+  fail, profile committed before arming).
 - **Board check:** `tools/pz_provider_probe --configure` commits these
   defaults through the provider before reading.
 

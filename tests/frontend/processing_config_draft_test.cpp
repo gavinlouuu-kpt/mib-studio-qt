@@ -59,7 +59,7 @@ int main(int argc, char* argv[])
             MIB_EXPECT(!target || tuneFieldLabel(f).startsWith(QStringLiteral("Target group")), "target labels are unmistakable");
             ++idx;
         }
-        MIB_EXPECT(allTuneFields().size() == 20, "all 20 exposed fields enumerated");
+        MIB_EXPECT(allTuneFields().size() == 23, "all 23 exposed fields enumerated");
         MIB_EXPECT(tuneFieldUnit(TuneField::AreaMin) == QStringLiteral(" µm²") && tuneFieldUnit(TuneField::DeformabilityMin).isEmpty(), "units");
     }
 
@@ -135,6 +135,18 @@ int main(int argc, char* argv[])
         c.multi_image_enabled = true;
         c.multi_image_count = 0;
         MIB_EXPECT(validateTuneConfig(c).size() == 2, "multi-image count validated");
+        {
+            ProcessingConfig e;
+            e.enable_target_group = true;
+            e.target_group_emodulus_min = 8.0;
+            e.target_group_emodulus_max = 2.0;
+            MIB_EXPECT(validateTuneConfig(e).isEmpty(), "inverted E range ignored while the E gate is off");
+            e.enable_target_group_emodulus = true;
+            MIB_EXPECT(validateTuneConfig(e).size() == 1 && validateTuneConfig(e).first().contains(QStringLiteral("Young's modulus")),
+                       "inverted E range reported when the E gate is on");
+            e.enable_target_group = false;
+            MIB_EXPECT(validateTuneConfig(e).isEmpty(), "E range not checked while the target group is off");
+        }
         ProcessingConfigDraft d;
         d.loadBaseline(ProcessingConfig{});
         d.setField(TuneField::AreaMin, 100000);

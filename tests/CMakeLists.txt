@@ -589,6 +589,11 @@ mib_add_backend_test_executable(processing_science_seam_test processing/processi
 add_test(NAME processing.science_seam COMMAND $<TARGET_FILE:mib_backend_tests> processing_science_seam_test)
 set_tests_properties(processing.science_seam PROPERTIES LABELS "processing;backend" TIMEOUT 30)
 
+# The target group's E layer filters only with a table loaded; without one the group is the box alone.
+mib_add_backend_test_executable(processing_target_group_emodulus_test processing/processing_target_group_emodulus_test.cpp)
+add_test(NAME processing.target_group_emodulus COMMAND $<TARGET_FILE:mib_backend_tests> processing_target_group_emodulus_test)
+set_tests_properties(processing.target_group_emodulus PROPERTIES LABELS "processing;backend" TIMEOUT 30)
+
 mib_add_backend_test_executable(processing_contract_v2_migration_test processing/processing_contract_v2_migration_test.cpp)
 add_test(NAME processing.contract_v2_migration COMMAND $<TARGET_FILE:mib_backend_tests> processing_contract_v2_migration_test)
 set_tests_properties(processing.contract_v2_migration PROPERTIES LABELS "processing;backend" TIMEOUT 30)
@@ -1413,6 +1418,24 @@ target_link_libraries(processing_config_draft_test PRIVATE Qt6::Core mib_process
 set_target_properties(processing_config_draft_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
 add_test(NAME frontend.config_draft COMMAND $<TARGET_FILE:processing_config_draft_test>)
 set_tests_properties(frontend.config_draft PROPERTIES LABELS "frontend;utility;safety" TIMEOUT 30)
+
+# Monitoring scatter gate overlay: pure model (gate predicate = ProcessingScience,
+# sampled mask, iso-E contours, handle hit testing, drag editing, live count).
+# QtCore + the Qt-free backend types only.
+add_executable(target_gate_preview_test
+    ${PROJECT_SOURCE_DIR}/tests/frontend/target_gate_preview_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/models/TargetGatePreview.cpp
+    ${PROJECT_SOURCE_DIR}/src/frontend/models/ProcessingConfigDraft.cpp
+)
+target_include_directories(target_gate_preview_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/tests
+    ${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(target_gate_preview_test PRIVATE Qt6::Core mib_processing)
+set_target_properties(target_gate_preview_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
+add_test(NAME frontend.target_gate_preview COMMAND $<TARGET_FILE:target_gate_preview_test>)
+set_tests_properties(frontend.target_gate_preview PROPERTIES LABELS "frontend;utility;safety" TIMEOUT 60)
 
 # Issue #363: pure run-state / alert model semantics (QtCore only; automoc for the QObject header).
 add_executable(run_status_model_test

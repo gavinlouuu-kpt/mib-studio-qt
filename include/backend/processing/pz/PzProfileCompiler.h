@@ -27,7 +27,7 @@ struct UnetCellsProfileInputs {
     bool storeValidAnchored{false};
     bool storeMask{false};
     bool storeAllFrames{false};
-    const EModulusLut* lut{nullptr}; // null or unloaded: no table, LUT axes 0, E-modulus gates impossible
+    const EModulusLut* lut{nullptr}; // null or unloaded: no table, LUT axes 0, the target group's E layer is off
 };
 
 struct CompiledProfile {
@@ -37,7 +37,9 @@ struct CompiledProfile {
     std::vector<uint8_t> table0; // 200 x 200 u16 LE, Q8.8 kPa, 0xFFFF = no value; empty without a LUT
     std::vector<std::string> errors;
     // Settings the operator changed from their defaults that the PL does not implement (no effect on this
-    // instrument): the profile still compiles, ok() stays true (#651 G7).
+    // instrument): the profile still compiles, ok() stays true (#651 G7). Also the E-modulus range of the
+    // target group when no table is loaded: the profile is compiled with target_group_emodulus_enabled clear
+    // (the group is the box alone), the same rule as the host's science.
     std::vector<std::string> warnings;
     bool ok() const { return errors.empty(); }
 };

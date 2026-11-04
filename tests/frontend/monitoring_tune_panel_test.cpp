@@ -104,6 +104,13 @@ int main(int argc, char* argv[])
     auto* targetBox = tab.findChild<QGroupBox*>(QStringLiteral("targetGroupBox"));
     MIB_REQUIRE(targetBox, "target group box");
     MIB_EXPECT(tab.tuneFieldWidget(TuneField::TargetAreaMin)->parentWidget() == targetBox && targetBox != areaBox, "target group is a separate group");
+    auto* emodBox = tab.findChild<QGroupBox*>(QStringLiteral("targetEmodulusBox"));
+    MIB_REQUIRE(emodBox && emodBox->isCheckable() && emodBox->parentWidget() == targetBox, "E gate is a checkable box inside the target group");
+    MIB_EXPECT(tab.tuneFieldWidget(TuneField::TargetEmodulusEnabled) == emodBox && tab.tuneFieldWidget(TuneField::TargetEmodulusMin)->parentWidget() == emodBox
+                   && tab.tuneFieldWidget(TuneField::TargetEmodulusMax)->parentWidget() == emodBox,
+               "E enable + min + max grouped");
+    auto* emodSpin = qobject_cast<QAbstractSpinBox*>(tab.tuneFieldWidget(TuneField::TargetEmodulusMin));
+    MIB_EXPECT(emodSpin && emodSpin->text().contains(QStringLiteral("kPa")), "E unit shown on the control");
     auto* areaSpin = qobject_cast<QAbstractSpinBox*>(tab.tuneFieldWidget(TuneField::AreaMin));
     MIB_EXPECT(areaSpin && areaSpin->text().contains(QStringLiteral("µm²")), "unit shown on the control");
     MIB_EXPECT(tab.tuneStateText() == QStringLiteral("Applied") && !tab.tuneApplyButton()->isEnabled(), "clean panel: Applied, Apply disabled");

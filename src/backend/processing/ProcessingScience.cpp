@@ -423,6 +423,26 @@ std::vector<InvalidReasonCode> classifyInvalidReasons(const FilterResult& result
     return reasons;
 }
 
+bool isTargetGroupMember(const ProcessingConfig& config, const backend::EModulusLut* eModulusLut,
+                         double areaUm, double deformability, double youngsModulus) {
+    if (!config.enable_target_group) {
+        return false;
+    }
+    const bool tgArea =
+        (areaUm >= config.target_group_area_min && areaUm <= config.target_group_area_max);
+    const bool tgDeform = (deformability >= config.target_group_deformability_min &&
+                           deformability <= config.target_group_deformability_max);
+    // The E layer filters only with an E range enabled AND a table loaded. Without a table no cell
+    // has an E (youngsModulus is left at 0.0), and testing that placeholder against the range would
+    // pass or fail every cell by accident (min 0 admits all, min > 0 admits none): skip the layer,
+    // so the group is the box alone. With a table a NaN lookup (outside it) still fails.
+    const bool lutLoaded = eModulusLut && eModulusLut->isLoaded();
+    const bool tgEmod = !config.enable_target_group_emodulus || !lutLoaded ||
+                        (!std::isnan(youngsModulus) && youngsModulus >= config.target_group_emodulus_min &&
+                         youngsModulus <= config.target_group_emodulus_max);
+    return tgArea && tgDeform && tgEmod;
+}
+
 namespace {
 
 FilterResult evaluateInnerContourObject(
@@ -523,16 +543,9 @@ FilterResult evaluateInnerContourObject(
     if (eModulusLut && eModulusLut->isLoaded()) {
         result.youngsModulus = eModulusLut->lookup(areaUm, result.deformability);
     }
-    if (result.isValid && config.enable_target_group) {
-        const bool tgArea =
-            (areaUm >= config.target_group_area_min && areaUm <= config.target_group_area_max);
-        const bool tgDeform = (result.deformability >= config.target_group_deformability_min &&
-                               result.deformability <= config.target_group_deformability_max);
-        const bool tgEmod = !config.enable_target_group_emodulus ||
-                            (!std::isnan(result.youngsModulus) &&
-                             result.youngsModulus >= config.target_group_emodulus_min &&
-                             result.youngsModulus <= config.target_group_emodulus_max);
-        result.isTargetGroup = tgArea && tgDeform && tgEmod;
+    if (result.isValid) {
+        result.isTargetGroup = isTargetGroupMember(config, eModulusLut, areaUm, result.deformability,
+                                                   result.youngsModulus);
     }
 
     return result;
@@ -618,16 +631,9 @@ FilterResult evaluateOuterContourObject(
     if (eModulusLut && eModulusLut->isLoaded()) {
         result.youngsModulus = eModulusLut->lookup(areaUm, result.deformability);
     }
-    if (result.isValid && config.enable_target_group) {
-        const bool tgArea =
-            (areaUm >= config.target_group_area_min && areaUm <= config.target_group_area_max);
-        const bool tgDeform = (result.deformability >= config.target_group_deformability_min &&
-                               result.deformability <= config.target_group_deformability_max);
-        const bool tgEmod = !config.enable_target_group_emodulus ||
-                            (!std::isnan(result.youngsModulus) &&
-                             result.youngsModulus >= config.target_group_emodulus_min &&
-                             result.youngsModulus <= config.target_group_emodulus_max);
-        result.isTargetGroup = tgArea && tgDeform && tgEmod;
+    if (result.isValid) {
+        result.isTargetGroup = isTargetGroupMember(config, eModulusLut, areaUm, result.deformability,
+                                                   result.youngsModulus);
     }
 
     return result;
@@ -757,16 +763,9 @@ FilterResult evaluateUnetCell(const std::vector<cv::Point>& contour, const UnetC
     if (eModulusLut && eModulusLut->isLoaded()) {
         result.youngsModulus = eModulusLut->lookup(areaUm, result.deformability);
     }
-    if (result.isValid && config.enable_target_group) {
-        const bool tgArea =
-            (areaUm >= config.target_group_area_min && areaUm <= config.target_group_area_max);
-        const bool tgDeform = (result.deformability >= config.target_group_deformability_min &&
-                               result.deformability <= config.target_group_deformability_max);
-        const bool tgEmod = !config.enable_target_group_emodulus ||
-                            (!std::isnan(result.youngsModulus) &&
-                             result.youngsModulus >= config.target_group_emodulus_min &&
-                             result.youngsModulus <= config.target_group_emodulus_max);
-        result.isTargetGroup = tgArea && tgDeform && tgEmod;
+    if (result.isValid) {
+        result.isTargetGroup = isTargetGroupMember(config, eModulusLut, areaUm, result.deformability,
+                                                   result.youngsModulus);
     }
     return result;
 }

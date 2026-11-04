@@ -9,8 +9,9 @@
 //    sha256, found among the host kernel's loaded LUT and the bundled LUT
 //    (compiled into the review core, so a shell without the resources folder
 //    has it). Not found, or no hash recorded: refused with the reason;
-//  - the source records that no LUT was loaded: no E (E stays 0, E gates
-//    cannot pass, reported as not computed), as the source;
+//  - the source records that no LUT was loaded: no E (E stays 0, reported as
+//    not computed) and the target group's E range is skipped (the group is
+//    the area / deformability box alone), as the source;
 //  - the source records nothing (no snapshot, or one before v3; folder and
 //    AVI sources): the host's behaviour before #764 (Legacy), which the
 //    caller says in its reply.

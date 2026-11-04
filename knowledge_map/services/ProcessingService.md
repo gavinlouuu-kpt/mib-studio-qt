@@ -180,7 +180,13 @@ All gates in one struct. Notable fields:
 - Target-group gate: `target_group_area_*`, `target_group_deformability_*`,
   `enable_target_group_emodulus` + `target_group_emodulus_*` (uses
   `EModulusLut`, which is now fed from the managed LUT cache prepared by
-  `AppBackend` at startup). `eModulusLutIdentity()` returns what was loaded
+  `AppBackend` at startup). The decision is one function,
+  `science::isTargetGroupMember` (`ProcessingScience.h`): box AND the E layer,
+  where the E layer filters only with the E gate on AND a loaded table (NaN
+  lookup fails; with no table it is skipped, so the group is the box alone and
+  `youngsModulus`' 0.0 default is never tested against the range). The three
+  object paths (inner contour, outer contour, U-Net cell) and the ABI v2
+  loader all call it ([[2026-11-03-emodulus-gate-needs-lut]]). `eModulusLutIdentity()` returns what was loaded
   (#712): `loaded`, `path` (the file the bytes came from, after EModulusLut's
   candidate resolution), the SHA-256 of exactly the bytes the table was built
   from (`EModulusLut::loadFromFileWithBytes(path, &bytes, &from)` reads the file once,
@@ -331,7 +337,10 @@ overrides `analyzeObjects`: it sends the full profile config as JSON
 background, and the core runs the same `filterProcessedObjects` the host's
 Contract 2 runs. The host only rebuilds display contours and the no-object
 record from the mask with `science::findContours`, and applies the E-modulus
-LUT. The object metrics struct carries `in_range`/`in_channel`. The service
+LUT. The core has no LUT, so the host decides the target group for every valid
+cell (`science::isTargetGroupMember`): with a LUT it also looks E up; without
+one the E layer is skipped and the group is the box, whatever the core's
+`is_target_group` said. The object metrics struct carries `in_range`/`in_channel`. The service
 passes the matching background to `analyzeObjects` at every call site (the
 bundled science ignores it, so Contract 1 is unchanged). Test:
 `processing.core_contract2_equivalence` loads the real Contract-2 core

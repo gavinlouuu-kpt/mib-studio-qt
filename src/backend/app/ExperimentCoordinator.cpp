@@ -921,12 +921,13 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
             // The settings must compile into the PL profile page (S2).
             const auto profile = compilePlProfile(backend_);
             if (profile.ok() && !profile.warnings.empty()) {
-                // The profile compiles, but settings the operator changed have no effect on the PL (G7).
+                // The profile compiles, but settings the operator changed have no effect on the PL (G7): ones it does not
+                // implement, and the E-modulus range while no E-modulus table is loaded (the group is the box alone).
                 std::string names;
                 for (const auto& w : profile.warnings) names += (names.empty() ? "" : ", ") + w;
                 r.gates.push_back(gate("processing.profileCompile", GateStatus::Warn,
-                                       "these settings are not implemented by the PL and have no effect: " + names,
-                                       "reset them to their defaults, or ignore: the run is not affected"));
+                                       "these settings have no effect on the PL: " + names,
+                                       "reset them to their defaults (or load an E-modulus table for the E range), or ignore: the run still sorts on the rest"));
             } else if (profile.ok()) {
                 r.gates.push_back(gate("processing.profileCompile", GateStatus::Pass, {}, {},
                                        "unet_cells_v2" + std::string(profile.table0.empty() ? ", no E-modulus table"

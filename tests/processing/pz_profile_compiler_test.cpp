@@ -134,7 +134,6 @@ void testOutOfRangeIsAnError() {
     bad([](UnetCellsProfileInputs& in) { in.config.area_threshold_max = -1; }, "negative area");
     bad([](UnetCellsProfileInputs& in) { in.config.deformability_threshold_max = 1.5; }, "deformability > 1");
     bad([](UnetCellsProfileInputs& in) { in.config.laplacian_variance_max = 2e7; }, "Laplacian over Q24.8");
-    bad([](UnetCellsProfileInputs& in) { in.lut = nullptr; }, "E-modulus target gate without a LUT");
     bad([](UnetCellsProfileInputs& in) {
         in.config.channel_band_y = -3;
         in.config.channel_band_h = 50;
@@ -155,6 +154,74 @@ void testOutOfRangeIsAnError() {
     MIB_EXPECT(p.page[18] == (100u | 5u << 16), "store word: invalid every 100, 5 multi-image frames");
     MIB_EXPECT(p.page[19] == 0 && p.page[20] == 0 && p.page[21] == 0, "no LUT axes without a LUT");
     MIB_EXPECT(p.warnings.empty(), "multi-image is a store flag the PL implements: no warning");
+}
+
+// The target group's E layer needs a table: without one the profile compiles with the E flag clear (the
+// group is the box alone) and says so in a warning; it is not an error and nothing else in the page moves.
+void testEModulusGateWithoutLut() {
+    const auto lut = boardLut();
+    const auto has = [](const CompiledProfile& p, const char* what) {
+        return std::any_of(p.warnings.begin(), p.warnings.end(),
+                           [&](const std::string& w) { return w.find(what) != std::string::npos; });
+    };
+    const auto flagWord = [](const CompiledProfile& p) { return p.page[3]; };
+
+    const auto withLut = compileUnetCellsV2(hostDefaults(&lut));
+    MIB_REQUIRE(withLut.ok(), "defaults with a table compile");
+    MIB_EXPECT((flagWord(withLut) >> 31 & 1u) == 1u, "table loaded: the E flag is set");
+    MIB_EXPECT(!has(withLut, "emodulus_enabled"), "table loaded: no E warning");
+
+    for (const double eMin : {0.0, 5.0}) {
+        const std::string tag = " (E min " + std::to_string(eMin) + ")";
+        auto in = hostDefaults(nullptr);
+        in.config.target_group_emodulus_min = eMin;
+        const auto p = compileUnetCellsV2(in);
+        MIB_EXPECT(p.ok(), "E gate without a table is not a compile error" + tag);
+        MIB_EXPECT((flagWord(p) >> 31 & 1u) == 0u, "E gate without a table: the E flag is clear" + tag);
+        MIB_EXPECT(p.table0.empty(), "E gate without a table: no table" + tag);
+        MIB_EXPECT(has(p, "emodulus_enabled") && has(p, "box only"), "E gate without a table: warned, box only" + tag);
+        MIB_EXPECT((p.page[0] >> 31 & 1u) == 1u, "the target group itself stays enabled" + tag);
+        // Everything but the E flag (word 3 bit 31) and the table's axes (words 19-21) is the page of the same
+        // settings with a table.
+        auto withTable = hostDefaults(&lut);
+        withTable.config.target_group_emodulus_min = eMin;
+        const auto ref = compileUnetCellsV2(withTable);
+        MIB_REQUIRE(ref.ok(), "the same settings with a table compile" + tag);
+        for (size_t i = 0; i < 32; ++i) {
+            if (i >= 19 && i <= 21) continue;
+            const uint32_t want = i == 3 ? (ref.page[i] & 0x7FFFFFFFu) : ref.page[i];
+            MIB_EXPECT(p.page[i] == want, "page word " + std::to_string(i) + " unchanged by the missing table" + tag);
+        }
+    }
+
+    // The same without a table, E gate off or target group off: no warning, flag clear.
+    {
+        auto in = hostDefaults(nullptr);
+        in.config.enable_target_group_emodulus = false;
+        const auto p = compileUnetCellsV2(in);
+        MIB_EXPECT(p.ok() && p.warnings.empty() && (flagWord(p) >> 31 & 1u) == 0u, "E gate off, no table: nothing to say");
+        auto off = hostDefaults(nullptr);
+        off.config.enable_target_group = false;
+        const auto q = compileUnetCellsV2(off);
+        MIB_EXPECT(q.ok() && !has(q, "emodulus_enabled") && (flagWord(q) >> 31 & 1u) == 0u && (q.page[0] >> 31 & 1u) == 0u,
+                   "target group off, no table: no E warning, E flag clear");
+    }
+
+    // An unloaded table object behaves like no table.
+    {
+        backend::EModulusLut unloaded;
+        const auto p = compileUnetCellsV2(hostDefaults(&unloaded));
+        MIB_EXPECT(p.ok() && (flagWord(p) >> 31 & 1u) == 0u && has(p, "emodulus_enabled"), "an unloaded table is no table");
+    }
+
+    // The warning does not hide the PL-ignored settings, and both are reported.
+    {
+        auto in = hostDefaults(nullptr);
+        in.config.gaussian_blur_size = 7;
+        const auto p = compileUnetCellsV2(in);
+        MIB_EXPECT(p.ok() && p.warnings.size() == 2 && has(p, "gaussian_blur_size") && has(p, "emodulus_enabled"),
+                   "ignored settings and the E warning are both named");
+    }
 }
 
 // #651 G7: settings the PL does not implement are reported when the operator changed them.
@@ -192,6 +259,7 @@ int main(int argc, char** argv) {
     testFieldTableMatchesProfile(argv[1]);
     testHostDefaultsCompileToTheBoardPage();
     testOutOfRangeIsAnError();
+    testEModulusGateWithoutLut();
     testIgnoredSettingsWarn();
     return mib::test::exitCode();
 }
