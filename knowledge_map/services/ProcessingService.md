@@ -966,7 +966,12 @@ The #595 accounting harness drains inline cursor replay after switching from asy
 without taking the experiment buffer or draining trigger events. Later flushes
 coalesce the retained frames into larger batches. The writer never blocks capture;
 only exhaustion of the existing frame/byte buffer bounds reports
-`Experiment buffer capacity exceeded: recording data was dropped`. HDF5 write
+`Experiment buffer capacity exceeded: recording data was dropped`, once per
+experiment (`capacityErrorReported_`, reset by `startExperiment`; #828). Every
+worker refuses frames once the buffer is full, and reporting each refusal sent
+thousands of identical errors to the fatal-save sink;
+`processing.experiment_capacity_error_latch` saturates the buffer from 8
+producers over two runs and expects one report per run. HDF5 write
 failures remain fatal and latched. Queue overflow remains a defensive invariant
 for other queue consumers.
 

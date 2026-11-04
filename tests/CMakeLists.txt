@@ -871,6 +871,11 @@ mib_backend_test_link(experiment_flush_backpressure_test PRIVATE Threads::Thread
 add_test(NAME processing.experiment_flush_backpressure COMMAND $<TARGET_FILE:mib_backend_tests> experiment_flush_backpressure_test)
 set_tests_properties(processing.experiment_flush_backpressure PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 120)
 
+mib_add_backend_test_executable(experiment_capacity_error_latch_test processing/experiment_capacity_error_latch_test.cpp)
+mib_backend_test_link(experiment_capacity_error_latch_test PRIVATE Threads::Threads)
+add_test(NAME processing.experiment_capacity_error_latch COMMAND $<TARGET_FILE:mib_backend_tests> experiment_capacity_error_latch_test)
+set_tests_properties(processing.experiment_capacity_error_latch PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 60)
+
 mib_add_backend_test_executable(flush_byte_watermark_test processing/flush_byte_watermark_test.cpp)
 mib_backend_test_link(flush_byte_watermark_test PRIVATE Threads::Threads)
 add_test(NAME processing.flush_byte_watermark COMMAND $<TARGET_FILE:mib_backend_tests> flush_byte_watermark_test)

@@ -156,6 +156,11 @@ private:
     uint64_t runOperationId_{0};
     uint64_t lastTerminalStartGeneration_{0};
     backend::app::ExperimentStatus presentedFault_;
+    // Issue #828: one fatal-save presentation at a time. During a run the
+    // message is held for the terminal dialog; outside a run it is shown
+    // without a nested event loop and released when the dialog closes.
+    bool fatalSavePresented_{false};
+    QString pendingFatalSaveMessage_;
     QString compactStatus_;
     QLabel* roiLabel_ = nullptr;
     QPushButton* startCameraBtn_ = nullptr;

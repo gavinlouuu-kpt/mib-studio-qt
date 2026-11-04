@@ -307,6 +307,14 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(integration.monitoring_scatter_e2e PROPERTIES LABELS "integration;e2e;frontend;monitoring" TIMEOUT 300 SKIP_RETURN_CODE 77)
 
+    # Issue #828: experiment buffer overflow on the 512x96 stream with a slowed
+    # HDF5 writer; one deferred Save Error box, no stacked modals, no crash.
+    # Skips (77) without the asset.
+    mib_test_runner_add(mib_frontend_tests fatal_save_dialog_e2e_test ${PROJECT_SOURCE_DIR}/tests/frontend/fatal_save_dialog_e2e_test.cpp)
+    add_test(NAME integration.fatal_save_dialog_e2e COMMAND $<TARGET_FILE:mib_frontend_tests> fatal_save_dialog_e2e_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(integration.fatal_save_dialog_e2e PROPERTIES LABELS "integration;e2e;frontend;safety" TIMEOUT 300 SKIP_RETURN_CODE 77)
+
     # YOFO Review parity sign-off, Qt half (tools/review_parity/run.sh): dumps
     # what the tab shows/exports for MIB_REVIEW_PARITY_FILE. Skips (77) without it.
     mib_test_runner_add(mib_frontend_tests review_parity_qt_dump ${PROJECT_SOURCE_DIR}/tests/frontend/review_parity_qt_dump.cpp)

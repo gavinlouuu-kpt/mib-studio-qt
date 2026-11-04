@@ -62,6 +62,7 @@ struct ExperimentBatch {
 
 class ProcessingService {
     friend struct ProcessingServiceFlushTestAccess;
+    friend struct ProcessingServiceCapacityLatchTestAccess;
 public:
     using Job = std::function<void()>;
 
@@ -1182,6 +1183,10 @@ private:
     std::atomic<uint64_t> droppedValidFrames_{0};
     std::atomic<uint64_t> droppedInvalidFrames_{0};
     std::atomic<uint64_t> lastDropLogUs_{0};
+    // Issue #828: the capacity error is reported once per experiment; every
+    // worker refuses frames once the buffer is full, and reporting each one
+    // flooded the fatal-save sink with thousands of identical errors.
+    std::atomic<bool> capacityErrorReported_{false};
 
     // Identification funnel + loss counters (see IdentificationCounters). The
     // reason array is indexed by science::InvalidReasonCode (size checked with

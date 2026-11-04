@@ -1075,10 +1075,18 @@ namespace backend
                 {
                     try
                     {
-                        const int ms = std::stoi(envInterval);
-                        if (ms > 0)
+                        // Fractional milliseconds are allowed (0.2 = 200 us,
+                        // 5000 fps); std::stoi used to truncate them to 0 and
+                        // silently keep the 33 ms default.
+                        const double ms = std::stod(envInterval);
+                        const auto us = static_cast<long long>(std::llround(ms * 1000.0));
+                        if (us > 0)
                         {
-                            options.frameInterval = std::chrono::milliseconds(ms);
+                            options.frameInterval = std::chrono::microseconds(us);
+                        }
+                        else
+                        {
+                            SPDLOG_WARN("Ignoring MIB_MOCK_CAMERA_INTERVAL_MS={} (must be > 0)", envInterval);
                         }
                     }
                     catch (const std::exception &)
