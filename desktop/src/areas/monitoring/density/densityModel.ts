@@ -108,8 +108,6 @@ function general3(value: number): string {
   return String(Number(value.toPrecision(3)));
 }
 
-const fixed = (value: number | null, digits: number): string => (value === null ? "n/a" : value.toFixed(digits));
-
 export interface DensityTooltipInput {
   on: boolean;
   estimate: DensityEstimate | null;
@@ -126,7 +124,7 @@ export function densityTooltip({ on, estimate, intervalMs, corePercent, referenc
   if (!on) return KDE_TOOLTIP_OFF;
   const refreshMs = Math.max(intervalMs, estimate?.refreshMs ?? 0);
   let text =
-    `Density (KDE) over ${estimate?.pointCount ?? 0} points; bandwidth ${fixed(estimate?.bandwidthX ?? 0, 1)} μm² × ${fixed(estimate?.bandwidthY ?? 0, 4)}; ` +
+    `Density (KDE) over ${estimate?.pointCount ?? 0} points; bandwidth ${(estimate?.bandwidthX ?? 0).toFixed(1)} μm² × ${(estimate?.bandwidthY ?? 0).toFixed(4)}; ` +
     `computed in ${estimate?.computeMs ?? 0} ms; refreshed every ${general3(refreshMs / 1000)} s`;
   if (estimate && estimate.coreLevel !== null) {
     text += `\nCore ${Math.round(corePercent)}%: ${estimate.coreCount} cells, ${estimate.contours.length} contour loop(s)`;
