@@ -32,7 +32,7 @@ implementation.
 | Concern | MIB Studio (Tauri) | YOFO Review |
 |---|---|---|
 | Page | `index.html` → `src/main.tsx` → `App.tsx` | `review.html` → `src/review/main.tsx` → `ReviewApp.tsx` |
-| Review UI | `App.tsx` with develop's review components (`ReviewCharts`, `SavedReviewImage`, export / reanalysis controls) | `ReviewApp.tsx` mounts `ReviewPanel` as the window |
+| Review UI | `areas/review/` (`ReviewTab.tsx`, `useReview.ts`; split out of `App.tsx` in #869 wave 0) with develop's review components (`ReviewCharts`, `SavedReviewImage`, export / reanalysis controls) | `ReviewApp.tsx` mounts `ReviewPanel` as the window |
 | Tauri config | `tauri.conf.json` | `tauri.conf.json` + overlay `tauri.review.conf.json` (`--config`): product name, identifier `bio.yofo.review`, `mainBinaryName` `yofo-review`, window → `review.html`, bundle targets `dmg` + `nsis`, `.h5`/`.hdf5` association |
 | Rust | the library (`lib.rs`, default feature `studio`, over `mib-app-commands`) | the binary built with `--no-default-features --features review-only`: `main.rs` → `review_app.rs` registers review, platform, isoelastic and update commands only; the library is empty |
 | Contract | `bridge-contract.json` (MIB bridge ABI) | `review-contract.json` (`review_abi_version`), packets via `review_packet.rs` / `reviewPacket.ts` |

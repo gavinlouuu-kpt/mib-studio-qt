@@ -1,0 +1,9 @@
+/* Connect and Overview (#863). Part of the App.css cascade. */
+.devices-list {
+  flex: 1;
+  min-height: 140px;
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 8px;
+  color: var(--muted);
+}

@@ -44,7 +44,7 @@ Jump to the notes that match your task:
 | Syringe pumps | [[services/SyringePumpService]] (serial via [[services/ISerialPort]]) + [[frontend/SyringePumpTab]] |
 | Crashes / observability | [[services/CrashReporter]] + [[diagnostics/CrashStateMirror]] |
 | React + Tauri migration / Rust bridge | [[architecture/Rust-Bridge]] + `docs/decisions/0003-rust-cxx-bridge.md` |
-| React + Tauri desktop app (`desktop/`) | [[architecture/Desktop-Shell]] |
+| React + Tauri desktop app (`desktop/`) | [[architecture/Desktop-Shell]]; which stream owns which classic-view file: `docs/howto/desktop-area-ownership.md` |
 | YOFO Review (standalone review product, `desktop/src/review/`) | [[frontend/YofoReview]] + `docs/exec-plans/active/2026-10-01-standalone-review-app.md` |
 | Syringe pumps | [[services/SyringePumpService]] + [[frontend/SyringePumpTab]] |
 | Pulse generator / shared RS485 bus | [[services/PulseGeneratorService]] + [[services/SerialBus]] + [[frontend/ConfigTabs]] |

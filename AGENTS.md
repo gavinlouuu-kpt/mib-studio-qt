@@ -25,7 +25,7 @@ Details: [`Overview`](knowledge_map/architecture/Overview.md), [`Threading-Model
 
 | Task | Start here |
 |------|------------|
-| A backend service / a frontend tab | `knowledge_map/services/<Name>Service.md` / `knowledge_map/frontend/` |
+| A backend service / a frontend tab | `knowledge_map/services/<Name>Service.md` / `knowledge_map/frontend/`; desktop (Tauri) area owners: [`desktop-area-ownership`](docs/howto/desktop-area-ownership.md) |
 | Build, run modes, dependencies, assets | [`knowledge_map/build-and-run/Build.md`](knowledge_map/build-and-run/Build.md) |
 | Code and logging conventions | [`knowledge_map/conventions/Code-Conventions.md`](knowledge_map/conventions/Code-Conventions.md) |
 | How-tos, ADRs, execution plans, known debt | [`docs/README.md`](docs/README.md), [`docs/decisions/README.md`](docs/decisions/README.md), [`docs/exec-plans/README.md`](docs/exec-plans/README.md), [`tech-debt-tracker`](docs/exec-plans/tech-debt-tracker.md) |

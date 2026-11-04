@@ -1,0 +1,40 @@
+/* Shared (owner: shell #862, coordinate changes): variables, reset and the app frame. Part of the App.css cascade, see App.css. */
+/* Operator shell layout (UI parity with the Qt app on main — issue #266).
+   Regions: menu row / telemetry sidebar / tabbed main area / status bar. */
+
+:root {
+  --bg: #f0f0f0;
+  --panel: #fafafa;
+  --border: #c8c8c8;
+  --text: #1a1a1a;
+  --muted: #777;
+  --accent: #2b6cb0;
+  --ok: #1a7f37;
+  --err: #b42318;
+  --warn: #b7791f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
