@@ -240,10 +240,43 @@ The Qt tab's layout per set (Valid / Invalid, or "Frames" for a recording):
   (100 rows per page, `metricsColumns.ts`: every Qt column, default set,
   "Columns…" chooser persisted in `localStorage` key `yofo.review.columns`;
   recording files show index + timestamp only). Grid, table and preview
-  share one selection; the table pages to follow it.
-- **`FrameViewer.tsx`** — in-app overlay (scheduler slot "viewer"): frame
-  prev/next (←/→, wraps), multi-image series (↑/↓; frame → series 1…n),
-  zoom Fit / 1× / 2× / 4×, the frame's key metrics, Esc closes.
+  share one selection; the table pages to follow it. Number formats are the
+  Qt model's (`HdfMetricsModel::data`, #867 REVIEW-020): deformability 3 dp,
+  area (px, µm²) 2 dp, area and ring ratio 3 dp, brightness 2 dp, E 3 dp and
+  **blank** when NaN, Yes / No; the columns Qt lacks (centroid, box,
+  Laplacian) keep their own. Tile tooltip: `Frame N` (the tile's 0-based
+  position) + `\nDouble-click to view details` (`thumbTooltip`).
+- **Valid / Invalid tabs** (REVIEW-018, Qt `onTabChanged`): each set keeps
+  its selection and thumbnail scroll position while the other is shown
+  (`tabMemory.ts`, keyed by the open file; the grid reports each scroll and
+  restores it when its set changes or it remounts after Charts; the first
+  visit of a set selects its first item). A cell chosen on the scatter
+  belongs to the Valid set.
+- **`FrameViewer.tsx`** — in-app overlay (scheduler slot "viewer"), the Qt
+  `FrameViewerDialog` (#867): Left / Up = previous frame, Right / Down =
+  next, both wrap, Esc closes (REVIEW-026; an arrow aimed at the overlay
+  combo is the combo's). The series (position 0 = the trigger image, Qt's
+  `seriesImages[0]`, then raw images with only the ROI; no wrap, buttons
+  `< Series Prev` / `Series Next >`) has Shift+Up / Shift+Down, a key Qt does
+  not have. Info header (REVIEW-027, `viewerInfo`): Frame Index, Timestamp
+  (ns), Deformability, Area, Area Ratio, Ring Ratio, Valid, Inner Count,
+  Series (`Trigger image (1/n)` / `Image k/n (metrics from trigger only)`)
+  with the table's formats, then YOFO's own area µm², E, object, track,
+  target; a recording shows index and timestamp only. The overlay combo
+  (`None` … `Filtered mask`, the viewer's own texts) and **ROI Overlay**
+  check change the panel's state, so the toolbar follows (REVIEW-028; Qt's
+  modal viewer copies the toolbar's values and does not write back).
+  **Zoom Out / Fit to Window / Zoom In** (×1.2, 0.1 – 10; Qt's Zoom In has no
+  upper limit) and Ctrl+wheel (`imageZoom.ts`, a notch is 10 %; the same
+  hook zooms the Charts pane) (REVIEW-029); YOFO's `1×` is kept because Qt's
+  "Fit to Window" is the 100 % reset. **Export as TIFF...** (REVIEW-031,
+  `exports/frameExport.ts`): save dialog proposing `frame_N[_series_K].tiff`
+  (K 0-based, only when the frame has a series), `.tiff` appended unless the
+  name ends .tiff / .tif; the displayed canvas is encoded as PNG
+  (`charts/chartExport.ts` `canvasToPng`), staged with `review_stage_chart`
+  under that file name and written by the **Export Charts** job into the
+  chosen folder (no new review ABI). The TIFF is 3-channel (the job decodes
+  as colour); Qt writes one channel for a gray frame without overlay.
 - **Launch file** — `review_launch_path` returns a pending OS open request,
   else the first existing `.h5`/`.hdf5` argument (`yofo-review run.h5`, the
   Windows/Linux file association); `?open=<path>` does the same for dev and
@@ -268,6 +301,32 @@ scatter on the left, the panel's preview pane over the ring-width histogram
 on the right; clicking a point selects that valid cell (same selection as
 the Frames view, so the table page, preview and viewer follow); ←/→ step
 through the valid set. Both charts are `<canvas>` with no chart library.
+
+- **Layout** (REVIEW-039, `charts/SplitPane.tsx`, `charts/splitter.ts`): two
+  draggable splits, scatter | (frame pane over histogram), the Qt
+  QSplitters. Start at Qt's `setSizes` (600 : 400 and 550 : 300), keep the
+  scatter 420 px and the pane 320 px wide (Qt minimums; 140 px high each
+  vertically). The first pane's share persists in `localStorage` keys
+  `yofo.review.chartsSplitter` and `yofo.review.chartsRightSplitter` (Qt
+  `Review/ChartsSplitter`, `Review/ChartsRightSplitter`), saved when a drag
+  ends and on each key press (arrows along the split, Shift = bigger step).
+- **Frame pane** (REVIEW-032, Qt `refreshFramePane` / `setupChartsLayout`):
+  title `Frame N · valid row k of n` (N the recorded frame index; plus
+  ` · failed validation, not on the scatter` when the valid-set position has
+  no scatter point), the empty text `Click a point on the scatter to view
+  the cell`, and a row `◀ Previous`, `Next ▶` (the same wrapping step as the
+  arrows), `Fit to Window` (back to the pane's sizing after a Ctrl+wheel
+  zoom) and `Open in window…` (the frame viewer on the cell).
+- **Core share** (REVIEW-036/037): `Preferences ▸ Core contour` (percent,
+  5 – 100 %, step 5) stores the fraction under `yofo.review.kdeCoreFraction`
+  (Qt `Monitoring/KdeCoreFraction`); `loadCoreFraction` returns 0.9 when it is
+  unset or unreadable and clamps to 0.05 – 1. The density request and
+  **Compute core contour** both send it (the stored record's fraction is no
+  longer reused, as in Qt).
+- A failed isoelastic-curve fetch is logged (`isoelastic curves
+  unavailable: …`) and retried at the next use, not silently dropped; so is a
+  failed series count in the viewer and a failed **Show in folder** (shown in
+  the job dialog and logged).
 
 - **Data** — `fetch_review_scatter` (columnar: area µm² with the recorded
   factor, deformability, valid-set position, frame index, ring ratio);
@@ -447,8 +506,8 @@ accounting text for recording files.
   otherwise), passed per call, never set on the shared kernel.
 - **Regenerate gating:** YOFO enables Regenerate masks once a file is ready;
   Qt requires data.
-- **Core fraction:** YOFO uses the stored record's fraction, else 0.9; Qt uses
-  `Monitoring/KdeCoreFraction` (default 0.9).
+- **Core fraction:** since #867 YOFO follows the Preferences core share like Qt's
+  `Monitoring/KdeCoreFraction` (default 0.9, clamp 0.05 – 1).
 
 ### MIB Studio against Qt and YOFO (#512 S6, 2026-10-20)
 
@@ -542,7 +601,7 @@ and renders the menu row (File ▸ Open… / Close / Preferences…, View ▸ Fi
 Help ▸ About with the stamped version from `@tauri-apps/api/app`), the
 panel, a status bar and the log drawer. **Preferences** holds the fallback
 px→µm (`localStorage` `yofo.review.pixelToMicron`, default 0.4886 like the Qt tab) passed to
-the panel. No camera, experiment or hardware state exists. Against a server
+the panel, the update channel and the KDE core share (see **Charts view**). No camera, experiment or hardware state exists. Against a server
 without the review commands it shows the unavailable notice (with Retry)
 instead of a usable Open (see **Transport**, #763 F7).
 

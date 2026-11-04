@@ -48,12 +48,41 @@ Browsing works as in MIB Studio's Review tab (see
 [Review & post-process](review-and-postprocess.md)):
 
 - **Frames** — thumbnails, the metrics table and the frame viewer, with
-  mask, contour and ROI overlays. Double-click a thumbnail or a table row
-  to open the viewer, then use **←/→** to step through frames.
-- **Charts** — the deformability-vs-area scatter and the ring-width
-  histogram. Click a point to show that cell, scroll to zoom and drag to
-  pan. Right-click for **Reset zoom** and **Compute core contour from full
-  run**.
+  mask, contour and ROI overlays. Hover a thumbnail for **Frame N** and
+  the double-click hint. Double-click a thumbnail or a table row to open
+  the viewer. **Valid Frames** and **Invalid Frames** each keep their own
+  selection and thumbnail scroll position while you look at the other.
+  The metrics table shows deformability and the ratios to three decimals,
+  area to two, and leaves **E** blank when it was not computed.
+- **Charts** — the deformability-vs-area scatter, the selected cell's frame
+  and the ring-width histogram. Click a point to show that cell, scroll to
+  zoom and drag to pan. Right-click for **Reset zoom** and **Compute core
+  contour from full run**. The frame pane is titled **Frame N · valid row k
+  of n** (with "· failed validation, not on the scatter" for a cell that
+  has no point) and has **Previous**, **Next**, **Fit to Window** and
+  **Open in window…**; Ctrl+wheel zooms it. Drag the bars between the
+  scatter, the frame pane and the histogram to resize them; the sizes are
+  remembered.
+
+### Frame viewer
+
+- **Keys:** ←/↑ show the previous frame, →/↓ the next (both wrap
+  around), **Esc** closes. For a frame with a series of images, use
+  **< Series Prev / Series Next >** or **Shift+↑ / Shift+↓**. Series 1 is
+  the trigger image; the other images show no overlay, because the metrics
+  belong to the trigger.
+- **Info line:** frame index, timestamp (ns), deformability, area,
+  area ratio, ring ratio, Valid (Yes/No), inner contour count and, for a
+  series, which image is shown; then the area in µm², E, object and track.
+- **Overlay** and **ROI Overlay** change here without closing the viewer;
+  the toolbar follows.
+- **Zoom Out**, **Fit to Window** and **Zoom In** change the size by 1.2
+  per step (down to 10 %, up to 1000 %); Ctrl+wheel zooms as well. **1×**
+  shows the image at its own size.
+- **Export as TIFF…** saves the frame as shown, with the overlay and ROI
+  drawn in, as `frame_<index>.tiff` (`frame_<index>_series_<k>.tiff` for a
+  frame with a series; k counts from 0, the trigger image). An existing
+  file is replaced only if you confirm in the save dialog.
 
 The status bar shows the file, its frame accounting, and the
 pixel-to-micron factor in use.
@@ -146,6 +175,13 @@ Review always uses it, for metrics, charts and exports (batches included).
 Older files that recorded no factor use the fallback set under **File ▸
 Preferences…** (default 0.4886 µm per pixel); the status bar then marks
 the factor "(fallback)".
+
+## Core contour share
+
+**File ▸ Preferences… ▸ Core contour** sets the share of the population
+that the core contour encloses (5 – 100 %, default 90 %, as in MIB Studio's
+Monitoring settings). **Compute core contour** uses it, and so does the
+contour the density estimate proposes for a file that has none stored.
 
 ## Updates
 
