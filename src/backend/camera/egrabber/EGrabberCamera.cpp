@@ -45,6 +45,10 @@ bool EGrabberCamera::start() {
     if (running_) {
         return true;
     }
+    // A new session: a stop() of the previous one no longer applies. (A stop()
+    // racing this start() sets the flag after this line and then waits for
+    // stateMutex_, so it still stops this session once start() returns.)
+    stopRequested_.store(false, std::memory_order_release);
     {
         std::lock_guard<std::mutex> reportLock(reportMutex_);
         reportValid_ = false;
@@ -214,30 +218,66 @@ bool EGrabberCamera::start() {
                     toString(config_.deliveryMode), deviceVendor, deviceModel);
         return true;
     } catch (const gentl_error& e) {
-        SPDLOG_ERROR("EGrabberCamera start failed with GenTL error (code={}): {}", 
+        SPDLOG_ERROR("EGrabberCamera start failed with GenTL error (code={}): {}",
                     static_cast<int>(e.gc_err), e.what());
-        stop();
+        // stateMutex_ is held: stop() would wait for it forever (std::mutex is
+        // not recursive; #840) and, with running_ still false, return without
+        // releasing anything. Release the half-started grabber here.
+        releaseGrabberLocked();
         return false;
     } catch (const std::exception& ex) {
         SPDLOG_ERROR("EGrabberCamera start failed: {}", ex.what());
-        stop();
+        releaseGrabberLocked();
         return false;
     }
 }
 
+void EGrabberCamera::interruptPendingPop() {
+    // triggerMutex_ pins grabber_ against a concurrent reset (every assignment
+    // holds it). Not stateMutex_: grabFrame() holds that across its wait, and
+    // waking the wait is the point of this call.
+    std::lock_guard<std::mutex> triggerLock(triggerMutex_);
+    if (!grabber_) {
+        return;
+    }
+    try {
+        grabber_->cancelPop();
+    } catch (const std::exception& ex) {
+        SPDLOG_DEBUG("EGrabberCamera cancelPop before stop: {}", ex.what());
+    }
+}
+
 void EGrabberCamera::stop() {
+    // Wake a capture thread blocked in grabFrame()'s wait for a buffer BEFORE
+    // taking stateMutex_ (#840). grabFrame() holds stateMutex_ across that
+    // wait, which has no end while the camera delivers no frames, so taking
+    // the mutex first never returned. The flag makes a grabFrame() that has
+    // not reached its wait yet skip it (a cancelPop in that gap is lost); one
+    // that is already in it ends by this cancelPop or, at the latest, by its
+    // kPopTimeoutMs timeout.
+    stopRequested_.store(true, std::memory_order_release);
+    interruptPendingPop();
+
     std::lock_guard<std::mutex> lock(stateMutex_);
-    
+
     if (!running_) {
         return;
     }
 
-    bool wasRunning = running_;
+    const bool wasRunning = running_;
     running_ = false;
-    
+
+    releaseGrabberLocked();
+
+    if (wasRunning) {
+        SPDLOG_INFO("EGrabberCamera: fully stopped and cleaned up");
+    }
+}
+
+void EGrabberCamera::releaseGrabberLocked() {
     // Wait a brief moment for any in-flight grabFrame() calls to finish
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    
+
     pendingFrames_.clear();
 
     if (grabber_) {
@@ -297,16 +337,14 @@ void EGrabberCamera::stop() {
         grabber_.reset();
     }
     genTL_.reset();
-    
-    if (wasRunning) {
-        SPDLOG_INFO("EGrabberCamera: fully stopped and cleaned up");
-    }
 }
 
 bool EGrabberCamera::grabFrame(Frame& out) {
     std::lock_guard<std::mutex> lock(stateMutex_);
-    
-    if (!running_) {
+
+    // stopRequested_: a stop() is waiting for stateMutex_; do not start another
+    // wait for a buffer (#840).
+    if (!running_ || stopRequested_.load(std::memory_order_acquire)) {
         return false;
     }
 
@@ -444,12 +482,16 @@ void EGrabberCamera::replenishPendingFrames() {
             // without releasing the buffers they own, desynchronizing the
             // event queue from buffer ownership.
             while (grabber_->getPendingEventCount<NewBufferData>() > 1) {
-                ScopedBuffer stale(*grabber_);
+                ScopedBuffer stale(*grabber_, kPopTimeoutMs);
                 intentionallyDiscardedFrames_.fetch_add(1, std::memory_order_relaxed);
             }
         }
 
-        ScopedBuffer buffer(*grabber_);
+        // The wait for the next frame is bounded (#840): the default is
+        // GENTL_INFINITE, and this thread holds stateMutex_ for as long as it
+        // waits, so stop() could never take the mutex while no frame arrived.
+        // GC_ERR_TIMEOUT is "no frame yet", handled below.
+        ScopedBuffer buffer(*grabber_, kPopTimeoutMs);
         uint8_t* basePtr = buffer.getInfo<uint8_t*>(gc::BUFFER_INFO_BASE);
         const size_t imageSize = buffer.getInfo<size_t>(ge::BUFFER_INFO_CUSTOM_PART_SIZE);
         const size_t linePitch = buffer.getInfo<size_t>(ge::BUFFER_INFO_CUSTOM_LINE_PITCH);
@@ -497,6 +539,13 @@ void EGrabberCamera::replenishPendingFrames() {
         if (e.gc_err == gc::GC_ERR_ABORT) {
             // Expected during stop; do nothing
             SPDLOG_DEBUG("EGrabberCamera replenish aborted (expected during stop): {}", e.what());
+            return;
+        }
+        if (e.gc_err == gc::GC_ERR_TIMEOUT) {
+            // No frame arrived within kPopTimeoutMs: not an error (an external
+            // trigger nothing drives, a stopped source). grabFrame() reports
+            // "no frame", releasing stateMutex_ so stop() and the stats polls
+            // can run, and the capture loop asks again.
             return;
         }
         throw;

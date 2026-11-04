@@ -68,6 +68,12 @@ struct RecordingCapacity {
 };
 RecordingCapacity evaluateRecordingCapacity(const RecordingCapacityInputs& in);
 
+// The floor stream the destination must sustain: a run with no valid cells saves every Nth
+// invalid frame (invalidSamplingRate) at the requested rate. 0 while the rate or the frame size
+// is unknown. The storage.throughput gate fails below it, and the write-rate probe uses it to
+// decide whether a slow sample is worth measuring again (DestinationWriteRate.h, #841).
+double recordingFloorBytesPerSecond(const RecordingCapacityInputs& in);
+
 // "2529 MB/s" (decimal megabytes, as disk rates are quoted)
 std::string formatRate(double bytesPerSecond);
 

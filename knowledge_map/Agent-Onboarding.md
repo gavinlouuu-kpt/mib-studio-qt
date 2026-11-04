@@ -24,7 +24,7 @@ Jump to the notes that match your task:
 
 | If you're touching... | Start here |
 |---|---|
-| Frame acquisition / camera | [[services/CaptureService]] + [[camera/_MOC]] (`[[camera/MindVisionCamera]]`, `[[camera/EGrabberCamera]]`, `[[camera/MockCamera]]`, `[[camera/AravisCamera]]`) |
+| Frame acquisition / camera (EGrabber changes are bench-tested on win11-agent before merge: [[build-and-run/Build]]) | [[services/CaptureService]] + [[camera/_MOC]] (`[[camera/MindVisionCamera]]`, `[[camera/EGrabberCamera]]`, `[[camera/MockCamera]]`, `[[camera/AravisCamera]]`) |
 | Image analysis / metrics | [[services/ProcessingService]] + [[domain/Microscopy-Pipeline]] |
 | Monitoring scatter density (KDE) / core contour | [[services/MonitoringDensityService]] + [[frontend/ExperimentMonitoringTab]] |
 | Live cell images (recent-cells strip, click-to-pin) | [[services/MonitoringCellStore]] + [[architecture/Rust-Bridge]] |

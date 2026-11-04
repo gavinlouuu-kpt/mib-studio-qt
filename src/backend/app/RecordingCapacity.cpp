@@ -127,6 +127,13 @@ ReadinessGate cameraWindowGate(const CameraWindowGateInputs& in)
                     wanted + " from the profile, for " + describeCamera(profile.cameraVendor, profile.cameraModel));
 }
 
+double recordingFloorBytesPerSecond(const RecordingCapacityInputs& in)
+{
+    if (!(in.requestedFps > 0) || in.plan.bytesPerFrame == 0) return 0.0;
+    const double floorFps = in.requestedFps / static_cast<double>(in.invalidSamplingRate ? in.invalidSamplingRate : 1);
+    return floorFps * static_cast<double>(in.plan.bytesPerFrame);
+}
+
 RecordingCapacity evaluateRecordingCapacity(const RecordingCapacityInputs& in)
 {
     using S = ExperimentBufferSizing;
@@ -144,7 +151,7 @@ RecordingCapacity evaluateRecordingCapacity(const RecordingCapacityInputs& in)
     if (rateKnown && plan.bytesPerFrame > 0) {
         c.everyFrameBytesPerSecond = in.requestedFps * static_cast<double>(plan.bytesPerFrame);
         c.floorFps = in.requestedFps / static_cast<double>(in.invalidSamplingRate ? in.invalidSamplingRate : 1);
-        c.floorBytesPerSecond = c.floorFps * static_cast<double>(plan.bytesPerFrame);
+        c.floorBytesPerSecond = recordingFloorBytesPerSecond(in);
     }
 
     // --- camera.rate ------------------------------------------------------

@@ -8,6 +8,8 @@
 //    applies the planned frame and byte caps (10000 frames, 2 s);
 //  - 1920x1080 at 5000 fps (camera max 1123): camera.rate fails, Start refused;
 //  - a destination slower than the floor stream: storage.throughput fails;
+//  - a slow sample is measured again (up to three probes, the best kept) and a result under the
+//    floor is not cached, so the next Start probes again (#841);
 //  - an unknown destination rate or camera maximum: warnings, Start allowed;
 //  - a camera without a report: the rate comes from target_fps;
 //  - an override: experiment_buffer_max_mb sizes the buffer (1061 frames);
@@ -30,14 +32,17 @@
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 using backend::app::ExperimentStartOutcome;
 using backend::app::ExperimentStartRequest;
@@ -262,6 +267,80 @@ int main()
                    "12.6 MB/s floor > 10 MB/s: " + textOf(r, "storage.throughput"));
         MIB_EXPECT(!r.ready, "Start blocked by the destination");
         MIB_EXPECT(textOf(r, "storage.throughput").find("NVMe") != std::string::npos, "names the fix");
+    }
+    // ---- a slow sample is measured again; a result under the floor is not kept (#841) --------------------
+    {
+        wd.mark("slow sample");
+        useCamera(1216, 208, 5000, 8894); // floor 12.6 MB/s, a sample under 4x (50.4 MB/s) is measured again
+        std::mutex scriptMutex;
+        std::vector<double> script; // MB/s per probe, the last one repeats
+        size_t next = 0;
+        std::atomic<int> taken{0};
+        auto install = [&](std::vector<double> rates) {
+            {
+                std::lock_guard<std::mutex> lk(scriptMutex);
+                script = std::move(rates);
+                next = 0;
+            }
+            taken.store(0);
+            coord.setWriteRateProbe([&](const std::string&, uint64_t) { // also clears the cache
+                std::lock_guard<std::mutex> lk(scriptMutex);
+                const double mbps = script[std::min(next++, script.size() - 1)];
+                taken.fetch_add(1);
+                backend::app::WriteRateMeasurement m;
+                m.ok = true;
+                m.bytesPerSecond = mbps * 1e6;
+                m.seconds = 0.1;
+                m.directory = td.path().string();
+                m.note = "scripted probe";
+                return m;
+            });
+        };
+        const auto out = (td.path() / "slowsample.h5").string();
+
+        // The bench's reading: 15.2 MB/s once, then a healthy disk. The best is used and kept.
+        install({15.2, 480.0});
+        auto r = coord.evaluateReadiness(out);
+        MIB_EXPECT(taken.load() == 2, "the slow sample was measured again");
+        MIB_EXPECT(statusOf(r, "storage.throughput") == GateStatus::Pass,
+                   "the better probe carries the floor: " + textOf(r, "storage.throughput"));
+        MIB_EXPECT(textOf(r, "storage.throughput").find("best of 2 probes") != std::string::npos,
+                   "the gate says it is the best of two");
+        (void)coord.evaluateReadiness(out);
+        MIB_EXPECT(taken.load() == 2, "a result that passes is kept: no probe on the next evaluation");
+
+        // A destination that stays under the floor: three probes, Fail, and nothing kept.
+        install({10.0, 11.0, 9.0});
+        r = coord.evaluateReadiness(out);
+        MIB_EXPECT(taken.load() == 3, "three probes, no more");
+        MIB_EXPECT(statusOf(r, "storage.throughput") == GateStatus::Fail && !r.ready,
+                   "the best of three is 11 MB/s, under the 12.6 MB/s floor: " + textOf(r, "storage.throughput"));
+        const auto view = coord.recordingCapacity(out);
+        MIB_EXPECT(view.capacity.throughput.status == GateStatus::Fail && taken.load() == 3,
+                   "the Overview panel still shows the failed measurement and never probes");
+        r = coord.evaluateReadiness(out);
+        MIB_EXPECT(taken.load() == 6 && statusOf(r, "storage.throughput") == GateStatus::Fail,
+                   "the next Start probes again: a result that fails the floor is not cached");
+
+        // The disk recovers (the antivirus scan ends): the next Start passes and is kept.
+        install({300.0});
+        r = coord.evaluateReadiness(out);
+        MIB_EXPECT(taken.load() == 1 && statusOf(r, "storage.throughput") == GateStatus::Pass,
+                   "the next Start measures the recovered disk: " + textOf(r, "storage.throughput"));
+        (void)coord.evaluateReadiness(out);
+        MIB_EXPECT(taken.load() == 1, "and keeps it");
+
+        // A kept result that passes one rate's floor but not a higher rate's is measured again.
+        install({20.0, 20.0, 20.0, 30.0});
+        r = coord.evaluateReadiness(out);
+        MIB_EXPECT(taken.load() == 3 && statusOf(r, "storage.throughput") == GateStatus::Pass,
+                   "20 MB/s passes the 12.6 MB/s floor but is under 4x it: three probes, kept");
+        useCamera(1216, 208, 8000, 8894); // floor 20.2 MB/s
+        r = coord.evaluateReadiness(out);
+        MIB_EXPECT(taken.load() == 6 && statusOf(r, "storage.throughput") == GateStatus::Pass,
+                   "the kept 20 MB/s no longer carries the higher floor: measured again (30 MB/s): " +
+                       textOf(r, "storage.throughput"));
+        useCamera(1216, 208, 5000, 8894);
     }
     // ---- unknown destination rate and camera maximum: warnings only ----------------------------------------
     {

@@ -65,7 +65,8 @@ sequence, override, invalid sampling. Not the available RAM.
 **Disk rate**: option 1 of the brief, a short sustained write (`app/DestinationWriteRate.h`):
 frame-size records in ~4 MiB chunks, each fsynced (`_commit` on Windows), ≤ 32 MiB / 0.75 s, in
 the destination's directory, removed afterwards; cached per (directory, frame size) for the
-coordinator's lifetime; only measured once `storage.output` passed (so in Qt after the Save
+coordinator's lifetime (a slow sample is measured again, up to 3 probes, and a result under the
+floor is not cached: #841, [[current-state/recent/2026-11-04-bench-findings-833]]); only measured once `storage.output` passed (so in Qt after the Save
 dialog). Raw writes, not HDF5: the HDF5 writer adds a small per-frame cost, so the number is the
 disk's (an upper bound for the writer). The previous run's own rate is not reused.
 
