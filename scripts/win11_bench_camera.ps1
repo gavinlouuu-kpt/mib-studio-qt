@@ -94,9 +94,11 @@ function Set-Features([string]$Module, [string[]]$Commands) {
 }
 
 if ($Action -eq 'Restore') {
-    $busy = Get-Process -Name 'mib_studio_qt' -ErrorAction SilentlyContinue
-    if ($busy -and -not $Force) {
-        Write-Output ("REFUSED: mib_studio_qt.exe is running (pid {0}, started {1}, {2}). Close it first; restoring now would overwrite a live test. -Force overrides." -f $busy[0].Id, $busy[0].StartTime, $busy[0].Path)
+    # Any MIB Studio frontend that can hold the camera: the Qt app, the Tauri
+    # desktop app and the browser-mode backend server.
+    $busy = @(Get-Process -Name 'mib_studio_qt', 'mib-studio-desktop', 'yofo-studio-server' -ErrorAction SilentlyContinue)
+    if ($busy.Count -gt 0 -and -not $Force) {
+        Write-Output ("REFUSED: {0}.exe is running (pid {1}, started {2}, {3}). Close it first; restoring now would overwrite a live test. -Force overrides." -f $busy[0].ProcessName, $busy[0].Id, $busy[0].StartTime, $busy[0].Path)
         exit 2
     }
     Write-Output '--- AcquisitionStop (a killed MIB Studio can leave the camera acquiring)'
