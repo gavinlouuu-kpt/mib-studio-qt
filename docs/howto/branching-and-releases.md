@@ -111,4 +111,6 @@ Before the release PR to main is approved:
 - Verify notes in Help and the Software Updates list. Stable Windows builds
   gate on curated notes before building and use them for the GitHub Release
   body and update manifest. Betas use recent vault fragments since the last
-  reachable stable tag, explicitly labelled uncurated.
+  reachable stable tag, explicitly labelled uncurated; once those outgrow GitHub's
+  125000-character release-body limit, the oldest entries are dropped and a
+  compare link replaces them (`release_notes.py`, limit 120000).
