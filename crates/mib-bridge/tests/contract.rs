@@ -126,7 +126,9 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    assert_eq!(ffi::bridge_abi_version(), 44);
+    // v45 (#863) fetch_frame_delivery_mode / set_frame_delivery_mode: the Connect stage's delivery mode
+    // (Every Frame / Latest Frame), applied at the next capture start.
+    assert_eq!(ffi::bridge_abi_version(), 45);
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.

@@ -374,6 +374,17 @@ Configuration/output-on serialize against experiment Start with `withIdleConfigu
 output-off remains possible while an experiment runs unless coordinated live view owns
 the generator. Status preserves that ownership so manual controls cannot steal it.
 
+Frame delivery mode (ABI 45, #863 CONNECT-019/020): `fetch_frame_delivery_mode` reads
+`{valid, mode, active_mode, confirmed, capturing}` (open to every client) and
+`set_frame_delivery_mode(mode)` (`everyFrame` | `latestFrame`; controller only) sets the capture service's
+configuration, answering `{ok, mode, applies_at_next_start, message}`. A running capture is never restarted:
+the change applies at the next start, as Qt's Connect combo. Refused during an experiment and for an unknown
+mode. The applied-config provenance (`camera.frame_delivery_mode`) follows, so a run's method records the
+mode and says the profile was modified after apply; the saved profile is never rewritten (its revision pins
+the startup restore). A configuration apply sets the mode from the document (missing = everyFrame).
+`select_hardware_camera` is refused while a capture runs or an experiment is Starting/Active/Stopping, like
+`select_mindvision_camera`; `configure_mock_camera` is refused by the facade under the same rule.
+
 `startup_discovery_run(start|camera|nanopositioner)` schedules the shared startup policy;
 `startup_discovery_status` drains its queued completion actions on the serialized bridge
 caller before reporting running flags, selected state and bounded per-job errors. The

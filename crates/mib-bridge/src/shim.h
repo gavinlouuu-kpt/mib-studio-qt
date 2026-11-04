@@ -136,6 +136,8 @@ public:
     rust::String startup_discovery_set_preference(rust::Str json);
     rust::String startup_discovery_run(rust::Str action);
     rust::String startup_discovery_status();
+    rust::String fetch_frame_delivery_mode();
+    rust::String set_frame_delivery_mode(rust::Str mode);
     BridgeCommandResult pulse_generator_command(rust::Str json);
     rust::String pulse_generator_status();
 

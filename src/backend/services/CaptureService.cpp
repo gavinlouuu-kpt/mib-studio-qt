@@ -37,7 +37,18 @@ CaptureService::~CaptureService() {
     reapFinishedWorkerLocked();
 }
 
-void CaptureService::setConfig(const Config& cfg) { config_ = cfg; }
+// B1 (#863 CONNECT-019): the Connect stage's delivery-mode control sets the config while a capture
+// may be running (it applies at the next start), so the config is lock-guarded and the worker works
+// from the copy it took when its session started.
+void CaptureService::setConfig(const Config& cfg) {
+    std::lock_guard<std::mutex> lk(lifecycleMutex_);
+    config_ = cfg;
+}
+
+CaptureService::Config CaptureService::config() const {
+    std::lock_guard<std::mutex> lk(lifecycleMutex_);
+    return config_;
+}
 
 void CaptureService::setFrameCallback(FrameCallback cb) { callback_ = std::move(cb); }
 
@@ -340,6 +351,8 @@ AcquisitionTelemetrySnapshot CaptureService::telemetrySnapshot(uint64_t freshnes
 void CaptureService::run(uint64_t generation) {
     std::unique_ptr<::camera::common::ICamera> camera;
     bool cameraStarted = false;
+    // The session's configuration: a setConfig() while it runs applies at the next start.
+    const Config sessionCfg = config();
 
     auto releaseCamera = [&]() {
         // Without a running camera there is no confirmed mode; consumers
@@ -401,16 +414,16 @@ void CaptureService::run(uint64_t generation) {
 
     try {
         SPDLOG_INFO("CaptureService starting: gen={}, parts={}, buffers={}, mode={}",
-                    generation, config_.bufferPartCount, config_.numBuffers,
-                    ::camera::common::toString(config_.deliveryMode));
-        stats_.requestedDeliveryMode.store(static_cast<int>(config_.deliveryMode),
+                    generation, sessionCfg.bufferPartCount, sessionCfg.numBuffers,
+                    ::camera::common::toString(sessionCfg.deliveryMode));
+        stats_.requestedDeliveryMode.store(static_cast<int>(sessionCfg.deliveryMode),
                                            std::memory_order_relaxed);
         stats_.deliveryModeConfirmed.store(false, std::memory_order_release);
         {
             auto& m = backend::diagnostics::CrashStateMirror::instance().capture;
             m.running.store(true, std::memory_order_relaxed);
-            m.bufferPartCount.store(config_.bufferPartCount, std::memory_order_relaxed);
-            m.numBuffers.store(config_.numBuffers, std::memory_order_relaxed);
+            m.bufferPartCount.store(sessionCfg.bufferPartCount, std::memory_order_relaxed);
+            m.numBuffers.store(sessionCfg.numBuffers, std::memory_order_relaxed);
         }
 
         if (!cameraFactory_) {
@@ -427,7 +440,7 @@ void CaptureService::run(uint64_t generation) {
         }
 
         const auto deliveryCaps = camera->deliveryCapabilities();
-        if (config_.deliveryMode == ::camera::common::FrameDeliveryMode::LatestFrame &&
+        if (sessionCfg.deliveryMode == ::camera::common::FrameDeliveryMode::LatestFrame &&
             !deliveryCaps.supportsLatestFrame) {
             recordFailure(CaptureFailureKind::UnsupportedDeliveryMode,
                           "This camera backend does not support Latest Frame delivery",
@@ -436,7 +449,7 @@ void CaptureService::run(uint64_t generation) {
                 "This camera backend does not support Latest Frame delivery; "
                 "select Every Frame or use a backend with newest-frame support");
         }
-        if (config_.deliveryMode == ::camera::common::FrameDeliveryMode::EveryFrame &&
+        if (sessionCfg.deliveryMode == ::camera::common::FrameDeliveryMode::EveryFrame &&
             !deliveryCaps.supportsEveryFrame) {
             recordFailure(CaptureFailureKind::UnsupportedDeliveryMode,
                           "This camera backend does not support Every Frame delivery",
@@ -447,9 +460,9 @@ void CaptureService::run(uint64_t generation) {
         }
 
         ::camera::common::CameraConfig camCfg;
-        camCfg.bufferPartCount = config_.bufferPartCount;
-        camCfg.numBuffers = config_.numBuffers;
-        camCfg.deliveryMode = config_.deliveryMode;
+        camCfg.bufferPartCount = sessionCfg.bufferPartCount;
+        camCfg.numBuffers = sessionCfg.numBuffers;
+        camCfg.deliveryMode = sessionCfg.deliveryMode;
         camera->applyConfig(camCfg);
 
         {
@@ -652,7 +665,7 @@ void CaptureService::run(uint64_t generation) {
                     // In EveryFrame mode a growing completed-buffer backlog is
                     // hidden latency; surface it (rate-limited to this 1 s
                     // stats interval).
-                    if (config_.deliveryMode == ::camera::common::FrameDeliveryMode::EveryFrame &&
+                    if (sessionCfg.deliveryMode == ::camera::common::FrameDeliveryMode::EveryFrame &&
                         queueStats.completedQueueDepthValid &&
                         queueStats.sdkCompletedQueueDepth > 0) {
                         SPDLOG_WARN("CaptureService: {} completed SDK buffers backlogged in "

@@ -707,6 +707,16 @@ namespace backend::bridge
         {
         case CameraCommandAction::ConfigureMockCamera:
         {
+            // Qt parity (ConnectTab::onConfigureMock, #863 CONNECT-013): the camera source is not swapped
+            // under a live capture or while an experiment holds the camera.
+            if (backend_.capture().isRunning() || backend_.experiment().state() != app::ExperimentRunState::Idle)
+            {
+                const std::string message = backend_.capture().isRunning()
+                    ? "Cannot change camera connection while camera is running. Please stop the camera first."
+                    : "Cannot change camera connection while an experiment is active.";
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
             ::camera::mock::MockCameraOptions options;
             options.folder = std::filesystem::path(command.mockFrameDirectory);
             options.frameInterval = std::chrono::milliseconds(std::max(1, command.mockFrameIntervalMs));
@@ -4243,6 +4253,55 @@ std::string BackendFacade::runStartupDiscoveryJson(const std::string& action) {
     else return json{{"accepted", false}, {"message", "Unknown startup action"}}.dump();
     return json{{"accepted", accepted}, {"message", accepted ? "Auto-selection scheduled; completion is reported separately" : "Selection is already configured or action was refused"}}.dump();
 }
+std::string BackendFacade::fetchFrameDeliveryModeJson() const {
+    using nlohmann::json;
+    if (!initialized_) return json{{"valid", false}}.dump();
+    auto& capture = backend_.capture();
+    const auto configured = capture.config().deliveryMode;
+    return json{{"valid", true},
+                {"mode", ::camera::common::toString(configured)},
+                {"active_mode", ::camera::common::toString(capture.activeDeliveryMode())},
+                {"confirmed", capture.stats().deliveryModeConfirmed.load(std::memory_order_acquire)},
+                {"capturing", capture.isRunning()}}
+        .dump();
+}
+
+std::string BackendFacade::setFrameDeliveryModeJson(const std::string& mode) {
+    using nlohmann::json;
+    const auto refused = [](const std::string& message) {
+        return json{{"ok", false}, {"message", message}}.dump();
+    };
+    if (!initialized_) return refused("Backend is not initialized");
+    if (mode != "everyFrame" && mode != "latestFrame") return refused("Unknown frame delivery mode");
+    if (backend_.experiment().state() != app::ExperimentRunState::Idle)
+        return refused("Cannot change the delivery mode while an experiment is active.");
+    auto& capture = backend_.capture();
+    auto config = capture.config();
+    config.deliveryMode = ::camera::common::frameDeliveryModeFromString(mode);
+    capture.setConfig(config);
+    // The applied-config provenance follows the runtime (a run's method records what ran). Only an
+    // existing applied document is touched; the saved profile itself is never rewritten (its revision
+    // pins the startup restore).
+    const auto applied = backend_.getLastConfigJson();
+    if (!applied.empty()) {
+        const auto parsed = json::parse(applied, nullptr, /*allow_exceptions=*/false);
+        if (parsed.is_object()) {
+            auto next = parsed;
+            if (!next.contains("camera") || !next.at("camera").is_object()) next["camera"] = json::object();
+            next["camera"]["frame_delivery_mode"] = mode;
+            backend_.setLastConfigJson(next.dump());
+        }
+    }
+    const bool running = capture.isRunning();
+    const std::string label = mode == "latestFrame" ? "Latest Frame" : "Every Frame";
+    return json{{"ok", true},
+                {"mode", mode},
+                {"applies_at_next_start", running},
+                {"message", running ? "Delivery mode set to " + label + " \xE2\x80\x94 applies at the next capture start."
+                                    : "Delivery mode set to " + label + "."}}
+        .dump();
+}
+
 std::string BackendFacade::fetchStartupDiscoveryStatusJson() const {
     using nlohmann::json;
     if (!initialized_) return json{{"valid", false}}.dump();

@@ -86,6 +86,8 @@ public:
     ~CaptureService();
 
     void setConfig(const Config& cfg);
+    // A copy of the configuration the next start() will use.
+    Config config() const;
     void setFrameCallback(FrameCallback cb);
 
     // Optional: store frames to a shared ring for playback/display
@@ -150,7 +152,7 @@ public:
         return stats_.deliveryModeConfirmed.load(std::memory_order_acquire)
                    ? static_cast<::camera::common::FrameDeliveryMode>(
                          stats_.activeDeliveryMode.load(std::memory_order_acquire))
-                   : config_.deliveryMode;
+                   : config().deliveryMode;
     }
 
 private:

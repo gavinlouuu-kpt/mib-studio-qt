@@ -60,7 +60,8 @@ stop/grab/restart boundary.
 ## Key APIs
 
 ```cpp
-void setConfig(const Config& cfg);              // bufferPartCount, numBuffers, deliveryMode
+void setConfig(const Config& cfg);              // bufferPartCount, numBuffers, deliveryMode (lock-guarded)
+Config config() const;                          // a copy of what the next start() uses
 camera::common::FrameDeliveryMode activeDeliveryMode(); // backend-confirmed
 void setFrameCallback(FrameCallback cb);        // UI live preview hook
 void setFrameStore(shared_ptr<FrameStore>);     // ring buffer sink
@@ -92,10 +93,13 @@ Camera factory is how `AppBackend` chooses between
 [[../camera/EGrabberCamera]], [[../camera/MindVisionCamera]] and
 [[../camera/MockCamera]] without this service knowing which one.
 
-`setConfig` has its single call site in
-`frontend::AppConfigWatcher::loadAndApplyFromPath` (fed by the
+`setConfig` is called by `frontend::AppConfigWatcher::loadAndApplyFromPath` (fed by the
 `camera.frame_delivery_mode` profile key and the
-[[../frontend/ConnectTab]] delivery-mode combo).
+[[../frontend/ConnectTab]] delivery-mode combo), by `ConfigDocumentApply` (a Tauri profile, central
+method or config document) and by `BackendFacade::setFrameDeliveryModeJson` (the Tauri Connect stage's
+delivery mode, #863). The control changes the mode while a capture may run, so `config_` is guarded by
+`lifecycleMutex_` (`setConfig`, `config()`) and the worker takes one copy when its session starts; a
+change while a capture runs applies at the next `start()` and never restarts it.
 `deliveryModeConfirmed` is cleared when the capture loop releases the
 camera, so `activeDeliveryMode()` falls back to the requested config mode
 between runs.
