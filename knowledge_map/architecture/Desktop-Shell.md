@@ -144,12 +144,22 @@ px→µm. Profile (UX-2 #306), operator identity, and storage free-space are
 `desktop/src/commissioning.ts` — `canActuate/canStartPeriodic/canStopPeriodic`
 gate hardware-actuating trigger tests. Every session starts in `operator` mode
 (`DEFAULT_MODE`); a menubar toggle enters `service` mode behind a confirm, with
-a persistent banner. The Monitoring trigger controls (Sort Trigger, Set Pulse,
-Periodic Test) render only in service mode behind an **Arm** checkbox, gated by
+a persistent banner. The Monitoring trigger controls (Sort Trigger, pulse
+duration, Periodic Test) render only in service mode behind an **Arm** checkbox, gated by
 those checks; arming is one-shot and clears on mode exit or an active
 experiment. A running periodic test stays stoppable in operator mode as a safety
 fallback. Details:
-`knowledge_map/task/2026-07-21-ux9-commissioning-mode.md`.
+`knowledge_map/task/2026-07-21-ux9-commissioning-mode.md`. The trigger tests follow the Qt
+Monitoring tab (#868, HW-043..045; `areas/hardware/TriggerTestControls.tsx` and
+`triggerTestModel.ts`): the pulse duration (1–1,000,000 µs, default 1) is applied while it is
+typed (300 ms pause, or Enter / leaving the field) and Sort Trigger and the periodic start apply a
+pending value first, so they fire with the duration the backend reports; the periodic interval
+(10–60,000 ms, default 1000) is validated and locked while running; blank, 0 and out-of-range
+values are refused beside the field, never replaced by a default. The backend only checks `>= 1`
+for both, so these bounds are enforced in the frontend only (a drift test reads the Qt `.ui`).
+The panel mounts only while the Experiment stage's Monitoring sub-tab is shown, so its unmount
+stops a running periodic test and logs it (Qt does the same on `hideEvent`); the arm is the shared
+one-shot and is left alone.
 
 Native **file pickers** use `tauri-plugin-dialog` (registered in `run()`,
 granted via `dialog:default` in `capabilities/default.json`, called from the
