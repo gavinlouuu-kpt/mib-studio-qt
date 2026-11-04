@@ -1,4 +1,4 @@
-# Compact mask exports
+## 2026-11-04 — Compact mask exports
 
 [[services/DotGridPortal]] now delivers compact combined DWG (when the provisioned
 ODA converter is present) and dots-only OASIS, preserving the original device
