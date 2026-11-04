@@ -35,7 +35,7 @@ function Harness() {
     ratesRef: { current: { windowStartMs: 0, frames: 0, bytes: 0, displayFps: 0, dataRateMBs: 0, lastFrameIndex: null } }, setRatesTick: () => undefined,
     previewLoopRef: { current: null }, liveCanvasRef: { current: canvas }, cameraGeometryRef: geometryRef, cameraWindowRef: windowRef,
     alignBestRef: { current: { best: null, box: null } }, alignImageMs: { current: 0 }, setAlignImage: () => undefined, camStatus: "running",
-    reviewCanvasRef: { current: null }, reviewPath: "", roiOverlayRef: overlayRef,
+    reviewCanvasRef: { current: null }, reviewPath: "", roiOverlayRef: overlayRef, waferGridOverlayRef: { current: null },
   } as never);
   return null;
 }
