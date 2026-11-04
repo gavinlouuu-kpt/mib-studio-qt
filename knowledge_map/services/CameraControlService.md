@@ -42,7 +42,9 @@
   the script's window. `report` (`CameraWindowApplyReport`) carries all of it
   for the `camera.window` readiness gate; the return value is the script's.
   [[../architecture/AppBackend]] passes the window only for the Experiment
-  script.
+  script. The report also carries the camera's sensor size (`SensorWidth`/
+  `SensorHeight`, else `WidthMax`/`HeightMax`, read after the script ran;
+  0 when it has neither) for the Overview's window box (#863).
 - `deviceReset(ifIdx, devIdx, errorOut)` — issue SFNC `DeviceReset`;
   best-effort stops acquisition first.
 

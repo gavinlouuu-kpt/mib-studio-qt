@@ -197,6 +197,11 @@ public:
                                                  rust::Str label,
                                                  rust::Str config_path);
     BridgeCommandResult apply_camera_script(rust::Str script_path);
+    BridgeCommandResult apply_camera_script_with_role(rust::Str script_path, bool overview);
+    rust::String save_camera_window(rust::Str script_path, std::int32_t x, std::int32_t y, std::int32_t width,
+                                    std::int32_t height);
+    rust::String fetch_recording_capacity(bool planned, std::int32_t x, std::int32_t y, std::int32_t width,
+                                          std::int32_t height);
     BridgeCommandResult reset_hardware_camera();
     BridgeCommandResult soft_trigger_camera();
     BridgeCommandResult set_camera_overview(bool overview);

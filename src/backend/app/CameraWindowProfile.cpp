@@ -2,7 +2,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -87,6 +89,105 @@ std::optional<::camera::common::CameraWindow> parseScriptCameraWindow(const std:
     }
     if (!width || !height) return std::nullopt;
     return w;
+}
+
+namespace {
+// Down to a multiple of `step`; never below 0.
+int floorToStep(int value, int step) { return value <= 0 ? 0 : (value / step) * step; }
+} // namespace
+
+::camera::common::CameraWindow snapEgrabberWindow(const ::camera::common::CameraWindow& requested, int sensorWidth,
+                                                  int sensorHeight)
+{
+    if (sensorWidth <= 0) sensorWidth = kEgrabberDefaultSensorWidth;
+    if (sensorHeight <= 0) sensorHeight = kEgrabberDefaultSensorHeight;
+    ::camera::common::CameraWindow out;
+    const int maxWidth = std::max(kEgrabberMinWidth, floorToStep(sensorWidth, kEgrabberWidthStep));
+    const int maxHeight = std::max(kEgrabberMinHeight, floorToStep(sensorHeight, kEgrabberHeightStep));
+    out.width = std::clamp(floorToStep(requested.width, kEgrabberWidthStep), kEgrabberMinWidth, maxWidth);
+    out.height = std::clamp(floorToStep(requested.height, kEgrabberHeightStep), kEgrabberMinHeight, maxHeight);
+    out.offsetX = floorToStep(requested.offsetX, kEgrabberOffsetXStep);
+    out.offsetY = floorToStep(requested.offsetY, kEgrabberOffsetYStep);
+    if (out.offsetX + out.width > sensorWidth)
+        out.offsetX = floorToStep(sensorWidth - out.width, kEgrabberOffsetXStep);
+    if (out.offsetY + out.height > sensorHeight)
+        out.offsetY = floorToStep(sensorHeight - out.height, kEgrabberOffsetYStep);
+    return out;
+}
+
+ScriptWindowRewrite rewriteScriptCameraWindow(const std::string& scriptText, const ::camera::common::CameraWindow& window)
+{
+    // Same line shape as parseScriptCameraWindow: g.RemotePort.set("Width", 512);  The number may be quoted.
+    static const std::regex line(
+        R"re(^(\s*[A-Za-z_]\w*\.RemotePort\.set\(\s*"(Width|Height|OffsetX|OffsetY)"\s*,\s*)"?-?\d{1,7}"?(\s*\).*)$)re");
+    ScriptWindowRewrite out;
+    bool seen[4] = {false, false, false, false};
+    static const char* const names[4] = {"Width", "Height", "OffsetX", "OffsetY"};
+    const int values[4] = {window.width, window.height, window.offsetX, window.offsetY};
+    std::size_t begin = 0;
+    while (begin <= scriptText.size()) {
+        std::size_t end = scriptText.find('\n', begin);
+        const bool last = end == std::string::npos;
+        std::string text = scriptText.substr(begin, last ? std::string::npos : end - begin);
+        // ECMAScript `.` does not match '\r': keep a CRLF line ending out of the match and put it back.
+        const bool carriageReturn = !text.empty() && text.back() == '\r';
+        if (carriageReturn) text.pop_back();
+        const auto first = text.find_first_not_of(" \t");
+        const bool comment = first != std::string::npos && text.compare(first, 2, "//") == 0;
+        std::smatch m;
+        if (!comment && std::regex_match(text, m, line)) {
+            const std::string feature = m[2].str();
+            for (int i = 0; i < 4; ++i) {
+                if (feature != names[i]) continue;
+                text = m[1].str() + std::to_string(values[i]) + m[3].str();
+                seen[i] = true;
+                break;
+            }
+        }
+        out.text += text;
+        if (carriageReturn) out.text += '\r';
+        if (last) break;
+        out.text += '\n';
+        begin = end + 1;
+    }
+    for (int i = 0; i < 4; ++i) (seen[i] ? out.rewritten : out.missing).emplace_back(names[i]);
+    return out;
+}
+
+std::string appliedProfileScriptPath(const std::string& appliedConfigJson)
+{
+    const auto root = Json::parse(appliedConfigJson, nullptr, /*allow_exceptions=*/false);
+    if (root.is_discarded() || !root.is_object()) return {};
+    const auto selection = root.find("profile_selection");
+    if (selection == root.end() || !selection->is_object()) return {};
+    const auto path = selection->find("path");
+    if (path == selection->end() || !path->is_string()) return {};
+    const auto folder = std::filesystem::u8path(path->get<std::string>()).parent_path();
+    if (folder.empty()) return {};
+    return (folder / "egrabberConfig.js").u8string();
+}
+
+const char* toString(WindowSource source)
+{
+    switch (source) {
+    case WindowSource::Profile: return "profile";
+    case WindowSource::Script: return "script";
+    default: return "none";
+    }
+}
+
+ChosenWindow chooseEgrabberWindow(const std::optional<ProfileCameraWindow>& profile,
+                                  const std::optional<::camera::common::CameraWindow>& script)
+{
+    ChosenWindow out;
+    if (profile && profile->window.valid()) {
+        out.window = profile->window;
+        out.source = WindowSource::Profile;
+    } else if (script && script->valid()) {
+        out.window = *script;
+        out.source = WindowSource::Script;
+    }
+    return out;
 }
 
 std::string cameraModelMismatch(const ProfileCameraWindow& profile, const std::string& connectedVendor,

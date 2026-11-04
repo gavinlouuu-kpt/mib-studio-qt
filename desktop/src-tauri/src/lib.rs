@@ -534,6 +534,25 @@ fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<cm
 }
 
 #[tauri::command]
+fn apply_camera_script_with_role(state: State<AppState>, script_path: String, overview: bool) -> Result<cmds::CmdResult, String> {
+    cmds::apply_camera_script_with_role(&state, script_path, overview)
+}
+
+#[tauri::command]
+fn save_camera_window(state: State<AppState>, script_path: String, x: i32, y: i32, w: i32, h: i32) -> Result<serde_json::Value, String> {
+    cmds::save_camera_window(&state, script_path, x, y, w, h)
+}
+
+#[tauri::command]
+fn fetch_recording_capacity(state: State<AppState>, x: Option<i32>, y: Option<i32>, w: Option<i32>, h: Option<i32>) -> Result<serde_json::Value, String> {
+    let planned = match (x, y, w, h) {
+        (Some(x), Some(y), Some(w), Some(h)) => Some((x, y, w, h)),
+        _ => None,
+    };
+    cmds::fetch_recording_capacity(&state, planned)
+}
+
+#[tauri::command]
 fn set_camera_overview(state: State<AppState>, overview: bool) -> Result<cmds::CmdResult, String> {
     cmds::set_camera_overview(&state, overview)
 }
@@ -917,6 +936,9 @@ pub fn run() {
             select_hardware_camera,
             select_mindvision_camera,
             apply_camera_script,
+            apply_camera_script_with_role,
+            save_camera_window,
+            fetch_recording_capacity,
             reset_hardware_camera,
             soft_trigger_camera,
             set_camera_overview,

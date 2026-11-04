@@ -132,6 +132,9 @@ pub const COMMANDS: &[&str] = &[
     "select_hardware_camera",
     "select_mindvision_camera",
     "apply_camera_script",
+    "apply_camera_script_with_role",
+    "save_camera_window",
+    "fetch_recording_capacity",
     "soft_trigger_camera",
     "reset_hardware_camera",
     "monitoring_set_active",
@@ -727,6 +730,42 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             crate::apply_camera_script(state, a.script_path).and_then(json)
         }
+        "apply_camera_script_with_role" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "scriptPath")] script_path: String,
+                overview: bool,
+            }
+            let a: A = args(value)?;
+            crate::apply_camera_script_with_role(state, a.script_path, a.overview).and_then(json)
+        }
+        "save_camera_window" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "scriptPath", default)] script_path: String,
+                x: i32,
+                y: i32,
+                w: i32,
+                h: i32,
+            }
+            let a: A = args(value)?;
+            crate::save_camera_window(state, a.script_path, a.x, a.y, a.w, a.h).and_then(json)
+        }
+        "fetch_recording_capacity" => {
+            #[derive(Deserialize, Default)]
+            struct A {
+                x: Option<i32>,
+                y: Option<i32>,
+                w: Option<i32>,
+                h: Option<i32>,
+            }
+            let a: A = args(value)?;
+            let planned = match (a.x, a.y, a.w, a.h) {
+                (Some(x), Some(y), Some(w), Some(h)) => Some((x, y, w, h)),
+                _ => None,
+            };
+            crate::fetch_recording_capacity(state, planned).and_then(json)
+        }
         "soft_trigger_camera" => crate::soft_trigger_camera(state).and_then(json),
         "reset_hardware_camera" => crate::reset_hardware_camera(state).and_then(json),
         "monitoring_set_active" => {
@@ -1058,6 +1097,48 @@ mod tests {
             }
             assert!(COMMANDS.contains(&name), "{name} is a Tauri command but not dispatchable");
         }
+    }
+
+    // The eGrabber camera window commands (ABI 45, #863): strict arguments before the backend is asked, the
+    // Overview role through the same guards as the Experiment one, and the capacity as a read.
+    #[test]
+    #[serial]
+    fn egrabber_window_commands_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_window_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        for (name, bad) in [
+            ("apply_camera_script_with_role", json!({ "scriptPath": "/x.js" })),
+            ("apply_camera_script_with_role", json!({ "overview": true })),
+            ("apply_camera_script_with_role", json!({ "scriptPath": "/x.js", "overview": "yes" })),
+            ("save_camera_window", json!({ "scriptPath": "/x.js", "x": 0, "y": 0, "w": 512 })),
+            ("save_camera_window", json!({ "scriptPath": "/x.js", "x": "0", "y": 0, "w": 512, "h": 96 })),
+        ] {
+            let err = dispatch(&state, &host, name, bad.clone()).unwrap_err();
+            assert!(err.starts_with("INVALID_ARGUMENTS"), "{name} {bad}: {err}");
+        }
+        // Both roles are refused cleanly without a hardware camera.
+        for overview in [true, false] {
+            let Reply::Json(r) = dispatch(&state, &host, "apply_camera_script_with_role", json!({ "scriptPath": "/x.js", "overview": overview })).unwrap() else { panic!("JSON") };
+            assert_eq!(r["ok"], json!(false), "{r}");
+            assert!(r["message"].as_str().unwrap().contains("No hardware camera selected"), "{r}");
+        }
+        // The window save answers in JSON with the reason; an empty script path is allowed when a profile holds the window.
+        let Reply::Json(saved) = dispatch(&state, &host, "save_camera_window", json!({ "scriptPath": "", "x": 0, "y": 0, "w": 512, "h": 96 })).unwrap() else { panic!("JSON") };
+        assert_eq!(saved["ok"], json!(false), "{saved}");
+        assert!(saved["error"].as_str().unwrap().contains("nowhere"), "{saved}");
+        // The capacity: no arguments = no planned window; all four = the planned window.
+        let Reply::Json(unknown) = dispatch(&state, &host, "fetch_recording_capacity", Value::Null).unwrap() else { panic!("JSON") };
+        assert_eq!((unknown["known"].clone(), unknown["planned"].clone()), (json!(false), json!(false)), "{unknown}");
+        let Reply::Json(planned) = dispatch(&state, &host, "fetch_recording_capacity", json!({ "x": 0, "y": 0, "w": 512, "h": 96 })).unwrap() else { panic!("JSON") };
+        assert_eq!((planned["known"].clone(), planned["planned"].clone()), (json!(true), json!(true)), "{planned}");
+        assert_eq!(planned["gates"].as_array().unwrap().len(), 4, "{planned}");
+        // Some but not all four is no plan (never a half window).
+        let Reply::Json(partial) = dispatch(&state, &host, "fetch_recording_capacity", json!({ "x": 0, "y": 0 })).unwrap() else { panic!("JSON") };
+        assert_eq!(partial["planned"], json!(false), "{partial}");
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     // The ring commands (ABI 34): `seq` is a JSON number (u64); a missing, negative or string value is INVALID_ARGUMENTS before the backend is asked, and off the
@@ -1529,7 +1610,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

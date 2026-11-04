@@ -1252,6 +1252,40 @@ pub mod ffi {
         fn apply_camera_script(self: Pin<&mut BackendBridge>, script_path: &str)
             -> BridgeCommandResult;
 
+        /// Apply a JS camera script with an explicit role (ABI 45, #863): `overview` true = the
+        /// Overview script, applied as is (full sensor); false = the Experiment script, followed by
+        /// the applied profile's `camera.window`. `apply_camera_script` keeps meaning Experiment.
+        fn apply_camera_script_with_role(
+            self: Pin<&mut BackendBridge>,
+            script_path: &str,
+            overview: bool,
+        ) -> BridgeCommandResult;
+
+        /// Save the eGrabber camera window placed on the Overview (ABI 45, #863): snapped as the Qt
+        /// app snaps it, written into the Experiment script and, when the applied profile has a
+        /// `camera.window`, into the profile. JSON `{ok, error, requested, window, snapped, script,
+        /// profile, ...}` (bridge-contract.json camera_alignment.save_camera_window).
+        fn save_camera_window(
+            self: Pin<&mut BackendBridge>,
+            script_path: &str,
+            x: i32,
+            y: i32,
+            width: i32,
+            height: i32,
+        ) -> String;
+
+        /// The recording capacity of the next run (ABI 45, #863): window, rate, save stream, buffer,
+        /// destination rate and the four capacity gates, as JSON. `planned` describes the window
+        /// (x, y, width, height) being placed on the Overview instead of the running session.
+        fn fetch_recording_capacity(
+            self: Pin<&mut BackendBridge>,
+            planned: bool,
+            x: i32,
+            y: i32,
+            width: i32,
+            height: i32,
+        ) -> String;
+
         /// Issue a GenICam DeviceReset to the selected hardware camera.
         fn soft_trigger_camera(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
 

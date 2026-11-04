@@ -10,6 +10,7 @@
 #include <limits>
 #include "backend/processing/ProcessingCoreLoader.h"
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -463,5 +464,164 @@ std::string profileStoreCommand(AppBackend& backend, const std::string& baseStri
         result["error"] = e.what();
     }
     return result.dump();
+}
+
+ProfileWindowEdit profileStoreSaveCameraWindow(AppBackend& backend, const ::camera::common::CameraWindow& window,
+                                               const std::function<void()>& writeScript) {
+    ProfileWindowEdit out;
+    out.configHasWindow = backend.acquisitionProfile().window.has_value();
+
+    // Which local profile the applied configuration came from, and whether its files are still the ones it
+    // applied. Everything below that touches the profile's files needs both; the script and the in-memory
+    // window never do.
+    const std::string appliedText = backend.getLastConfigJson();
+    J provenance = J::parse(appliedText.empty() ? "{}" : appliedText, nullptr, /*allow_exceptions=*/false);
+    std::string name, oldRevision;
+    fs::path configPath, folder, base;
+    std::string reason = out.configHasWindow ? std::string() : "the applied configuration has no camera.window";
+    const auto why = [&](const std::string& text) {
+        if (reason.empty()) reason = text;
+    };
+    J current;
+    bool unchanged = false;
+    std::string profileFingerprint; // the applied text's fingerprint, if it was still current
+    if (provenance.is_discarded() || !provenance.is_object() || !provenance.contains("profile_selection") ||
+        !provenance.at("profile_selection").is_object()) {
+        why("the applied window does not come from a local profile: it changes for this session only");
+    } else {
+        const J selected = provenance.at("profile_selection");
+        const auto text = [&](const char* key) {
+            const auto it = selected.find(key);
+            return it != selected.end() && it->is_string() ? it->get<std::string>() : std::string{};
+        };
+        name = text("name");
+        oldRevision = text("revision");
+        configPath = fs::path(text("path")).lexically_normal();
+        folder = configPath.parent_path();
+        base = folder.parent_path();
+        out.profileName = name;
+        if (name.empty() || oldRevision.empty() || configPath.filename() != "config.json" || folder.filename() != name ||
+            base.empty()) {
+            why("the applied profile's location is not recorded");
+        } else {
+            try {
+                current = snapshot(base, name);
+                if (current.at("revision") != oldRevision)
+                    why("the profile changed on disk since it was applied; apply it again to keep its window");
+                else
+                    unchanged = true;
+            } catch (const std::exception& e) {
+                why(std::string("the applied profile cannot be read: ") + e.what());
+            }
+        }
+        // The profile's text was applied as provenance: if its fingerprint still matched the text, it must keep
+        // matching once the file and the session carry the same window; a text a later apply modified stays "modified".
+        if (text("applied_config_sha256") == localProfileAppliedConfigSha256(appliedText))
+            profileFingerprint = text("applied_config_sha256");
+    }
+    out.localProfile = unchanged;
+
+    // The profile's config.json section, prepared before anything is committed.
+    J document, section;
+    bool sectionExists = false, sectionCurrent = false;
+    std::string rewritten;
+    if (unchanged && out.configHasWindow) {
+        try {
+            document = J::parse(current.at("document_json").get<std::string>());
+            sectionExists = document.is_object() && document.contains("camera") && document.at("camera").is_object() &&
+                            document.at("camera").contains("window") && document.at("camera").at("window").is_object();
+        } catch (const std::exception&) {
+            why("the profile's config.json is not valid JSON");
+        }
+        if (sectionExists) {
+            section = document.at("camera").at("window");
+            sectionCurrent = section.value("width", -1) == window.width && section.value("height", -1) == window.height &&
+                             section.value("offset_x", -1) == window.offsetX &&
+                             section.value("offset_y", -1) == window.offsetY;
+            section["width"] = window.width;
+            section["height"] = window.height;
+            section["offset_x"] = window.offsetX;
+            section["offset_y"] = window.offsetY;
+            document["camera"]["window"] = section;
+            rewritten = document.dump(4) + "\n";
+            if (!sectionCurrent && rewritten.size() > limit) {
+                sectionExists = false;
+                why("the profile's config.json would exceed 4 MiB");
+            }
+        } else {
+            why("the profile's config.json has no camera.window section");
+        }
+    }
+
+    // The script first: it may live in the profile folder (hence the checks above), and an exception from it
+    // leaves everything else as it was.
+    writeScript();
+    if (out.configHasWindow) out.memoryUpdated = backend.updateAcquisitionWindow(window);
+
+    if (unchanged && sectionExists && !sectionCurrent) {
+        static std::atomic<unsigned long long> seq{0};
+        const fs::path staged = folder / (".config-tmp-" + std::to_string(++seq) + ".json");
+        struct Cleanup {
+            fs::path path;
+            ~Cleanup() {
+                std::error_code ec;
+                fs::remove(path, ec);
+            }
+        } cleanup{staged};
+        try {
+            write(staged, rewritten);
+            fs::rename(staged, configPath);
+            out.configUpdated = true;
+        } catch (const std::exception& e) {
+            why(std::string("the profile's config.json could not be written: ") + e.what());
+        }
+    }
+    // The text the session records for its runs carries the window the camera will have (Qt writes the
+    // document and sets the recorded text again).
+    bool provenanceChanged = false;
+    const bool fileHasWindow = out.configUpdated || (sectionExists && sectionCurrent);
+    if (out.configHasWindow && provenance.is_object() && provenance.contains("camera") &&
+        provenance.at("camera").is_object() && provenance.at("camera").contains("window") &&
+        provenance.at("camera").at("window").is_object()) {
+        auto& shown = provenance["camera"]["window"];
+        const J next = {{"width", window.width}, {"height", window.height}, {"offset_x", window.offsetX},
+                        {"offset_y", window.offsetY}};
+        for (const auto& [key, value] : next.items())
+            if (!shown.contains(key) || shown.at(key) != value) {
+                shown[key] = value;
+                provenanceChanged = true;
+            }
+    }
+
+    // The files changed (config.json and/or a script in the profile folder): the revision the store remembers
+    // follows them, so the next start restores this profile instead of refusing a "changed" one.
+    try {
+        std::string newRevision = oldRevision;
+        if (unchanged) newRevision = snapshot(base, name).at("revision").get<std::string>();
+        const bool revisionMoved = unchanged && newRevision != oldRevision;
+        if (revisionMoved) {
+            provenance["profile_selection"]["revision"] = newRevision;
+            provenanceChanged = true;
+        }
+        // The fingerprint says "the recorded text is the profile as applied": it holds again only when the
+        // profile's file and the session carry the same window.
+        if (!profileFingerprint.empty() && provenanceChanged && (!out.configHasWindow || fileHasWindow)) {
+            provenance["profile_selection"].erase("applied_config_sha256");
+            provenance["profile_selection"]["applied_config_sha256"] = localProfileAppliedConfigSha256(provenance.dump());
+        }
+        if (provenanceChanged) backend.setLastConfigJson(provenance.dump());
+        if (revisionMoved) {
+            if (const auto saved = selectionRead(base);
+                saved.is_object() && saved.at("name") == name && saved.at("revision") == oldRevision)
+                selectionWrite(base, {{"name", name}, {"revision", newRevision},
+                                      {"path", saved.value("path", configPath.string())}});
+            updateStartupProfileRevision(backend, base.string(), name, oldRevision, newRevision);
+        }
+    } catch (const std::exception& e) {
+        reason = std::string("the window is saved, but the remembered profile revision could not follow: ") + e.what();
+        SPDLOG_WARN("ProfileStore: {}", reason);
+    }
+    out.reason = reason;
+    return out;
 }
 } // namespace backend::app

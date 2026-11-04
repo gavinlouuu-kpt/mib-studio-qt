@@ -7,6 +7,8 @@
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/app/ProfileStore.h"
+#include "backend/app/CameraWindowSave.h"
+#include "backend/processing/ExperimentBufferSizing.h"
 #include "backend/app/StartupConfiguration.h"
 #include "backend/app/ProfileCatalog.h"
 #include "backend/app/ProcessingCoreManagement.h"
@@ -755,14 +757,17 @@ namespace backend::bridge
         case CameraCommandAction::ApplyCameraScript:
         {
             std::string error;
-            if (!backend_.applyCameraScriptFromFile(command.cameraScriptPath, &error))
+            const auto role = command.cameraScriptOverview ? AppBackend::CameraScriptRole::Overview
+                                                           : AppBackend::CameraScriptRole::Experiment;
+            if (!backend_.applyCameraScriptFromFile(command.cameraScriptPath, &error, role))
             {
                 const std::string message = error.empty() ? "Camera script apply failed" : error;
                 emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
                 return {false, BackendCommandType::Camera, message};
             }
             emitEvent(makeCameraStatus(CameraState::Configured));
-            return {true, BackendCommandType::Camera, "Camera script applied"};
+            return {true, BackendCommandType::Camera,
+                    command.cameraScriptOverview ? "Overview camera script applied (full sensor)" : "Camera script applied"};
         }
         case CameraCommandAction::SoftTriggerCamera:
         {
@@ -3936,6 +3941,41 @@ std::string BackendFacade::fetchRunAccountingJson(const std::string& source) con
     return none("unknown accounting source (review | last_run)");
 }
 
+namespace {
+nlohmann::json cameraWindowJson(const ::camera::common::CameraWindow& w) {
+    return {{"x", w.offsetX}, {"y", w.offsetY}, {"width", w.width}, {"height", w.height}};
+}
+
+// The last Experiment script apply (AppBackend::CameraGeometry::windowApply): what the script left in
+// the camera, what the profile asked for, what the camera now has, and why the profile's window was
+// refused or rejected. null when no Experiment script has been applied.
+nlohmann::json windowApplyJson(const AppBackend::CameraGeometry& g) {
+    if (!g.windowApplyKnown) return nullptr;
+    const auto& a = g.windowApply;
+    return {
+        {"sequence", a.sequence},
+        {"requested", a.requested},
+        {"applied", a.applied},
+        {"script_window", a.scriptWindowKnown ? cameraWindowJson(a.scriptWindow) : nlohmann::json(nullptr)},
+        {"profile_window", a.requested ? cameraWindowJson(a.profile.window) : nlohmann::json(nullptr)},
+        {"result_window", a.resultKnown ? cameraWindowJson(a.result) : nlohmann::json(nullptr)},
+        {"camera", app::describeCamera(a.connectedVendor, a.connectedModel)},
+        {"refusal", a.refusal},
+        {"error", a.error},
+        {"text", a.requested ? (a.applied && a.scriptWindowKnown && a.scriptWindow != a.profile.window
+                                    ? "the profile's camera window " + app::describeWindow(a.profile.window) +
+                                          " is applied instead of the script's " + app::describeWindow(a.scriptWindow)
+                                    : (a.applied ? "the profile's camera window " + app::describeWindow(a.profile.window) +
+                                                       " is applied"
+                                                 : "the profile's camera window " + app::describeWindow(a.profile.window) +
+                                                       " was not applied: " + (a.refusal.empty() ? a.error : a.refusal)))
+                              : (a.scriptWindowKnown ? "the script's camera window " + app::describeWindow(a.scriptWindow) +
+                                                           " is applied"
+                                                     : std::string("the script is applied"))},
+    };
+}
+} // namespace
+
 std::string BackendFacade::fetchCameraGeometryJson() const {
     if (!initialized_) return nlohmann::json{{"supported", false}}.dump();
     const auto g = backend_.cameraGeometry();
@@ -3955,7 +3995,100 @@ std::string BackendFacade::fetchCameraGeometryJson() const {
         {"min_width", g.minWidth},
         {"min_height", g.minHeight},
         {"session", session},
+        // ABI 45 (#846), additive. Always present; the eGrabber members say what the window is and what
+        // the last Experiment script apply did, the MindVision ones what its profile says.
+        {"window_source", g.windowSource},
+        {"script_role", g.scriptRole},
+        {"experiment_script_path", g.experimentScriptPath},
+        {"window_apply", windowApplyJson(g)},
+        {"illuminated_live", g.illuminatedLive},
+        {"profile_error", g.profileError},
     }.dump();
+}
+
+std::string BackendFacade::saveCameraWindowJson(const std::string& scriptPath, int x, int y, int width, int height) {
+    if (!initialized_) return nlohmann::json{{"ok", false}, {"error", "backend is not initialized"}}.dump();
+    ::camera::common::CameraWindow requested;
+    requested.offsetX = x;
+    requested.offsetY = y;
+    requested.width = width;
+    requested.height = height;
+    try {
+        return app::toJson(app::saveEgrabberWindow(backend_, scriptPath, requested));
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"ok", false}, {"error", std::string("Camera window not saved: ") + e.what()}}.dump();
+    }
+}
+
+namespace {
+nlohmann::json gateJson(const app::ReadinessGate& g) {
+    return {{"id", g.id}, {"status", static_cast<std::uint32_t>(g.status)}, {"status_name", app::toString(g.status)},
+            {"reason", g.reason}, {"remediation", g.remediation}, {"detail", g.detail}};
+}
+// Qt's RecordingCapacityPanel severity: Fail and Unavailable block, Warn warns.
+int gateSeverity(app::GateStatus s) {
+    return (s == app::GateStatus::Fail || s == app::GateStatus::Unavailable) ? 2 : s == app::GateStatus::Warn ? 1 : 0;
+}
+} // namespace
+
+std::string BackendFacade::fetchRecordingCapacityJson(bool planned, int x, int y, int width, int height) const {
+    nlohmann::json out{{"busy", false}, {"known", false}, {"planned", false}, {"status", "unknown"},
+                       {"gates", nlohmann::json::array()}};
+    if (!initialized_) return out.dump();
+    std::optional<::camera::common::CameraWindow> window;
+    if (planned) {
+        ::camera::common::CameraWindow w;
+        w.offsetX = x;
+        w.offsetY = y;
+        w.width = width;
+        w.height = height;
+        if (w.valid()) window = w;
+    }
+    const auto view = backend_.experiment().recordingCapacity({}, window);
+    out["busy"] = view.busy;
+    out["known"] = view.known;
+    out["planned"] = view.planned;
+    if (view.busy) return out.dump();
+    int worst = 0;
+    std::vector<const app::ReadinessGate*> gates;
+    if (!view.window.id.empty()) gates.push_back(&view.window);
+    if (view.known) {
+        gates.push_back(&view.capacity.rate);
+        gates.push_back(&view.capacity.buffer);
+        gates.push_back(&view.capacity.throughput);
+    }
+    for (const auto* g : gates) {
+        worst = std::max(worst, gateSeverity(g->status));
+        out["gates"].push_back(gateJson(*g));
+    }
+    if (!view.known) return out.dump();
+    out["status"] = worst >= 2 ? "blocked" : worst == 1 ? "warning" : "ok";
+    const auto& in = view.inputs;
+    const auto& plan = in.plan;
+    out["window"] = {{"width", in.windowWidth}, {"height", in.windowHeight}};
+    out["images_per_frame"] = in.imagesPerFrame;
+    out["bytes_per_frame"] = plan.bytesPerFrame;
+    out["bytes_per_frame_text"] = processing::formatBufferBytes(plan.bytesPerFrame);
+    out["requested_fps"] = in.requestedFps;
+    out["requested_fps_source"] = in.requestedFpsSource;
+    out["max_fps"] = in.maxFps;
+    out["invalid_sampling_rate"] = in.invalidSamplingRate;
+    out["save_stream"] = {{"every_frame_bytes_per_second", view.capacity.everyFrameBytesPerSecond},
+                          {"every_frame_text", app::formatRate(view.capacity.everyFrameBytesPerSecond)},
+                          {"floor_fps", view.capacity.floorFps},
+                          {"floor_bytes_per_second", view.capacity.floorBytesPerSecond},
+                          {"floor_text", app::formatRate(view.capacity.floorBytesPerSecond)}};
+    out["buffer"] = {{"frames", plan.maxFrames},
+                     {"bytes", plan.maxBytes},
+                     {"bytes_text", processing::formatBufferBytes(plan.maxBytes)},
+                     {"seconds", plan.seconds},
+                     {"source", processing::toString(plan.source)},
+                     {"summary", plan.summary()},
+                     {"clamped_by_ram", plan.clampedByRam}};
+    out["destination"] = {{"bytes_per_second", in.diskBytesPerSecond},
+                          {"text", in.diskBytesPerSecond > 0 ? app::formatRate(in.diskBytesPerSecond) : std::string()},
+                          {"note", in.diskRateNote}};
+    return out.dump();
 }
 
 std::string BackendFacade::fetchPreviewBufferJson() const {

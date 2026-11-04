@@ -84,6 +84,9 @@ namespace backend::bridge
         std::string mindVisionLabel;
         std::string mindVisionConfigPath;
         std::string cameraScriptPath;
+        // ApplyCameraScript role (ABI 45): false = Experiment (the script, then the profile's
+        // camera.window), true = Overview (the full-sensor script as is). Default Experiment.
+        bool cameraScriptOverview{false};
         bool cameraOverview{false};
         int roiX{0}, roiY{0}, roiWidth{0}, roiHeight{0};
     };
@@ -1069,6 +1072,15 @@ namespace backend::bridge
         // Camera & Alignment geometry: mode, sensor size, saved experiment window, steps and
         // the last camera read-back (ABI 20).
         std::string fetchCameraGeometryJson() const;
+        // The eGrabber camera window the operator placed on the Overview (ABI 45, #863): snapped as Qt
+        // snaps it, written into the Experiment script and, when the applied profile has a
+        // camera.window, into the profile (CameraWindowSave.h). JSON {ok, error, requested, window,
+        // snapped, sensor_*, script{...}, profile{...}}.
+        std::string saveCameraWindowJson(const std::string &scriptPath, int x, int y, int width, int height);
+        // The recording capacity of the next run (ABI 45, #833/#863): ExperimentCoordinator::
+        // recordingCapacity as JSON. With `planned`, the window being placed on the Overview instead
+        // of the running session's frames. A read; never waits behind a Start (busy: true).
+        std::string fetchRecordingCapacityJson(bool planned, int x, int y, int width, int height) const;
         // Where the science runs and what this build has (ABI 21): {science: host|pl,
         // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
         // `capabilities` (#501) says which surfaces exist on this instrument.

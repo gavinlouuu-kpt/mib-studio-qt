@@ -168,7 +168,8 @@ struct SessionTable {
 /// Commands that change the instrument's state; viewers may not send them.
 const CONTROL_COMMANDS: &[&str] = &[
     "configure_mock", "start_capture", "stop_capture", "set_camera_overview", "save_camera_roi",
-    "select_hardware_camera", "select_mindvision_camera", "apply_camera_script", "soft_trigger_camera",
+    "select_hardware_camera", "select_mindvision_camera", "apply_camera_script", "apply_camera_script_with_role",
+    "save_camera_window", "soft_trigger_camera",
     "reset_hardware_camera", "start_recording", "stop_recording", "seek_latest", "seek_index", "load_recording",
     "close_review", "experiment_start", "experiment_stop", "experiment_cancel", "experiment_acknowledge_fault",
     "apply_processing", "apply_processing_config_json", "set_processing_roi", "set_background_from_current_frame",
@@ -675,6 +676,17 @@ mod stage_control_tests {
         for cmd in ["fetch_ring_status", "fetch_ring_frame", "fetch_ssd_status", "fetch_ssd_runs", "fetch_run_fps", "check_pz_camera_document"] {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
         }
+    }
+
+    // The eGrabber camera window (#863, ABI 45): applying a script with a role and saving the window edit the camera
+    // and the files of the controlling client's profile, so they need control; the capacity is a read for every client.
+    #[test]
+    fn egrabber_window_edits_are_control_only_but_the_capacity_is_not() {
+        for cmd in ["apply_camera_script_with_role", "save_camera_window"] {
+            assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} must be a CONTROL command");
+        }
+        assert!(!CONTROL_COMMANDS.contains(&"fetch_recording_capacity"), "viewers may read the capacity");
+        assert!(!CONTROL_COMMANDS.contains(&"fetch_camera_geometry"), "viewers may read the geometry");
     }
 
     // Z stage (#464): everything that can move or reconfigure the stage needs

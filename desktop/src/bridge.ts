@@ -703,6 +703,25 @@ export interface InstrumentStatus {
   latency?: { last_us: number; max_us: number; over_budget: number; frames: number };
 }
 
+/** A camera window in sensor coordinates. */
+export interface WindowRect {x: number; y: number; width: number; height: number}
+
+/** The last Experiment script apply (ABI 45): what the script left in the camera, what the profile
+ *  asked for, what the camera has now, and why the profile's window was refused or rejected. */
+export interface CameraWindowApply {
+  sequence: number;
+  requested: boolean;
+  applied: boolean;
+  script_window: WindowRect | null;
+  profile_window: WindowRect | null;
+  result_window: WindowRect | null;
+  camera: string;
+  refusal: string;
+  error: string;
+  /** One sentence for the operator, e.g. "the profile's camera window 1216x208 at (368, 616) is applied instead of the script's ...". */
+  text: string;
+}
+
 /** Camera & Alignment geometry (ABI 20, `fetch_camera_geometry`). Sensor coordinates. */
 export interface CameraGeometry {
   supported: boolean;
@@ -717,6 +736,18 @@ export interface CameraGeometry {
   offset_y_increment: number;
   min_width: number;
   min_height: number;
+  /** eGrabber (ABI 45, #863): where `roi` comes from. The applied profile's camera.window wins, else
+   *  the Experiment script's Width/Height/OffsetX/OffsetY, else there is none. Absent before ABI 45. */
+  window_source?: "profile" | "script" | "none";
+  /** eGrabber: the last camera script applied was the Overview one, the Experiment one, or none. */
+  script_role?: "overview" | "experiment" | "";
+  /** eGrabber: the Experiment script last applied or saved a window into. */
+  experiment_script_path?: string;
+  /** eGrabber: the last Experiment script apply; null when none yet. */
+  window_apply?: CameraWindowApply | null;
+  /** MindVision: the saved profile is illuminated-live (no auto-start on Overview), and why it cannot be read. */
+  illuminated_live?: boolean;
+  profile_error?: string;
   /** Last camera read-back (Aravis): applied window, sensor rate and the delivered rate. */
   session: {
     overview?: boolean;
@@ -731,6 +762,42 @@ export interface CameraGeometry {
     delivered_limit?: string;
     preview_rate_hz?: number;
   };
+}
+
+/** `save_camera_window` (ABI 45, #863): the eGrabber window as the backend snapped and saved it. */
+export interface SaveCameraWindowReply {
+  ok: boolean;
+  error: string;
+  requested: WindowRect;
+  window: WindowRect;
+  snapped: boolean;
+  sensor_width: number;
+  sensor_height: number;
+  script: {path: string; updated: boolean; changed: boolean; missing: string[]};
+  profile: {config_has_window: boolean; local_profile: boolean; name: string; memory_updated: boolean; config_updated: boolean; reason: string};
+}
+
+/** One capacity gate (`fetch_recording_capacity`); `status` is a READINESS_GATE_STATUSES value. */
+export interface CapacityGate {id: string; status: number; status_name: string; reason: string; remediation: string; detail: string}
+
+/** `fetch_recording_capacity` (ABI 45, #863): the next run's window, rate, save stream, buffer, destination rate and gates. */
+export interface RecordingCapacity {
+  busy: boolean;
+  known: boolean;
+  planned: boolean;
+  status: "ok" | "warning" | "blocked" | "unknown";
+  gates: CapacityGate[];
+  window?: {width: number; height: number};
+  images_per_frame?: number;
+  bytes_per_frame?: number;
+  bytes_per_frame_text?: string;
+  requested_fps?: number;
+  requested_fps_source?: string;
+  max_fps?: number;
+  invalid_sampling_rate?: number;
+  save_stream?: {every_frame_bytes_per_second: number; every_frame_text: string; floor_fps: number; floor_bytes_per_second: number; floor_text: string};
+  buffer?: {frames: number; bytes: number; bytes_text: string; seconds: number; source: string; summary: string; clamped_by_ram: boolean};
+  destination?: {bytes_per_second: number; text: string; note: string};
 }
 
 async function invokeCommand(command: string, args?: Record<string, unknown>): Promise<CmdResult> {
@@ -918,6 +985,13 @@ export const bridge = {
   setCameraOverview: (overview: boolean) => sourceMutation("set_camera_overview", {overview}),
   saveCameraRoi: (x: number, y: number, w: number, h: number) => invokeCommand("save_camera_roi", {x, y, w, h}),
   fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
+  // eGrabber camera window (ABI 45, #863). The backend snaps the window, rewrites the Experiment script's
+  // Width/Height/OffsetX/OffsetY and updates the applied profile; nothing is sent to the camera.
+  saveCameraWindow: (scriptPath: string, x: number, y: number, w: number, h: number) =>
+    invoke<SaveCameraWindowReply>("save_camera_window", {scriptPath, x, y, w, h}),
+  // The recording capacity of the next run; `planned` is the window being placed on the Overview.
+  fetchRecordingCapacity: (planned?: WindowRect) =>
+    invoke<RecordingCapacity>("fetch_recording_capacity", planned ? {x: planned.x, y: planned.y, w: planned.width, h: planned.height} : {}),
   fetchPlatformInfo: () => invoke<PlatformInfo>("fetch_platform_info"),
   fetchRunAccounting: (source: "review" | "last_run") => invoke<RunAccounting>("fetch_run_accounting", { source }),
   fetchInstrumentStatus: () => invoke<InstrumentStatus>("fetch_instrument_status"),
@@ -1004,6 +1078,10 @@ export const bridge = {
     sourceMutation("select_mindvision_camera", { cameraIndex, label, configPath }),
   applyCameraScript: (scriptPath: string) =>
     sourceMutation("apply_camera_script", { scriptPath }),
+  // ABI 45 (#863): `overview` true = the Overview script as is (full sensor); false = the Experiment
+  // script, followed by the applied profile's camera.window. apply_camera_script means Experiment.
+  applyCameraScriptWithRole: (scriptPath: string, overview: boolean) =>
+    sourceMutation("apply_camera_script_with_role", { scriptPath, overview }),
   resetHardwareCamera: () => sourceMutation("reset_hardware_camera"),
   // Monitoring + sorter trigger (bridge schema v6, BE-5). Monitoring is
   // visibility-gated: enable only while the Monitoring view is shown.

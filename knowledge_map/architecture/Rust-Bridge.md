@@ -520,6 +520,46 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 45: the eGrabber camera window (#863, #846)
+
+Additive over ABI 44. An eGrabber camera has an Overview like the Qt app's: the full-sensor
+Overview script, then the Experiment script followed by the applied profile's `camera.window`
+([[../services/CameraControlService]], `AppBackend::applyCameraScriptFromFile`'s roles, #833).
+Three functions and additive geometry members; contract `camera_alignment`.
+
+- `apply_camera_script_with_role(script_path, overview)`: `CameraCommand.cameraScriptOverview` ->
+  `AppBackend::CameraScriptRole`. `apply_camera_script` keeps meaning Experiment. Same Rust guards
+  (stopped camera, idle experiment); a CONTROL command on the server.
+- `save_camera_window(script_path, x, y, w, h) -> JSON`: `BackendFacade::saveCameraWindowJson` ->
+  `saveEgrabberWindow` (`CameraWindowSave.cpp`): the window is snapped as Qt snaps it
+  (`snapEgrabberWindow`), the Experiment script's `Width`/`Height`/`OffsetX`/`OffsetY` lines are
+  rewritten in place (`rewriteScriptCameraWindow`, nothing is ever added), and, only when the
+  applied configuration already has a `camera.window`, `profileStoreSaveCameraWindow` takes it
+  into the in-memory acquisition profile and, for a local profile whose files are still the ones it
+  applied, rewrites its `config.json` and moves the revision the store remembers
+  (`.selection.json`, `startup_configuration.json`, the runtime `profile_selection`) so a restart
+  restores the edited window; the revision also follows when only the profile's own script changed
+  (the profile has no `camera.window`), and the recorded configuration text shows the new window. A
+  changed profile, a central method or a hand-applied config keeps its file (`profile.reason`). A CONTROL command; refused during an experiment or raw recording.
+- `fetch_recording_capacity(x?, y?, w?, h?) -> JSON`: `ExperimentCoordinator::recordingCapacity` as
+  JSON (window, rate, save stream, buffer, destination rate, the gates `camera.window`,
+  `camera.rate`, `storage.buffer`, `storage.throughput`, `busy`). A read for every client.
+- `fetch_camera_geometry` for an eGrabber hardware camera: `supported`, `camera: "egrabber"`,
+  `overview` = the last script applied was the Overview one, increments X 16 / Y 4 / W 16 / H 4,
+  min 64x16, the sensor the camera reported (`SensorWidth`/`SensorHeight`, else `WidthMax`/
+  `HeightMax`, read in `CameraControlService::applyScriptToDevice`) else Qt's 1920x1080, `roi` =
+  the profile's window (`window_source` "profile"), else the Experiment script's ("script"), else
+  none; plus `script_role`, `experiment_script_path`, `window_apply` (the last Experiment apply:
+  script window, profile window, result, refusal, error, a sentence) and, for MindVision,
+  `illuminated_live` and `profile_error`. `set_camera_overview` and `save_camera_roi` stay
+  MindVision / Aravis.
+- **Tests:** `contract.rs` `egrabber_window_functions_are_described`,
+  `camera_script_roles_without_a_hardware_camera`, `save_camera_window_end_to_end` (create and
+  apply a profile, save, files, restart restore), `recording_capacity_through_the_bridge`;
+  `dispatch.rs` `egrabber_window_commands_through_dispatch`; the server's
+  `egrabber_window_edits_are_control_only_but_the_capacity_is_not`; C++ `backend.camera_window_profile`
+  (snap, rewrite, choose) and `backend.camera_window_save` (geometry, save, revision follow, restart).
+
 ## ABI 44: the run quick look (#716 A7a)
 
 Additive over ABI 43. `run_quick_look {paths: 1..32, reference?: {path, run_id, start_generation?}}`

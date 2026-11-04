@@ -410,10 +410,33 @@ namespace backend
             int widthIncrement{1}, heightIncrement{1}, offsetXIncrement{1}, offsetYIncrement{1};
             int minWidth{1}, minHeight{1};
             std::string sessionJson{"{}"}; // last camera read-back (Aravis: rate model)
+            // eGrabber (#846): the window is the profile's camera.window, else the Experiment
+            // script's; `overview` says the last script applied was the Overview one.
+            std::string windowSource{"none"}; // "profile" | "script" | "none"
+            std::string scriptRole;           // "overview" | "experiment" | "" (no script applied yet)
+            std::string experimentScriptPath; // the Experiment script last applied or edited
+            bool windowApplyKnown{false};     // an Experiment script was applied (windowApply is its report)
+            app::CameraWindowApplyReport windowApply;
+            // MindVision: the saved profile's trigger mode (no auto-start on Overview when it is
+            // illuminated, Qt MainWindow::onTabChanged) and why it could not be read, if so.
+            bool illuminatedLive{false};
+            std::string profileError;
         };
         CameraGeometry cameraGeometry() const;
         bool setCameraOverview(bool overview, std::string* errorOut = nullptr);
         bool isCameraOverview() const;
+        // An eGrabber hardware camera is selected (#846). Its window lives in the camera script and
+        // the applied profile, not in a camera preset: see cameraGeometry() and saveEgrabberWindow.
+        bool isEgrabberCameraSelected() const;
+        // The Experiment script the operator last applied or saved a window into (empty: none yet).
+        std::string lastExperimentScriptPath() const;
+        void setExperimentScriptPath(const std::string& path);
+        // The camera's sensor size as the last script apply read it (0x0 = not known: Qt's 1920x1080).
+        struct EgrabberSensor { int width{0}, height{0}; };
+        EgrabberSensor egrabberSensor() const;
+        // Replace the applied profile's camera.window only (not its target rate): the in-memory half
+        // of an eGrabber window edit. False when the applied profile has no window.
+        bool updateAcquisitionWindow(const ::camera::common::CameraWindow& window);
         bool saveCameraRoi(int x, int y, int width, int height, std::string* errorOut = nullptr);
 
         // Fire one software acquisition trigger on the live capture camera
@@ -517,6 +540,7 @@ namespace backend
                                 std::string* errorOut = nullptr);
 
     private:
+        friend struct CameraGeometryTestAccess; // tests: select an eGrabber camera without the SDK (#863)
         bool startFrameRecordingLocked(const std::string& hdf5FilePath, std::string* error);
         void reportFatalSaveError(const std::string& msg);
         // Best-effort auto-dump used at capture stop/shutdown; logs on failure.
@@ -664,10 +688,12 @@ namespace backend
         // Selection-snapshot extras (BE-2): last applied camera script and the
         // active mock parameters.
         std::string lastCameraScriptPath_;
-        mutable std::mutex acquisitionProfileMutex_; // guards the two members below
+        mutable std::mutex acquisitionProfileMutex_; // guards the members below
         app::AcquisitionProfile acquisitionProfile_;
         app::CameraWindowApplyReport lastCameraWindowApply_;
         std::optional<CameraScriptRole> lastCameraScriptRole_;
+        std::string lastExperimentScriptPath_;
+        EgrabberSensor egrabberSensor_;
         std::string mockFrameDir_;
         int mockIntervalMs_{0};
         bool mockLoop_{true};

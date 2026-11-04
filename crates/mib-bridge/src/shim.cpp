@@ -2100,6 +2100,38 @@ BridgeCommandResult BackendBridge::apply_camera_script(rust::Str script_path) {
     }
 }
 
+BridgeCommandResult BackendBridge::apply_camera_script_with_role(rust::Str script_path, bool overview) {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::ApplyCameraScript;
+        cmd.cameraScriptPath = toStd(script_path);
+        cmd.cameraScriptOverview = overview;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) {
+        return errorResult(std::string("apply_camera_script_with_role: ") + e.what());
+    } catch (...) {
+        return errorResult("apply_camera_script_with_role: unknown error");
+    }
+}
+
+rust::String BackendBridge::save_camera_window(rust::Str script_path, std::int32_t x, std::int32_t y,
+                                               std::int32_t width, std::int32_t height) {
+    try {
+        return rust::String(impl_->facade.saveCameraWindowJson(toStd(script_path), x, y, width, height));
+    } catch (...) {
+        return rust::String("{\"ok\":false,\"error\":\"save_camera_window: unknown error\"}");
+    }
+}
+
+rust::String BackendBridge::fetch_recording_capacity(bool planned, std::int32_t x, std::int32_t y, std::int32_t width,
+                                                     std::int32_t height) {
+    try {
+        return rust::String(impl_->facade.fetchRecordingCapacityJson(planned, x, y, width, height));
+    } catch (...) {
+        return rust::String("{\"busy\":false,\"known\":false,\"planned\":false,\"status\":\"unknown\",\"gates\":[]}");
+    }
+}
+
 BridgeCommandResult BackendBridge::soft_trigger_camera() {
     try {
         backend::bridge::CameraCommand cmd;
@@ -2706,12 +2738,14 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // the command result and experiment_stop's expected start generation (#741, stop
 // outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
 // run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6); v42 calibration records
-// (#716 A4a); v43 the readiness report's method_calibration (#776). All additive over v1 except that removal (ADR
+// (#716 A4a); v43 the readiness report's method_calibration (#776); v44 run_quick_look (#716 A7a); v45 the eGrabber
+// camera window (apply_camera_script_with_role, save_camera_window, fetch_recording_capacity and the geometry's
+// window_source/script_role/window_apply, #863). All additive over v1 except that removal (ADR
 // 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 44; }
+std::uint32_t bridge_abi_version() { return 45; }
 
 } // namespace mib_bridge
 
