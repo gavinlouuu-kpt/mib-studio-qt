@@ -137,6 +137,9 @@ describe("the classic view gates its control commands", () => {
     "onClick={() => void onTuneApply()}", "onClick={() => void onTuneRevert()}",
     "bridge.monitoringClear()", "bridge.triggerManualPulse()", "bridge.triggerSetPulseDuration(", "bridge.triggerPeriodicStart(",
     "onClick={onSelectHdf}", "}}>Close File</button>", "reviewExport.start(", "<ReanalysisControls",
+    // PR E2: the Density (KDE) toggle sends monitoring_density_set_settings, a control command (one set per instrument).
+    // The reference buttons send none (Pin and Clear are local, From file… is a read), so they are not on this list.
+    "toggle.onChange(e.target.checked)",
   ])("%s is inside a ViewerGate", (needle) => {
     const at = occurrences(needle);
     expect(at.length).toBeGreaterThan(0);

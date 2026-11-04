@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import type { MonitoringRow, MonitoringSnapshot } from "../../../bridge";
 import { MonitoringCharts } from "../../../components/MonitoringCharts";
+import { StudioContext } from "../../../studio/StudioContext";
+import { DEFAULT_MONITORING_SETTINGS } from "../monitoringSettings";
 import { recordingContext } from "../charts/recordingContext";
 import { monitoringRowKey } from "../monitoringChartModel";
 import { callsDigest } from "./densityFixtures";
@@ -109,6 +111,31 @@ describe("the Density (KDE) toggle (MON-058)", () => {
     await mount(layer({ on: true, toggle: { onChange: vi.fn(), tooltip: "t", notice: "Density (KDE) settings were not accepted by the backend (VIEWER_ONLY)." } }));
     expect(host.querySelector('[data-tour="monitoring-density-key"]')!.querySelectorAll("i")).toHaveLength(8);
     expect(host.querySelector('[data-tour="monitoring-density-notice"]')!.textContent).toContain("not accepted by the backend");
+  });
+});
+
+describe("in the classic view", () => {
+  it("takes the layer from the studio state, as it takes the settings", async () => {
+    const d = layer();
+    await act(async () => root.render(
+      <StudioContext.Provider value={{ monSettings: DEFAULT_MONITORING_SETTINGS, kdeLayer: d } as never}>
+        <MonitoringCharts snapshot={snapshot(ROWS)} />
+      </StudioContext.Provider>,
+    ));
+    expect(checkbox()!.checked).toBe(true);
+    await act(async () => checkbox()!.click());
+    expect(d.toggle.onChange).toHaveBeenCalledWith(false);
+    const canvas = host.querySelector<HTMLCanvasElement>('[data-tour="monitoring-scatter"] canvas')!;
+    expect(lastDraw(canvas).of("fill").some((f) => f.fillStyle === LEVEL_COLOURS[7])).toBe(true);
+  });
+
+  it("a studio state without a layer (older context) gives the plain chart with no toggle", async () => {
+    await act(async () => root.render(
+      <StudioContext.Provider value={{ monSettings: DEFAULT_MONITORING_SETTINGS } as never}>
+        <MonitoringCharts snapshot={snapshot(ROWS)} />
+      </StudioContext.Provider>,
+    ));
+    expect(checkbox()).toBeNull();
   });
 });
 
