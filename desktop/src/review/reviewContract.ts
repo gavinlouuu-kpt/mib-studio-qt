@@ -3,7 +3,7 @@
 // YOFO Review's own contract (ADR 0014); the MIB Studio bridge contract is
 // ../bridgeContract.ts.
 
-export const REVIEW_ABI_VERSION = 6;
+export const REVIEW_ABI_VERSION = 8;
 
 export const OVERLAY_MODES = {
   None: 0,
@@ -21,6 +21,9 @@ export const REVIEW_OPERATION_KINDS = {
   ComputeCore: 4,
   Density: 5,
   ExportCharts: 6,
+  Export: 7,
+  Reanalysis: 8,
+  ExportFcs: 9,
 } as const;
 
 export const REVIEW_REGENERATE_SOURCES = {

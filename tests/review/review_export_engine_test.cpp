@@ -17,7 +17,11 @@
 //    copy at each progress report) and the phases each reports, and that
 //    ReviewJobs' exports keep theirs;
 //  - the status snapshots (validating, progress, terminal for single,
-//    batch, cancelled and failed runs, start failure), byte for byte.
+//    batch, cancelled and failed runs, start failure), byte for byte;
+//  - FCS (#867): the first free <base>[_N].fcs + event map pair, an explicit
+//    .fcs destination, no replace, recordings refused; the per-source policy
+//    (each file's recorded factor, the request's as fallback, refused
+//    recordings) and the factor / counts it adds to the status.
 // The facade surface over it is covered by backend.export_bridge_facade,
 // ReviewJobs' by review.jobs. Watchdog guarded.
 
@@ -41,6 +45,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -69,7 +74,7 @@ namespace
 {
     constexpr int kValid = 6, kInvalid = 2;
 
-    void writeFixture(const fs::path &path)
+    void writeFixture(const fs::path &path, const std::string &snapshotJson = {})
     {
         Hdf5Service writer;
         MIB_REQUIRE(writer.openFile(path.string()) && writer.initializeDatasets(), "fixture open");
@@ -91,7 +96,38 @@ namespace
         }
         MIB_REQUIRE(writer.appendFrames(valid, invalid), "fixture frames");
         MIB_REQUIRE(writer.writeExperimentInfo(1000, 1007, kValid, kInvalid, {}, {0, 0, 32, 24}), "fixture info");
+        if (!snapshotJson.empty()) MIB_REQUIRE(writer.writeRunSnapshotJson(snapshotJson, "{}"), "fixture snapshot");
         writer.closeFile();
+    }
+
+    void writeRecordingFixture(const fs::path &path)
+    {
+        Hdf5Service writer;
+        MIB_REQUIRE(writer.openFile(path.string()) && writer.initializeRecordingDatasets(), "recording fixture open");
+        std::vector<cv::Mat> images;
+        std::vector<Hdf5Service::RecordingFrameMeta> meta;
+        for (std::uint64_t i = 0; i < 3; ++i)
+        {
+            images.push_back(cv::Mat(24, 32, CV_8UC1, cv::Scalar(static_cast<double>(40 * i))));
+            meta.push_back({i, 100 * i, 32, 24});
+        }
+        MIB_REQUIRE(writer.appendRecordingFrames(images, meta), "recording fixture frames");
+        MIB_REQUIRE(writer.writeRecordingInfo(10, 20, 3, 0), "recording fixture info");
+        writer.closeFile();
+    }
+
+    // The first line of an FCS event map, and the FCS file's $P1..$Pn names / $TOT.
+    std::string firstLine(const fs::path &path)
+    {
+        std::ifstream in(path);
+        std::string line;
+        std::getline(in, line);
+        return line;
+    }
+    std::string fileBytes(const fs::path &path)
+    {
+        std::ifstream in(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), {});
     }
 
     std::uint64_t hash(const fs::path &path)
@@ -205,7 +241,9 @@ int main()
             {json{{"output_root", "o"}, {"source_paths", many}}, "Batch requires 1 to 256 nonempty source paths"},
             {json{{"output_root", "o"}, {"source_paths", {source.string(), other.string()}}, {"explicit_destination", "x"}},
              "Batch exports use generated destinations, not an explicit destination"},
-            {json{{"output_root", "o"}, {"format", "fcs"}}, "Unknown export format"},
+            {json{{"output_root", "o"}, {"format", "pdf"}}, "Unknown export format"},
+            {json{{"output_root", "o"}, {"format", "fcs"}, {"fcs_frames", "some"}}, "Unknown FCS frame selection"},
+            {json{{"output_root", "o"}, {"conversion_factor_source", "live"}}, "Unknown conversion factor source"},
             {json{{"output_root", "o"}, {"frames", "some"}}, "Unknown frame selection"},
             {json{{"output_root", "o"}, {"series", {{"start", -1}}}}, "Series indices must be nonnegative integers"},
             {json{{"output_root", "o"}, {"series", {{"end", 1.5}}}}, "Series indices must be nonnegative integers"},
@@ -553,6 +591,147 @@ int main()
         MIB_EXPECT(!residue, "nothing published, no partial left");
     }
     wd.mark("review jobs");
+
+    // ---- FCS and the per-source policy (#867) --------------------------------------
+    {
+        const fs::path recorded = td.path() / "recorded.h5";
+        const fs::path recording = td.path() / "raw.h5";
+        writeFixture(recorded, R"({"schema_version":3,"pixel_to_micron":0.25})");
+        writeRecordingFixture(recording);
+        const fs::path out = td.path() / "fcs";
+        fs::create_directories(out);
+
+        ExportBatchRequest parsed;
+        const json fcsRequest{{"output_root", out.string()},
+                              {"format", "fcs"},
+                              {"conversion_factor_source", "recorded"},
+                              {"refuse_recordings", true},
+                              {"conversion_factor", 0.5},
+                              {"source_paths", {recorded.string(), source.string(), recording.string(), recorded.string()}}};
+        MIB_REQUIRE(backend::review::parseExportRequest(fcsRequest.dump(), defaults, parsed, error), "fcs parses: " + error);
+        MIB_EXPECT(parsed.request.format == HdfExportFormat::Fcs && parsed.request.fcsFrames == HdfExportFrames::Valid,
+                   "fcs, valid detections by default");
+        MIB_EXPECT(parsed.policy.recordedFactor && parsed.policy.refuseRecordings && parsed.policy.reportFactor, "policy");
+        ExportBatchRequest plain;
+        MIB_REQUIRE(backend::review::parseExportRequest(json{{"output_root", "o"}}.dump(), defaults, plain, error), "plain");
+        MIB_EXPECT(!plain.policy.recordedFactor && !plain.policy.refuseRecordings && !plain.policy.reportFactor,
+                   "no policy unless asked");
+        ExportBatchRequest both;
+        MIB_REQUIRE(backend::review::parseExportRequest(
+                        json{{"output_root", "o"}, {"format", "fcs"}, {"fcs_frames", "both"}, {"conversion_factor_source", "request"}}.dump(),
+                        defaults, both, error),
+                    "fcs_frames both: " + error);
+        MIB_EXPECT(both.request.fcsFrames == HdfExportFrames::Both && !both.policy.recordedFactor && both.policy.reportFactor,
+                   "fcs_frames both, request factor reported");
+
+        // A pair already taken by one half: the next name is the first free pair.
+        { std::ofstream(out / "other_event_map.csv") << "taken"; }
+        auto request = parsed.request;
+        ExportRunOptions options;
+        options.policy = parsed.policy;
+        const std::vector<std::string> sources{recorded.string(), other.string(), recording.string(), recorded.string()};
+        const auto outcome = backend::review::runExportBatch(request, sources, flag(), {}, options);
+        MIB_REQUIRE(outcome.files.size() == 4, "every source reached");
+        const auto &f = outcome.files;
+        MIB_EXPECT(f[0].attempted && f[0].result.completed() && f[0].result.finalPath == (out / "recorded.fcs").string(),
+                   "first pair <base>.fcs: " + f[0].result.finalPath + " " + f[0].result.error);
+        MIB_EXPECT(fs::is_regular_file(out / "recorded_event_map.csv") &&
+                       firstLine(out / "recorded_event_map.csv") ==
+                           "fcs_event_index,source_frame_index,object_id,timestamp_ns,event_mode",
+                   "the event map beside it");
+        MIB_EXPECT(f[0].conversionFactor == 0.25 && f[0].conversionFactorSource == "recorded",
+                   "the file's recorded factor, not the request's 0.5");
+        MIB_EXPECT(fileBytes(out / "recorded.fcs").find("0.25") != std::string::npos, "FCS records the factor it used");
+        MIB_EXPECT(f[0].result.validCount == kValid && f[0].result.invalidCount == 0, "valid detections only");
+        MIB_EXPECT(f[1].result.completed() && f[1].result.finalPath == (out / "other_2.fcs").string() &&
+                       fs::is_regular_file(out / "other_2_event_map.csv"),
+                   "a half-taken pair moves to _2: " + f[1].result.finalPath + " " + f[1].result.error);
+        MIB_EXPECT(f[1].conversionFactor == 0.5 && f[1].conversionFactorSource == "fallback",
+                   "a file with no recorded factor uses the request's as fallback");
+        MIB_EXPECT(!f[2].attempted && f[2].result.error == "recording files do not contain metrics",
+                   "a recording is refused up front: " + f[2].result.error);
+        MIB_EXPECT(f[3].result.completed() && f[3].result.finalPath == (out / "recorded_2.fcs").string(),
+                   "the same source twice gets the next pair: " + f[3].result.finalPath);
+        MIB_EXPECT(outcome.failed && !outcome.cancelled && outcome.completedCount() == 3, "batch continues past the refusal");
+        const auto terminal = json::parse(backend::review::exportTerminalStatusJson(21, outcome));
+        MIB_EXPECT(terminal["results"][0]["conversion_factor"] == 0.25 &&
+                       terminal["results"][0]["conversion_factor_source"] == "recorded" &&
+                       terminal["results"][0]["valid_count"] == std::to_string(kValid) &&
+                       terminal["results"][0]["invalid_count"] == "0" &&
+                       terminal["results"][1]["conversion_factor_source"] == "fallback" &&
+                       terminal["results"][2]["error"] == "recording files do not contain metrics",
+                   "per-file factor, source and counts in the status: " + terminal.dump());
+        MIB_EXPECT(noPartials(out), "no partial left");
+
+        // Without the policy the status keeps its old keys; FCS still refuses a recording.
+        ExportRunOptions bare;
+        auto single = parsed.request;
+        single.explicitDestination = (out / "chosen.fcs").string();
+        const auto one = backend::review::runExportBatch(single, {other.string()}, flag(), {}, bare);
+        MIB_EXPECT(one.last.completed() && fs::is_regular_file(out / "chosen.fcs") &&
+                       fs::is_regular_file(out / "chosen_event_map.csv") && one.files[0].conversionFactorSource.empty(),
+                   "explicit .fcs destination with its map: " + one.last.error);
+        MIB_EXPECT(!json::parse(backend::review::exportTerminalStatusJson(22, one))["results"][0].contains("conversion_factor"),
+                   "no factor keys unless asked");
+        const auto again = backend::review::runExportBatch(single, {other.string()}, flag(), {}, bare);
+        MIB_EXPECT(again.last.status == HdfExportStatus::Failed &&
+                       again.last.error.find("already exists") != std::string::npos,
+                   "an existing pair is never replaced: " + again.last.error);
+        auto raw = parsed.request;
+        raw.explicitDestination.clear();
+        const auto refused = backend::review::runExportBatch(raw, {recording.string()}, flag(), {}, bare);
+        MIB_EXPECT(!refused.files[0].attempted && refused.files[0].result.error == "recording files do not contain metrics",
+                   "FCS refuses a recording without the policy too");
+
+        // `recordingsAsImages` (ReviewJobs' non-metrics batch, #873 review): the batch's format
+        // for an experiment file, Images for a raw recording, both at the file's own factor;
+        // `prepare` sees the request as the policy left it.
+        {
+            auto all = parsed.request;
+            all.format = HdfExportFormat::All;
+            all.explicitDestination.clear();
+            all.conversionFactor = 0.5;
+            ExportRunOptions asImages;
+            asImages.policy.recordedFactor = true;
+            asImages.policy.recordingsAsImages = true;
+            std::vector<std::pair<HdfExportFormat, double>> seen;
+            asImages.prepare = [&](std::size_t, backend::recording::HdfExportRequest &r, std::string &) {
+                seen.emplace_back(r.format, r.conversionFactor);
+                return false; // inspect only; nothing is exported
+            };
+            const auto probed = backend::review::runExportBatch(all, {recorded.string(), other.string(), recording.string()},
+                                                                 flag(), {}, asImages);
+            MIB_REQUIRE(seen.size() == 3 && probed.files.size() == 3, "every source reached prepare");
+            MIB_EXPECT(seen[0].first == HdfExportFormat::All && seen[0].second == 0.25, "an experiment keeps All, at its 0.25");
+            MIB_EXPECT(seen[1].first == HdfExportFormat::All && seen[1].second == 0.5, "no recorded factor: the request's, All");
+            MIB_EXPECT(seen[2].first == HdfExportFormat::Images, "a recording becomes Images");
+            // Not asked for: the format is left alone.
+            seen.clear();
+            asImages.policy.recordingsAsImages = false;
+            backend::review::runExportBatch(all, {recording.string()}, flag(), {}, asImages);
+            MIB_REQUIRE(seen.size() == 1, "recording reaches prepare");
+            MIB_EXPECT(seen[0].first == HdfExportFormat::All, "without recordingsAsImages the format is the request's");
+        }
+
+        // Metrics CSV with the recorded factor: the µm² column follows the file.
+        auto metrics = plain.request;
+        metrics.format = HdfExportFormat::MetricsCsv;
+        metrics.outputRoot = out.string();
+        metrics.conversionFactor = 0.5;
+        ExportRunOptions recordedOnly;
+        recordedOnly.policy.recordedFactor = true;
+        recordedOnly.policy.reportFactor = true;
+        const auto csv = backend::review::runExportBatch(metrics, {recorded.string()}, flag(), {}, recordedOnly);
+        MIB_EXPECT(csv.last.completed() && csv.files[0].conversionFactor == 0.25, "metrics at the recorded factor");
+        // A recording in a metrics batch without refuse_recordings is exported as before.
+        const auto rawCsv = backend::review::runExportBatch(metrics, {recording.string()}, flag(), {}, recordedOnly);
+        MIB_EXPECT(rawCsv.last.completed() && rawCsv.files[0].conversionFactorSource == "fallback",
+                   "a recording's metadata CSV still exports without refuse_recordings: " + rawCsv.last.error);
+        MIB_EXPECT(backend::recording::HdfExportService::nextAvailableFcsPath(out.string(), "fresh") ==
+                       (out / "fresh.fcs").string(),
+                   "a free stem keeps its name");
+    }
+    wd.mark("fcs");
 
     MIB_EXPECT(hash(source) == sourceHash, "source unchanged at the end");
     return mib::test::exitCode();

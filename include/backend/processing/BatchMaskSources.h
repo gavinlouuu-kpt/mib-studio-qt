@@ -37,6 +37,12 @@ cv::Mat buildSyntheticBackground(const std::vector<cv::Mat>& frames,
 bool loadPreview(const std::string& kind,const std::string& path,const std::string& dataset,
                  size_t index,cv::Mat& image);
 
+// The frames an AVI ("avi": the container's CAP_PROP_FRAME_COUNT, as the Qt
+// BatchMaskDialog reads it) or an image folder ("folder": the TIFF/PNG/JPEG
+// files loadFromFolder reads) holds; 0 when unreadable or another kind
+// (#867, the regenerate dialog's "Frame i / n").
+size_t countSourceFrames(const std::string& kind,const std::string& path);
+
 // Load a contiguous range of images from an open Hdf5Service dataset.
 // `datasetPath` is typically one of:
 //   "/valid_frames/images", "/invalid_frames/images", "/recorded_frames/images"

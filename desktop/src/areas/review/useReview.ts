@@ -10,7 +10,10 @@ import { useReanalysis } from "../../reanalysisControls";
 import { describeReviewOutcome } from "../../runOutcome";
 import { isOpenFailureMessage, openFailureFor, type OpenFailure, type OpenPhase } from "../../review/reviewOpen";
 import { open } from "../../transport/dialogs";
-import { H5_FILTER } from "../../studio/constants";
+
+// The Qt tab's open dialog (HdfReviewTab: "Open HDF File", *.h5 *.hdf5 + All Files). MIB raw
+// recordings from tools/yzr-extract (zu15eg-linux) open the same way (/recording_info).
+export const REVIEW_OPEN_FILTERS = [{ name: "HDF5 Files", extensions: ["h5", "hdf5"] }, { name: "All Files", extensions: ["*"] }];
 import type { LiveFramesModel, PreviewState } from "../preview/usePreview";
 import type { ShellState, StatePollingModel } from "../shell/useShell";
 
@@ -105,44 +108,68 @@ export function useReviewSource({
     setReviewMeta(null);setMetricsPage(null);setReviewPath("");setReviewing(false);setReviewIndex("0");setReviewImgIndex(0);
     const canvas=reviewCanvasRef.current;if(canvas)canvas.getContext("2d")?.clearRect(0,0,canvas.width,canvas.height);
   },[]);
+  // The load, after a path is chosen. The caller holds the source lock (reviewSourcePending) and
+  // passes the generation it took; a failure throws to the caller (recoverFromLoadError).
+  const loadReviewFile = useCallback(async (picked: string, sourceGeneration: number): Promise<boolean> => {
+    ++metricsGeneration.current;
+    framePulls.current.invalidate("review");
+    setMetricsPage(null);
+    setReviewOpenPhase("loading");
+    const res = await bridge.loadRecording(picked);
+    if(sourceGeneration!==reviewSourceGeneration.current)return false;
+    if (!res.ok) { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata);
+      // Qt's critical "Cannot Open HDF5 File" for a file that cannot be opened; a refusal about the instrument stays in the log.
+      if (isOpenFailureMessage(res.message)) { setReviewOpenPhase("error"); setReviewOpenFailure(openFailureFor(picked, res.message)); } else setReviewOpenPhase("idle");
+      append(`load failed: ${res.message}`);return false; }
+    setReviewPath(picked);
+    setReviewing(true);
+    append(`loaded ${picked}`);
+    applyEvents(await bridge.pollEvents());
+    const meta = await bridge.fetchReviewMetadata();
+    setReviewMeta(meta);
+    setReviewOpenPhase("idle");
+    setReviewTab(meta.recording_file ? "raw" : "valid");
+    setReviewImgIndex(0);
+    await loadMetricsPage(true, 0, picked);
+    if (meta.recording_file) {
+      await onScrub("0");
+    } else if (meta.valid_images.present && meta.valid_images.count > 0) {
+      await drawReviewImage(0, 0);
+    }
+    return true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage,clearReviewSource]);
+  const recoverFromLoadError = useCallback(async (e: unknown) => {
+    setReviewOpenPhase("error");
+    append(`load error: ${e}`);
+    try { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata); } catch { clearReviewSource(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [append, clearReviewSource]);
   const onSelectHdf = useCallback(async () => {
     if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);
     const sourceGeneration=++reviewSourceGeneration.current;
     try {
-    const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
-    if (typeof picked !== "string") return;
-    ++metricsGeneration.current;
-    framePulls.current.invalidate("review");
-    setMetricsPage(null);
-      setReviewOpenPhase("loading");
-      const res = await bridge.loadRecording(picked);
-      if(sourceGeneration!==reviewSourceGeneration.current)return;
-      if (!res.ok) { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata);
-        // Qt's critical "Cannot Open HDF5 File" for a file that cannot be opened; a refusal about the instrument stays in the log.
-        if (isOpenFailureMessage(res.message)) { setReviewOpenPhase("error"); setReviewOpenFailure(openFailureFor(picked, res.message)); } else setReviewOpenPhase("idle");
-        return append(`load failed: ${res.message}`); }
-      setReviewPath(picked);
-      setReviewing(true);
-      append(`loaded ${picked}`);
-      applyEvents(await bridge.pollEvents());
-      const meta = await bridge.fetchReviewMetadata();
-      setReviewMeta(meta);
-      setReviewOpenPhase("idle");
-      setReviewTab(meta.recording_file ? "raw" : "valid");
-      setReviewImgIndex(0);
-      await loadMetricsPage(true, 0, picked);
-      if (meta.recording_file) {
-        await onScrub("0");
-      } else if (meta.valid_images.present && meta.valid_images.count > 0) {
-        await drawReviewImage(0, 0);
-      }
+      const picked = await open({ title: "Open HDF File", filters: REVIEW_OPEN_FILTERS, multiple: false });
+      if (typeof picked !== "string") return;
+      await loadReviewFile(picked, sourceGeneration);
     } catch (e) {
-      setReviewOpenPhase("error");
-      append(`load error: ${e}`);
-      try { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata); } catch { clearReviewSource(); }
+      await recoverFromLoadError(e);
     } finally {reviewSourcePending.current=false;setReviewSourceBusy(false);}
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage,clearReviewSource]);
+  }, [loadReviewFile, recoverFromLoadError]);
+  // Open a known path in the Review stage without the picker (a regenerated file, #867 REVIEW-067).
+  // True once the file is loaded; false when another open is in flight, the load was refused or failed.
+  const openReviewPath = useCallback(async (path: string): Promise<boolean> => {
+    if(reviewSourcePending.current)return false;reviewSourcePending.current=true;setReviewSourceBusy(true);
+    const sourceGeneration=++reviewSourceGeneration.current;
+    try {
+      return await loadReviewFile(path, sourceGeneration);
+    } catch (e) {
+      await recoverFromLoadError(e);
+      return false;
+    } finally {reviewSourcePending.current=false;setReviewSourceBusy(false);}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadReviewFile, recoverFromLoadError]);
 
   useEffect(()=>{
     if(!ready||tab!=="review"||!recoveredReview.current||!reviewMeta?.file_open)return;
@@ -156,7 +183,7 @@ export function useReviewSource({
     setTab("review");
     void onSelectHdf();
   }, [onSelectHdf]);
-  return { onScrub, loadMetricsPage, drawReviewImage, clearReviewSource, onSelectHdf, openReviewFromMenu };
+  return { onScrub, loadMetricsPage, drawReviewImage, clearReviewSource, onSelectHdf, openReviewPath, openReviewFromMenu };
 }
 
 type ReviewAccountingDeps = Pick<ReviewState, "reviewFilePath" | "setReviewAccounting"> & Pick<ShellState, "append">;
@@ -172,9 +199,10 @@ export function useReviewAccounting({ reviewFilePath, setReviewAccounting, appen
   }, [reviewFilePath]);
 }
 
-export function useReviewJobs({ ready, append }: Pick<ShellState, "ready" | "append">) {
+// `openReviewPath` (useReviewSource) loads the file a finished regenerate job wrote (REVIEW-067).
+export function useReviewJobs({ ready, append, openReviewPath }: Pick<ShellState, "ready" | "append"> & { openReviewPath?: (path: string) => Promise<boolean> }) {
   const reviewExport = useReviewExport(ready, append);
-  const reanalysis = useReanalysis(ready);
+  const reanalysis = useReanalysis(ready, openReviewPath);
   return { reviewExport, reanalysis };
 }
 export type ReviewJobsModel = ReturnType<typeof useReviewJobs>;

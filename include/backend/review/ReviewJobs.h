@@ -59,6 +59,7 @@ namespace backend::review
         ExportCharts = 6,
         Export = 7,
         Reanalysis = 8,
+        ExportFcs = 9, // YOFO Review's Export FCS (#576, #867; review ABI 7)
     };
 
     // D7 (#512): the two lanes of a session's jobs.
@@ -137,6 +138,9 @@ namespace backend::review
         std::vector<std::string> sources;
         std::string outputRoot;
         bool metricsOnly{false};
+        // FCS 3.1 + event map pair per source (`<root>/<base>[_N].fcs`, the Qt batch FCS rule,
+        // #867); recordings refused; ignores `metricsOnly` and `series`.
+        bool fcs{false};
         ExportSeriesRange series;
     };
 
@@ -147,6 +151,15 @@ namespace backend::review
         WholeFile = 2,      // every image of the open file (recording: all; experiment: valid + invalid)
         Avi = 3,            // `sourcePath` is an AVI
         Folder = 4,         // `sourcePath` is a folder of TIFF/PNG/JPEG
+    };
+
+    // Review ABI 8 (#867): the background of a regenerate (the JSON request's
+    // `background`: "recorded", "none", "frame").
+    enum class RegenerateBackground : std::uint32_t
+    {
+        Recorded = 0, // the open file's saved one with the recorded config, else none
+        None = 1,     // none (a synthetic one when requested)
+        Frame = 2,    // one source frame (Qt's Set as Background)
     };
 
     struct RegenerateMasksRequest
@@ -170,7 +183,62 @@ namespace backend::review
         services::ProcessingConfig config{};
         services::ProcessingService::Roi roi{};
         bool synthesizeBackground{false};
+        // Review ABI 8 (#867, the Qt BatchMaskDialog's Processing Config and
+        // Preview & ROI groups; all default to the behaviour above):
+        // - `imageProcessingJson`: when not empty, a partial config.json
+        //   `image_processing` object (ProcessingConfigJson merge rules:
+        //   present keys only) applied on top of the config the run uses
+        //   otherwise (the recorded one, else `config`).
+        // - `overrideRoi`: `roi` instead of the recorded one (w or h 0 = the
+        //   full frame). AVI / folder sources and recordings always use `roi`.
+        // - `background`: Recorded keeps the rule above (the open file's
+        //   saved background with `useRecordedConfig`, else none); None uses
+        //   no background (`synthesizeBackground` then builds one); Frame
+        //   uses one source frame: row `backgroundIndex` of
+        //   `backgroundDataset` of the open file, or frame `backgroundIndex`
+        //   of the AVI / folder.
+        std::string imageProcessingJson;
+        bool overrideRoi{false};
+        RegenerateBackground background{RegenerateBackground::Recorded};
+        std::uint64_t backgroundIndex{0};
+        std::string backgroundDataset;
     };
+
+    // Review ABI 8 (#867): `review_regenerate_masks_json` (review-contract.json)
+    // into a request. False with `error` for a malformed request; the job's own
+    // checks (an existing output, no file open) stay in startRegenerateMasks.
+    bool parseRegenerateMasksJson(const std::string &json, RegenerateMasksRequest &out, std::string &error);
+
+    // Review ABI 8 (#867): what the regenerate dialog shows before a run, as
+    // the Qt BatchMaskDialog reads it when its source changes
+    // (ReviewJobs::regenerateSetup).
+    struct RegenerateSetup
+    {
+        // The preview set: the open file's dataset for an hdf source (the
+        // whole file and the valid range preview the valid images, or the
+        // recorded ones of a recording, as Qt's hdf5ImageDatasetPath), "" for
+        // AVI / folder; its frame count (AVI: the container's frame count,
+        // as Qt). The dialog's Set as Background sends this dataset.
+        std::string previewDataset;
+        std::uint64_t frameCount{0};
+        // What a run with the recorded config starts from: the open file's
+        // recorded config, else the defaults (`configRecorded` false; AVI and
+        // folder sources always).
+        services::ProcessingConfig config{};
+        bool configRecorded{false};
+        // The ROI pre-filled from /experiment_info (Qt), when it records one
+        // with a positive size; else all zero (the full frame).
+        services::ProcessingService::Roi roi{};
+        bool roiRecorded{false};
+        bool hasBackground{false};
+        // Qt's processing-core mismatch text, shown before a run: the open
+        // file's recorded core differs from the active one. "" when they
+        // match, the file records none or the source is not the open file.
+        std::string coreWarning;
+    };
+    // review-contract.json `review_regenerate_setup`: the setup with "ok": true,
+    // or {"ok": false, "error": `error`} when it was refused.
+    std::string regenerateSetupJson(bool ok, const RegenerateSetup &setup, const std::string &error);
 
     struct DensityRequest
     {
@@ -284,6 +352,10 @@ namespace backend::review
         // request's fault, or "Another review job is still running" while a
         // job runs that the lane policy does not let this one run beside).
         std::uint64_t startExportMetrics(const std::string &outputPath, std::string *error = nullptr);
+        // FCS 3.1 at the open file's factor into `outputPath` (an explicit `.fcs`; its sibling
+        // `<stem>_event_map.csv` is published with it as one no-replace pair). Refused for a
+        // recording. The completed message is the `.fcs` path, then " (N events: V valid, I invalid)".
+        std::uint64_t startExportFcs(const std::string &outputPath, std::string *error = nullptr);
         std::uint64_t startExportAll(const ExportAllRequest &request, std::string *error = nullptr);
         std::uint64_t startBatchExport(const BatchExportRequest &request, std::string *error = nullptr);
         std::uint64_t startExportCharts(const ExportChartsRequest &request, std::string *error = nullptr);
@@ -344,6 +416,16 @@ namespace backend::review
         // there is no processing service, and for what reprocessInputs refuses.
         bool reprocessRecord(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessResult &out,
                              std::string *error = nullptr);
+        // Review ABI 8 (#867): the regenerate dialog's setup for `source`
+        // (RegenerateSetup) and one Mono8 frame `index` of its preview set
+        // (an independent reader, batch_masks::loadPreview; `out.frameIndex`
+        // = `index`). Gated on the lanes like the probe: they hold the lanes'
+        // lock while they read and are refused (false, `error`) while either
+        // lane is claimed (HDF5 is not thread-safe, #722). Never write.
+        bool regenerateSetup(RegenerateSource source, const std::string &sourcePath, RegenerateSetup &out,
+                             std::string *error = nullptr);
+        bool regeneratePreview(RegenerateSource source, const std::string &sourcePath, std::uint64_t index,
+                               ReviewImage &out, std::string *error = nullptr);
         // The record the last ComputeCore / Density job produced for the file
         // the session holds now (JSON, empty when none or computed for
         // another file); the shell saves it through ReviewSession.

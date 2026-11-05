@@ -499,7 +499,7 @@ namespace backend::review
                                              const ReanalysisOutcome &outcome)
     {
         using nlohmann::json;
-        return json{{"state", outcome.published ? "completed" : outcome.cancelled ? "cancelled" : "failed"},
+        json status{{"state", outcome.published ? "completed" : outcome.cancelled ? "cancelled" : "failed"},
                     {"operation_id", std::to_string(operationId)},
                     {"final_path", outcome.published ? request.outputPath : ""},
                     {"retained_partial_path", outcome.retainedPartialPath},
@@ -515,8 +515,19 @@ namespace backend::review
                     {"objects", std::to_string(outcome.produced)},
                     // Of `objects`, the valid records (#763 F18: the classic view's completion line
                     // reports both, next to final_path).
-                    {"valid_objects", std::to_string(outcome.valid)}}
-            .dump();
+                    {"valid_objects", std::to_string(outcome.valid)}};
+        // A published run says what it was validated at (#867 REVIEW-064, the Qt
+        // BatchMaskDialog's log lines): the factor, whether it is the source's
+        // own, and what E was computed with.
+        if (outcome.published)
+        {
+            status["pixel_to_micron"] = outcome.pixelToMicron;
+            status["pixel_to_micron_source"] = outcome.pixelToMicronRecorded   ? "recorded"
+                                               : request.pixelToMicronExplicit ? "operator"
+                                                                               : "fallback";
+            status["emodulus_lut"] = reanalysisEModulusLutPhrase(outcome);
+        }
+        return status.dump();
     }
 
     std::string reanalysisStartFailedStatusJson(std::uint64_t operationId, const std::string &error)

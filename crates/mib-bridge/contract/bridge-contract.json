@@ -425,7 +425,8 @@
         "metrics_csv",
         "images",
         "all",
-        "charts"
+        "charts",
+        "fcs"
       ],
       "frames": [
         "valid",
@@ -433,6 +434,9 @@
         "both"
       ],
       "conversion_factor": "positive finite number; optional",
+      "conversion_factor_source": "optional: recorded = each source at the px->um factor it was recorded with (TD-17, as Qt), conversion_factor or the live factor only for a source that records none; request = conversion_factor or the live factor for every source; when present each results entry carries conversion_factor, conversion_factor_source (recorded|fallback|request), valid_count and invalid_count (#867, additive within the existing command)",
+      "refuse_recordings": "boolean; optional: raw recordings are skipped (not attempted) with 'recording files do not contain metrics', the Qt batch rule; format fcs always refuses them",
+      "fcs_frames": "valid (default) | invalid | both; format fcs only: FCS 3.1 + <stem>_event_map.csv published as one no-replace pair at explicit_destination (a .fcs path) or, without one, at <output_root>/<base>[_N].fcs, the first free pair (Qt rule, #576)",
       "keep_partial_on_failure": "boolean; optional",
       "explicit_destination": "string; optional",
       "source_paths": "optional 1..256 source paths; independent readers; forbids explicit_destination"
@@ -523,7 +527,7 @@
       "max_frames": "integer 1..1000000; default 4096",
       "max_input_mib": "integer 1..16384; default 256; input pixels only, processing needs additional memory"
     },
-    "status": "review-export status vocabulary; own operation id; current settings, source ROI/background/identity, active core recorded"
+    "status": "review-export status vocabulary; own operation id; current settings, source ROI/background/identity, active core recorded; a completed run adds pixel_to_micron (number), pixel_to_micron_source (recorded | fallback | operator) and emodulus_lut (what E was computed with, in words) (#867)"
   },
   "review_charts_json": {
     "description": "all valid-file metrics; 128x128 density conserves every finite calibrated point; histogram exact; shared Qt math",

@@ -20,6 +20,10 @@
 //    no clobber: an existing output is refused
 //    at start, one created while the job runs fails the job untouched with
 //    no partial file left, a cancel writes nothing;
+//  - regenerate dialog inputs (review ABI 8, #867): the setup (preview set,
+//    frame count, recorded ROI / config / background, Qt's core-mismatch
+//    text), the preview frame, the JSON request with its refusals, and a run
+//    with config fields, a full-frame ROI, no background / a chosen frame;
 //  - compute core: full-run record JSON with the recorded factor;
 //  - density: one level per scatter point, no computed record when the
 //    file has one, a computed record on a legacy file, results only for the
@@ -50,6 +54,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -647,6 +652,28 @@ int main()
         MIB_EXPECT(readAll(td.path() / "factors" / "bare_metrics.csv") == direct(bare, 0.3), "bare.h5 uses the fallback");
         MIB_EXPECT(direct(quarter, 0.25) != direct(quarter, 0.5), "factors change the CSV (test is sensitive)");
         MIB_EXPECT(!fs::exists(td.path() / "factors" / "rec_metrics.csv"), "no CSV for the recording file");
+
+        // The same sources through a non-metrics ("All") batch (#873 review: one policy for every
+        // batch, ExportEngine's applySourcePolicy, not a probe of the batch's own): each file at
+        // its own recorded factor, the fallback only for the one that records none, and a
+        // recording exported as images instead of refused.
+        BatchExportRequest all;
+        all.sources = {quarter.string(), bare.string(), rec.string()};
+        all.outputRoot = (td.path() / "factors_all").string();
+        const uint64_t allId = jobs.startBatchExport(all, &err);
+        MIB_REQUIRE(allId != 0, "start All batch: " + err);
+        MIB_REQUIRE(sink.terminal(allId, done), "All batch terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Completed && done.message == "exported 3 of 3 file(s)",
+                   "All batch exports all three, the recording included: " + done.message);
+        const fs::path allRoot = td.path() / "factors_all";
+        MIB_EXPECT(readAll(allRoot / "quarter" / "metrics.csv") == direct(quarter, 0.25), "All batch: quarter.h5 at its 0.25");
+        MIB_EXPECT(readAll(allRoot / "bare" / "metrics.csv") == direct(bare, 0.3), "All batch: bare.h5 at the fallback");
+        MIB_EXPECT(fs::is_directory(allRoot / "rec") && !fs::exists(allRoot / "rec" / "metrics.csv"),
+                   "All batch: the recording is exported as images, with no metrics");
+        std::size_t recTiffs = 0;
+        for (const auto &e : fs::recursive_directory_iterator(allRoot / "rec"))
+            if (e.path().extension() == ".tiff") ++recTiffs;
+        MIB_EXPECT(recTiffs == 4, "All batch: one image per recorded frame, " + std::to_string(recTiffs));
         session.setFallbackPixelToMicron(0.4886);
     }
     wd.mark("batch factors");
@@ -724,6 +751,49 @@ int main()
     }
     wd.mark("batch charts");
 
+    // ---- Export FCS and Batch Export FCS (#867, review ABI 7) ----------------------
+    {
+        const fs::path out = td.path() / "fcs";
+        fs::create_directories(out);
+        const uint64_t id = jobs.startExportFcs((out / "chosen.fcs").string(), &err);
+        MIB_REQUIRE(id != 0, "start FCS: " + err);
+        MIB_REQUIRE(sink.terminal(id, done), "FCS terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Completed && done.kind == ReviewJobKind::ExportFcs &&
+                       done.message == (out / "chosen.fcs").string() + " (30 events: 30 valid, 0 invalid)",
+                   "FCS completes with the .fcs path: " + done.message);
+        MIB_EXPECT(fs::is_regular_file(out / "chosen.fcs") && fs::is_regular_file(out / "chosen_event_map.csv"),
+                   "the FCS file and its event map");
+        MIB_EXPECT(laneOf(ReviewJobKind::ExportFcs) == ReviewJobLane::Export, "FCS runs on the export lane");
+        // Never over an existing pair.
+        const uint64_t again = jobs.startExportFcs((out / "chosen.fcs").string(), &err);
+        MIB_REQUIRE(again != 0, "start FCS again: " + err);
+        MIB_REQUIRE(sink.terminal(again, done), "FCS again terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Failed && done.message.find("already exists") != std::string::npos,
+                   "an existing pair is refused: " + done.message);
+        MIB_EXPECT(jobs.startExportFcs("", &err) == 0 && err == "Export output path is empty", "empty path refused");
+
+        const fs::path quarter = td.path() / "quarter.h5";
+        const fs::path rec = td.path() / "rec.h5";
+        BatchExportRequest req;
+        req.sources = {experiment.string(), quarter.string(), rec.string()};
+        req.outputRoot = out.string();
+        req.fcs = true;
+        req.metricsOnly = true; // ignored with fcs
+        const uint64_t batch = jobs.startBatchExport(req, &err);
+        MIB_REQUIRE(batch != 0, "start FCS batch: " + err);
+        MIB_REQUIRE(sink.terminal(batch, done), "FCS batch terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Completed && done.kind == ReviewJobKind::BatchExport &&
+                       done.message.find("exported 2 of 3") != std::string::npos &&
+                       done.message.find("rec.h5: recording files do not contain metrics") != std::string::npos,
+                   "FCS batch summary: " + done.message);
+        MIB_EXPECT(fs::is_regular_file(out / "run.fcs") && fs::is_regular_file(out / "run_event_map.csv") &&
+                       fs::is_regular_file(out / "quarter.fcs") && fs::is_regular_file(out / "quarter_event_map.csv") &&
+                       !fs::exists(out / "rec.fcs"),
+                   "one pair per experiment file, none for the recording");
+        MIB_EXPECT(noPartials(out), "FCS leaves no partial");
+    }
+    wd.mark("fcs");
+
     // ---- regenerate masks (whole file, recorded config) --------------------------
     {
         RegenerateMasksRequest req;
@@ -749,6 +819,172 @@ int main()
         MIB_EXPECT(noPartials(td.path()), "regenerate leaves no partial file");
     }
     wd.mark("regenerate");
+
+    // ---- regenerate dialog inputs (review ABI 8, #867: the Qt BatchMaskDialog) -----
+    {
+        // Setup: the whole file previews the valid set (Qt's hdf5ImageDatasetPath),
+        // with the recorded ROI, config and background the dialog pre-fills.
+        RegenerateSetup setup;
+        MIB_REQUIRE(jobs.regenerateSetup(RegenerateSource::WholeFile, "", setup, &err), "setup: " + err);
+        MIB_EXPECT(setup.previewDataset == "/valid_frames/images" && setup.frameCount == 30,
+                   "whole file previews the 30 valid images: " + setup.previewDataset + " " + std::to_string(setup.frameCount));
+        MIB_EXPECT(setup.roiRecorded && setup.roi.x == 2 && setup.roi.y == 2 && setup.roi.w == 28 && setup.roi.h == 20,
+                   "ROI pre-filled from /experiment_info");
+        MIB_EXPECT(setup.configRecorded && setup.config.gaussian_blur_size == backend::services::ProcessingConfig{}.gaussian_blur_size,
+                   "the recorded config is the base");
+        MIB_EXPECT(setup.hasBackground, "the saved background is reported");
+        MIB_EXPECT(setup.coreWarning.empty(), "same core: no warning: " + setup.coreWarning);
+        const std::string json = regenerateSetupJson(true, setup, "");
+        MIB_EXPECT(json.find(R"("frame_count":"30")") != std::string::npos &&
+                       json.find(R"("roi":{"h":20,"w":28,"x":2,"y":2})") != std::string::npos &&
+                       json.find(R"("ok":true)") != std::string::npos && json.find(R"("gaussian_blur_size":3)") != std::string::npos,
+                   "setup JSON: " + json);
+        MIB_EXPECT(regenerateSetupJson(false, setup, "busy") == R"({"error":"busy","ok":false})", "refused setup JSON");
+        MIB_REQUIRE(jobs.regenerateSetup(RegenerateSource::CurrentInvalid, "", setup, &err), "invalid setup: " + err);
+        MIB_EXPECT(setup.previewDataset == "/invalid_frames/images" && setup.frameCount == 3, "the invalid range previews the invalid set");
+
+        // Preview: frame i of the set, from an independent reader.
+        ReviewImage frame;
+        MIB_REQUIRE(jobs.regeneratePreview(RegenerateSource::WholeFile, "", 1, frame, &err), "preview: " + err);
+        const cv::Mat expected = pattern(2, 0); // valid row 1 is frame index 2
+        MIB_EXPECT(frame.frameIndex == 1 && frame.width == kW && frame.height == kH && frame.channels == 1 &&
+                       std::memcmp(frame.data.data(), expected.data, frame.data.size()) == 0,
+                   "preview frame 2 of 30 is valid row 1");
+        MIB_EXPECT(!jobs.regeneratePreview(RegenerateSource::WholeFile, "", 30, frame, &err) && !err.empty(), "past the set: refused");
+
+        // AVI / folder: the frame count and preview of the source itself.
+        const fs::path folder = td.path() / "frames";
+        fs::create_directories(folder);
+        for (int i = 0; i < 3; ++i) cv::imwrite((folder / ("f" + std::to_string(i) + ".png")).string(), pattern(static_cast<uint64_t>(10 + i)));
+        std::ofstream(folder / "notes.txt") << "not an image";
+        MIB_REQUIRE(jobs.regenerateSetup(RegenerateSource::Folder, folder.string(), setup, &err), "folder setup: " + err);
+        MIB_EXPECT(setup.frameCount == 3 && setup.previewDataset.empty() && !setup.configRecorded && !setup.roiRecorded,
+                   "folder: three images, defaults, full frame");
+        MIB_EXPECT(jobs.regeneratePreview(RegenerateSource::Folder, folder.string(), 2, frame, &err) &&
+                       std::memcmp(frame.data.data(), pattern(12).data, frame.data.size()) == 0,
+                   "folder preview frame 3 is the third file by name");
+        MIB_EXPECT(!jobs.regeneratePreview(RegenerateSource::Folder, folder.string(), 3, frame, &err), "past the folder: refused");
+        MIB_EXPECT(backend::services::batch_masks::countSourceFrames("avi", (folder / "none.avi").string()) == 0, "missing AVI: 0 frames");
+
+        // A recorded core that differs from the active one: Qt's warning, word for word.
+        const fs::path otherCore = td.path() / "other_core.h5";
+        {
+            Hdf5Service hdf5;
+            MIB_REQUIRE(hdf5.openFile(otherCore.string()) && hdf5.initializeDatasets(), "other-core fixture");
+            std::vector<ProcessedFrame> v{makeFrame(0, true, 700, 0.05), makeFrame(2, true, 700, 0.05)}, inv;
+            MIB_REQUIRE(hdf5.appendFrames(v, inv), "append other-core");
+            backend::processing::ProcessingCoreIdentity core;
+            core.version = "9.9.9-test";
+            core.contractVersion = 7;
+            MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 5000, v.size(), 0, backend::services::ProcessingConfig{},
+                                                 backend::services::ProcessingService::Roi{0, 0, kW, kH}, nullptr, &core),
+                        "other-core info");
+            hdf5.closeFile();
+        }
+        ReviewSession os;
+        MIB_REQUIRE(os.open(otherCore.string()), "open other-core");
+        Sink osink;
+        ReviewJobs oj(os, &processing, std::ref(osink));
+        MIB_REQUIRE(oj.regenerateSetup(RegenerateSource::WholeFile, "", setup, &err), "other-core setup: " + err);
+        const auto active = processing.activeProcessingCoreIdentity();
+        MIB_EXPECT(setup.coreWarning == "This file was recorded with processing core 9.9.9-test (contract 7), but regeneration "
+                                        "will use the currently active core " + active.version + " (contract " +
+                                        std::to_string(active.contractVersion) +
+                                        ").\n\nThe application will not switch cores automatically; the regenerated output "
+                                        "records the active identity.",
+                   "core mismatch warning: " + setup.coreWarning);
+        MIB_EXPECT(!setup.hasBackground, "no saved background reported");
+        oj.shutdown();
+
+        // The JSON request: defaults, every field, refusals.
+        RegenerateMasksRequest parsed;
+        MIB_REQUIRE(parseRegenerateMasksJson(R"({"source":2,"output_path":"/o.h5"})", parsed, err), "minimal request: " + err);
+        MIB_EXPECT(parsed.source == RegenerateSource::WholeFile && parsed.useRecordedConfig && !parsed.synthesizeBackground &&
+                       parsed.imageProcessingJson.empty() && !parsed.overrideRoi && parsed.background == RegenerateBackground::Recorded &&
+                       parsed.outputPath == "/o.h5" && parsed.startIndex == 0 && parsed.count == 0,
+                   "minimal request keeps review_regenerate_masks' defaults");
+        MIB_REQUIRE(parseRegenerateMasksJson(R"({"source":0,"start":5,"count":100,"output_path":"o.h5","use_recorded_config":true,
+            "synthesize_background":true,"image_processing":{"area_threshold_min":1},"roi":{"x":1,"y":2,"w":3,"h":4},
+            "background":"frame","background_index":7,"background_dataset":"/invalid_frames/images"})", parsed, err),
+                    "full request: " + err);
+        MIB_EXPECT(parsed.source == RegenerateSource::CurrentValid && parsed.startIndex == 5 && parsed.count == 100 &&
+                       parsed.synthesizeBackground && parsed.imageProcessingJson == R"({"area_threshold_min":1})" &&
+                       parsed.overrideRoi && parsed.roi.x == 1 && parsed.roi.y == 2 && parsed.roi.w == 3 && parsed.roi.h == 4 &&
+                       parsed.background == RegenerateBackground::Frame && parsed.backgroundIndex == 7 &&
+                       parsed.backgroundDataset == "/invalid_frames/images",
+                   "full request parsed");
+        MIB_REQUIRE(parseRegenerateMasksJson(R"({"output_path":"o.h5","roi":{"x":4,"y":4,"w":0,"h":9},"background":"none"})", parsed, err),
+                    "full-frame ROI: " + err);
+        MIB_EXPECT(parsed.overrideRoi && parsed.roi.w == 0 && parsed.roi.x == 0 && parsed.background == RegenerateBackground::None,
+                   "zero width = the full frame");
+        for (const char *bad : {R"([])", R"({"source":9,"output_path":"o"})", R"({"start":-1,"output_path":"o"})",
+                                R"({"roi":{"x":-1,"y":0,"w":2,"h":2},"output_path":"o"})", R"({"background":"saved","output_path":"o"})",
+                                R"({"background":"frame","output_path":"o"})",
+                                R"({"background":"frame","background_index":0,"background_dataset":"/x","output_path":"o"})",
+                                R"({"image_processing":{"gaussian_blur_size":"big"},"output_path":"o"})",
+                                R"({"image_processing":[1],"output_path":"o"})", "{nope"})
+        {
+            err.clear();
+            MIB_EXPECT(!parseRegenerateMasksJson(bad, parsed, err) && !err.empty(), std::string("refused: ") + bad);
+        }
+
+        // A run with the dialog's config fields, full-frame ROI and no background.
+        RegenerateMasksRequest req;
+        MIB_REQUIRE(parseRegenerateMasksJson(R"({"source":2,"output_path":")" + (td.path() / "dialog.h5").string() +
+                                                 R"(","image_processing":{"gaussian_blur_size":5,"area_threshold_min":1,"area_threshold_max":9000},
+                                                 "roi":{"x":0,"y":0,"w":0,"h":0},"background":"none"})",
+                                             req, err),
+                    "dialog request: " + err);
+        uint64_t id = jobs.startRegenerateMasks(req, &err);
+        MIB_REQUIRE(id != 0, "start dialog regenerate: " + err);
+        MIB_REQUIRE(sink.terminal(id, done, 120000), "dialog regenerate terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Completed && done.message.find("px→µm 0.5000 recorded") != std::string::npos,
+                   "dialog regenerate completed at the recorded factor: " + done.message);
+        {
+            Hdf5Service out;
+            MIB_REQUIRE(out.loadFile(req.outputPath), "open dialog output");
+            backend::services::ProcessingConfig cfg;
+            MIB_EXPECT(out.readRecordedProcessingConfig(cfg) && cfg.gaussian_blur_size == 5 && cfg.area_threshold_min == 1 &&
+                           cfg.area_threshold_max == 9000 &&
+                           cfg.morph_kernel_size == backend::services::ProcessingConfig{}.morph_kernel_size,
+                       "the output records the dialog's fields over the recorded config");
+            uint64_t a = 0, b = 0;
+            std::size_t nv = 0, ni = 0;
+            backend::services::ProcessingService::Roi roi{9, 9, 9, 9};
+            MIB_EXPECT(out.readExperimentInfo(a, b, nv, ni, &roi) && roi.w == 0 && roi.h == 0, "full-frame ROI recorded");
+            cv::Mat bg;
+            MIB_EXPECT(!out.readBackgroundImage(bg) || bg.empty(), "background none: none written");
+        }
+
+        // Set as Background: one source frame (valid row 4) is the run's background.
+        req = RegenerateMasksRequest{};
+        req.source = RegenerateSource::CurrentValid;
+        req.count = 5;
+        req.outputPath = (td.path() / "dialog_bg.h5").string();
+        req.background = RegenerateBackground::Frame;
+        req.backgroundDataset = "/valid_frames/images";
+        req.backgroundIndex = 4;
+        id = jobs.startRegenerateMasks(req, &err);
+        MIB_REQUIRE(id != 0, "start background-frame regenerate: " + err);
+        MIB_REQUIRE(sink.terminal(id, done, 120000), "background-frame terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Completed, "background-frame regenerate: " + done.message);
+        {
+            Hdf5Service out;
+            cv::Mat bg;
+            MIB_REQUIRE(out.loadFile(req.outputPath), "open background-frame output");
+            MIB_EXPECT(out.readBackgroundImage(bg) && bg.size() == expected.size() && cv::norm(bg, pattern(8), cv::NORM_INF) == 0,
+                       "the chosen frame is the recorded background");
+        }
+        req.outputPath = (td.path() / "dialog_bad.h5").string();
+        req.backgroundDataset = "/x";
+        MIB_EXPECT(jobs.startRegenerateMasks(req, &err) == 0 && err == "Unsupported background dataset", "bad background dataset refused");
+        req.background = RegenerateBackground::Recorded;
+        req.imageProcessingJson = "{nope";
+        MIB_EXPECT(jobs.startRegenerateMasks(req, &err) == 0 && err.rfind("Processing config: ", 0) == 0,
+                   "malformed config refused before the job: " + err);
+        MIB_EXPECT(!fs::exists(req.outputPath) && noPartials(td.path()), "refusals write nothing");
+    }
+    wd.mark("regenerate dialog");
 
     // ---- regenerate on the reanalysis engine (#512 S8, D6) ------------------------
     {

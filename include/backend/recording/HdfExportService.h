@@ -129,6 +129,10 @@ public:
     // listing, "<first>" or "<pattern with max suffix + 1>".
     static std::string nextAvailableName(const std::string& parentDir, const std::string& firstName,
                                          const std::string& prefix, const std::string& suffix);
+    // The Qt FCS rule (frontend::hdfreviewexport uniqueFcsPath, #576): "<base>.fcs" when it
+    // and "<base>_event_map.csv" are both free, else the first free "<base>_N.fcs" pair
+    // (N from 2). An FCS export never merges into an existing pair.
+    static std::string nextAvailableFcsPath(const std::string& parentDir, const std::string& base);
     static std::string sourceBaseName(const std::string& hdfPath);
     static std::string newJobId();
 

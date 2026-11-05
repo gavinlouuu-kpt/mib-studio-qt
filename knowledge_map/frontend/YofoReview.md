@@ -8,7 +8,8 @@
 menus, exports and update flow below).
 
 **Source:** `desktop/review.html`, `desktop/src/review/` (`main.tsx`,
-`ReviewApp.tsx`, `ReviewPanel.tsx`, `RegenerateMasks.tsx`, `review.css`,
+`ReviewApp.tsx`, `ReviewPanel.tsx`, `RegenerateMasks.tsx` (+ the shared
+`regenerate/` panels, #867), `review.css`,
 `charts/`, `exports/`),
 `desktop/src-tauri/tauri.review.conf.json`, cargo feature `review-only` in
 `desktop/src-tauri/Cargo.toml` (features `studio` / `review-only`),
@@ -341,9 +342,49 @@ cells render with density ready in ~2–3 s.
   (`ReviewJobsOptions::forReviewBridge()`, #512 S7) keeps YOFO Review off the
   second lane (an export beside a regenerate / density / core job) until
   HDF5 is thread-safe (#722).
-- **Toolbar**: Export Metrics, Export All, and a **More…** menu with Batch
-  Metrics, Batch Export All, Export Charts, Regenerate masks (the Qt
-  layout); job buttons disable while a job runs.
+- **Toolbar**: Export Metrics, Export FCS, Export All, and a **More…** menu
+  with Batch Metrics, Batch Export FCS, Batch Export All, Export Charts,
+  Regenerate masks (the Qt layout); job buttons disable while a job runs.
+- **FCS (review ABI 7, #867; Qt #576)**: **Export FCS…** opens the Qt save
+  dialog ("Export FCS 3.1", FCS + All Files) on `<base>.fcs` in the
+  remembered export directory, else the first free `<base>_N.fcs` pair
+  (`defaultFcsName`: both the `.fcs` and `<stem>_event_map.csv` must be free,
+  the Qt `uniqueFcsPath` first gap), appends `.fcs`
+  (`withFcsExtension`), and runs `review_export_fcs` (job kind `ExportFcs` 9,
+  `ReviewJobs::startExportFcs`: valid detections at the session's factor, the
+  pair published without replacing one). The terminal message is
+  `<path> (N events: V valid, I invalid)`; the dialog shows the Qt success
+  text with the event map (`fcsOutcomeText`) and Show in folder reveals the
+  `.fcs`. **Batch Export FCS…** picks HDF files then a folder and runs
+  `review_batch_export_fcs` (kind `BatchExport`, the engine's source policy:
+  each file's recorded factor, the fallback when it records none,
+  `<root>/<base>[_N].fcs`, recordings refused with the Qt wording). Disabled
+  for recording files. The `data-tour` anchor `review-export-fcs` marks the
+  button for the guided tour (Driver.js is not on develop yet, PR #827).
+- **Regenerate masks (review ABI 8, #867; Qt `BatchMaskDialog`)**:
+  `RegenerateMasks.tsx` lays out the Qt groups. **Input source** (whole file,
+  valid / invalid / recorded range with 1-based From and Count 100, AVI,
+  folder) re-reads `fetch_review_regenerate_setup` when the source changes;
+  **Preview & ROI** and **Processing Config** are the shared
+  `regenerate/RegeneratePanels.tsx` components (`RoiPreviewPanel`,
+  `ProcessingConfigGroup`; rules in `regenerate/regenerateForm.ts`, also used
+  by MIB Studio's Review stage): frames by `fetch_review_regenerate_preview`
+  with Prev / Next and "Frame i / n" (Qt `previewWindow`), the ROI pre-filled
+  from `/experiment_info` and drawn by dragging (or typed; Full frame), Set as
+  Background / Clear / Use saved with Qt's "Background: …" label, the
+  synthetic box on by default, the eight config fields from the recorded
+  config (the defaults for AVI / folder) with odd-kernel coercion and "Reset
+  to recorded config". Under the groups `regenerateCalibration` names the
+  factor (recorded / Preferences fallback / default 0.4886 for AVI and
+  folder) and the E-LUT the run will use, and the setup's core-mismatch
+  text shows before Run. Run sends `review_regenerate_masks_json` (only the
+  eight fields as `image_processing`, the ROI, `background`
+  recorded / none / frame); the default output is Qt's `<base>_remasked.h5`
+  beside the source (inside a folder), then `_N`; the backend never
+  overwrites (D6). After success the panel opens the new file (as before).
+  `data-tour` anchors: `regen-source`, `regen-preview-roi`,
+  `regen-preview-nav`, `regen-roi`, `regen-background`, `regen-config`,
+  `regen-config-reset`, `regen-calibration`, `regen-output`, `regen-run`.
 - **Rules** (`exports/exportHelpers.ts`, Qt parity): metrics default to
   `<basename>_metrics.csv`, then `_N` one past the highest suffix in the
   directory (`HdfExportService::nextAvailableName`, mirrored; directory
