@@ -647,6 +647,28 @@ int main()
         MIB_EXPECT(readAll(td.path() / "factors" / "bare_metrics.csv") == direct(bare, 0.3), "bare.h5 uses the fallback");
         MIB_EXPECT(direct(quarter, 0.25) != direct(quarter, 0.5), "factors change the CSV (test is sensitive)");
         MIB_EXPECT(!fs::exists(td.path() / "factors" / "rec_metrics.csv"), "no CSV for the recording file");
+
+        // The same sources through a non-metrics ("All") batch (#873 review: one policy for every
+        // batch, ExportEngine's applySourcePolicy, not a probe of the batch's own): each file at
+        // its own recorded factor, the fallback only for the one that records none, and a
+        // recording exported as images instead of refused.
+        BatchExportRequest all;
+        all.sources = {quarter.string(), bare.string(), rec.string()};
+        all.outputRoot = (td.path() / "factors_all").string();
+        const uint64_t allId = jobs.startBatchExport(all, &err);
+        MIB_REQUIRE(allId != 0, "start All batch: " + err);
+        MIB_REQUIRE(sink.terminal(allId, done), "All batch terminal");
+        MIB_EXPECT(done.state == ReviewJobState::Completed && done.message == "exported 3 of 3 file(s)",
+                   "All batch exports all three, the recording included: " + done.message);
+        const fs::path allRoot = td.path() / "factors_all";
+        MIB_EXPECT(readAll(allRoot / "quarter" / "metrics.csv") == direct(quarter, 0.25), "All batch: quarter.h5 at its 0.25");
+        MIB_EXPECT(readAll(allRoot / "bare" / "metrics.csv") == direct(bare, 0.3), "All batch: bare.h5 at the fallback");
+        MIB_EXPECT(fs::is_directory(allRoot / "rec") && !fs::exists(allRoot / "rec" / "metrics.csv"),
+                   "All batch: the recording is exported as images, with no metrics");
+        std::size_t recTiffs = 0;
+        for (const auto &e : fs::recursive_directory_iterator(allRoot / "rec"))
+            if (e.path().extension() == ".tiff") ++recTiffs;
+        MIB_EXPECT(recTiffs == 4, "All batch: one image per recorded frame, " + std::to_string(recTiffs));
         session.setFallbackPixelToMicron(0.4886);
     }
     wd.mark("batch factors");

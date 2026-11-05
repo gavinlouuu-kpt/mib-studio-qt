@@ -49,6 +49,9 @@ namespace backend::review
         // contain metrics" (the Qt batch rule) instead of exported. An FCS export refuses
         // recordings whatever this says.
         bool refuseRecordings{false};
+        // A raw recording that is not refused is exported as `Images` instead of the request's
+        // format (ReviewJobs' non-metrics batch: a recording has no metrics, only frames).
+        bool recordingsAsImages{false};
         // The request named `conversion_factor_source`: each per-file result reports the factor
         // used, where it came from and the exported counts (absent otherwise, so older clients
         // see the status byte for byte as before).
