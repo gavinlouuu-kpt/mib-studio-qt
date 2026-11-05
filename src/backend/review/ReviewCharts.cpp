@@ -21,7 +21,8 @@ namespace backend::review
 {
 
     std::string reviewChartsJson(const std::vector<services::ProcessedFrame> &rows, const std::string &source,
-                                 double factor, double ringMin, double ringMax)
+                                 double factor, double ringMin, double ringMax,
+                                 const std::string &pixelToMicronSource)
     {
         using nlohmann::json;
         const auto data = recording::makeReviewChartData(rows, factor, ringMin, ringMax);
@@ -43,23 +44,24 @@ namespace backend::review
         json curves = json::array();
         for (const auto &[modulus, points] : recording::bundledIsoelasticCurves())
             curves.push_back({{"modulus", modulus}, {"points", points}});
-        return json{{"valid", true},
-                    {"source_path", source},
-                    {"pixel_to_micron", factor},
-                    {"rows", std::to_string(rows.size())},
-                    {"finite_points", std::to_string(data.points.size())},
-                    {"excluded_nonfinite", std::to_string(data.excludedNonfinite)},
-                    {"area_range", {data.areaMin, data.areaMax}},
-                    {"deform_range", {data.deformMin, data.deformMax}},
-                    {"resolution", resolution},
-                    {"density", cells},
-                    {"histogram", bins},
-                    {"ring_range", {data.ringMin, data.ringMax}},
-                    {"histogram_samples", std::to_string(data.ringRatios.size())},
-                    {"curves", curves},
-                    {"curve_source", "Bundled scaled_isoelastic_data_6.16-4.24; channel width 30 um, flow rate 0.25, "
-                                     "fluid viscosity 4.24"}}
-            .dump();
+        json out{{"valid", true},
+                 {"source_path", source},
+                 {"pixel_to_micron", factor},
+                 {"rows", std::to_string(rows.size())},
+                 {"finite_points", std::to_string(data.points.size())},
+                 {"excluded_nonfinite", std::to_string(data.excludedNonfinite)},
+                 {"area_range", {data.areaMin, data.areaMax}},
+                 {"deform_range", {data.deformMin, data.deformMax}},
+                 {"resolution", resolution},
+                 {"density", cells},
+                 {"histogram", bins},
+                 {"ring_range", {data.ringMin, data.ringMax}},
+                 {"histogram_samples", std::to_string(data.ringRatios.size())},
+                 {"curves", curves},
+                 {"curve_source", "Bundled scaled_isoelastic_data_6.16-4.24; channel width 30 um, flow rate 0.25, "
+                                  "fluid viscosity 4.24"}};
+        if (!pixelToMicronSource.empty()) out["pixel_to_micron_source"] = pixelToMicronSource;
+        return out.dump();
     }
 
     std::string reviewChartsErrorJson(const std::string &error)

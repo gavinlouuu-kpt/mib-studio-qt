@@ -58,6 +58,9 @@ public:
     ReviewResult review_save_core_record(rust::Str json, bool overwrite);
 
     ReviewResult review_export_metrics(rust::Str output_path);
+    // Review ABI 7 (#867): Export FCS 3.1 (+ event map) and its batch.
+    ReviewResult review_export_fcs(rust::Str output_path);
+    ReviewResult review_batch_export_fcs(rust::Vec<rust::String> sources, rust::Str output_root);
     ReviewResult review_export_all(rust::Str output_root, bool export_series, std::uint64_t series_start,
                                    std::uint64_t series_end, rust::Vec<ReviewChartSnapshot> charts);
     ReviewResult review_export_charts(rust::Str output_dir, rust::Vec<ReviewChartSnapshot> charts);
@@ -66,6 +69,11 @@ public:
     ReviewResult review_regenerate_masks(std::uint32_t source, rust::Str source_path, std::uint64_t start_index,
                                          std::uint64_t count, rust::Str output_path, bool use_recorded_config,
                                          bool synthesize_background);
+    // Review ABI 8 (#867): the Qt BatchMaskDialog's groups (review-contract.json
+    // review_regenerate_setup / review_regenerate_masks_json).
+    rust::String fetch_review_regenerate_setup(std::uint32_t source, rust::Str source_path);
+    ReviewFrame fetch_review_regenerate_preview(std::uint32_t source, rust::Str source_path, std::uint64_t index);
+    ReviewResult review_regenerate_masks_json(rust::Str request_json);
     ReviewResult review_compute_core(double core_fraction);
     rust::String fetch_review_computed_core_json();
     ReviewResult review_request_density(double bandwidth_factor, double core_fraction, std::uint32_t levels,

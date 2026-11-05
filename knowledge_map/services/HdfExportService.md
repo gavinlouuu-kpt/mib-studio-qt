@@ -39,7 +39,10 @@ native CLI: `hdf_export_cli`
   every artifact, image, series frame, FCS event, and the commit.
 - Generated names: `nextAvailableName()` lists the parent once and picks
   `<base>` or `<base>_<max suffix + 1>` — cost does not grow with the number
-  of previous exports. An explicit destination is honoured; an existing
+  of previous exports. `nextAvailableFcsPath(dir, base)` (#867) is the Qt FCS
+  rule instead: `<base>.fcs` while it and `<base>_event_map.csv` are both
+  free, else the first free `<base>_N.fcs` pair from N = 2 (the export
+  engine's FCS batches and default FCS destinations). An explicit destination is honoured; an existing
   *file* destination (already confirmed by a save dialog) is replaced
   atomically at commit for MetricsCsv; existing FCS files, their event-map
   siblings, and existing folders are refused. A destination equivalent
@@ -162,8 +165,10 @@ the transactional export worker. Chart-only jobs export no source-frame images;
 failed chart writes never publish a successful output. Calibration/ring limits
 are explicit snapshots of current backend settings (the live factor and
 config), not claimed to be recovered recording calibration; the Qt tab and YOFO
-Review use each file's recorded factor (TD-17), and MIB Studio follows them once
-it mounts the review module (#512 decision D3). Fixed isoelastic reference conditions are
+Review use each file's recorded factor (TD-17). Since #867 MIB Studio's
+`fetchReviewChartsJson` does too (`pixel_to_micron_source` "recorded"; "live" only for a file
+that records none), and YOFO's batch Export All sets `generateReviewCharts` per file (the
+file's factor and recorded ring-ratio range). Fixed isoelastic reference conditions are
 labelled rather than automatically assumed to match the experiment.
 
 Tauri Review export options pass existing frame classes and inclusive series ranges to the shared service; fractional, negative and reversed ranges fail at the facade boundary.

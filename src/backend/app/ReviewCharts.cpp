@@ -3,7 +3,8 @@
 // density, the reader-side overlay and the PNG live in mib_review_core
 // (backend/review/ReviewCharts.h, #512 slice 4); the facade keeps the policy:
 // the loaded file (the valid rows its ReviewSession read at open, #512 S5),
-// the live factor and ring-ratio range, and the facade's ROI style
+// the factor (the file's recorded pixel_to_micron as Qt charts it, else the
+// live one) and the live ring-ratio range, and the facade's ROI style
 // (RoiStyle::Facade until decision D2 switches it).
 #include "backend/app/BackendFacade.h"
 #include "backend/app/AppBackend.h"
@@ -39,8 +40,14 @@ std::string BackendFacade::fetchReviewChartsJson() const {
         if(!valid.metadataReadable)throw std::runtime_error("Cannot read valid-frame metrics");
         const auto& rows=valid.frames;
         const auto cfg=backend_.processing().getProcessingConfig();
-        const auto factor=backend_.processing().getPixelToMicronFactor();
-        return review::reviewChartsJson(rows,source,factor,cfg.ring_ratio_min,cfg.ring_ratio_max);
+        // Qt parity (REVIEW-068): the factor the file recorded, the live one only for a file that
+        // records none (#867: the session's fallback is the live factor, so the snapshot's factor is
+        // already that). Same snapshot as the rows, so the pair cannot mix two files. The charts'
+        // wire spelling of the one source enum: "recorded", or "live" for a Fallback.
+        const auto factorSource=valid.pixelToMicronFromFile?review::PixelToMicronSource::Recorded
+                                                           :review::PixelToMicronSource::Fallback;
+        return review::reviewChartsJson(rows,source,valid.pixelToMicron,cfg.ring_ratio_min,cfg.ring_ratio_max,
+                                        factorSource==review::PixelToMicronSource::Recorded?"recorded":"live");
     }catch(const std::exception& error){return review::reviewChartsErrorJson(error.what());}
 }
 } // namespace backend::bridge

@@ -85,7 +85,7 @@ def main():
         wait(lambda: js('return [...document.querySelectorAll("button")].some(b=>b.textContent.trim()===arguments[0]&&!b.disabled)', text), text)
         js('const b=[...document.querySelectorAll("button")].find(b=>b.textContent.trim()===arguments[0]&&!b.disabled);b.scrollIntoView({block:"center"});b.click();', text)
         if next_picker is not None:
-            title = {"Start Experiment": "Save Experiment Data", "Select HDF File…": "Open recording", "Export All…": "Choose export parent folder", "Regenerate into new HDF…": "Save regenerated masks as a new HDF file"}[text]
+            title = {"Start Experiment": "Save Experiment Data", "Select HDF File…": "Open HDF File|Open recording", "Export All…": "Choose export parent folder", "Regenerate into new HDF…": "Save regenerated masks as a new HDF file"}[text]
             def find_dialog():
                 result = subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', title], capture_output=True, text=True)
                 return result.stdout.splitlines()[-1] if result.returncode == 0 and result.stdout.strip() else None

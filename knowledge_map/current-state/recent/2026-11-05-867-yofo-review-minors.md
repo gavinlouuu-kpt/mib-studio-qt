@@ -17,3 +17,8 @@ the scatter | (pane over histogram) layout has draggable splits remembered in `l
 (039). Three silent failures now speak: isoelastic curves, the viewer's series count and Show in
 folder. The IPC golden changed on purpose (viewer keys and series positions, the core share
 argument, one new export-frame flow). See [[frontend/YofoReview]] and `docs/manual/yofo-review.md`.
+
+Stack merge (2026-11-05): this branch now contains the updated #889 (`9839d8f0`: one pixel-to-micron
+resolver, main bridge ABI 45, review ABI 8). The IPC golden also carries #882's regenerate flows, and
+the export-as-TIFF flow's paths moved from `/data/out` to `/data` because Regenerate no longer sets
+the remembered export folder. This branch itself still adds no ABI.

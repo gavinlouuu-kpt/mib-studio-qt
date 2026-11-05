@@ -177,10 +177,18 @@ export interface ReviewMetadata {
   invalid_masks: ReviewDatasetInfo;
   recorded_images: ReviewDatasetInfo;
   file_path: string;
+  /** The px→µm factor the file's numbers use: the one the file recorded when `pixel_to_micron_from_file`,
+   *  else the live processing factor (Qt, TD-17). Absent from an older backend. */
+  pixel_to_micron?: number;
+  pixel_to_micron_from_file?: boolean;
+  /** Recording files: frames filtered out as empty at record time ("M empty skipped"). Absent from an older backend. */
+  filtered_frames?: number;
 }
 
 export interface ReviewChartSnapshot {
   valid:boolean;error?:string;source_path:string;pixel_to_micron:number;
+  /** Which factor `pixel_to_micron` is: the file's recorded one, or the live setting for a file that records none. Absent from an older backend (always live). */
+  pixel_to_micron_source?:"recorded"|"live";
   rows:string;finite_points:string;excluded_nonfinite:string;histogram_samples:string;
   area_range:[number,number];deform_range:[number,number];ring_range:[number,number];
   resolution:number;density:[number,number,string][];histogram:string[];

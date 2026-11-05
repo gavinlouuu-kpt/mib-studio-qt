@@ -13,7 +13,16 @@
 // #717 B1a (review ABI 2) added one call outside the panel: the identity
 // probe (`review_probe_runs`); no existing flow changed. #717 B3b (review ABI
 // 3) added two: the linked records of a track (`fetch_review_track_rows`)
-// and one record reprocessed (`review_reprocess_record`).
+// and one record reprocessed (`review_reprocess_record`). #867 (review ABI 7)
+// added two flows: Export FCS (`review_export_fcs`, the save dialog's Qt
+// title, filters and `<base>.fcs` default) and Batch Export FCS
+// (`review_batch_export_fcs`); no existing flow changed. #867 (review ABI 8)
+// changed the two regenerate flows on purpose: the dialog reads the source's
+// setup and preview frames (`fetch_review_regenerate_setup`,
+// `fetch_review_regenerate_preview`), proposes Qt's `<base>_remasked.h5`
+// beside the source instead of in the remembered export folder, and starts
+// the job with `review_regenerate_masks_json` (the Processing Config fields,
+// ROI and background); one flow was added for those groups.
 // #867 (Qt parity, YOFO Review minors) changed the golden on purpose: the
 // viewer's Up / Down keys step frames (series is Shift+Up / Shift+Down, and its
 // position 0 is the trigger image, so a series image is fetched raw and at
@@ -238,6 +247,33 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
       return job(REVIEW_OPERATION_KINDS.ExportCharts, `exported 2 chart(s) to ${args.outputDir}`);
     case "review_batch_export":
       return job(REVIEW_OPERATION_KINDS.BatchExport, `exported 2 of 2 file(s)`);
+    case "review_export_fcs":
+      return job(REVIEW_OPERATION_KINDS.ExportFcs, `${args.outputPath} (3 events: 2 valid, 1 invalid)`);
+    case "review_batch_export_fcs":
+      return job(REVIEW_OPERATION_KINDS.BatchExport, `exported 2 of 2 file(s)`);
+    case "fetch_review_regenerate_setup": {
+      const external = args.source === 3 || args.source === 4;
+      return JSON.stringify({
+        ok: true,
+        error: "",
+        preview_dataset: external ? "" : "/valid_frames/images",
+        frame_count: external ? "2" : "250",
+        config: { gaussian_blur_size: 3, bg_subtract_threshold: 8, morph_kernel_size: 3, morph_iterations: 1, area_threshold_min: 60, area_threshold_max: 290, deformability_threshold_min: 0, deformability_threshold_max: 1 },
+        config_recorded: !external,
+        roi: external ? { x: 0, y: 0, w: 0, h: 0 } : { x: 0, y: 0, w: 512, h: 96 },
+        roi_recorded: !external,
+        has_background: !external,
+        core_warning: "",
+      });
+    }
+    case "fetch_review_regenerate_preview":
+      return new ArrayBuffer(0); // the decoder refuses it: the dialog says it cannot show the frame
+    case "review_regenerate_masks_json": {
+      const request = JSON.parse(String(args.json)) as { output_path: string };
+      if (existingOutputs.has(request.output_path)) return { ok: false, command: 0, message: "Output already exists; choose a new file", operation_id: "0" };
+      existingOutputs.add(request.output_path);
+      return job(REVIEW_OPERATION_KINDS.RegenerateMasks, `${request.output_path} (2 images: 2 valid, 0 invalid)`);
+    }
     case "review_regenerate_masks":
       if (existingOutputs.has(String(args.outputPath))) return { ok: false, command: 0, message: "Output already exists; choose a new file", operation_id: "0" };
       existingOutputs.add(String(args.outputPath));
@@ -266,6 +302,7 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
       const o = args.options as { title?: string; defaultPath?: string };
       // Regenerate: the operator takes the proposed name unless told otherwise.
       if (o.title === "Export Frame as TIFF") return o.defaultPath; // the operator takes the proposed name
+      if (o.title === "Export FCS 3.1") return "/data/out/run_cells"; // no extension: the panel appends .fcs
       return o.title === "Save regenerated masks" ? (regenerateSaveAnswers.shift() ?? o.defaultPath) : "/data/out/run_metrics_2.csv";
     }
     case "plugin:dialog|message":
@@ -503,6 +540,23 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
   );
 
   flows.push(
+    await flow("export fcs", async () => {
+      await click(button("Export FCS…"));
+      await finishJob("Export FCS");
+    }),
+  );
+
+  flows.push(
+    await flow("batch export fcs", async () => {
+      await more("Batch Export FCS…");
+      await settle(250);
+      const text = modal("Batch Export FCS").textContent ?? "";
+      if (!text.includes("Exported all 2 file(s).")) throw new Error(`batch FCS summary: ${text}`);
+      await click(button("Close", modal("Batch Export FCS")));
+    }),
+  );
+
+  flows.push(
     await flow("charts and core contour", async () => {
       await click(button("Charts"));
       await click(button("Compute core contour…"));
@@ -532,7 +586,7 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
       await click(button("Choose…", dialog));
       // The operator picks the file the last run wrote (past the OS's own
       // overwrite question): the backend refuses, nothing is replaced.
-      regenerateSaveAnswers.push("/data/out/clip_remasked.h5");
+      regenerateSaveAnswers.push("/data/clip_remasked.h5");
       await click(button("Save as…", dialog));
       await click(button("Regenerate", dialog));
       const refused = modal("Regenerate masks");
@@ -541,9 +595,33 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
       expect(host.querySelector('[role="dialog"][aria-label="Regenerate masks"].job-dialog')).toBeNull();
       // Choose again: the proposal is the next free name.
       await click(button("Save as…", refused));
-      expect((refused.querySelector('input[aria-label="Output file"]') as HTMLInputElement).value).toBe("/data/out/clip_remasked_2.h5");
+      expect((refused.querySelector('input[aria-label="Output file"]') as HTMLInputElement).value).toBe("/data/clip_remasked_2.h5");
       expect(refused.querySelector('[role="alert"]')).toBeNull();
       await click(button("Regenerate", refused));
+      await finishJob("Regenerate masks");
+    }),
+  );
+
+  flows.push(
+    await flow("regenerate masks with the dialog's preview, ROI and config (#867)", async () => {
+      await more("Regenerate masks…");
+      const dialog = modal("Regenerate masks");
+      // Qt's groups: the ROI pre-filled from the file, "Frame 1 / 250", the recorded config.
+      expect((dialog.querySelector('input[aria-label="ROI w"]') as HTMLInputElement).value).toBe("512");
+      expect(dialog.textContent).toContain("Frame 1 / 250");
+      await click(button("Next →", dialog));
+      expect(dialog.textContent).toContain("Frame 2 / 250");
+      const blur = dialog.querySelector('input[aria-label="Blur kernel"]') as HTMLInputElement;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(blur, "5");
+        blur.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await click(button("Clear", dialog));
+      expect(dialog.textContent).toContain("Background: none (a synthetic one is built)");
+      await click(button("Save as…", dialog));
+      // The panel opened the last run's output (REVIEW-067): its name, beside it.
+      expect((dialog.querySelector('input[aria-label="Output file"]') as HTMLInputElement).value).toBe("/data/clip_remasked_2_remasked.h5");
+      await click(button("Regenerate", dialog));
       await finishJob("Regenerate masks");
     }),
   );

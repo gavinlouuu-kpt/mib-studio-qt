@@ -6,7 +6,7 @@ import { useState } from "react";
 import { isRemote } from "../../transport";
 import { revealItemInDir } from "../../transport/dialogs";
 import { REVIEW_OPERATION_KINDS } from "../reviewContract";
-import { batchSummaryText, parseBatchSummary, parseSeriesRange, type SeriesChoice } from "./exportHelpers";
+import { batchSummaryText, eventMapPathOf, parseBatchSummary, parseSeriesRange, type SeriesChoice } from "./exportHelpers";
 import type { TrackedJob } from "./useReviewJobs";
 
 /** Why "Show in folder" is unavailable in a browser: the output is on the
@@ -19,7 +19,22 @@ export function outputPathOf(job: TrackedJob): string {
   if (job.kind === REVIEW_OPERATION_KINDS.ExportMetrics || job.kind === REVIEW_OPERATION_KINDS.ExportAll) return job.message;
   if (job.kind === REVIEW_OPERATION_KINDS.RegenerateMasks) return job.message.replace(/ \(\d+ images:.*\)$/, "");
   if (job.kind === REVIEW_OPERATION_KINDS.ExportCharts) return job.message.replace(/^exported \d+ chart\(s\) to /, "");
+  if (job.kind === REVIEW_OPERATION_KINDS.ExportFcs) return parseFcsOutcome(job.message).path;
   return "";
+}
+
+/** Export FCS's terminal message: `<path> (N events: V valid, I invalid)`. */
+export function parseFcsOutcome(message: string): { path: string; events?: number; valid?: number; invalid?: number } {
+  const m = /^(.*) \((\d+) events: (\d+) valid, (\d+) invalid\)$/s.exec(message);
+  return m ? { path: m[1], events: Number(m[2]), valid: Number(m[3]), invalid: Number(m[4]) } : { path: message };
+}
+
+/** The Qt success text of Export FCS ("Exported N FCS 3.1 events (V valid,
+ * I invalid) to … Event map: …"). */
+export function fcsOutcomeText(message: string): string {
+  const o = parseFcsOutcome(message);
+  const counts = o.events === undefined ? "" : ` ${o.events} FCS 3.1 events (${o.valid} valid, ${o.invalid} invalid)`;
+  return `Exported${counts} to ${o.path}. Event map: ${eventMapPathOf(o.path)}`;
 }
 
 /** Progress text with paths shortened to their file name
@@ -44,6 +59,7 @@ export function outcomeText(job: TrackedJob): string {
         return s ? batchSummaryText(s) : job.message;
       }
       if (job.kind === REVIEW_OPERATION_KINDS.ExportCharts) return capitalize(job.message);
+      if (job.kind === REVIEW_OPERATION_KINDS.ExportFcs) return fcsOutcomeText(job.message);
       const path = outputPathOf(job);
       return path ? `Written to ${path}` : capitalize(job.message);
     }

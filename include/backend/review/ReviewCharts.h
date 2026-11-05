@@ -7,8 +7,9 @@
 //
 // Qt-free, built on mib_processing only. The host keeps the policy: which
 // file the charts describe, the pixel-to-micron factor and the ring-ratio
-// range (the facade: the loaded file, the live factor and processing
-// config), and the ROI style of the overlay. The JSON and the messages
+// range (the facade: the loaded file, the file's recorded factor else the
+// live one, and the live processing config), and the ROI style of the
+// overlay. The JSON and the messages
 // follow bridge-contract.json exactly; the facade's are these.
 #pragma once
 
@@ -25,9 +26,13 @@ namespace backend::review
     // (recording::makeReviewChartData keeps the valid rows): 128 × 128
     // density cells that conserve every finite calibrated point, the exact
     // ring-ratio histogram over [ringMin, ringMax], the bundled isoelastic
-    // curves; counters as decimal strings.
+    // curves; counters as decimal strings. `pixelToMicronSource` ("recorded":
+    // the open file's own factor, as Qt charts it; "live": the host's current
+    // factor, the file records none) is emitted as `pixel_to_micron_source`
+    // next to `pixel_to_micron`; empty emits nothing.
     std::string reviewChartsJson(const std::vector<services::ProcessedFrame> &rows, const std::string &sourcePath,
-                                 double pixelToMicron, double ringMin, double ringMax);
+                                 double pixelToMicron, double ringMin, double ringMax,
+                                 const std::string &pixelToMicronSource = {});
 
     // `fetch_review_charts_json` when no snapshot can be built.
     std::string reviewChartsErrorJson(const std::string &error);

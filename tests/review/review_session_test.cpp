@@ -37,8 +37,10 @@
 
 #include <hdf5.h>
 
+#include <atomic>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <new>
 #include <string>
@@ -184,6 +186,15 @@ int main()
     writeExperiment(experiment, true, true, true);
     writeExperiment(legacy, false, false, false);
     writeRecording(recording, 9, 3);
+    const fs::path notHdf5 = td.path() / "not_hdf5.h5";
+    const fs::path truncated = td.path() / "truncated.h5";
+    {
+        std::ofstream(notHdf5) << "not an hdf5 file";
+        std::ifstream whole(experiment, std::ios::binary);
+        std::vector<char> head(512);
+        whole.read(head.data(), static_cast<std::streamsize>(head.size()));
+        std::ofstream(truncated, std::ios::binary).write(head.data(), whole.gcount());
+    }
 
     // ---- faults before open -------------------------------------------------
     {
@@ -191,6 +202,20 @@ int main()
         std::string err;
         MIB_EXPECT(!s.open((td.path() / "missing.h5").string(), &err), "missing file opens");
         MIB_EXPECT(!err.empty(), "missing file: no error text");
+        // Qt's two messages: a missing path is told apart from a file HDF5 cannot read.
+        MIB_EXPECT(err == "File not found: " + (td.path() / "missing.h5").string(), "missing file: error text: " + err);
+        MIB_EXPECT(!s.isOpen() && !s.metadata().fileOpen && s.filePath().empty(), "session closed after a missing file");
+        MIB_EXPECT(!s.open(notHdf5.string(), &err) && err.rfind("Cannot read the HDF5 file", 0) == 0 &&
+                       err.find(notHdf5.string()) != std::string::npos,
+                   "existing non-HDF5 file: error text: " + err);
+        MIB_EXPECT(!s.isOpen() && !s.metadata().fileOpen, "session closed after a non-HDF5 file");
+        MIB_EXPECT(!s.open(truncated.string(), &err) && err.rfind("Cannot read the HDF5 file", 0) == 0,
+                   "truncated HDF5 file: error text: " + err);
+        MIB_EXPECT(!s.isOpen() && !s.metadata().fileOpen, "session closed after a truncated file");
+        // A good open, then a missing path: the failed open leaves nothing open.
+        MIB_REQUIRE(s.open(experiment.string()), "open before the failed open");
+        MIB_EXPECT(!s.open((td.path() / "gone.h5").string(), &err) && err.rfind("File not found", 0) == 0 && !s.isOpen(),
+                   "failed open closes the previous file");
         MIB_EXPECT(!s.isOpen(), "session open after failed open");
         MIB_EXPECT(!s.metadata().fileOpen, "metadata fileOpen when closed");
         std::vector<backend::review::MetricRow> rows;
@@ -202,6 +227,7 @@ int main()
         const auto closedSet = s.validSet();
         MIB_EXPECT(!closedSet.open && closedSet.filePath.empty() && !closedSet.metadataReadable && closedSet.frames.empty(),
                    "valid set when closed");
+        MIB_EXPECT(closedSet.pixelToMicron == 0.0 && !closedSet.pixelToMicronFromFile, "valid set factor when closed");
         ReviewImage img;
         MIB_EXPECT(!s.fetchImage(ReviewDataset::ValidImage, 0, OverlayMode::None, false, img), "image when closed");
         MIB_EXPECT(s.scatter().frameIndex.empty(), "scatter when closed");
@@ -226,6 +252,13 @@ int main()
         MIB_EXPECT(meta.pixelToMicronFromFile && std::fabs(meta.pixelToMicron - kRecordedFactor) < 1e-12,
                    "TD-17 recorded factor");
         MIB_EXPECT(std::fabs(s.pixelToMicron() - kRecordedFactor) < 1e-12, "effective factor is the recorded one");
+        {
+            // The valid-set snapshot carries the calibration the charts use (Qt parity, REVIEW-068).
+            const auto set = s.validSet();
+            MIB_EXPECT(set.pixelToMicronFromFile == meta.pixelToMicronFromFile && set.pixelToMicronFromFile &&
+                           set.pixelToMicron == meta.pixelToMicron && std::fabs(set.pixelToMicron - kRecordedFactor) < 1e-12,
+                       "valid set carries the recorded factor");
+        }
         MIB_EXPECT(!meta.kdeAnalysisJson.empty() && meta.kdeLiveJson.empty(), "stored kde records");
         MIB_EXPECT(meta.hasRecordedConfig && meta.ringRatioMin == 12.0 && meta.ringRatioMax == 30.0, "recorded ring-ratio range");
         MIB_EXPECT(s.frameCount(true) == 10 && s.frameCount(false) == 4, "frame counts");
@@ -411,6 +444,12 @@ int main()
         MIB_REQUIRE(s.open(legacy.string()), "open legacy");
         const auto meta = s.metadata();
         MIB_EXPECT(!meta.pixelToMicronFromFile && std::fabs(meta.pixelToMicron - 0.5) < 1e-12, "legacy factor fallback");
+        {
+            const auto set = s.validSet();
+            MIB_EXPECT(!set.pixelToMicronFromFile && set.pixelToMicron == meta.pixelToMicron &&
+                           std::fabs(set.pixelToMicron - 0.5) < 1e-12,
+                       "valid set of a legacy file: from_file false, the session's fallback");
+        }
         MIB_EXPECT(!meta.hasAccounting, "legacy accounting");
         {
             // Closed before the save below: an open reader holds the file and
@@ -430,6 +469,59 @@ int main()
         MIB_EXPECT(s.saveCoreRecordJson("{\"schema\":1}", false, &err), "first record on legacy: " + err);
     }
     wd.mark("legacy");
+
+    // ---- #867: one px->um rule; a live fallback for a file that records none --------
+    {
+        // The resolver: recorded (the snapshot's 0.25) beats the operator's factor, which beats the fallback.
+        const auto resolveOf = [&](const fs::path &file, double fallback, double operatorFactor) {
+            Hdf5Service reader;
+            MIB_REQUIRE(reader.loadFile(file.string()), "load for the resolver");
+            const auto resolved = ReviewSession::resolvePixelToMicron(reader, fallback, operatorFactor);
+            reader.closeFile();
+            return resolved;
+        };
+        const auto recordedRule = resolveOf(experiment, 0.5123, 0.7);
+        MIB_EXPECT(recordedRule.recorded() && std::fabs(recordedRule.factor - 0.25) < 1e-12 &&
+                       std::string(backend::review::pixelToMicronSourceName(recordedRule.source)) == "recorded",
+                   "a file that records a factor is analysed at it, whatever the fallback and operator factor are");
+        const auto fallbackRule = resolveOf(legacy, 0.5123, 0.0);
+        MIB_EXPECT(!fallbackRule.recorded() && std::fabs(fallbackRule.factor - 0.5123) < 1e-12 &&
+                       std::string(backend::review::pixelToMicronSourceName(fallbackRule.source)) == "fallback",
+                   "a file that records none is analysed at the fallback (here not 0.4886)");
+        const auto operatorRule = resolveOf(legacy, 0.5123, 0.7);
+        MIB_EXPECT(std::fabs(operatorRule.factor - 0.7) < 1e-12 &&
+                       std::string(backend::review::pixelToMicronSourceName(operatorRule.source)) == "operator",
+                   "an operator's factor beats the fallback for a file that records none");
+
+        // The session asks the host for the fallback each time, so a factor changed while a file is
+        // open reaches its metadata, scatter and valid set; a recorded factor never moves.
+        std::atomic<double> live{0.5123};
+        ReviewSession s;
+        s.setFallbackPixelToMicronProvider([&live] { return live.load(); });
+        MIB_REQUIRE(s.open(legacy.string()), "open legacy with a live fallback");
+        MIB_EXPECT(!s.metadata().pixelToMicronFromFile && std::fabs(s.metadata().pixelToMicron - 0.5123) < 1e-12 &&
+                       std::fabs(s.pixelToMicron() - 0.5123) < 1e-12,
+                   "the session opens a file that records none at the live factor");
+        live = 0.6;
+        MIB_EXPECT(std::fabs(s.metadata().pixelToMicron - 0.6) < 1e-12 && std::fabs(s.pixelToMicron() - 0.6) < 1e-12 &&
+                       std::fabs(s.fallbackPixelToMicron() - 0.6) < 1e-12,
+                   "a live factor changed while the file is open reaches the session");
+        {
+            const auto set = s.validSet();
+            MIB_EXPECT(!set.pixelToMicronFromFile && std::fabs(set.pixelToMicron - 0.6) < 1e-12,
+                       "the valid set (the charts' snapshot) carries the live factor, not from the file");
+        }
+        MIB_EXPECT(std::fabs(s.scatter().areaUm2[0] - 100.0 * 0.6 * 0.6) < 1e-9, "the scatter follows the live factor");
+        live = -1.0; // an invalid live factor falls back to the static one
+        s.setFallbackPixelToMicron(0.8);
+        MIB_EXPECT(std::fabs(s.pixelToMicron() - 0.8) < 1e-12, "an invalid live factor falls back to the set fallback");
+        s.close();
+        live = 0.6;
+        MIB_REQUIRE(s.open(experiment.string()), "open experiment with a live fallback");
+        MIB_EXPECT(s.metadata().pixelToMicronFromFile && std::fabs(s.pixelToMicron() - 0.25) < 1e-12 &&
+                       std::fabs(s.validSet().pixelToMicron - 0.25) < 1e-12,
+                   "a recorded factor is not moved by the live one");
+    }
 
     // ---- recording round trip --------------------------------------------------
     {
