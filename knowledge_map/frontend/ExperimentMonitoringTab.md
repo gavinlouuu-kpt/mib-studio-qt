@@ -36,7 +36,13 @@
   entirely (see [[../services/ProcessingService]] "Monitoring rings"). Rows
   carry their own copy of the ROI crop: with views into the full frames, the
   open tab pinned about 1 GB at 5000 fps and runs fell behind the camera
-  (#857).
+  (#857). Each ring also holds at most 32 MiB of row images (the oldest rows
+  keep their measurements and lose their pictures), and the tab's rolling
+  copies (`recentValidFrames_` / `recentInvalidFrames_`, which share those
+  images) are trimmed to the same figure in `onUpdate`
+  (`ProcessingService::releaseImagesBeyondBudget`): the thumbnails show the
+  newest 25 rows, a scatter click shows the image while the row still has one.
+  At 1216x208 that is 66 whole-frame rows per buffer.
 - **Top-row trigger controls:**
   - `sortTriggerBtn` — single manual pulse; calls
     `backend_.trigger().onTargetGroupResult(services::TargetGroupSignal{.isTargetGroup=true})`.

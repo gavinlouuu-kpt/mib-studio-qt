@@ -376,6 +376,13 @@ mib_backend_test_link(monitoring_cell_hot_path_test PRIVATE Threads::Threads)
 add_test(NAME performance.monitoring_cell_hot_path COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_hot_path_test)
 set_tests_properties(performance.monitoring_cell_hot_path PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 180)
 
+# #857: the per-frame Monitoring row (crop copy, ring append, byte-budget release) against the frame's
+# own cost, at the bench geometry. Ratio gates only; sanitizer lanes skip `performance`.
+mib_add_backend_test_executable(monitoring_row_latency_test performance/monitoring_row_latency_test.cpp)
+mib_backend_test_link(monitoring_row_latency_test PRIVATE Threads::Threads)
+add_test(NAME performance.monitoring_row_latency COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_row_latency_test)
+set_tests_properties(performance.monitoring_row_latency PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 180)
+
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:mib_backend_tests> pr4_monitoring_snapshot_test)
 set_tests_properties(backend.pr4_monitoring_snapshot PROPERTIES LABELS "backend;processing;monitoring" TIMEOUT 30)
