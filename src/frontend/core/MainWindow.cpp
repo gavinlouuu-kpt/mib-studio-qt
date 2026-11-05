@@ -522,6 +522,7 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
 
     // Tabs: Connect + Overview + Experiment (Preview + Monitoring) + Review
     connectTab_ = new frontend::ConnectTab(backend_, ui->tabs);
+    connectTab_->setCameraState(cameraController_->state()); // later changes: onCameraStateChanged (#860)
     overviewTab_ = new frontend::OverviewTab(backend_, ui->tabs);
     
     // Create Experiment tab with nested Preview and Monitoring tabs
@@ -1192,6 +1193,9 @@ void MainWindow::onCameraStateChanged(const frontend::CameraActionState& state)
     {
         statsTimer_->stop();
     }
+
+    // The Connect tab's "Connected to … (capturing)" line follows the same state (#860).
+    if (connectTab_) connectTab_->setCameraState(state);
 
     if (!statusLabel_) return;
     switch (state.phase)

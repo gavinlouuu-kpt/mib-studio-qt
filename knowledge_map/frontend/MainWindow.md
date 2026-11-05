@@ -38,8 +38,10 @@ capture generation for an illuminated profile, using a fake camera factory.
   and `AppBackend::isFrameRecording()`; its `commandFailed` signal shows the
   warning dialog + status text, and `onCameraStateChanged` arms/disarms
   `statsTimer_` for every route (the sampling/flush scheduling in
-  `onUpdateStats` no longer depends on which button started the camera) and
-  writes the phase/failure text to the status label. The Preview page's
+  `onUpdateStats` no longer depends on which button started the camera),
+  writes the phase/failure text to the status label and forwards the state to
+  [[ConnectTab]]`::setCameraState` (its "Connected to … (capturing)" line,
+  #860). The Preview page's
   `PlaybackPanel::captureToggleRequested` (Space) is wired to
   `requestToggle()` (issue #360).
 - `onStartExperiment` / `onStopExperiment` — Start is a backend
