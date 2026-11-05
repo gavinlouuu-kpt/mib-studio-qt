@@ -683,6 +683,36 @@ int main()
         MIB_EXPECT(!refused.files[0].attempted && refused.files[0].result.error == "recording files do not contain metrics",
                    "FCS refuses a recording without the policy too");
 
+        // `recordingsAsImages` (ReviewJobs' non-metrics batch, #873 review): the batch's format
+        // for an experiment file, Images for a raw recording, both at the file's own factor;
+        // `prepare` sees the request as the policy left it.
+        {
+            auto all = parsed.request;
+            all.format = HdfExportFormat::All;
+            all.explicitDestination.clear();
+            all.conversionFactor = 0.5;
+            ExportRunOptions asImages;
+            asImages.policy.recordedFactor = true;
+            asImages.policy.recordingsAsImages = true;
+            std::vector<std::pair<HdfExportFormat, double>> seen;
+            asImages.prepare = [&](std::size_t, backend::recording::HdfExportRequest &r, std::string &) {
+                seen.emplace_back(r.format, r.conversionFactor);
+                return false; // inspect only; nothing is exported
+            };
+            const auto probed = backend::review::runExportBatch(all, {recorded.string(), other.string(), recording.string()},
+                                                                 flag(), {}, asImages);
+            MIB_REQUIRE(seen.size() == 3 && probed.files.size() == 3, "every source reached prepare");
+            MIB_EXPECT(seen[0].first == HdfExportFormat::All && seen[0].second == 0.25, "an experiment keeps All, at its 0.25");
+            MIB_EXPECT(seen[1].first == HdfExportFormat::All && seen[1].second == 0.5, "no recorded factor: the request's, All");
+            MIB_EXPECT(seen[2].first == HdfExportFormat::Images, "a recording becomes Images");
+            // Not asked for: the format is left alone.
+            seen.clear();
+            asImages.policy.recordingsAsImages = false;
+            backend::review::runExportBatch(all, {recording.string()}, flag(), {}, asImages);
+            MIB_REQUIRE(seen.size() == 1, "recording reaches prepare");
+            MIB_EXPECT(seen[0].first == HdfExportFormat::All, "without recordingsAsImages the format is the request's");
+        }
+
         // Metrics CSV with the recorded factor: the µm² column follows the file.
         auto metrics = plain.request;
         metrics.format = HdfExportFormat::MetricsCsv;

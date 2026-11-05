@@ -182,7 +182,9 @@ namespace backend::review
     namespace
     {
         // ExportSourcePolicy for one source (#867): the FCS pair name, the recorded factor, the
-        // recording refusal. false: skip the source with `skipped`.
+        // recording refusal or its Images format. The one place an export source is probed for its
+        // recorded factor and its recording-ness (every batch, FCS or not, goes through it).
+        // false: skip the source with `skipped`.
         bool applySourcePolicy(const ExportSourcePolicy &policy, recording::HdfExportRequest &request,
                                std::string &factorSource, std::string &skipped)
         {
@@ -192,7 +194,7 @@ namespace backend::review
                 request.explicitDestination = recording::HdfExportService::nextAvailableFcsPath(
                     request.outputRoot, recording::HdfExportService::sourceBaseName(request.sourcePath));
             if (policy.reportFactor) factorSource = "request";
-            if (!policy.recordedFactor && !policy.refuseRecordings && !fcs) return true;
+            if (!policy.recordedFactor && !policy.refuseRecordings && !policy.recordingsAsImages && !fcs) return true;
             services::Hdf5Service probe;
             if (!probe.loadFile(request.sourcePath)) return true; // the run reports why it cannot open it
             const bool recordingFile = probe.isRecordingFile();
@@ -209,6 +211,7 @@ namespace backend::review
                 skipped = "recording files do not contain metrics";
                 return false;
             }
+            if (recordingFile && policy.recordingsAsImages) request.format = HdfExportFormat::Images;
             return true;
         }
     } // namespace

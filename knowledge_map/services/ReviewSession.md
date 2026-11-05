@@ -350,7 +350,10 @@ contiguous below `ExportFcs` (9); the review bridge never starts them. The two e
   no-replace pair; refused up front for a recording; the completed message is
   `<path> (N events: V valid, I invalid)`. `BatchExportRequest::fcs` makes
   `startBatchExport` an FCS batch on the engine's `ExportSourcePolicy`
-  (recorded factor, recordings refused, `<root>/<base>[_N].fcs`).
+  (recorded factor, recordings refused, `<root>/<base>[_N].fcs`). The non-FCS
+  batch (metrics-only or All) uses the same policy and no probe of its own
+  (#873 review): `recordedFactor`, `refuseRecordings` for a metrics batch,
+  `recordingsAsImages` for an All batch.
 - `startExportCharts({outputDir, charts})` (PR 4, contract kind
   `ExportCharts` = 6): the shell's snapshots decoded and written as files
   into an existing directory, all or nothing (temporary
@@ -557,7 +560,9 @@ the snapshot are ReviewJobs' export lane, `startExportJson`):
   at `recordedPixelToMicron` (TD-17, as Qt), the request's factor (else the
   facade's live one) only for a file that records none; `refuse_recordings`
   skips raw recordings with "recording files do not contain metrics" (not
-  attempted); an FCS request always refuses them and, without an explicit
+  attempted); `recordingsAsImages` exports a recording that is not refused
+  as `Images` instead of the request's format (ReviewJobs' All batch); an FCS
+  request always refuses them and, without an explicit
   destination, gets `HdfExportService::nextAvailableFcsPath` (the first free
   `<root>/<base>[_N].fcs` pair). With `conversion_factor_source` present each
   `results` entry adds `conversion_factor`, `conversion_factor_source`

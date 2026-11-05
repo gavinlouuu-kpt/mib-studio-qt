@@ -1271,36 +1271,23 @@ namespace backend::review
             }
             else
             {
-                options.prepare = [&](std::size_t i, recording::HdfExportRequest &request, std::string &skipped) {
+                // The same per-source policy as the FCS batch (ExportEngine's applySourcePolicy
+                // probes each file once: its recorded factor, the fallback when it records none,
+                // and whether it is a raw recording): a metrics batch refuses recordings, an
+                // "All" batch exports them as images only.
+                base.format = req.metricsOnly ? recording::HdfExportFormat::MetricsCsv : recording::HdfExportFormat::All;
+                options.policy.recordedFactor = true;
+                options.policy.refuseRecordings = req.metricsOnly;
+                options.policy.recordingsAsImages = !req.metricsOnly;
+                options.prepare = [&](std::size_t i, recording::HdfExportRequest &request, std::string &) {
                     const std::string &source = req.sources[i];
                     impl->progress(id, ReviewJobKind::BatchExport, i, req.sources.size(), source);
-                    bool recordingFile = false;
-                    {
-                        services::Hdf5Service probe;
-                        if (probe.loadFile(source))
-                        {
-                            recordingFile = probe.isRecordingFile();
-                            if (const double f = ReviewSession::recordedPixelToMicron(probe); f > 0.0) request.conversionFactor = f;
-                            probe.closeFile();
-                        }
-                    }
-                    if (req.metricsOnly && recordingFile)
-                    {
-                        // As the Qt tab: recording files are refused, not attempted.
-                        skipped = "recording files do not contain metrics";
-                        return false;
-                    }
                     if (req.metricsOnly)
                     {
-                        request.format = recording::HdfExportFormat::MetricsCsv;
                         request.explicitDestination =
                             recording::HdfExportService::nextAvailableName(
                                 req.outputRoot, recording::HdfExportService::sourceBaseName(source) + "_metrics.csv",
                                 recording::HdfExportService::sourceBaseName(source) + "_metrics_", ".csv");
-                    }
-                    else
-                    {
-                        request.format = recordingFile ? recording::HdfExportFormat::Images : recording::HdfExportFormat::All;
                     }
                     return true;
                 };

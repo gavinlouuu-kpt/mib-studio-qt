@@ -24,6 +24,12 @@ Review stage stops exporting at the live px→µm factor (#854, matrix REVIEW-06
   recording files; keep-partial is an option (default off, as Qt) instead of always on; the
   open dialog is the Qt "Open HDF File" (`.h5`/`.hdf5` + All Files).
 
+- **One source policy for every batch** (independent review of #867, finding 4): the non-FCS
+  YOFO Review batch (Batch Metrics / Batch Export All) no longer probes each file for its
+  recorded factor itself; it sets `ExportSourcePolicy` (`recordedFactor`, `refuseRecordings` for
+  metrics, the new `recordingsAsImages` for All) and `applySourcePolicy` does the one probe, as
+  for FCS. No visible change: same factors, same refusal text, same formats.
+
 Tests: `review.export_engine`, `review.jobs`, `backend.export_bridge_facade`,
 `tests/review_bridge.rs`, `exportControls.test.tsx`, `exports.test.ts`, the `reviewIpc` golden
 (two new flows, none changed). See [[services/ReviewSession]], [[services/HdfExportService]],
