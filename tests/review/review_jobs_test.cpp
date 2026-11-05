@@ -930,7 +930,7 @@ int main()
 
         // A run with the dialog's config fields, full-frame ROI and no background.
         RegenerateMasksRequest req;
-        MIB_REQUIRE(parseRegenerateMasksJson(R"({"source":2,"output_path":")" + (td.path() / "dialog.h5").string() +
+        MIB_REQUIRE(parseRegenerateMasksJson(R"({"source":2,"output_path":")" + (td.path() / "dialog.h5").generic_string() +
                                                  R"(","image_processing":{"gaussian_blur_size":5,"area_threshold_min":1,"area_threshold_max":9000},
                                                  "roi":{"x":0,"y":0,"w":0,"h":0},"background":"none"})",
                                              req, err),
