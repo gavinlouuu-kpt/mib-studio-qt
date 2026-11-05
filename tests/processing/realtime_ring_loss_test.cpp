@@ -425,13 +425,17 @@ void calibrationIgnoresStoreLoss()
     request.maxAttempts = 5;
     request.timeoutMs = 30000;
     std::string err;
-    MIB_REQUIRE(rig.svc.startBackgroundCalibration(request, &err), "calibration starts: " + err);
 
     const uint64_t base = kernel.emptyCalls.load();
     kernel.holdCall.store(base + 1);
     rig.pushBlank(); // F0
     MIB_REQUIRE(waitFor([&] { return kernel.heldCall.load() == base + 1; }, std::chrono::seconds(5)),
                 "loop held on F0");
+    // Start the calibration only now. The loop is inside F0's examination, so the warm-up frame's
+    // outcome has been booked: warmUpInline returns once the kernel is entered, and a slow build
+    // (the sanitizer lanes) books that outcome after a calibration started before this point, which
+    // then counts the warm-up ring frame as a contaminated attempt.
+    MIB_REQUIRE(rig.svc.startBackgroundCalibration(request, &err), "calibration starts: " + err);
     for (int i = 1; i <= 16; ++i) rig.pushBlank();
     kernel.holdCall.store(base + 2);
     kernel.release(base + 1);
