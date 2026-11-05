@@ -784,6 +784,9 @@ owned session. Desktop CI now runs this in addition to unit tests and launch smo
 Initial local pass: 2 persistence-admitted/committed frames, 2 exported images.
 The gate exposed and drove fixes for the disabled Start button and missing
 realtime processing consumer. It does not establish physical hardware timing.
+It finds each GTK dialog by window title. The Review open dialog is matched as
+`Open HDF File|Open recording` (an xdotool regex), because MIB Studio's Review tab
+now uses Qt's "Open HDF File" title (#873) and the YOFO Review panel keeps "Open recording".
 
 ### Managed profiles and startup provenance
 
