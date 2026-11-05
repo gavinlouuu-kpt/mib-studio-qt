@@ -1632,6 +1632,7 @@ void MainWindow::onStopExperiment()
         {
             // The backend already finalized (fatal save error); mirror it.
             experimentActive_ = false;
+            releaseRealtimeHeldForRun();
             updateExperimentButtonStates();
         }
         return;
@@ -1774,6 +1775,7 @@ void MainWindow::onExperimentStatus(const backend::app::ExperimentStatus& status
     experimentActive_ = false;
     stopInProgress_ = false;
     flushInProgress_ = false;
+    releaseRealtimeHeldForRun(); // #899: the run left the tab with processing kept for it
     // Complete becomes Failed automatically when a failure was latched.
     runStatusModel_->setPhase(frontend::RunPhase::Complete, runOperationId_);
     updateExperimentButtonStates(); // This will also call updateTabStates() to enable Overview and Review tabs
@@ -1953,9 +1955,10 @@ void MainWindow::startExperimentServices()
         return;
     }
 
-    backend_.processing().startRealtime(frameStore);
+    backend_.processing().startRealtime(frameStore); // no-op while it still runs for a run (#899)
     backend_.playback().play();
     experimentServicesActive_ = true;
+    realtimeHeldForRun_ = false; // the shown tab owns realtime processing again
     SPDLOG_INFO("MainWindow: Experiment services started");
 }
 
@@ -1965,10 +1968,39 @@ void MainWindow::stopExperimentServices()
         return; // Already stopped
     }
 
-    backend_.processing().stopRealtime();
     backend_.playback().pause();
     experimentServicesActive_ = false;
+    // #899: the realtime loop is the run's only consumer: it admits, processes and saves the run's
+    // frames. Stopping it because a tab is hidden stopped the recording for as long as the user
+    // looked elsewhere (3.3 s on the Connect tab on the bench), and the run ended incompleteLoss.
+    // During a run only the view pauses; processing is stopped once the run is over.
+    if (runOwnsRealtime()) {
+        realtimeHeldForRun_ = true;
+        SPDLOG_INFO("MainWindow: Experiment view paused; realtime processing kept for the run");
+        return;
+    }
+    backend_.processing().stopRealtime();
     SPDLOG_INFO("MainWindow: Experiment services stopped");
+}
+
+bool MainWindow::runOwnsRealtime() const
+{
+    if (experimentActive_ || stopInProgress_) return true;
+    // A run started by another client (the bridge) is known to the coordinator only. Same states as
+    // the camera-mode guard in AppBackend; Failed is left out there too: a failed run stays Failed
+    // after its file is closed, until the fault is acknowledged.
+    using State = backend::app::ExperimentRunState;
+    const auto state = backend_.experiment().stateNow();
+    return state == State::Starting || state == State::Active || state == State::Stopping;
+}
+
+void MainWindow::releaseRealtimeHeldForRun()
+{
+    if (!realtimeHeldForRun_ || runOwnsRealtime()) return;
+    realtimeHeldForRun_ = false;
+    if (experimentServicesActive_) return; // the Experiment or Overview tab is shown again
+    backend_.processing().stopRealtime();
+    SPDLOG_INFO("MainWindow: realtime processing kept for the run stopped (Experiment tab not shown)");
 }
 
 void MainWindow::onNoCamerasFound()

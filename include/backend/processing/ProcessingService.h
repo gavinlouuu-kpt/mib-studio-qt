@@ -840,6 +840,9 @@ private:
     void realtimeLoop();
     void realtimeInlineLoop();
     void realtimeBatchLoop();
+    // The write index a (re)started realtime loop treats as already consumed (#899): the run's last
+    // admitted frame when a run is being read, else the frame before the ring's oldest one.
+    uint64_t realtimeResumePointer() const;
     BatchPipelineConfig makeRealtimeBatchPipelineConfig() const;
     void refreshRealtimeBatchPipelineConfig();
     void publishRealtimeBatchFrame(ProcessedFrame&& frame);
