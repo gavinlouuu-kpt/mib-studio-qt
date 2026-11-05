@@ -19,6 +19,7 @@
 #include "backend/review/RunStatistics.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -56,6 +57,13 @@ namespace backend::review
         // live/preferred pixel-to-micron. Takes effect on the next open and
         // immediately for scatter/metrics when the file has no recorded value.
         void setFallbackPixelToMicron(double factor);
+        // The host's live factor, asked for each time the fallback is read
+        // (the facade: the live processing factor, which an operator can
+        // change while a file is open). Wins over setFallbackPixelToMicron
+        // while it returns a finite positive value; an empty function removes
+        // it. Called with the session's mutex held: it must not call back
+        // into the session.
+        void setFallbackPixelToMicronProvider(std::function<double()> provider);
         // The effective factor (recorded value when present, else fallback).
         double pixelToMicron() const;
         double fallbackPixelToMicron() const;
@@ -67,6 +75,14 @@ namespace backend::review
         // files without the attribute read as before); 0 when the file
         // records neither.
         static double recordedPixelToMicron(const services::Hdf5Service &reader);
+        // #867: THE px->um rule, once. The factor `reader`'s open file is
+        // analysed at and where it comes from: the file's recorded factor
+        // (Recorded); else `operatorFactor` when it is positive (Operator: a
+        // regenerate request's explicit factor); else `fallback` (Fallback).
+        // The session, exports, charts, regenerate and the Qt tab all ask
+        // this instead of re-deriving the fallback half.
+        static ResolvedPixelToMicron resolvePixelToMicron(const services::Hdf5Service &reader, double fallback,
+                                                          double operatorFactor = 0.0);
         // #717 B1a: the run identity of `reader`'s open file (snapshot v3 +
         // /experiment_annotation, and a regenerated file's E-LUT record,
         // review ABI 5). Attributes only; absent members for a legacy file,

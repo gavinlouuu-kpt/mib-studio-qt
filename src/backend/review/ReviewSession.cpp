@@ -202,11 +202,23 @@ namespace backend::review
         bool validMetaReadable{false};
         ReviewMetadata meta;
         double fallbackFactor{0.4886};
+        // The host's live factor (setFallbackPixelToMicronProvider), preferred while it is valid.
+        std::function<double()> fallbackProvider;
+
+        // The factor a file that records none is shown and analysed at.
+        double fallback() const
+        {
+            if (fallbackProvider)
+            {
+                const double live = fallbackProvider();
+                if (std::isfinite(live) && live > 0.0) return live;
+            }
+            return fallbackFactor;
+        }
 
         double factor() const
         {
-            return meta.pixelToMicronFromFile && meta.pixelToMicron > 0.0 ? meta.pixelToMicron
-                                                                            : fallbackFactor;
+            return meta.pixelToMicronFromFile && meta.pixelToMicron > 0.0 ? meta.pixelToMicron : fallback();
         }
 
         void readMetadataLocked()
@@ -276,13 +288,10 @@ namespace backend::review
 
             meta.hasAccounting = reader.readRunAccounting(meta.accounting);
 
-            // TD-17: the factor the run was recorded with.
-            if (const double f = ReviewSession::recordedPixelToMicron(reader); f > 0.0)
-            {
-                meta.pixelToMicron = f;
-                meta.pixelToMicronFromFile = true;
-            }
-            if (!meta.pixelToMicronFromFile) meta.pixelToMicron = fallbackFactor;
+            // TD-17: the factor the run was recorded with, else the fallback (#867: the one rule).
+            const auto resolved = ReviewSession::resolvePixelToMicron(reader, fallback());
+            meta.pixelToMicron = resolved.factor;
+            meta.pixelToMicronFromFile = resolved.recorded();
 
             {
                 services::ProcessingConfig recorded;
@@ -562,7 +571,14 @@ namespace backend::review
     {
         std::scoped_lock lock(impl_->mutex);
         if (factor > 0.0) impl_->fallbackFactor = factor;
-        if (impl_->open && !impl_->meta.pixelToMicronFromFile) impl_->meta.pixelToMicron = impl_->fallbackFactor;
+        if (impl_->open && !impl_->meta.pixelToMicronFromFile) impl_->meta.pixelToMicron = impl_->fallback();
+    }
+
+    void ReviewSession::setFallbackPixelToMicronProvider(std::function<double()> provider)
+    {
+        std::scoped_lock lock(impl_->mutex);
+        impl_->fallbackProvider = std::move(provider);
+        if (impl_->open && !impl_->meta.pixelToMicronFromFile) impl_->meta.pixelToMicron = impl_->fallback();
     }
 
     double ReviewSession::pixelToMicron() const
@@ -574,7 +590,7 @@ namespace backend::review
     double ReviewSession::fallbackPixelToMicron() const
     {
         std::scoped_lock lock(impl_->mutex);
-        return impl_->fallbackFactor;
+        return impl_->fallback();
     }
 
     double ReviewSession::recordedPixelToMicron(const services::Hdf5Service &reader)
@@ -600,6 +616,26 @@ namespace backend::review
             *source != services::Hdf5Service::kPixelToMicronSourceOperator)
             return 0.0;
         return reader.readAnalysisPixelToMicron().value_or(0.0);
+    }
+
+    ResolvedPixelToMicron ReviewSession::resolvePixelToMicron(const services::Hdf5Service &reader, double fallback,
+                                                              double operatorFactor)
+    {
+        if (const double recorded = recordedPixelToMicron(reader); recorded > 0.0)
+            return {recorded, PixelToMicronSource::Recorded};
+        if (std::isfinite(operatorFactor) && operatorFactor > 0.0) return {operatorFactor, PixelToMicronSource::Operator};
+        return {fallback, PixelToMicronSource::Fallback};
+    }
+
+    const char *pixelToMicronSourceName(PixelToMicronSource source)
+    {
+        switch (source)
+        {
+        case PixelToMicronSource::Recorded: return "recorded";
+        case PixelToMicronSource::Operator: return "operator";
+        case PixelToMicronSource::Fallback: break;
+        }
+        return "fallback";
     }
 
     MetricRow ReviewSession::metricRow(const services::ProcessedFrame &frame, double pixelToMicron)
@@ -875,7 +911,7 @@ namespace backend::review
         out.metadataReadable = impl_->validMetaReadable;
         out.frames = impl_->validMeta;
         out.pixelToMicronFromFile = impl_->meta.pixelToMicronFromFile && impl_->meta.pixelToMicron > 0.0;
-        out.pixelToMicron = impl_->meta.pixelToMicron;
+        out.pixelToMicron = impl_->factor(); // the live fallback when the file records none
         return out;
     }
 

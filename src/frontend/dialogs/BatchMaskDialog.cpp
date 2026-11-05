@@ -967,10 +967,10 @@ void BatchMaskDialog::onRun() {
     if (srcHdf5_->isChecked() && !hdf5LoadedPath_.isEmpty()) {
         backend::services::Hdf5Service reader;
         if (reader.loadFile(hdf5LoadedPath_.toStdString())) {
-            if (const double f = backend::review::ReviewSession::recordedPixelToMicron(reader); f > 0.0) {
-                factor = f;
-                recordedFactor = true;
-            }
+            // The shared px->um rule (#867): the source's recorded factor, else the live one.
+            const auto resolved = backend::review::ReviewSession::resolvePixelToMicron(reader, factor);
+            factor = resolved.factor;
+            recordedFactor = resolved.recorded();
             lutRecord = backend::recording::readFileEModulusLut(reader);
         }
     }

@@ -181,6 +181,13 @@ namespace backend::review
 
     namespace
     {
+        // The exports' wire spelling of the px->um source (`conversion_factor_source`'s per-file
+        // `factor_source`): the request's own factor is "request", not "operator".
+        std::string exportSourceName(PixelToMicronSource source)
+        {
+            return source == PixelToMicronSource::Operator ? "request" : pixelToMicronSourceName(source);
+        }
+
         // ExportSourcePolicy for one source (#867): the FCS pair name, the recorded factor, the
         // recording refusal or its Images format. The one place an export source is probed for its
         // recorded factor and its recording-ness (every batch, FCS or not, goes through it).
@@ -193,7 +200,7 @@ namespace backend::review
             if (fcs && request.explicitDestination.empty())
                 request.explicitDestination = recording::HdfExportService::nextAvailableFcsPath(
                     request.outputRoot, recording::HdfExportService::sourceBaseName(request.sourcePath));
-            if (policy.reportFactor) factorSource = "request";
+            if (policy.reportFactor) factorSource = exportSourceName(PixelToMicronSource::Operator);
             if (!policy.recordedFactor && !policy.refuseRecordings && !policy.recordingsAsImages &&
                 !policy.recordedChartRange && !fcs)
                 return true;
@@ -202,9 +209,10 @@ namespace backend::review
             const bool recordingFile = probe.isRecordingFile();
             if (policy.recordedFactor)
             {
-                const double recorded = ReviewSession::recordedPixelToMicron(probe);
-                if (recorded > 0.0) request.conversionFactor = recorded;
-                factorSource = recorded > 0.0 ? "recorded" : "fallback";
+                // The one px->um rule (#867): the file's own factor, else the request's.
+                const auto resolved = ReviewSession::resolvePixelToMicron(probe, request.conversionFactor);
+                request.conversionFactor = resolved.factor;
+                factorSource = exportSourceName(resolved.source);
             }
             if (policy.recordedChartRange)
             {

@@ -41,10 +41,13 @@ std::string BackendFacade::fetchReviewChartsJson() const {
         const auto& rows=valid.frames;
         const auto cfg=backend_.processing().getProcessingConfig();
         // Qt parity (REVIEW-068): the factor the file recorded, the live one only for a file that
-        // records none. Same snapshot as the rows, so the pair cannot mix two files.
-        const auto factor=valid.pixelToMicronFromFile?valid.pixelToMicron:backend_.processing().getPixelToMicronFactor();
-        return review::reviewChartsJson(rows,source,factor,cfg.ring_ratio_min,cfg.ring_ratio_max,
-                                        valid.pixelToMicronFromFile?"recorded":"live");
+        // records none (#867: the session's fallback is the live factor, so the snapshot's factor is
+        // already that). Same snapshot as the rows, so the pair cannot mix two files. The charts'
+        // wire spelling of the one source enum: "recorded", or "live" for a Fallback.
+        const auto factorSource=valid.pixelToMicronFromFile?review::PixelToMicronSource::Recorded
+                                                           :review::PixelToMicronSource::Fallback;
+        return review::reviewChartsJson(rows,source,valid.pixelToMicron,cfg.ring_ratio_min,cfg.ring_ratio_max,
+                                        factorSource==review::PixelToMicronSource::Recorded?"recorded":"live");
     }catch(const std::exception& error){return review::reviewChartsErrorJson(error.what());}
 }
 } // namespace backend::bridge

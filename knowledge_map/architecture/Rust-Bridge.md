@@ -76,8 +76,8 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   handle); the metadata, page, image, `fetch_run_accounting("review")` and
   charts shapes are filled from it field for field (no contract change; since #867
   `fetch_review_metadata` adds `pixel_to_micron`, `pixel_to_micron_from_file` and
-  `filtered_frames`, and `fetch_review_charts_json` adds `pixel_to_micron_source`: additive
-  keys, ABI stays 44), and
+  `filtered_frames` as fields of the shared `BridgeReviewMetadata` struct: additive, ABI 45, see
+  `## ABI 45` below; `fetch_review_charts_json` adds the JSON key `pixel_to_micron_source`), and
   a loaded file still keeps `experiment_start` and `start_frame_recording`
   refused with the same gate and messages (decision D1 (a),
   [[ExperimentCoordinator]]).
@@ -522,6 +522,29 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
+
+## ABI 45: the review file's recorded factor in the shared metadata (#867)
+
+Additive over ABI 44. The cxx shared struct `BridgeReviewMetadata` (`crates/mib-bridge/src/lib.rs`)
+gains `pixel_to_micron_from_file: bool` and `filtered_frames: u64` next to `pixel_to_micron`, which
+now says which px->um factor a loaded review file uses and where it came from (the Review tab's Area
+(um^2) column and the charts' provenance line). A shared-struct field changes the C++/Rust layout of
+`fetch_review_metadata`, so the bump follows the precedent of ABI 41's `start_generation`. Review ABI
+is a separate number (7 and 8 are the Review chain's own, `review-contract.json`).
+
+- **Path:** `ReviewSession::metadata()` (`pixelToMicron`, `pixelToMicronFromFile`, `filteredFrames`) ->
+  `BackendFacade::fetchReviewMetadata` -> `shim.cpp` `fetch_review_metadata` -> `mib-app-commands`
+  `ReviewMetadata` -> `desktop/src/bridge.ts`. `fetch_review_charts_json` adds the JSON key
+  `pixel_to_micron_source` (`recorded` | `live`); that key is not an ABI change.
+- **One factor, one resolver:** every surface asks `ReviewSession::resolvePixelToMicron` (see
+  [[../services/ReviewSession]]); the facade registers the live factor as the session's fallback
+  provider, so the metadata, charts, exports and regenerate agree.
+- **ABI touch points:** `bridge-contract.json` `abi_version` 45; `shim.cpp` `bridge_abi_version()`;
+  `contract.rs` `abi_version_is_stable`; the generated `bridgeContract.ts`
+  (`scripts/gen_bridge_contract.py --check`); `dispatch.rs` `run_quick_look_through_dispatch`; the
+  `eventAdapter.test.ts` and `runQuickLook.test.ts` pins.
+- **Tests:** `contract.rs` (`abi_version_is_stable`, the metadata assertions at ~758),
+  `review_bridge.rs` (TD-17 factor), `backend.facade_review_session`, `review.session`.
 
 ## ABI 44: the run quick look (#716 A7a)
 

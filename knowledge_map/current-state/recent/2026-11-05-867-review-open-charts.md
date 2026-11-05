@@ -1,4 +1,4 @@
-## 2026-11-05 — Tauri Review: open failure, status line, recording mode, lock and the file's factor (#867 PR 3)
+## 2026-11-05 — Tauri Review: open failure, status line, recording mode, lock and the file's factor (#867 PR 3, bridge ABI 45)
 
 Closes matrix rows REVIEW-003, -004, -006, -007, -049 and -068 and bugs #853 and #854 (charts half) for
 both React/Tauri Review surfaces. See [[frontend/YofoReview]], [[services/ReviewSession]],
@@ -14,8 +14,18 @@ both React/Tauri Review surfaces. See [[frontend/YofoReview]], [[services/Review
   `pixelToMicronFromFile`, read in the rows' snapshot), the live one only for a file that records none, and
   says which (`pixel_to_micron_source` "recorded" | "live"; the chart text no longer claims "current
   backend setting, same as Qt"). `fetch_review_metadata` gains `pixel_to_micron`,
-  `pixel_to_micron_from_file` and `filtered_frames` (additive; bridge ABI stays 44), and the metrics table
-  gets Qt's "Area (µm²)" column (2 dp) at that factor.
+  `pixel_to_micron_from_file` and `filtered_frames` (additive fields of the shared `BridgeReviewMetadata`
+  struct, so **bridge ABI 44 -> 45**, as ABI 41's `start_generation`; the first draft of this entry said
+  "ABI stays 44"), and the metrics table gets Qt's "Area (µm²)" column (2 dp) at that factor.
+- **One px->um resolver (stack-review F889-1/2).** `ReviewSession::resolvePixelToMicron(reader,
+  fallback, operatorFactor)` returns `{factor, source}` with one enum (`PixelToMicronSource`:
+  Recorded | Operator | Fallback); the session, the export engine, the reanalysis engine, the
+  regenerate job, the Qt tab and the batch dialog all use it, with their wire spellings kept
+  (exports `recorded|fallback|request`, charts `recorded|live`, regenerate `recorded|fallback|operator`).
+  The facade registers the live factor as the session's fallback provider
+  (`setFallbackPixelToMicronProvider`), so a file that records no factor is exported, regenerated and
+  charted at the same live factor; before, exports and regenerate used the never-set 0.4886 default.
+  `ExportSourcePolicy::recordedChartRange` moves the batch's ring-range probe into `applySourcePolicy`.
 - **REVIEW-003 / -004.** A file that cannot be opened shows Qt's critical box "Cannot Open HDF5 File"
   ("Failed to open:\n<path>\n\n<detail>": "File not found." or the interrupted-write text with the
   `h5recover` hint) on both surfaces, and the status label reads "Ready", "Loading...", "Error loading
@@ -36,7 +46,8 @@ both React/Tauri Review surfaces. See [[frontend/YofoReview]], [[services/Review
   `ring_width_histogram.tiff`). Recordings still get images only.
 - A failed `fetch_run_accounting("review")` is now logged instead of silently hiding the outcome notice.
 
-Tests: `review.charts_json`, `review.session` (validSet factor, open messages), `review.jobs` (batch charts,
+Tests: `review.charts_json`, `review.session` (validSet factor, open messages, resolver, provider),
+`review.reanalysis_pixel_factor` (operator run), `review.export_engine` (request-only factor), `review.jobs` (batch charts,
 mutation-checked), `backend.facade_review_session` (charts and metadata at a recorded factor, the load
 message), `ReviewTab.test.tsx`, `useReview.test.tsx`, `reviewOpen.test.tsx`, `reviewOpenPanel.test.tsx`,
 `ReviewCharts.test.tsx`. `tools/review_parity/compare.py` still expects the old D3 outcome (see YofoReview).

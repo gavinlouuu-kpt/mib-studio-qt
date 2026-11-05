@@ -37,6 +37,7 @@
 
 #include <hdf5.h>
 
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -468,6 +469,59 @@ int main()
         MIB_EXPECT(s.saveCoreRecordJson("{\"schema\":1}", false, &err), "first record on legacy: " + err);
     }
     wd.mark("legacy");
+
+    // ---- #867: one px->um rule; a live fallback for a file that records none --------
+    {
+        // The resolver: recorded (the snapshot's 0.25) beats the operator's factor, which beats the fallback.
+        const auto resolveOf = [&](const fs::path &file, double fallback, double operatorFactor) {
+            Hdf5Service reader;
+            MIB_REQUIRE(reader.loadFile(file.string()), "load for the resolver");
+            const auto resolved = ReviewSession::resolvePixelToMicron(reader, fallback, operatorFactor);
+            reader.closeFile();
+            return resolved;
+        };
+        const auto recordedRule = resolveOf(experiment, 0.5123, 0.7);
+        MIB_EXPECT(recordedRule.recorded() && std::fabs(recordedRule.factor - 0.25) < 1e-12 &&
+                       std::string(backend::review::pixelToMicronSourceName(recordedRule.source)) == "recorded",
+                   "a file that records a factor is analysed at it, whatever the fallback and operator factor are");
+        const auto fallbackRule = resolveOf(legacy, 0.5123, 0.0);
+        MIB_EXPECT(!fallbackRule.recorded() && std::fabs(fallbackRule.factor - 0.5123) < 1e-12 &&
+                       std::string(backend::review::pixelToMicronSourceName(fallbackRule.source)) == "fallback",
+                   "a file that records none is analysed at the fallback (here not 0.4886)");
+        const auto operatorRule = resolveOf(legacy, 0.5123, 0.7);
+        MIB_EXPECT(std::fabs(operatorRule.factor - 0.7) < 1e-12 &&
+                       std::string(backend::review::pixelToMicronSourceName(operatorRule.source)) == "operator",
+                   "an operator's factor beats the fallback for a file that records none");
+
+        // The session asks the host for the fallback each time, so a factor changed while a file is
+        // open reaches its metadata, scatter and valid set; a recorded factor never moves.
+        std::atomic<double> live{0.5123};
+        ReviewSession s;
+        s.setFallbackPixelToMicronProvider([&live] { return live.load(); });
+        MIB_REQUIRE(s.open(legacy.string()), "open legacy with a live fallback");
+        MIB_EXPECT(!s.metadata().pixelToMicronFromFile && std::fabs(s.metadata().pixelToMicron - 0.5123) < 1e-12 &&
+                       std::fabs(s.pixelToMicron() - 0.5123) < 1e-12,
+                   "the session opens a file that records none at the live factor");
+        live = 0.6;
+        MIB_EXPECT(std::fabs(s.metadata().pixelToMicron - 0.6) < 1e-12 && std::fabs(s.pixelToMicron() - 0.6) < 1e-12 &&
+                       std::fabs(s.fallbackPixelToMicron() - 0.6) < 1e-12,
+                   "a live factor changed while the file is open reaches the session");
+        {
+            const auto set = s.validSet();
+            MIB_EXPECT(!set.pixelToMicronFromFile && std::fabs(set.pixelToMicron - 0.6) < 1e-12,
+                       "the valid set (the charts' snapshot) carries the live factor, not from the file");
+        }
+        MIB_EXPECT(std::fabs(s.scatter().areaUm2[0] - 100.0 * 0.6 * 0.6) < 1e-9, "the scatter follows the live factor");
+        live = -1.0; // an invalid live factor falls back to the static one
+        s.setFallbackPixelToMicron(0.8);
+        MIB_EXPECT(std::fabs(s.pixelToMicron() - 0.8) < 1e-12, "an invalid live factor falls back to the set fallback");
+        s.close();
+        live = 0.6;
+        MIB_REQUIRE(s.open(experiment.string()), "open experiment with a live fallback");
+        MIB_EXPECT(s.metadata().pixelToMicronFromFile && std::fabs(s.pixelToMicron() - 0.25) < 1e-12 &&
+                       std::fabs(s.validSet().pixelToMicron - 0.25) < 1e-12,
+                   "a recorded factor is not moved by the live one");
+    }
 
     // ---- recording round trip --------------------------------------------------
     {

@@ -669,6 +669,8 @@ pub mod ffi {
         pub file_path: String,
         /// The calibration the review charts use: the file's recorded
         /// pixel_to_micron (`pixel_to_micron_from_file`), else the live factor.
+        /// ABI 45 (#867): `pixel_to_micron`, `pixel_to_micron_from_file` and `filtered_frames`
+        /// are additive fields of this shared struct.
         pub pixel_to_micron: f64,
         pub pixel_to_micron_from_file: bool,
         /// Recording files: frames filtered empty at record time.

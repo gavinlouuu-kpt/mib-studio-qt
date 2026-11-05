@@ -80,7 +80,28 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   factor; `fallbackPixelToMicron()` reads it back); `pixelToMicronFromFile`
   says which applied. The static `recordedPixelToMicron(reader)` is that
   read (0 when absent), shared with the Qt tab, the batch job and the
-  reanalysis engine. A file without a run snapshot factor falls back to
+  reanalysis engine.
+
+  **One resolver (#867 F889-1).** `ReviewSession::resolvePixelToMicron(reader, fallback,
+  operatorFactor = 0)` is the one place the rule lives and returns `ResolvedPixelToMicron{factor,
+  source}` with `source` the single enum `backend::review::PixelToMicronSource` (an alias of
+  `services::batch_masks::PixelToMicronSource`: `Recorded` | `Operator` | `Fallback`). Order: the
+  file's recorded factor (as below), else a finite operator factor > 0, else the fallback. The
+  session, the export engine (`applySourcePolicy`), the reanalysis engine, the regenerate job, the
+  Qt tab (`HdfReviewTab::pixelToMicronOf`) and the batch-mask dialog all call it, so no call site
+  re-derives the "recorded else fallback" half. Each surface keeps its wire spelling behind the one
+  enum (`pixelToMicronSourceName`: `recorded` | `operator` | `fallback`): exports say
+  `recorded|fallback|request` (the request's own factor is `request`), charts `recorded|live`,
+  regenerate `recorded|fallback|operator`. **Live fallback:** the facade registers
+  `setFallbackPixelToMicronProvider(...)` returning `ProcessingService::getPixelToMicronFactor()`;
+  it is called with the session mutex held on every read, wins while it returns a finite value > 0
+  (else `setFallbackPixelToMicron()`'s value applies), and so follows every setter of the live factor
+  (config apply, calibration apply, config watcher) without a push. Before this the facade never
+  set the session fallback, so a file that recorded no factor was exported and regenerated at the
+  0.4886 default while the charts and the Area column used the live factor; now all agree.
+  Tests: `review.session` ("#867" block: recorded wins, operator, fallback, provider, a recorded
+  factor beats the provider), `review.reanalysis_pixel_factor`, `review.export_engine` (request-only
+  run, source "request"), `backend.facade_review_session` (charts and metadata follow the live factor). A file without a run snapshot factor falls back to
   `/experiment_info @pixel_to_micron`, the factor a regenerated or
   reanalysed file was validated at (#758), so such a file reopens at it
   instead of the fallback, unless its `@pixel_to_micron_source` (#764) says
@@ -311,7 +332,8 @@ while either lane is claimed (the probe's rule, #722). Tests: `review.jobs`
 
 **Reanalysis status names its calibration (#867 REVIEW-064).** A completed
 `reanalysisTerminalStatusJson` adds `pixel_to_micron` (number),
-`pixel_to_micron_source` (`recorded` | `fallback` | `operator`) and
+`pixel_to_micron_source` (`recorded` | `fallback` | `operator`, from `ReanalysisOutcome::pixelToMicronSource`,
+the resolver's enum) and
 `emodulus_lut` (`reanalysisEModulusLutPhrase`); cancelled and failed statuses
 are unchanged (`review.reanalysis` pins the bytes).
 
@@ -371,7 +393,7 @@ contiguous below `ExportFcs` (9); the review bridge never starts them. The two e
   file is valid rows then invalid rows. The job has no frame or byte budget.
   The recorded config (read here, its target group from `@config_json`), ROI,
   background and pixel-to-micron factor (#758: the file's recorded one, the
-  session's `fallbackPixelToMicron()` when it records none) are used by
+  session's `fallbackPixelToMicron()` when it records none; the facade's is live, #867) are used by
   default. Otherwise the request's config and ROI apply, the background is
   cleared and objects are validated at the default 0.4886 µm/px, as for AVI
   and folder sources. The factor goes to the engine per request; the bundled
@@ -437,7 +459,9 @@ the facade's ROI style:
 - `reviewChartsJson(rows, source, factor, ringMin, ringMax, factorSource = {})`:
   `factorSource` ("recorded" | "live") is emitted as `pixel_to_micron_source` next to
   `pixel_to_micron` when named (empty emits nothing, so the pinned JSON of the five-argument
-  call is unchanged); the facade names it from `ValidSet::pixelToMicronFromFile`.
+  call is unchanged); the facade names it from `ValidSet::pixelToMicronFromFile`, and the factor
+  is `ValidSet::pixelToMicron` (the session's resolved factor, so the live one only through the
+  session's fallback provider).
   `recording::makeReviewChartData`, the 128 × 128 density (conserves every
   finite point), the exact 0.5-wide histogram, the bundled isoelastic curves,
   counters as decimal strings. It throws what `makeReviewChartData` throws (an
@@ -564,11 +588,13 @@ the snapshot are ReviewJobs' export lane, `startExportJson`):
 - **`ExportSourcePolicy` (#867)**, applied by `runExportBatch` to every source
   before `options.prepare` (`ExportBatchRequest::policy`, passed through
   `startExportJson`): `conversion_factor_source: "recorded"` exports each file
-  at `recordedPixelToMicron` (TD-17, as Qt), the request's factor (else the
+  at its recorded factor (TD-17, as Qt; `ReviewSession::resolvePixelToMicron`), the request's factor (else the
   facade's live one) only for a file that records none; `refuse_recordings`
   skips raw recordings with "recording files do not contain metrics" (not
   attempted); `recordingsAsImages` exports a recording that is not refused
-  as `Images` instead of the request's format (ReviewJobs' All batch); an FCS
+  as `Images` instead of the request's format (ReviewJobs' All batch); `recordedChartRange`
+  reads each experiment file's recorded ring-ratio range for its backend-rendered charts
+  (YOFO's Export All, #867 REVIEW-049; the batch no longer probes files itself); an FCS
   request always refuses them and, without an explicit
   destination, gets `HdfExportService::nextAvailableFcsPath` (the first free
   `<root>/<base>[_N].fcs` pair). With `conversion_factor_source` present each

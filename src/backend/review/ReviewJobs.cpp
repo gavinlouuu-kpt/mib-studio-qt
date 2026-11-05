@@ -1567,9 +1567,9 @@ namespace backend::review
                 msg << req.outputPath << " (" << outcome.produced << " images: " << outcome.valid << " valid, "
                     << (outcome.produced - outcome.valid) << " invalid; px→µm " << std::fixed
                     << std::setprecision(4) << outcome.pixelToMicron << ' '
-                    << (!r.useRecordedPixelToMicron       ? "default"
-                        : outcome.pixelToMicronRecorded ? "recorded"
-                                                        : "fallback: the file records none");
+                    << (!r.useRecordedPixelToMicron        ? "default"
+                        : outcome.pixelToMicronRecorded() ? "recorded"
+                                                          : "fallback: the file records none");
                 // What E was computed with (#764): the source run's own
                 // E-LUT, none as the source, or the loaded one for a file
                 // that records none.

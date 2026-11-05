@@ -727,6 +727,15 @@ int main()
         const auto rawCsv = backend::review::runExportBatch(metrics, {recording.string()}, flag(), {}, recordedOnly);
         MIB_EXPECT(rawCsv.last.completed() && rawCsv.files[0].conversionFactorSource == "fallback",
                    "a recording's metadata CSV still exports without refuse_recordings: " + rawCsv.last.error);
+        // #867: the exports keep their wire spelling on top of the one px->um source enum. "request"
+        // (reported, no recorded-factor policy) is the Operator source; a recorded factor is
+        // "recorded"; a file that records none is "fallback" at the request's factor (not 0.4886).
+        ExportRunOptions requestOnly;
+        requestOnly.policy.reportFactor = true;
+        const auto requested = backend::review::runExportBatch(metrics, {recorded.string()}, flag(), {}, requestOnly);
+        MIB_EXPECT(requested.last.completed() && requested.files[0].conversionFactor == 0.5 &&
+                       requested.files[0].conversionFactorSource == "request",
+                   "the request's factor, said so: " + requested.last.error);
         MIB_EXPECT(backend::recording::HdfExportService::nextAvailableFcsPath(out.string(), "fresh") ==
                        (out / "fresh.fcs").string(),
                    "a free stem keeps its name");

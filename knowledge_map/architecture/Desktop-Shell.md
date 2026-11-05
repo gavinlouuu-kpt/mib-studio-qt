@@ -1248,7 +1248,7 @@ still show Failed. No bridge ABI or JSON field changes.
 - **Factor.** The Area (µm²) column (2 dp, `ResultMetricCells` `areaUm2Factor`) uses
   `fetch_review_metadata` `pixel_to_micron` (the file's recorded factor, else the live one;
   `pixel_to_micron_from_file`, `filtered_frames` are new additive fields) and the charts say
-  which factor they used (`pixel_to_micron_source`). Bridge ABI stays 44.
+  which factor they used (`pixel_to_micron_source`). The shared metadata struct change is bridge ABI 45 ([[Rust-Bridge]] `## ABI 45`).
 - **#853.** `.subtab-body > fieldset.viewer-gate > .config-group` joins the stacked-group rule in
   `styles/widgets.css`, so the Regenerate masks panel inside its `ViewerGate` no longer covers
   the views; `styles/subtabBodyGroup.test.tsx` guards it.
