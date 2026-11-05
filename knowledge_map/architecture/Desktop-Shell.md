@@ -787,6 +787,8 @@ realtime processing consumer. It does not establish physical hardware timing.
 It finds each GTK dialog by window title. The Review open dialog is matched as
 `Open HDF File|Open recording` (an xdotool regex), because MIB Studio's Review tab
 now uses Qt's "Open HDF File" title (#873) and the YOFO Review panel keeps "Open recording".
+The Export All folder picker is matched as `Select Export Root Directory` (Qt's title, `exportDialogPlan` in
+`reviewExport.ts`), which replaced "Choose export parent folder" when #873 moved the Review tab to Qt's titles.
 
 ### Managed profiles and startup provenance
 
