@@ -103,6 +103,19 @@ export function deriveRunPresentation({ cameraRunning, status, startInFlight, st
 /** Qt MainWindow.cpp:1150-1158 (#585): the Overview and Review stages are shut for the whole run. */
 export const STAGE_LOCK_REASON = "Locked while an experiment runs or is being saved. Stop the experiment and wait for the save to finish.";
 
+/** The stages the run lock shuts (MON-013). */
+export function isRunLockedTab(tab: string | undefined): boolean {
+  return tab === "overview" || tab === "review";
+}
+
+/** The stage a navigation request lands on: while the run is locked, a request for a shut stage keeps the
+ *  current one. One guard for every route there (stage tabs, the context bar, the workflow's next step, a
+ *  notice's "place the window" link): the #877 review found the context bar's Calibration segment opening
+ *  Overview mid-run. */
+export function runLockedTabChange<T extends string>(current: T, next: T, locked: boolean): T {
+  return locked && next !== current && isRunLockedTab(next) ? current : next;
+}
+
 /** Why Stop Camera is refused, or undefined (Qt CameraController operation guard, MainWindow.cpp:437-451). */
 export function cameraStopBlock({ expActive, flushing, recording }: { expActive: boolean; flushing: boolean; recording: boolean }): string | undefined {
   if (expActive) return "Cannot stop camera while an experiment is active. Stop the experiment first.";

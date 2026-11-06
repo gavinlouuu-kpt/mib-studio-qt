@@ -9,7 +9,7 @@ import { StudioContext } from "../../studio/StudioContext";
 import type { Studio } from "../../studio/useStudioController";
 import { CameraActions } from "../connect/CameraActions";
 import { TelemetrySidebar } from "../shell/Sidebar";
-import { StatusBar } from "../shell/StatusBar";
+import { ContextBar, StatusBar } from "../shell/StatusBar";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let host: HTMLDivElement, root: Root;
@@ -120,5 +120,28 @@ describe("Stop Camera (MON-012)", () => {
     expect(stop().disabled).toBe(false);
     await render(studio({ running: false }), <CameraActions />);
     expect(stop()).toMatchObject({ disabled: true, title: "Camera is not running" });
+  });
+});
+
+describe("the context bar during a run (MON-013, #877 review)", () => {
+  const contextBar = { segments: [
+    { id: "calibration", label: "Calibration", value: "0.5 µm/px", status: "ok", detail: "Pixel-to-micron scale is set.", tab: "overview" },
+    { id: "storage", label: "Storage", value: "RAM", status: "ok", detail: "Recording to RAM.", tab: "experiment" },
+  ] };
+  const seg = (label: string) => Array.from(host.querySelectorAll<HTMLButtonElement>(".context-seg")).find((b) => b.textContent!.includes(label))!;
+  it("does not open a stage the run has shut, and says why", async () => {
+    const setTab = vi.fn();
+    await render(studio({ contextBar, setTab, runLocked: true }), <ContextBar />);
+    expect(seg("Calibration").disabled).toBe(true);
+    expect(seg("Calibration").title).toContain("Locked while an experiment runs");
+    await act(async () => { seg("Calibration").click(); });
+    expect(setTab).not.toHaveBeenCalled();
+    expect(seg("Storage").disabled).toBe(false);
+  });
+  it("opens it when no run holds the lock", async () => {
+    const setTab = vi.fn();
+    await render(studio({ contextBar, setTab, runLocked: false }), <ContextBar />);
+    await act(async () => { seg("Calibration").click(); });
+    expect(setTab).toHaveBeenCalledWith("overview");
   });
 });

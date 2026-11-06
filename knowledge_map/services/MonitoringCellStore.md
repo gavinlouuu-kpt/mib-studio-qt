@@ -113,7 +113,10 @@
   than 8/16-bit, a row whose images the ring released to stay within its byte budget (only the
   newest rows keep images, #857; the candidate carries `imageReleased`), or a row that left the
   ring before the pin carries its metadata and `noImageReason` ("no image: …"); the image
-  commands return an empty packet.
+  commands return an empty packet. This holds in both strips: a released invalid row is listed in
+  the invalid strip with its reasons, no bytes and the budget reason, and counts as a cell
+  (`testInvalidReleasedImages`, #880 review). With the strips reading the newest 25 rows per ring,
+  this shows only for crops over about 1.3 MB (32 MiB / 25 rows).
 - **Crop.** Bounding box grown by `max(8, longer side / 2)` per side, at most 256 square, shifted
   inside the source (the processing ROI) rather than shrunk; unknown box → centred on the centroid
   (else the image centre). Mono8: channel 0, 16-bit scaled by 1/256. The mask crop is the same

@@ -6,7 +6,7 @@ import {
 } from "../areas/connect/useConnect";
 import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
 import {
-  experimentModel, useExperimentLifecycle, useMonitoringConfigRange, useMonitoringPolling, useMonitoringState, useSsdStatus,
+  experimentModel, useExperimentLifecycle, useMonitoringConfigRange, useMonitoringPolling, useMonitoringState, useRunLockedNavigation, useSsdStatus,
   useStartReadiness,
 } from "../areas/monitoring/useMonitoring";
 import { useCellView } from "../areas/monitoring/clickView/useCellView";
@@ -34,8 +34,13 @@ import { shellWorkflow, useWorkflowLanding } from "../areas/shell/workflowModel"
 // Everything returned is provided through StudioContext; area views read it with useStudio().
 export function useStudioController() {
   useWallClockSync(); // the PZ7035 has no RTC: the controlling browser sends its clock (G14)
+  const shellState = useShellState();
+  // MON-013 (#585 run-lock): every route to a stage the run has shut goes through this setTab (monitoring);
+  // the lock is the render-time `runLocked` below. No effect is registered, so the effect order is unchanged.
+  const { setTab, runLockRef } = useRunLockedNavigation(shellState.setTab);
   const states = {
-    ...useShellState(),
+    ...shellState,
+    setTab,
     ...useConnectState(),
     ...useConfigState(),
     ...usePreviewState(),
@@ -86,6 +91,7 @@ export function useStudioController() {
   const density = useMonitoringDensity(composed); // monitoring: the scatter's density (KDE) layer and reference contour (#866 PR E2)
   // Render-time values (no hooks).
   const startExperiment = experimentModel(composed); // monitoring
+  runLockRef.current = startExperiment.runLocked;
   const connectView = connectModel(composed); // connect: Start Camera gate, preflight, quality gates
   const workflow = shellWorkflow({ ...composed, ...connectView }); // shell: workflow stages, context bar
   const telemetry = shellTelemetry(composed); // shell: sidebar and status-bar rates

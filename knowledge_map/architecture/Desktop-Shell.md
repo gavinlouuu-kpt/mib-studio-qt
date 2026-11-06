@@ -96,7 +96,10 @@ every dialog goes through `transport/dialogs.message`. `useStartReadiness` reads
 `fetch_experiment_readiness("")` every 2 s on the Experiment stage (no run active) for the standing
 list of blocking and Warn gates. The run phase (`experimentModel`'s `runPresentation`, `runLocked`)
 locks the Overview and Review stage tabs, Review's Select HDF File and Open Recording, Stop Camera and
-Raw Record; the shell views (`Sidebar`, `StatusBar`, `Workflow`) and `CameraActions`, `PreviewPanel`,
+Raw Record; the lock on the two stages is enforced at the stage setter (`useRunLockedNavigation` wraps
+the shell's `setTab` in `useStudioController`, so the context bar, the workflow's next step and every
+other route keep the current stage mid-run; `runStatus.runLockedTabChange`), and the context bar
+disables a segment that leads to a shut stage; the shell views (`Sidebar`, `StatusBar`, `Workflow`) and `CameraActions`, `PreviewPanel`,
 `ReviewTab` only place what these modules return. `ProcessingStats` (eventAdapter) carries the
 optional `algo_avg_us` / `algo_avg_age_ms` the bridge does not send yet. Tests: `areas/monitoring/*.test.ts(x)`,
 `experimentStart.test.ts`, `transport/dialogsMessage.test.ts`.

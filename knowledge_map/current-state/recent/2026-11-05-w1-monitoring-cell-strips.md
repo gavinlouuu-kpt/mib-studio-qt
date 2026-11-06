@@ -30,3 +30,8 @@ classifier over 3 contracts x 64 configs x 32 rows), `e2e.monitoring_cells_facad
 `processing.monitoring_cell_concurrency` (a config switcher fills the invalid half); Rust
 `contract.rs` `monitoring_invalid_cells_end_to_end`, `monitoring_cells_are_described`;
 `monitoringCells.test.ts`, `cellStripsModel.test.ts`, `CellStrips.dom.test.tsx`.
+
+**Review (2026-11-06).** After the merge of develop (#876's byte-bound rings), an invalid row whose
+images the ring released is listed in the invalid strip with its reasons, no bytes and the budget
+reason, and the image commands refuse it: `testInvalidReleasedImages` pins this (it fails if the store
+reports such a row as results-only). The owner map lists the four strip files under `monitoring`.

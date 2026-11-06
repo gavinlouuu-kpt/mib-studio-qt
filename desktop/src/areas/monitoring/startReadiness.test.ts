@@ -93,11 +93,18 @@ describe("Start outcomes (MON-010)", () => {
 });
 
 describe("multi-image series (MON-008)", () => {
-  it("is asked for by the processing configuration's multi_image block", () => {
-    expect(seriesForcesInline(JSON.stringify({ multi_image: { enabled: true, count: 3 } }))).toBe(true);
-    expect(seriesForcesInline(JSON.stringify({ multi_image: { enabled: true, count: 1 } }))).toBe(false);
-    expect(seriesForcesInline(JSON.stringify({ multi_image: { enabled: false, count: 3 } }))).toBe(false);
+  // The shape of BackendFacade::fetchProcessingConfigJson: the series under image_processing, the mode under
+  // realtime_processing (#877 review: a top-level multi_image never exists, so the note never showed).
+  const doc = (enabled: boolean, count: number, mode: string) =>
+    JSON.stringify({ config_version: 3, image_processing: { multi_image: { enabled, count } }, realtime_processing: { enabled: true, mode } });
+  it("is asked for by a series that switches an async-batch run to inline, as Qt", () => {
+    expect(seriesForcesInline(doc(true, 3, "async_batch"))).toBe(true);
+    expect(seriesForcesInline(doc(true, 3, "inline"))).toBe(false); // already inline: no note (Qt)
+    expect(seriesForcesInline(doc(true, 1, "async_batch"))).toBe(false);
+    expect(seriesForcesInline(doc(false, 3, "async_batch"))).toBe(false);
+    expect(seriesForcesInline(JSON.stringify({ multi_image: { enabled: true, count: 3 } }))).toBe(false); // not the document's shape
     expect(seriesForcesInline(JSON.stringify({}))).toBe(false);
+    expect(seriesForcesInline("null")).toBe(false);
     expect(seriesForcesInline("not json")).toBe(false);
   });
   it("uses Qt's words", () => {

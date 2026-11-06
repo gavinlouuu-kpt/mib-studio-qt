@@ -3,7 +3,7 @@ import { EXPERIMENT_STATES, RUN_COMPLETION_STATES } from "../../bridgeContract";
 import type { ExperimentStatus } from "../../eventAdapter";
 import { runKey } from "../../runOutcome";
 import {
-  RUN_PHASE_GLYPH, RUN_PHASE_LABEL, cameraStopBlock, deriveRunPresentation, failureReason, recordBlock, runProgressText,
+  RUN_PHASE_GLYPH, RUN_PHASE_LABEL, cameraStopBlock, deriveRunPresentation, failureReason, recordBlock, runProgressText, isRunLockedTab, runLockedTabChange,
 } from "./runStatus";
 
 const status = (over: Partial<ExperimentStatus> = {}): ExperimentStatus => ({
@@ -98,6 +98,18 @@ describe("what a run locks", () => {
     expect(recordBlock({ recording: false, experimentIdle: true, hdf5Open: true })).toBe("Close the HDF5 file open in Review before recording.");
     expect(recordBlock({ recording: false, experimentIdle: true, hdf5Open: false })).toBeUndefined();
     expect(recordBlock({ recording: true, experimentIdle: false, hdf5Open: true })).toBeUndefined();
+  });
+
+  it("keeps the current stage when a navigation asks for a shut one during the run (MON-013, #877 review)", () => {
+    expect(isRunLockedTab("overview")).toBe(true);
+    expect(isRunLockedTab("review")).toBe(true);
+    expect(isRunLockedTab("experiment")).toBe(false);
+    expect(isRunLockedTab(undefined)).toBe(false);
+    expect(runLockedTabChange("experiment", "overview", true)).toBe("experiment");
+    expect(runLockedTabChange("experiment", "review", true)).toBe("experiment");
+    expect(runLockedTabChange("experiment", "connect", true)).toBe("connect");
+    expect(runLockedTabChange("overview", "overview", true)).toBe("overview"); // a run started elsewhere: stay put
+    expect(runLockedTabChange("experiment", "overview", false)).toBe("overview");
   });
 });
 
