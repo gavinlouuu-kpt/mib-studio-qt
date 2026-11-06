@@ -25,3 +25,10 @@ Backend and bridge groundwork so a later frontend PR can close the remaining Tau
 **Tests.** C++ `backend.monitoring_density_service` (identities), `e2e.monitoring_density_facade`; Rust
 `contract.rs` `monitoring_density_is_described` / `monitoring_density_end_to_end`, `dispatch.rs`
 `monitoring_density_through_dispatch`, the server's control-only test; `monitoringDensity.test.ts`.
+
+**Review (2026-11-07, #886).** Non-author review: three blocking findings, fixed. (1) A non-ASCII file
+name could end the app on Windows: `file_name` came from `std::filesystem::path::string()` (ANSI on
+MSVC) and the strict JSON dump threw on the non-UTF-8 bytes, again inside the `noexcept` cxx handler. Now
+the name is split as UTF-8 text, the reply is dumped with `error_handler_t::replace`, and the handler has
+a fixed last-resort refusal. (2) The raw-recording refusal had no test: `e2e.monitoring_density_facade`
+4c. (3) `desktop/src/monitoringDensity.ts` is listed in the owner map's monitoring row.

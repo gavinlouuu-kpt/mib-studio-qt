@@ -2473,12 +2473,23 @@ rust::String BackendBridge::fetch_monitoring_density(std::uint64_t since_generat
 }
 
 rust::String BackendBridge::fetch_kde_reference_from_file(rust::Str path) {
+    // This cxx entry point is noexcept: nothing may leave it. The refusal builder writes bad UTF-8 as
+    // U+FFFD rather than throwing (#886 review), and if even it fails the reply is a fixed refusal.
+    const auto refused = [&](const std::string& reason) {
+        try {
+            return rust::String(backend::review::kdeReferenceRefusedJson(std::string(path), reason));
+        } catch (...) {
+            return rust::String(
+                R"({"ok":false,"path":"","file_name":"","error":"No reference contour loaded: read failed",)"
+                R"("reason":"read failed","source":null,"core_fraction":null,"core_percent":null,"loops":0,"contours":[]})");
+        }
+    };
     try {
         return rust::String(impl_->facade.fetchKdeReferenceFromFileJson(std::string(path.data(), path.size())));
     } catch (const std::exception& e) {
-        return rust::String(backend::review::kdeReferenceRefusedJson(std::string(path), std::string("read failed: ") + e.what()));
+        return refused(std::string("read failed: ") + e.what());
     } catch (...) {
-        return rust::String(backend::review::kdeReferenceRefusedJson(std::string(path), "read failed"));
+        return refused("read failed");
     }
 }
 
