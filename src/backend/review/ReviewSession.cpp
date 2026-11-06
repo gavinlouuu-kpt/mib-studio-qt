@@ -700,6 +700,13 @@ namespace backend::review
         return readRunStatistics(path, computedAt);
     }
 
+    KdeReferenceResult ReviewSession::readKdeReference(const std::string &path) const
+    {
+        // The session's own lock (#722), as probeRuns and runStatistics.
+        std::scoped_lock lock(impl_->mutex);
+        return review::readKdeReference(path);
+    }
+
     ReviewMetadata ReviewSession::metadata() const
     {
         std::scoped_lock lock(impl_->mutex);

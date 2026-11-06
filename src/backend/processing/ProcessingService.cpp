@@ -869,8 +869,11 @@ std::vector<ProcessingService::MonitoringPoint> ProcessingService::getMonitoring
     std::vector<MonitoringPoint> out;
     out.reserve(MAX_MONITORING_FRAMES);
     std::scoped_lock lk(monitoringFramesMutex_);
-    monitoringValidFrames_.forEach([&out](const ProcessedFrame& f) {
-        if (f.validation.isValid) out.push_back({f.index, f.validation.area, f.validation.deformability});
+    monitoringValidFrames_.forEachNewest(monitoringValidFrames_.size(),
+                                         [&out](const ProcessedFrame& f, const MonitoringRowTag& tag) {
+        if (f.validation.isValid)
+            out.push_back({f.index, f.validation.area, f.validation.deformability, tag.runGeneration,
+                           tag.captureEpoch, static_cast<int32_t>(f.validation.objectId)});
     });
     return out;
 }
@@ -1026,6 +1029,26 @@ ProcessingService::MonitoringRingView ProcessingService::visitMonitoringNewest(
             visit(f, tag, false);
         });
     }
+    return view;
+}
+
+ProcessingService::MonitoringRingView ProcessingService::visitMonitoringNewestPerRing(
+    size_t maxValid, size_t maxInvalid, const MonitoringVisitor& visit) const {
+    MonitoringRingView view;
+    std::scoped_lock lk(monitoringFramesMutex_);
+    view.validHeld = monitoringValidFrames_.size();
+    view.invalidHeld = monitoringInvalidFrames_.size();
+    view.validAppended = monitoringValidAppended_.load(std::memory_order_relaxed);
+    view.invalidAppended = monitoringInvalidAppended_.load(std::memory_order_relaxed);
+    view.runGeneration = monitoringRunGeneration_.load(std::memory_order_acquire);
+    view.captureEpoch = monitoringCaptureEpoch_.load(std::memory_order_acquire);
+    if (!visit) return view;
+    monitoringValidFrames_.forEachNewest(maxValid, [&visit](const ProcessedFrame& f, const MonitoringRowTag& tag) {
+        visit(f, tag, true);
+    });
+    monitoringInvalidFrames_.forEachNewest(maxInvalid, [&visit](const ProcessedFrame& f, const MonitoringRowTag& tag) {
+        visit(f, tag, false);
+    });
     return view;
 }
 

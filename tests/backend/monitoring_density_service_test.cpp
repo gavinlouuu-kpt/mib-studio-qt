@@ -16,7 +16,11 @@
 //    an empty ring drops a stale result;
 //  - stop() joins promptly while a long interval is pending;
 //  - concurrent setSettings/requestUpdate/latest/stats from four threads
-//    while the input changes (TSan lane).
+//    while the input changes (TSan lane);
+//  - row identities (#866 PR E, bridge ABI next (#886, set at merge)): a result carries each row's
+//    whole key (run, capture, frame index, object id), all or nothing, and a
+//    new capture or run that restarts the frame numbering is never mistaken
+//    for unchanged input (the fingerprint covers the ends' whole keys).
 
 #include "backend/processing/KdeCoreRecord.h"
 #include "backend/services/MonitoringDensityService.h"
@@ -76,10 +80,25 @@ struct FakeRing {
             data.frameIndices.erase(data.frameIndices.begin(), data.frameIndices.begin() + excess);
         }
     }
+    // The same cluster with the rows' whole identities (what AppBackend supplies): one run and
+    // capture, two objects in every tenth frame.
+    void appendKeyed(std::size_t n, uint64_t firstIndex, uint64_t startGeneration, uint64_t captureEpoch) {
+        append(n, firstIndex);
+        std::scoped_lock lk(m);
+        for (std::size_t i = 0; i < n; ++i) {
+            backend::services::MonitoringDensityKey k;
+            k.startGeneration = startGeneration;
+            k.captureEpoch = captureEpoch;
+            k.frameIndex = firstIndex + i;
+            k.objectId = static_cast<int32_t>(i % 10 == 0 ? 1 : 0);
+            data.keys.push_back(k);
+        }
+    }
     void clear() {
         std::scoped_lock lk(m);
         data.frameIndices.clear();
         data.points.clear();
+        data.keys.clear();
     }
     MonitoringDensityInput snapshot() {
         ++calls;
@@ -294,6 +313,66 @@ int main() {
         MIB_EXPECT(stopMs < 1000, "stop joins promptly during a 50 s wait");
         svc.stop();                         // idempotent
         svc.setSettings(enabledSettings()); // after stop: harmless
+    }
+
+    // ---- row identities (#866 PR E) --------------------------------------------------
+    wd.mark("identities");
+    {
+        FakeRing k;
+        FakeLoad quiet;
+        k.appendKeyed(60, 0, /*start*/ 0, /*epoch*/ 3);
+        MonitoringDensityService svc([&] { return k.snapshot(); }, [&] { return quiet.sample(); });
+        svc.setSettings(enabledSettings());
+        MIB_REQUIRE(spinUntil([&] { return svc.generation() >= 1; }, 10000), "an estimate lands");
+        auto r = svc.latest();
+        MIB_REQUIRE(r != nullptr && r->keys.size() == r->frameIndices.size() && r->keys.size() == 60,
+                    "the result carries one key per row");
+        MIB_EXPECT(r->keys[0] == (backend::services::MonitoringDensityKey{0, 3, 0, 1}) &&
+                       r->keys[1] == (backend::services::MonitoringDensityKey{0, 3, 1, 0}) &&
+                       r->keys[59].frameIndex == 59 && r->frameIndices[59] == 59,
+                   "each key names its row (run, capture, frame index, object id)");
+        MIB_REQUIRE(settle(svc), "idle");
+
+        // The same frame indices (0..59) and count in a new capture: a restarted numbering. The end
+        // indices are equal, so only the keys tell this is another input.
+        k.clear();
+        k.appendKeyed(60, 0, 0, 5);
+        const auto skipped = svc.stats().skippedUnchanged;
+        svc.requestUpdate();
+        MIB_REQUIRE(spinUntil([&] { return svc.generation() == 2; }, 10000), "a new capture re-estimates");
+        MIB_EXPECT(svc.stats().skippedUnchanged == skipped && svc.latest()->keys[0].captureEpoch == 5,
+                   "a restarted frame numbering is not unchanged input");
+        MIB_REQUIRE(settle(svc), "idle after the new capture");
+
+        // Another run in the same capture, again the same indices.
+        k.clear();
+        k.appendKeyed(60, 0, 9, 5);
+        svc.requestUpdate();
+        MIB_REQUIRE(spinUntil([&] { return svc.generation() == 3; }, 10000), "a new run re-estimates");
+        MIB_EXPECT(svc.latest()->keys[0].startGeneration == 9, "the run is in the key");
+        MIB_REQUIRE(settle(svc), "idle after the new run");
+
+        // The same keys are unchanged input; a different object id at the end alone is not.
+        const auto again = svc.stats().skippedUnchanged;
+        svc.requestUpdate();
+        MIB_REQUIRE(settle(svc), "idle after an unchanged request");
+        MIB_EXPECT(svc.generation() == 3 && svc.stats().skippedUnchanged == again + 1, "identical keys are skipped");
+        {
+            std::scoped_lock lk(k.m);
+            k.data.keys.back().objectId = 1;
+        }
+        svc.requestUpdate();
+        MIB_REQUIRE(spinUntil([&] { return svc.generation() == 4; }, 10000), "a changed last key re-estimates");
+        MIB_EXPECT(svc.latest()->keys.back().objectId == 1, "the object id is in the key");
+
+        // An input without keys (a provider that only knows frame indices): the result has none.
+        FakeRing plain;
+        plain.append(60, 0);
+        MonitoringDensityService bare([&] { return plain.snapshot(); }, [&] { return quiet.sample(); });
+        bare.setSettings(enabledSettings());
+        MIB_REQUIRE(spinUntil([&] { return bare.generation() >= 1; }, 10000), "an estimate lands without keys");
+        MIB_EXPECT(bare.latest()->keys.empty() && bare.latest()->frameIndices.size() == 60,
+                   "keys are all or nothing");
     }
 
     // ---- concurrent callers ---------------------------------------------------------

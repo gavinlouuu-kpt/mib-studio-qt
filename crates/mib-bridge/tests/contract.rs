@@ -126,6 +126,12 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
+    // ABI next (#880, set at merge): #866 MON-052/053 monitoring_cells: the invalid strip (invalid_strip) and per-cell
+    // rejection reasons from the shared classifier; the strip cap 24 -> 25.
+    // ABI next (#886, set at merge): #866 PR E the live Monitoring density (monitoring_density_set_settings,
+    // monitoring_density_request_update, fetch_monitoring_density), a reference contour from a file
+    // (fetch_kde_reference_from_file), the E-modulus table (fetch_emodulus_lut) and the processing
+    // stats' algorithm time, realtime mode and camera telemetry.
     assert_eq!(ffi::bridge_abi_version(), 44);
 }
 
@@ -336,9 +342,11 @@ fn monitoring_cells_are_described() {
     let contract: serde_json::Value =
         serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
     let cells = &contract["monitoring_cells"];
-    for (key, value) in [("strip_max_cells", 24), ("strip_max_bytes", 4194304), ("max_pins", 16),
+    for (key, value) in [("strip_max_cells", 25), ("strip_max_bytes", 4194304), ("max_pins", 16),
                          ("pin_max_bytes", 4194304), ("crop_max_side", 256), ("crop_min_margin", 8),
-                         ("row_index_max", 4096)] {
+                         ("row_index_max", 4096),
+                         // ABI next (#880, set at merge) (#866 MON-052/053): the invalid strip's own bounds.
+                         ("invalid_strip_max_cells", 25), ("invalid_strip_max_bytes", 4194304)] {
         assert_eq!(cells[key], serde_json::json!(value), "monitoring_cells.{key} (pinned in shim.cpp)");
     }
     for (key, needle) in [("identity", "capture_epoch"), ("commands", "captureEpoch"), ("listing", "ring_capture_epoch"),
@@ -350,9 +358,17 @@ fn monitoring_cells_are_described() {
                           ("capture_rules", "the camera opening or closing"), ("capture_rules", "another processing ROI"),
                           ("capture_rules", "a realtime stop"), ("capture_rules", "Tag at entry"),
                           ("capture_rules", "One authority"), ("listing", "pins_ended"),
-                          ("geometry", "ROI"), ("threading", "24-byte tag")] {
+                          ("geometry", "ROI"), ("threading", "24-byte tag"),
+                          // ABI next (#880, set at merge): the invalid strip and its reasons.
+                          ("listing", "invalid_strip"), ("cell", "reasons"), ("invalid_strip", "oldest evicted first"),
+                          ("invalid_strip", "every rule of the strip"), ("invalid_strip", "monitoring_clear"),
+                          ("reasons", "classifyInvalidReasons"), ("reasons", "no_contour"), ("reasons", "wall"),
+                          ("reasons", "histogram"), ("commands", "then the invalid strip")] {
         assert!(cells[key].as_str().is_some_and(|d| d.contains(needle)), "monitoring_cells.{key} mentions {needle}");
     }
+    // ABI next (#880, set at merge): the reason codes, in the classifier's InvalidReasonCode order (pinned in the C++ store test).
+    assert_eq!(cells["reason_codes"],
+               serde_json::json!(["no_contour", "border", "area", "ring", "deform", "area_ratio", "focus", "wall"]));
     // Review round 2: the error an image pull of another capture is refused with.
     assert_eq!(cells["error_codes"]["capture_mismatch"], serde_json::json!("CAPTURE_MISMATCH"));
     let kinds = &contract["frame_packet"]["pull_kinds"];
@@ -1186,7 +1202,7 @@ fn monitoring_cells_end_to_end() {
     // The strip: owned crops with their masks, metadata only in JSON.
     let listing: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
     let strip = listing["strip"].as_array().unwrap();
-    assert!(!strip.is_empty() && strip.len() <= 24, "{listing}");
+    assert!(!strip.is_empty() && strip.len() <= 25, "{listing}");
     let cell = strip.last().unwrap();
     assert!(cell["image"]["has_mask"] == true && cell["no_image_reason"].is_null(), "{cell}");
     assert!(listing.to_string().len() < 64 * 1024, "the listing carries no pixels");
@@ -1270,6 +1286,275 @@ fn monitoring_cells_end_to_end() {
     assert!(unpin.ok && unpin.message == "unpinned", "the ended pin is unpinned: {unpin:?}");
 
     assert!(bridge.pin_mut().stop_capture().ok);
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&frame_dir);
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+// ABI next (#886, set at merge) (#866 PR E): the contract describes the live Monitoring density, the reference contour
+// from a file, the E-modulus table and the processing-stats additions.
+#[test]
+fn monitoring_density_is_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let density = &contract["monitoring_density"];
+    for (key, value) in [("interval_ms_min", serde_json::json!(500)), ("interval_ms_max", serde_json::json!(60000)),
+                         ("interval_ms_default", serde_json::json!(2000)), ("bandwidth_factor_min", serde_json::json!(0.2)),
+                         ("bandwidth_factor_max", serde_json::json!(5.0)), ("bandwidth_factor_default", serde_json::json!(1.0)),
+                         ("core_fraction_min", serde_json::json!(0.05)), ("core_fraction_max", serde_json::json!(1.0)),
+                         ("core_fraction_default", serde_json::json!(0.9)), ("grid_nx", serde_json::json!(128)),
+                         ("grid_ny", serde_json::json!(64)), ("compute_budget_factor", serde_json::json!(20)),
+                         ("max_points", serde_json::json!(1000))] {
+        assert_eq!(density[key], value, "monitoring_density.{key} (pinned in shim.cpp)");
+    }
+    for (key, needle) in [("commands", "monitoring_density_set_settings"), ("commands", "monitoring_density_request_update"),
+                          ("commands", "VIEWER_ONLY"), ("fetch", "sinceGeneration"), ("fetch", "unchanged"),
+                          ("result", "contexts"), ("result", "frame_index"), ("result", "object_id"),
+                          ("identity", "frame index"), ("identity", "capture_epoch"), ("identity", "start_generation"),
+                          ("threading", "lowest OS priority"), ("threading", "acquisition")] {
+        assert!(density[key].as_str().is_some_and(|d| d.contains(needle)), "monitoring_density.{key} mentions {needle}");
+    }
+    let reference = &contract["kde_reference_from_file"];
+    assert_eq!((reference["path_max_bytes"].clone(), reference["max_vertices"].clone()),
+               (serde_json::json!(4096), serde_json::json!(20000)));
+    for (key, needle) in [("command", "fetch_kde_reference_from_file"), ("command", "never opens the file in Review"),
+                          ("reply", "No reference contour loaded from"), ("reply", "full-run"),
+                          ("rules", "idle transaction"), ("rules", "refused while an experiment runs")] {
+        assert!(reference[key].as_str().is_some_and(|d| d.contains(needle)), "kde_reference_from_file.{key} mentions {needle}");
+    }
+    let lut = &contract["emodulus_lut"];
+    assert_eq!(lut["known_identity_max_bytes"], serde_json::json!(8192));
+    for (key, needle) in [("command", "fetch_emodulus_lut"), ("command", "knownIdentity"), ("encoding", "JSON"),
+                          ("threading", "bootstrap")] {
+        assert!(lut[key].as_str().is_some_and(|d| d.contains(needle)), "emodulus_lut.{key} mentions {needle}");
+    }
+    let stats = &contract["processing_stats"];
+    assert_eq!(stats["metric_states"], serde_json::json!(["valid", "stale", "unavailable", "unsupported", "error"]));
+    assert_eq!(stats["realtime_modes"], serde_json::json!(["inline", "async_batch"]));
+    for needle in ["algo_avg_us", "algo_avg_age_ms", "realtime_mode", "camera"] {
+        assert!(stats["fields"].as_str().is_some_and(|d| d.contains(needle)), "processing_stats.fields mentions {needle}");
+    }
+}
+
+// ABI next (#886, set at merge) (#866 PR E): the density, the reference contour, the E-modulus table and the stats
+// telemetry end to end through the cxx bridge: the mock camera's blob frames, the real realtime
+// path into the monitoring ring, the service worker's estimate, and the replies in their JSON shapes.
+#[test]
+#[serial]
+fn monitoring_density_end_to_end() {
+    let frame_dir = make_blob_frame_dir("density");
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_density_data_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let json = |s: String| -> serde_json::Value { serde_json::from_str(&s).unwrap() };
+
+    // Before init: every command answers in its own plain form and nothing is computed.
+    assert_eq!(json(bridge.pin_mut().fetch_monitoring_density(0)), serde_json::json!({ "valid": false }));
+    assert_eq!(json(bridge.pin_mut().fetch_emodulus_lut("")), serde_json::json!({ "valid": false }));
+    let before = json(bridge.pin_mut().monitoring_density_set_settings(true, 2000, 1.0, 0.9, 0.0, 0.0, 0.0, 0.0));
+    assert!(before["ok"] == false && before["settings"].is_null(), "{before}");
+    assert!(!bridge.pin_mut().monitoring_density_request_update().ok);
+    let refused = json(bridge.pin_mut().fetch_kde_reference_from_file("/nope.h5"));
+    assert!(refused["ok"] == false && refused["error"].as_str().unwrap().starts_with("No reference contour loaded from /nope.h5: "),
+            "{refused}");
+    let stats = bridge.pin_mut().fetch_processing_stats();
+    assert!(!stats.valid && !stats.algo_avg_published && !stats.camera_running, "{stats:?}");
+
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    // Settings: clamped by the service, the clamped values echoed; axes that are not all finite become 0.
+    let set = json(bridge.pin_mut().monitoring_density_set_settings(false, 1, 99.0, 0.01, f64::NAN, 5.0, f64::INFINITY, 2.0));
+    assert!(set["ok"] == true, "{set}");
+    assert_eq!(set["settings"], serde_json::json!({ "enabled": false, "interval_ms": 500, "bandwidth_factor": 5.0,
+                "core_fraction": 0.05, "x0": 0.0, "x1": 0.0, "y0": 0.0, "y1": 0.0 }), "{set}");
+    let axes = json(bridge.pin_mut().monitoring_density_set_settings(false, 90000, f64::NAN, f64::NAN, 100.0, 900.0, 0.0, 1.0));
+    assert_eq!(axes["settings"], serde_json::json!({ "enabled": false, "interval_ms": 60000, "bandwidth_factor": 1.0,
+                "core_fraction": 0.9, "x0": 100.0, "x1": 900.0, "y0": 0.0, "y1": 1.0 }), "{axes}");
+    // Disabled: an update request is a plain no-op, and the poll answers the same state.
+    assert!(bridge.pin_mut().monitoring_density_request_update().ok);
+    let idle = json(bridge.pin_mut().fetch_monitoring_density(0));
+    assert_eq!((idle["valid"].clone(), idle["result"].clone()), (serde_json::json!(true), serde_json::Value::Null), "{idle}");
+
+    assert!(bridge.pin_mut().apply_processing_config_json(LENIENT_CONFIG).ok);
+    assert!(bridge.pin_mut().apply_processing(true, 0.5).ok);
+    assert!(bridge.pin_mut().configure_mock_camera(&frame_dir.to_string_lossy(), 5, true).ok);
+    assert!(bridge.pin_mut().monitoring_set_active(true).ok);
+    let on = json(bridge.pin_mut().monitoring_density_set_settings(true, 60000, 1.0, 0.9, 0.0, 0.0, 0.0, 0.0));
+    assert!(on["ok"] == true && on["settings"]["enabled"] == true && on["settings"]["interval_ms"] == 60000, "{on}");
+    assert!(bridge.pin_mut().start_capture().ok);
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let result = loop {
+        let snap = bridge.pin_mut().fetch_monitoring_snapshot(2000);
+        if snap.rows.iter().filter(|r| r.valid).count() >= 12 {
+            assert!(bridge.pin_mut().monitoring_density_request_update().ok);
+            let d = json(bridge.pin_mut().fetch_monitoring_density(0));
+            if d["unchanged"] == false && d["result"].is_object() { break d; }
+        }
+        assert!(Instant::now() < deadline, "no density estimate from the blob frames");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    // The shape: a generation (decimal string), the settings in force, the points and the grid.
+    let generation = result["generation"].as_str().unwrap().to_string();
+    assert!(generation.parse::<u64>().is_ok() && generation != "0", "{result}");
+    assert_eq!(result["settings"]["enabled"], true);
+    let points = &result["result"]["points"];
+    let n = points["count"].as_u64().unwrap() as usize;
+    assert!((3..=1000).contains(&n), "the bounded point set: {n}");
+    for key in ["frame_index", "object_id", "context", "density"] {
+        assert_eq!(points[key].as_array().unwrap().len(), n, "points.{key} runs parallel to the points");
+    }
+    let contexts = points["contexts"].as_array().unwrap();
+    assert!(!contexts.is_empty() && contexts.iter().all(|c| c["start_generation"].is_string() && c["capture_epoch"].is_string()), "{points}");
+    assert!(points["context"].as_array().unwrap().iter().all(|i| (i.as_u64().unwrap() as usize) < contexts.len()));
+    assert!(points["density"].as_array().unwrap().iter().all(|d| d.as_f64().is_some_and(f64::is_finite)));
+    assert_eq!((result["result"]["grid"]["nx"].clone(), result["result"]["grid"]["ny"].clone()),
+               (serde_json::json!(128), serde_json::json!(64)));
+    // Every point is a row of the monitoring snapshot, by (run, capture, frame index, object id).
+    let snap = bridge.pin_mut().fetch_monitoring_snapshot(2000);
+    let rows: std::collections::HashSet<(u64, u64, u64, i32)> = snap.rows.iter().filter(|r| r.valid)
+        .map(|r| (r.start_generation, r.capture_epoch, r.frame_index, r.object_id)).collect();
+    for i in 0..n {
+        let ctx = &contexts[points["context"][i].as_u64().unwrap() as usize];
+        let key = (ctx["start_generation"].as_str().unwrap().parse().unwrap(), ctx["capture_epoch"].as_str().unwrap().parse().unwrap(),
+                   points["frame_index"][i].as_str().unwrap().parse().unwrap(), points["object_id"][i].as_i64().unwrap() as i32);
+        assert!(rows.contains(&key), "point {key:?} is no monitoring row");
+    }
+    // Nothing newer: three members only.
+    let same = json(bridge.pin_mut().fetch_monitoring_density(generation.parse().unwrap()));
+    if same["unchanged"] == true {
+        assert_eq!(same, serde_json::json!({ "valid": true, "generation": generation, "unchanged": true }));
+    }
+
+    // The stats telemetry while the camera runs.
+    let stats = bridge.pin_mut().fetch_processing_stats();
+    assert!(stats.valid && stats.camera_running && stats.realtime_mode == "inline", "{stats:?}");
+    for (state, has, value) in [(&stats.camera_frame_rate_state, stats.camera_frame_rate_has_value, stats.camera_frame_rate),
+                                (&stats.camera_data_rate_state, stats.camera_data_rate_has_value, stats.camera_data_rate_mbps)] {
+        assert!(["valid", "stale", "unavailable", "unsupported", "error"].contains(&state.as_str()), "{state}");
+        assert_eq!(has, state == "valid" || state == "stale", "a value exactly for a valid or stale sample");
+        assert!(value.is_finite());
+    }
+    assert!(!stats.algo_avg_published || (stats.algo_avg_us.is_finite() && stats.algo_avg_age_ms >= 0.0), "{stats:?}");
+
+    // The reference contour: a missing file, and refused while a run would be reading the instrument.
+    let missing = json(bridge.pin_mut().fetch_kde_reference_from_file(&data_dir.join("missing.h5").to_string_lossy()));
+    assert!(missing["ok"] == false && missing["reason"] == "file not found" && missing["file_name"] == "missing.h5", "{missing}");
+    assert_eq!((missing["source"].clone(), missing["core_fraction"].clone(), missing["loops"].clone(), missing["contours"].clone()),
+               (serde_json::Value::Null, serde_json::Value::Null, serde_json::json!(0), serde_json::json!([])));
+
+    // The E-modulus table: loaded or not; the same identity answers unchanged.
+    let lut = json(bridge.pin_mut().fetch_emodulus_lut(""));
+    assert_eq!(lut["valid"], true, "{lut}");
+    if lut["loaded"] == true {
+        let identity = lut["identity"].as_str().unwrap().to_string();
+        assert!(!identity.is_empty() && lut["lut"]["values"].as_array().unwrap().len() == 200 * 200, "{}", lut["lut"]["values"].is_array());
+        let again = json(bridge.pin_mut().fetch_emodulus_lut(&identity));
+        assert!(again["unchanged"] == true && again["lut"].is_null() && again["identity"] == identity.as_str(), "{again}");
+    } else {
+        assert!(lut["identity"] == "" && lut["lut"].is_null(), "{lut}");
+    }
+
+    assert!(bridge.pin_mut().stop_capture().ok);
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&frame_dir);
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+// A config under which the blob frames fail validation: the area gate (60..70 um^2) is far below
+// a blob's area at the calibration the test applies, so every detection is invalid with an Area
+// reason (the other gates are off). ABI next (#880, set at merge) (#866 MON-053).
+const AREA_REJECTING_CONFIG: &str = r#"{"image_processing": {"gaussian_blur_size": 3, "bg_subtract_threshold": 8,
+    "morph_kernel_size": 3, "morph_iterations": 1, "empty_frame_pixel_threshold": 1, "auto_background_enabled": false,
+    "area_threshold_min": 60, "area_threshold_max": 70,
+    "filters": {"enable_border_check": false, "enable_area_range_check": true, "enable_deformability_range_check": false,
+                "enable_area_ratio_check": false, "enable_ring_ratio_check": false,
+                "enable_laplacian_variance_check": false, "require_single_inner_contour": false}}}"#;
+
+// ABI next (#880, set at merge) (#866 MON-052/053): the invalid-cell strip end to end through the cxx bridge: blob frames
+// that fail the area gate reach the monitoring ring's invalid half, the store keeps their crops in
+// its own strip (never in the valid one) with the shared classifier's reasons (measured value and
+// the configured range), the pixels come out as frame packets, and monitoring_clear and a capture
+// change empty it.
+#[test]
+#[serial]
+fn monitoring_invalid_cells_end_to_end() {
+    let frame_dir = make_blob_frame_dir("invalid_cells");
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_invalid_cells_data_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let empty: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    assert!(empty["invalid_strip"].as_array().is_some_and(|a| a.is_empty()), "{empty}");
+    assert_eq!((empty["caps"]["strip_max_cells"].clone(), empty["caps"]["invalid_strip_max_cells"].clone(),
+                empty["caps"]["invalid_strip_max_bytes"].clone()),
+               (serde_json::json!(25), serde_json::json!(25), serde_json::json!(4194304)), "{empty}");
+
+    assert!(bridge.pin_mut().apply_processing_config_json(AREA_REJECTING_CONFIG).ok);
+    assert!(bridge.pin_mut().apply_processing(true, 0.5).ok);
+    assert!(bridge.pin_mut().configure_mock_camera(&frame_dir.to_string_lossy(), 5, true).ok);
+    assert!(bridge.pin_mut().monitoring_set_active(true).ok);
+    assert!(bridge.pin_mut().start_capture().ok);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let listing = loop {
+        let l: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+        if l["invalid_strip"].as_array().is_some_and(|a| a.len() >= 5) { break l; }
+        assert!(Instant::now() < deadline, "no invalid cells from the blob frames: {l}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let invalid = listing["invalid_strip"].as_array().unwrap();
+    assert!(invalid.len() <= 25, "bounded: {}", invalid.len());
+    assert!(listing["strip"].as_array().unwrap().is_empty(), "no valid cell: {listing}");
+    for cell in invalid {
+        assert_eq!(cell["valid"], false, "{cell}");
+        assert!(cell["image"]["has_mask"] == true && cell["no_image_reason"].is_null(), "{cell}");
+        assert_eq!(cell["capture_epoch"], listing["ring_capture_epoch"], "the current capture only");
+        let reasons = cell["reasons"].as_array().unwrap();
+        assert_eq!(reasons.len(), 1, "only the area gate rejects: {cell}");
+        let r = &reasons[0];
+        assert_eq!(r["code"], "area", "{cell}");
+        // The measured value is the cell's area in um^2 at the row's own calibration (0.5 um/px):
+        // a blob of radius 14 px is ~615 px^2 = ~154 um^2; the range is the configured one.
+        let (value, min, max) = (r["value"].as_f64().unwrap(), r["min"].as_f64().unwrap(), r["max"].as_f64().unwrap());
+        let expected = cell["area"].as_f64().unwrap() * 0.5 * 0.5;
+        assert!((value - expected).abs() < 1e-6 && value > 100.0, "{r} vs area {}", cell["area"]);
+        assert_eq!((min, max), (60.0, 70.0), "{r}");
+    }
+    assert_eq!(listing["stats"]["invalid_strip_cells"].as_u64().unwrap() as usize, invalid.len(), "{listing}");
+    assert!(listing["stats"]["invalid_strip_admitted"].as_str().unwrap().parse::<u64>().unwrap() >= invalid.len() as u64);
+    assert!(listing.to_string().len() < 128 * 1024, "the listing carries no pixels");
+
+    // The pixels of an invalid cell are pulled like a strip cell's.
+    let cell = invalid.last().unwrap();
+    let (gen, epoch, frame, object) = (
+        cell["start_generation"].as_str().unwrap().parse::<u64>().unwrap(),
+        cell["capture_epoch"].as_str().unwrap().parse::<u64>().unwrap(),
+        cell["frame_index"].as_str().unwrap().parse::<u64>().unwrap(),
+        cell["object_id"].as_i64().unwrap() as i32,
+    );
+    let image = bridge.pin_mut().fetch_monitoring_cell_image(gen, epoch, frame, object, false).frame;
+    assert!(image.valid && image.data.iter().any(|&p| p >= 200), "the crop holds the blob: {image:?}");
+    assert_eq!((image.width, image.height), (cell["image"]["width"].as_u64().unwrap(), cell["image"]["height"].as_u64().unwrap()));
+    let mask = bridge.pin_mut().fetch_monitoring_cell_image(gen, epoch, frame, object, true).frame;
+    assert!(mask.valid && mask.data.iter().any(|&p| p > 0), "the mask crop");
+
+    // A pin of an invalid cell carries its reasons.
+    let pin: serde_json::Value =
+        serde_json::from_str(&bridge.pin_mut().monitoring_cell_pin(gen, epoch, frame, object)).unwrap();
+    assert!(pin["ok"] == true && pin["cell"]["reasons"][0]["code"] == "area", "{pin}");
+    assert!(bridge.pin_mut().monitoring_cell_clear_pins().ok);
+
+    // monitoring_clear empties both strips with the ring (accumulation off first, so nothing refills
+    // them): no capture change, the same capture.
+    assert!(bridge.pin_mut().monitoring_set_active(false).ok);
+    assert!(bridge.pin_mut().monitoring_clear().ok);
+    let cleared: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    assert!(cleared["invalid_strip"].as_array().unwrap().is_empty() && cleared["strip"].as_array().unwrap().is_empty(),
+            "{cleared}");
+    assert_eq!(cleared["ring_capture_epoch"], listing["ring_capture_epoch"], "a clear is not a capture change");
+    // Stopping the camera is one: the next capture begins, the listing says why.
+    assert!(bridge.pin_mut().stop_capture().ok);
+    let stopped: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    assert_ne!(stopped["ring_capture_epoch"], listing["ring_capture_epoch"], "a new capture began");
+    assert!(stopped["last_capture_change"]["invalid_strip_dropped"].is_number(), "{stopped}");
+
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&frame_dir);
     let _ = std::fs::remove_dir_all(&data_dir);

@@ -114,6 +114,11 @@ def render(contract: dict) -> str:
     lines.append("export const MONITORING_CELL_ERROR_CODES = "
                  + json.dumps(contract["monitoring_cells"]["error_codes"], indent=2) + " as const;")
     lines.append("")
+    # ABI 45 (#866 MON-053): the rejection reason codes of an invalid cell, in the classifier's
+    # InvalidReasonCode order (index = enum value).
+    lines.append("export const MONITORING_CELL_REASON_CODES = "
+                 + json.dumps(contract["monitoring_cells"]["reason_codes"], indent=2) + " as const;")
+    lines.append("")
     # ABI 42 (#716 A4a): the calibration records' bounds and defaults (numbers only).
     calib = {k: v for k, v in contract["calibration_records"].items() if isinstance(v, int)}
     lines.append("export const CALIBRATION_RECORDS = " + json.dumps(calib, indent=2) + " as const;")
@@ -121,6 +126,16 @@ def render(contract: dict) -> str:
     # ABI 44 (#716 A7a): the run quick look's bounds (numbers only; the prose stays in the JSON).
     quick = {k: v for k, v in contract["run_quick_look"].items() if isinstance(v, int)}
     lines.append("export const RUN_QUICK_LOOK = " + json.dumps(quick, indent=2) + " as const;")
+    lines.append("")
+    # ABI 46 (#866 PR E): the live density's, the reference contour's and the E-modulus table's bounds
+    # (numbers only; the prose stays in the JSON), and the stats telemetry's states and modes.
+    for section, name in (("monitoring_density", "MONITORING_DENSITY"), ("kde_reference_from_file", "KDE_REFERENCE_FROM_FILE"),
+                          ("emodulus_lut", "EMODULUS_LUT")):
+        numbers = {k: v for k, v in contract[section].items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+        lines.append(f"export const {name} = " + json.dumps(numbers, indent=2) + " as const;")
+        lines.append("")
+    stats = {k: v for k, v in contract["processing_stats"].items() if isinstance(v, list)}
+    lines.append("export const PROCESSING_STATS = " + json.dumps(stats, indent=2) + " as const;")
     lines.append("")
     # Reverse lookup for event kinds: numeric value -> stable name.
     lines.append("export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {")
@@ -155,6 +170,10 @@ def render_rust(contract: dict) -> str:
     lines += [f"pub const RUN_QUICK_LOOK_MAX_PATHS: usize = {quick['max_paths']};",
               f"pub const RUN_QUICK_LOOK_PATH_MAX_BYTES: usize = {quick['path_max_bytes']};",
               f"pub const RUN_QUICK_LOOK_RUN_ID_MAX_BYTES: usize = {quick['run_id_max_bytes']};"]
+    # ABI 46 (#866 PR E): a fetch_kde_reference_from_file path and a fetch_emodulus_lut known identity
+    # longer than these are refused before the backend.
+    lines += [f"pub const KDE_REFERENCE_PATH_MAX_BYTES: usize = {contract['kde_reference_from_file']['path_max_bytes']};",
+              f"pub const EMODULUS_LUT_KNOWN_IDENTITY_MAX_BYTES: usize = {contract['emodulus_lut']['known_identity_max_bytes']};"]
     return "\n".join(lines) + "\n"
 
 
@@ -297,6 +316,26 @@ def check_bridge(contract: dict) -> str | None:
         bound = re.search(const + r"\s*=\s*(\d+)", header)
         if not bound or int(bound.group(1)) != contract["run_quick_look"][member]:
             return f"run_quick_look.{member} differs from RunStatistics.h {const}"
+    # ABI 46 (#866 PR E): the live density's bounds equal MonitoringDensityService.h's, the reference
+    # contour's size cap equals KdeReference.h's.
+    density = (REPO_ROOT / "include/backend/services/MonitoringDensityService.h").read_text(encoding="utf-8")
+    for member, const in (("interval_ms_min", "kIntervalMsMin"), ("interval_ms_max", "kIntervalMsMax"),
+                          ("bandwidth_factor_min", "kBandwidthFactorMin"), ("bandwidth_factor_max", "kBandwidthFactorMax"),
+                          ("core_fraction_min", "kCoreFractionMin"), ("core_fraction_max", "kCoreFractionMax"),
+                          ("grid_nx", "kGridNx"), ("grid_ny", "kGridNy"), ("compute_budget_factor", "kComputeBudgetFactor")):
+        bound = re.search(const + r"\s*=\s*([0-9.]+)", density)
+        if not bound or float(bound.group(1)) != float(contract["monitoring_density"][member]):
+            return f"monitoring_density.{member} differs from MonitoringDensityService.h {const}"
+    defaults = {"interval_ms_default": r"int intervalMs\{(\d+)\}", "bandwidth_factor_default": r"double bandwidthFactor\{([0-9.]+)\}",
+                "core_fraction_default": r"double coreFraction\{([0-9.]+)\}"}
+    for member, pattern in defaults.items():
+        found = re.search(pattern, density)
+        if not found or float(found.group(1)) != float(contract["monitoring_density"][member]):
+            return f"monitoring_density.{member} differs from MonitoringDensityService.h"
+    reference = (REPO_ROOT / "include/backend/review/KdeReference.h").read_text(encoding="utf-8")
+    bound = re.search(r"kKdeReferenceMaxVertices\s*=\s*(\d+)", reference)
+    if not bound or int(bound.group(1)) != contract["kde_reference_from_file"]["max_vertices"]:
+        return "kde_reference_from_file.max_vertices differs from KdeReference.h kKdeReferenceMaxVertices"
     return None
 
 

@@ -92,6 +92,43 @@ pub struct ProcessingStats {
     valid_fps1s: Option<f64>,
     invalid_fps1s: Option<f64>,
     pixel_to_micron: Option<f64>,
+    /// ABI next (#886, set at merge) (#866 PR E; MON-095): the last published algorithm time per frame (1 s window, µs) and
+    /// its age (ms), as Qt's Statistics panel shows them; null until one is published (and when the
+    /// backend is not initialized).
+    algo_avg_us: Option<f64>,
+    algo_avg_age_ms: Option<f64>,
+    /// ABI next (#886, set at merge) (MON-008): the realtime processing mode now, "inline" or "async_batch".
+    realtime_mode: Option<String>,
+    /// ABI next (#886, set at merge) (MON-098): the capture session's own telemetry; null when the backend is not initialized.
+    camera: Option<CameraTelemetry>,
+}
+
+/// One acquisition telemetry sample (ABI next (#886, set at merge)): `state` is a MetricValidity name ("valid", "stale",
+/// "unavailable", "unsupported", "error"); `value` and `age_ms` are null unless the sample is valid or
+/// stale, so an unknown rate is never a 0.
+#[derive(Serialize, Clone, Default)]
+pub struct MetricSample {
+    state: String,
+    value: Option<f64>,
+    age_ms: Option<f64>,
+}
+
+/// The capture session as Qt's Statistics panel reads it (ABI next (#886, set at merge), MON-098): the device/SDK frame
+/// rate (fps) and data rate (MB/s). The samples are "unavailable" while the session is not running.
+#[derive(Serialize, Clone, Default)]
+pub struct CameraTelemetry {
+    running: bool,
+    frame_rate: MetricSample,
+    data_rate_mbps: MetricSample,
+}
+
+fn metric_sample(state: &str, has_value: bool, value: f64, age_ms: f64) -> MetricSample {
+    let known = has_value && value.is_finite();
+    MetricSample {
+        state: state.to_string(),
+        value: if known { Some(value) } else { None },
+        age_ms: if known && age_ms.is_finite() { Some(age_ms) } else { None },
+    }
 }
 
 pub fn kind_name(k: BridgeEventKind) -> &'static str {
@@ -1791,6 +1828,85 @@ pub fn monitoring_cell_clear_pins(state: &AppState) -> Result<CmdResult, String>
     Ok(guard.pin_mut().monitoring_cell_clear_pins().into())
 }
 
+/// ABI next (#886, set at merge) (#866 PR E; bridge-contract.json `monitoring_density`): push the live density's settings to
+/// the backend service. The service clamps them (interval 500..60000 ms, bandwidth factor 0.2..5,
+/// core fraction 0.05..1); the reply is `{ok, message, settings}` with what applies. x0 x1 y0 y1 are
+/// the chart's axes (the contour grid's range); all zero means the data range padded by 10%.
+#[allow(clippy::too_many_arguments)]
+pub fn monitoring_density_set_settings(
+    state: &AppState,
+    enabled: bool,
+    interval_ms: i32,
+    bandwidth_factor: f64,
+    core_fraction: f64,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+) -> Result<serde_json::Value, String> {
+    for (name, v) in [("bandwidthFactor", bandwidth_factor), ("coreFraction", core_fraction), ("x0", x0), ("x1", x1), ("y0", y0), ("y1", y1)] {
+        if !v.is_finite() {
+            return Err(format!("Invalid {name}: a finite number is required"));
+        }
+    }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().monitoring_density_set_settings(
+        enabled,
+        interval_ms,
+        bandwidth_factor,
+        core_fraction,
+        x0,
+        x1,
+        y0,
+        y1,
+    ))
+    .map_err(|e| e.to_string())
+}
+
+/// Wake the density worker now (a no-op while disabled).
+pub fn monitoring_density_request_update(state: &AppState) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().monitoring_density_request_update().into())
+}
+
+/// The last density estimate: `{valid, generation, unchanged: true}` when nothing is newer than
+/// `since_generation` (a canonical decimal string; absent = nothing seen yet), else the result.
+/// A read every client may use.
+pub fn fetch_monitoring_density(state: &AppState, since_generation: Option<String>) -> Result<serde_json::Value, String> {
+    let since = match since_generation {
+        None => 0,
+        Some(text) => parse_canonical_u64(&text)
+            .ok_or_else(|| "Invalid sinceGeneration: a canonical decimal generation is required".to_string())?,
+    };
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_monitoring_density(since)).map_err(|e| e.to_string())
+}
+
+/// A reference core contour from an experiment file (read only; refused with a plain reason while a
+/// run is active). `{ok, path, file_name, error, reason, source, core_fraction, core_percent, loops, contours}`.
+pub fn fetch_kde_reference_from_file(state: &AppState, path: String) -> Result<serde_json::Value, String> {
+    // The contract's bound (kde_reference_from_file.path_max_bytes): a longer path never reaches the backend.
+    let max = frame_packet::KDE_REFERENCE_PATH_MAX_BYTES;
+    if path.is_empty() || path.len() > max {
+        return Err(format!("Invalid path: a file path of 1 to {max} bytes is required"));
+    }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_kde_reference_from_file(&path)).map_err(|e| e.to_string())
+}
+
+/// The loaded E-modulus table: `{valid, loaded, identity, unchanged, info, lut}`; the grid (`lut`)
+/// only when `known_identity` differs from the table's identity. A read every client may use.
+pub fn fetch_emodulus_lut(state: &AppState, known_identity: Option<String>) -> Result<serde_json::Value, String> {
+    let known = known_identity.unwrap_or_default();
+    // The contract's bound (emodulus_lut.known_identity_max_bytes): the table's identity is its SHA-256 and path.
+    let max = frame_packet::EMODULUS_LUT_KNOWN_IDENTITY_MAX_BYTES;
+    if known.len() > max {
+        return Err(format!("Invalid knownIdentity: at most {max} bytes"));
+    }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_emodulus_lut(&known)).map_err(|e| e.to_string())
+}
+
 /// ABI 42 (#716 A4a): a calibration record id as the contract allows it (1 to
 /// `calibration_records.record_id_max_bytes` bytes); anything else is refused before the backend.
 fn calibration_record_id(record_id: &str) -> Result<(), String> {
@@ -1982,6 +2098,32 @@ pub fn fetch_processing_stats(state: &AppState) -> Result<ProcessingStats, Strin
         valid_fps1s: if s.valid && s.valid_fps1s.is_finite() { Some(s.valid_fps1s) } else { None },
         invalid_fps1s: if s.valid && s.invalid_fps1s.is_finite() { Some(s.invalid_fps1s) } else { None },
         pixel_to_micron: if s.valid && s.pixel_to_micron.is_finite() { Some(s.pixel_to_micron) } else { None },
+        algo_avg_us: if s.valid && s.algo_avg_published && s.algo_avg_us.is_finite() { Some(s.algo_avg_us) } else { None },
+        algo_avg_age_ms: if s.valid && s.algo_avg_published && s.algo_avg_age_ms.is_finite() {
+            Some(s.algo_avg_age_ms)
+        } else {
+            None
+        },
+        realtime_mode: if s.valid { Some(s.realtime_mode.clone()) } else { None },
+        camera: if s.valid {
+            Some(CameraTelemetry {
+                running: s.camera_running,
+                frame_rate: metric_sample(
+                    &s.camera_frame_rate_state,
+                    s.camera_frame_rate_has_value,
+                    s.camera_frame_rate,
+                    s.camera_frame_rate_age_ms,
+                ),
+                data_rate_mbps: metric_sample(
+                    &s.camera_data_rate_state,
+                    s.camera_data_rate_has_value,
+                    s.camera_data_rate_mbps,
+                    s.camera_data_rate_age_ms,
+                ),
+            })
+        } else {
+            None
+        },
     })
 }
 

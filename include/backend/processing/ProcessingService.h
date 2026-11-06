@@ -231,6 +231,12 @@ public:
         uint64_t index{0};
         double area{0.0}; // pixels
         double deformability{0.0};
+        // The rest of the row's identity (#866 PR E): the run and the capture it entered
+        // processing with (MonitoringRowTag) and its object id. The tag is a slot's own 24-byte
+        // store, copied here under the same lock hold.
+        uint64_t startGeneration{0};
+        uint64_t captureEpoch{0};
+        int32_t objectId{-1};
     };
     std::vector<MonitoringPoint> getMonitoringValidPoints() const;
     // Live cell images (#716 A6a, bridge ABI 41). Every monitoring ring slot
@@ -331,6 +337,12 @@ public:
         std::function<void(const ProcessedFrame& frame, const MonitoringRowTag& tag, bool valid)>;
     MonitoringRingView visitMonitoringNewest(size_t maxRows, bool includeInvalid,
                                              const MonitoringVisitor& visit) const;
+    // The same read with a budget of its own per ring (the live cell store's two strips): under
+    // one hold of the ring's lock, the newest `maxValid` valid rows, then the newest `maxInvalid`
+    // invalid rows, each oldest -> newest (`valid` tells which ring a row came from). The visitor
+    // rules are those of visitMonitoringNewest.
+    MonitoringRingView visitMonitoringNewestPerRing(size_t maxValid, size_t maxInvalid,
+                                                    const MonitoringVisitor& visit) const;
     // A visitor that took shares of ring images and read their pixels outside
     // the lock gives the shares back here: they are dropped under the ring's
     // lock, the lock the ring's evictions take, so a free by an eviction (or by

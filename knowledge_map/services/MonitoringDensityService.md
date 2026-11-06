@@ -42,8 +42,18 @@ codec `include/backend/processing/MonitoringDensity.h`,
   ~90 ms CPU per 1000-cell estimate, next wake ~1.8 s (was ~600 ms before
   the separable grid and the one-pass normaliser).
 - Input: `AppBackend` copies `ProcessingService::getMonitoringValidPoints()`
-  (index, area, deformability only — no image references under the ring
-  lock) and converts area to µm² with the current pixel-to-micron factor.
+  (index, area, deformability and the row's identity only — no image
+  references under the ring lock) and converts area to µm² with the current
+  pixel-to-micron factor. Since ABI next (#886, set at merge) each point carries its whole row
+  identity, `MonitoringDensityKey{startGeneration, captureEpoch, frameIndex,
+  objectId}` (the ring slot's `MonitoringRowTag` plus the frame's index and
+  object id), because a frame index alone names nothing: it restarts with
+  every capture, the ring holds rows of several captures and runs, and a
+  frame can hold more than one object. The keys run parallel to the indices
+  (`MonitoringDensityInput::keys` / `MonitoringDensityResult::keys`, all or
+  nothing: a provider that cannot name every row sends none), and the
+  unchanged-input fingerprint includes the first and last key, so a new
+  capture that restarts the numbering is never mistaken for the same input.
 - Output: `latest()` (shared, immutable `MonitoringDensityResult`) and a
   monotonic `generation()`; shells poll the generation. Disabling drops the
   result (re-enable recomputes); an empty ring drops a stale result.
@@ -55,7 +65,10 @@ codec `include/backend/processing/MonitoringDensity.h`,
 
 ## Key APIs
 
-`setSettings(MonitoringDensitySettings)` (clamped; `enabled`,
+`setSettings(MonitoringDensitySettings)` (clamped by
+`MonitoringDensitySettings::clamped()`: interval 500–60000, factor 0.2–5,
+core fraction 0.05–1, a non-finite factor or fraction falls back to its
+default, axes that are not all finite become 0; `enabled`,
 `intervalMs`, `bandwidthFactor`, `coreFraction`, grid range `x0..y1` — the
 shell's chart axes, empty = padded data range), `settings()`,
 `requestUpdate()`, `latest()`, `generation()`, `busy()` (pending or
@@ -63,6 +76,47 @@ computing), `stats()` (`estimates`, `skippedUnchanged`, `skippedUnderLoad`,
 `busyMs`, `lastComputeMs`, `nextIntervalMs`, `priorityLowered`), `stop()`.
 Pure policy for tests: `nextIntervalMs`, `underLoad`, `compute`,
 `liveRecordJson`.
+
+## The bridge surface (ABI next (#886, set at merge), #866 PR E)
+
+The service was already shared by every shell; ABI next (#886, set at merge) gives the Rust/Tauri
+and WebSocket shells the same reads and writes the Qt tab had
+(`bridge-contract.json` sections `monitoring_density`,
+`kde_reference_from_file`, `emodulus_lut`; full shapes in
+[[../architecture/Rust-Bridge]]):
+
+- `monitoring_density_set_settings` (control: VIEWER_ONLY on the WebSocket
+  server, like `monitoring_set_active`) → `{ok, message, settings}` with the
+  clamped settings as the service applies them. The frontend sends
+  `enabled: false` while the sub-tab is hidden; disabling drops the result.
+- `monitoring_density_request_update` (control) wakes the worker now; a
+  no-op while disabled.
+- `fetch_monitoring_density(sinceGeneration)` (read) answers
+  `{valid, generation, unchanged: true}` (one atomic read) when nothing is
+  newer, else the result: a density per point (rounded, `null` when not
+  finite), the points named by `(start_generation, capture_epoch,
+  frame_index, object_id)` through a small `contexts` table so the payload
+  stays at most 1000 rows, the contours, the grid and the stats the Qt
+  tooltip shows (`refresh_ms` = max(interval, next wake)). The frontend
+  matches a point to a snapshot row by the whole identity; a row newer than
+  the estimate has no density yet.
+- `fetch_kde_reference_from_file(path)` (read) reads a reference core contour
+  from an experiment file: the stored full-run record first, the live one
+  second, Qt's reason wording, at most 20000 vertices
+  (`readKdeReference`). It never opens the file in Review. HDF5 is built
+  without thread safety (#722), so the read goes through the lanes' lock and
+  the session mutex (`ReviewJobs::readKdeReference` →
+  `ReviewSession::readKdeReference`) inside the coordinator's non-waiting
+  idle transaction with no raw recording writing, like the run quick look;
+  while an experiment runs or starts the call is refused with plain text
+  (Qt reads with a reader of its own and does not refuse; the frontend loads
+  the reference while idle and keeps the contours in memory).
+- `fetch_emodulus_lut(knownIdentity)` (read) returns the loaded E-modulus
+  table once per identity (`"<sha256>|<path>"`), `unchanged` otherwise.
+
+No command computes anything: the estimate stays on the worker, a command
+takes the service mutex for a few field reads and one `shared_ptr` copy,
+and nothing was added to the acquisition or processing path.
 
 ## Lifecycle
 
@@ -78,7 +132,19 @@ the visibility-gated monitoring ring.
 - `backend.monitoring_density_service` — policy, clamping, disabled no-op,
   first estimate + record, fingerprint skip, interval-only change, fraction
   and axis changes, load back-off (drops, backlog), disable/re-enable,
-  empty ring, prompt stop, four concurrent callers (TSan lane).
+  empty ring, prompt stop, four concurrent callers (TSan lane); row identity
+  (keys per point, a new capture with the same indices re-estimates, a new
+  run, an object-id change in the last row, no keys → none returned).
+- `e2e.monitoring_density_facade` — the bridge facade: settings echo and
+  clamping, the result's identity (two captures, the 1000-point bound,
+  disable), the reference read (full-run, live, no record, missing file,
+  refused during a run), the E-modulus table (identity, unchanged), stats
+  telemetry.
+- Rust `contract.rs` `monitoring_density_is_described`,
+  `monitoring_density_end_to_end`; `dispatch.rs`
+  `monitoring_density_through_dispatch`; `mib-bridge-server`
+  `monitoring_density_settings_are_control_only_but_reads_are_not`;
+  `monitoringDensity.test.ts` (the TS decoders).
 - `performance.monitoring_density_contention` — duty cycle within the
   budget when idle; real `computeProcessedFrame` on every core, density off
   vs on in alternating windows, median throughput ratio ≥ 0.90; starved
@@ -116,7 +182,8 @@ unfiltered so it includes the test.
   so no estimate — and no stored record — exists for a run watched from
   another tab.
 - Settings persistence still lives in the shell (Qt `QSettings`
-  `Monitoring/Kde*`); a React shell needs its own until the bridge exposes
-  the service (follow-up).
+  `Monitoring/Kde*`); the bridge now exposes the service (ABI next (#886, set at merge)), so the
+  React shell keeps its own copy of the settings and pushes them (the
+  service holds one set per instrument, shared by every client).
 
 The #595 KDE e2e harness waits for captured/monitoring frame work and two KDE generations rather than fixed phase durations. Its 120 s progress deadlines and 900 s CTest timeout accommodate parallel CI load. Work per captured frame, overlay lag, GUI responsiveness, compute-budget cadence, real contours, persisted live records and disabled-KDE recovery remain gated; wall-time FPS is diagnostic.
