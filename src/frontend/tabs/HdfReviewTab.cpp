@@ -2422,8 +2422,9 @@ void HdfReviewTab::updateComputeCoreActionState() {
 }
 
 double HdfReviewTab::pixelToMicronOf(const backend::services::Hdf5Service& reader) const {
-    const double recorded = backend::review::ReviewSession::recordedPixelToMicron(reader);
-    return recorded > 0.0 ? recorded : backend_.processing().getPixelToMicronFactor();
+    // The shared px->um rule (#867): the file's recorded factor, else the live one.
+    return backend::review::ReviewSession::resolvePixelToMicron(reader, backend_.processing().getPixelToMicronFactor())
+        .factor;
 }
 
 double HdfReviewTab::filePixelToMicron() const {

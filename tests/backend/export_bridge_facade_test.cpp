@@ -326,6 +326,27 @@ int main() {
         MIB_REQUIRE(job.ok && terminal(facade,job.operationId)["state"]=="completed","single pinned source supports explicit CSV destination after review close");
         MIB_REQUIRE(std::filesystem::exists(destination),"pinned CSV published");
     }
+    {
+        // FCS through review_export_json (#867): the first free <base>[_N].fcs pair under the
+        // root, each file at its recorded factor (this one records none: the live fallback).
+        const auto root=dir/"fcs";
+        const json fcs{{"source_paths",{source.string()}},{"output_root",root.string()},{"format","fcs"},
+                       {"conversion_factor_source","recorded"},{"refuse_recordings",true}};
+        const auto base=source.stem().string();
+        for(const std::string expected:{base+".fcs",base+"_2.fcs"}){
+            const auto job=facade.submitReviewExportJson(fcs.dump());
+            MIB_REQUIRE(job.ok,"FCS export accepted: "+job.message);
+            const auto done=terminal(facade,job.operationId);
+            MIB_REQUIRE(done["state"]=="completed","FCS export completed: "+done.dump());
+            MIB_EXPECT(done["final_path"]==(root/expected).string(),"FCS pair name: "+done.dump());
+            const auto stem=std::filesystem::path(expected).stem().string();
+            MIB_EXPECT(std::filesystem::is_regular_file(root/(stem+"_event_map.csv")),"event map published with it");
+            MIB_EXPECT(done["results"][0]["conversion_factor_source"]=="fallback" &&
+                       done["results"][0]["conversion_factor"].is_number() &&
+                       done["results"][0]["valid_count"].is_string(),"per-file factor and counts: "+done.dump());
+        }
+        MIB_REQUIRE(hash(source) == originalHash, "FCS source unchanged");
+    }
     facade.shutdown();
     return mib::test::exitCode();
 }

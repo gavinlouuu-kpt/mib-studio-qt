@@ -8,7 +8,8 @@
 menus, exports and update flow below).
 
 **Source:** `desktop/review.html`, `desktop/src/review/` (`main.tsx`,
-`ReviewApp.tsx`, `ReviewPanel.tsx`, `RegenerateMasks.tsx`, `review.css`,
+`ReviewApp.tsx`, `ReviewPanel.tsx`, `RegenerateMasks.tsx` (+ the shared
+`regenerate/` panels, #867), `review.css`,
 `charts/`, `exports/`),
 `desktop/src-tauri/tauri.review.conf.json`, cargo feature `review-only` in
 `desktop/src-tauri/Cargo.toml` (features `studio` / `review-only`),
@@ -68,6 +69,25 @@ YOFO Review's preference, MIB Studio's applied processing factor; applied
 with `review_set_pixel_to_micron` and the info re-read on change).
 `ReviewPanelHandle` exposes `openFile` / `openPath` / `closeFile` for menus.
 A file with no valid frames opens on its invalid set (`initialTab`).
+
+**Open failure and status line (#867, REVIEW-003/004).** `src/review/reviewOpen.tsx`
+holds what the Qt tab tells the operator when it opens a file
+(`HdfReviewTab.cpp:540-581`, `598-728`), and both Tauri surfaces use it. A file
+that cannot be opened shows `OpenFailureDialog`, a modal `alertdialog` titled
+"Cannot Open HDF5 File" with Qt's text ("Failed to open:\n<path>\n\n<detail>"). The
+detail is "File not found." for a missing file, else the interrupted-write text with
+the `h5recover` hint. Qt tells them apart with `QFile::exists`; here the backend does
+it where the file is: `ReviewSession::open` answers "File not found: <path>" or
+"Cannot read the HDF5 file (corrupt or not an HDF5 review file): <path>", and the
+facade's load result says "Recording load failed: file not found" (otherwise it is
+still the pinned "Recording load failed"), so a browser needs no file system. The
+failed open also clears the panel's info (the backend closed the previous file before it
+opened this one, so the old file's counts must not stay on screen). `ReviewStatus` is
+Qt's status label next to the path: "Ready", "Loading...", "Error loading file", "Valid:
+N, Invalid: M" and "Recording: N frames, M empty skipped", each followed by the accounting
+summary (YOFO moved it from the path label to the status, as in Qt). Tour anchors:
+`review-status`, `review-open-failure`. Tests: `reviewOpen.test.tsx`,
+`reviewOpenPanel.test.tsx`.
 
 The panel talks only to the **review bridge** (`src/review/reviewBridge.ts`
 → `src-tauri/src/review.rs` → `ReviewBridge` → [[../services/ReviewSession]]):
@@ -322,9 +342,49 @@ cells render with density ready in ~2–3 s.
   (`ReviewJobsOptions::forReviewBridge()`, #512 S7) keeps YOFO Review off the
   second lane (an export beside a regenerate / density / core job) until
   HDF5 is thread-safe (#722).
-- **Toolbar**: Export Metrics, Export All, and a **More…** menu with Batch
-  Metrics, Batch Export All, Export Charts, Regenerate masks (the Qt
-  layout); job buttons disable while a job runs.
+- **Toolbar**: Export Metrics, Export FCS, Export All, and a **More…** menu
+  with Batch Metrics, Batch Export FCS, Batch Export All, Export Charts,
+  Regenerate masks (the Qt layout); job buttons disable while a job runs.
+- **FCS (review ABI 7, #867; Qt #576)**: **Export FCS…** opens the Qt save
+  dialog ("Export FCS 3.1", FCS + All Files) on `<base>.fcs` in the
+  remembered export directory, else the first free `<base>_N.fcs` pair
+  (`defaultFcsName`: both the `.fcs` and `<stem>_event_map.csv` must be free,
+  the Qt `uniqueFcsPath` first gap), appends `.fcs`
+  (`withFcsExtension`), and runs `review_export_fcs` (job kind `ExportFcs` 9,
+  `ReviewJobs::startExportFcs`: valid detections at the session's factor, the
+  pair published without replacing one). The terminal message is
+  `<path> (N events: V valid, I invalid)`; the dialog shows the Qt success
+  text with the event map (`fcsOutcomeText`) and Show in folder reveals the
+  `.fcs`. **Batch Export FCS…** picks HDF files then a folder and runs
+  `review_batch_export_fcs` (kind `BatchExport`, the engine's source policy:
+  each file's recorded factor, the fallback when it records none,
+  `<root>/<base>[_N].fcs`, recordings refused with the Qt wording). Disabled
+  for recording files. The `data-tour` anchor `review-export-fcs` marks the
+  button for the guided tour (Driver.js is not on develop yet, PR #827).
+- **Regenerate masks (review ABI 8, #867; Qt `BatchMaskDialog`)**:
+  `RegenerateMasks.tsx` lays out the Qt groups. **Input source** (whole file,
+  valid / invalid / recorded range with 1-based From and Count 100, AVI,
+  folder) re-reads `fetch_review_regenerate_setup` when the source changes;
+  **Preview & ROI** and **Processing Config** are the shared
+  `regenerate/RegeneratePanels.tsx` components (`RoiPreviewPanel`,
+  `ProcessingConfigGroup`; rules in `regenerate/regenerateForm.ts`, also used
+  by MIB Studio's Review stage): frames by `fetch_review_regenerate_preview`
+  with Prev / Next and "Frame i / n" (Qt `previewWindow`), the ROI pre-filled
+  from `/experiment_info` and drawn by dragging (or typed; Full frame), Set as
+  Background / Clear / Use saved with Qt's "Background: …" label, the
+  synthetic box on by default, the eight config fields from the recorded
+  config (the defaults for AVI / folder) with odd-kernel coercion and "Reset
+  to recorded config". Under the groups `regenerateCalibration` names the
+  factor (recorded / Preferences fallback / default 0.4886 for AVI and
+  folder) and the E-LUT the run will use, and the setup's core-mismatch
+  text shows before Run. Run sends `review_regenerate_masks_json` (only the
+  eight fields as `image_processing`, the ROI, `background`
+  recorded / none / frame); the default output is Qt's `<base>_remasked.h5`
+  beside the source (inside a folder), then `_N`; the backend never
+  overwrites (D6). After success the panel opens the new file (as before).
+  `data-tour` anchors: `regen-source`, `regen-preview-roi`,
+  `regen-preview-nav`, `regen-roi`, `regen-background`, `regen-config`,
+  `regen-config-reset`, `regen-calibration`, `regen-output`, `regen-run`.
 - **Rules** (`exports/exportHelpers.ts`, Qt parity): metrics default to
   `<basename>_metrics.csv`, then `_N` one past the highest suffix in the
   directory (`HdfExportService::nextAvailableName`, mirrored; directory
@@ -418,13 +478,16 @@ accounting text for recording files.
   - YOFO adds a "Core N% (full run, not saved)" family.
   - Exported charts use density colours when a result is ready.
 - **Exports:**
-  - Batch Export All writes no chart TIFFs per file.
+  - Batch Export All writes the charts of each file (#867, REVIEW-049) as the backend renders
+    them (`scatter_plot.tiff` and `histogram.tiff`, plan decision D5) at the file's own
+    recorded factor and ring-ratio range; Qt renders them from its on-screen chart views and
+    names the histogram `ring_width_histogram.tiff`. Recording files get images only.
   - Batch default names take one past the highest `_N`; Qt fills the first gap.
   - Batch series is one choice for all files; Qt prompts per file.
   - Export All asks the series question before the folder; Qt asks after it.
-- **Status text:** for experiment files, the Qt status line replaces the
-  accounting suffix with "Valid: N, Invalid: M" (metadata counts). YOFO shows
-  the accounting in the file label, with counts from the experiment info.
+- **Status text:** since #867 (REVIEW-004) YOFO has Qt's status label ("Ready", "Loading...",
+  "Valid: N, Invalid: M" + accounting, "Recording: N frames, M empty skipped", "Error loading
+  file"); the counts are the experiment info's, Qt prefers the metadata rows' count.
 - **Regenerate masks:** YOFO uses the recorded config and a median-of-32
   background. Qt uses the live config, a tiled synthetic background and
   timestamp order. Since #512 S8 these are options of the one reanalysis
@@ -500,7 +563,11 @@ Accepted until S13 (plan decisions):
   OpenCV paints as a 5 px band with rounded outer corners (`compare.roi_band`,
   checked against `cv2.rectangle` goldens).
 - **D3:** the as-opened px→µm on the two 0.25 µm/px fixtures (live 0.4886), with
-  the area extents scaled by (0.4886 / 0.25)².
+  the area extents scaled by (0.4886 / 0.25)². Closed by #867 (REVIEW-068, bug #854):
+  `fetch_review_charts_json` now uses the file's recorded factor and says so
+  (`pixel_to_micron_source` "recorded" | "live"), so as-opened charts equal the compared
+  pass on those fixtures. `tools/review_parity/compare.py` still expects the old D3 outcome
+  and will report a DIFF on its "px→µm as opened" row until it is updated.
 - **D4:** the probe's bins over [10, 30]. As opened, D4 is not exercised: every
   input records 15–25, the live default.
 - **D5:** Export All carries `scatter_plot.tiff` and `histogram.tiff`.

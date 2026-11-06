@@ -231,6 +231,11 @@ namespace backend::bridge
                       return beginOperation(operationKindOf(kind), &cancel, message);
                   }})))
     {
+        // #867: a file that records no px->um factor is shown, charted, exported and reprocessed at
+        // the live factor, which an operator can change while the file is open: the session asks for
+        // it each time (an atomic read), instead of holding the 0.4886 it starts with.
+        review_->setFallbackPixelToMicronProvider(
+            [&backend = backend_] { return backend.processing().getPixelToMicronFactor(); });
     }
 
     review::ReviewJobs &BackendFacadeTestAccess::reviewJobs(BackendFacade &facade)
@@ -1142,7 +1147,8 @@ namespace backend::bridge
         // and the guard sets the D1 flag from isOpen() on every exit, so Start
         // and raw recording see the flag and the open file together.
         const ReviewSourceFlagSync flagSync{backend_, *review_};
-        const bool opened = review_->open(command.filePath);
+        std::string openError;
+        const bool opened = review_->open(command.filePath, &openError);
         if (!opened)
         {
             emitEvent(RecordingStatusEvent{
@@ -1158,7 +1164,11 @@ namespace backend::bridge
                                         BackendCommandType::RecordingLoad,
                                         "Recording load failed"});
             finishOperation(operationId, BackendOperationState::Failed, "Recording load failed");
-            return {false, BackendCommandType::RecordingLoad, "Recording load failed", operationId};
+            // MIB Studio shows only this message; a missing file reads differently from a corrupt
+            // one (Qt parity). The event and operation messages above stay the pinned text.
+            const bool missing = openError.rfind("File not found", 0) == 0;
+            return {false, BackendCommandType::RecordingLoad,
+                    missing ? "Recording load failed: file not found" : "Recording load failed", operationId};
         }
 
         RecordingStatusEvent event;
@@ -1957,6 +1967,11 @@ namespace backend::bridge
         out.coreSource = meta.coreSource;
         out.coreReleaseTag = meta.coreReleaseTag;
         out.hasBackground = meta.hasBackground;
+        // Same rule as the review charts: the file's recorded factor, else the live one (#867: the
+        // session's fallback is the live factor, so its metadata already says which).
+        out.pixelToMicronFromFile = meta.pixelToMicronFromFile && meta.pixelToMicron > 0.0;
+        out.pixelToMicron = meta.pixelToMicron;
+        out.filteredFrames = meta.filteredFrames;
         auto fillInfo = [](const review::DatasetInfo &from, BackendReviewDatasetInfo &info) {
             info.present = from.present;
             info.count = from.count;

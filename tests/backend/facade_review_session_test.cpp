@@ -21,7 +21,12 @@
 //    malformed background) leaves the D1 flag equal to the session's state
 //    (the load fails closed: open() is all or nothing);
 //  - charts never pair one file's identity with another's rows while loads
-//    replace the file on another thread (one session snapshot per request).
+//    replace the file on another thread (one session snapshot per request);
+//  - calibration (Qt parity, REVIEW-068): the charts and the metadata use the
+//    factor the open file recorded, the live factor only for a file that
+//    records none, and say which ("pixel_to_micron_source");
+//  - a load of a missing path says so in the command result (Task D); a
+//    corrupt file keeps the pinned text.
 // Watchdog guarded.
 
 #include "backend/app/AppBackend.h"
@@ -41,9 +46,11 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -51,6 +58,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -254,7 +262,7 @@ namespace
             invalidMeta.clear();
         }
 
-        BackendReviewMetadata metadata()
+        BackendReviewMetadata metadata(double liveFactor)
         {
             BackendReviewMetadata out;
             out.fileOpen = hdf5.isFileOpen();
@@ -271,6 +279,7 @@ namespace
                 std::uint64_t total = 0, filtered = 0;
                 hdf5.readRecordingInfo(out.startTimeNs, out.endTimeNs, total, filtered);
                 out.totalValid = total;
+                out.filteredFrames = filtered;
             }
             else
             {
@@ -301,6 +310,9 @@ namespace
             fillInfo("/valid_frames/masks", out.validMasks);
             fillInfo("/invalid_frames/masks", out.invalidMasks);
             fillInfo("/recorded_frames/images", out.recordedImages);
+            const double recorded = recordedFactor(hdf5);
+            out.pixelToMicronFromFile = recorded > 0.0;
+            out.pixelToMicron = out.pixelToMicronFromFile ? recorded : liveFactor;
             return out;
         }
 
@@ -429,7 +441,20 @@ namespace
             return j.dump();
         }
 
-        std::string charts(double factor, double ringMin, double ringMax) const
+        // The factor the fixture's run snapshot records (0 when it records none): the oracle
+        // models Qt's rule on its own, not through ReviewSession.
+        static double recordedFactor(const Hdf5Service &reader)
+        {
+            std::string snapshot;
+            if (!reader.readRunSnapshotJson(snapshot) || snapshot.empty()) return 0.0;
+            const auto j = nlohmann::json::parse(snapshot, nullptr, false);
+            if (!j.is_object() || !j.contains("pixel_to_micron") || !j["pixel_to_micron"].is_number()) return 0.0;
+            const double f = j["pixel_to_micron"].get<double>();
+            return f > 0.0 ? f : 0.0;
+        }
+
+        // Qt parity (REVIEW-068): the file's recorded factor, else `liveFactor`.
+        std::string charts(double liveFactor, double ringMin, double ringMax) const
         {
             try
             {
@@ -442,7 +467,9 @@ namespace
                 const auto present = reader.metadataDatasetPresent(true);
                 if (!present || (*present && !reader.readValidMetadata(rows)))
                     throw std::runtime_error("Cannot read valid-frame metrics");
-                return backend::review::reviewChartsJson(rows, source, factor, ringMin, ringMax);
+                const double recorded = recordedFactor(reader);
+                return backend::review::reviewChartsJson(rows, source, recorded > 0.0 ? recorded : liveFactor, ringMin,
+                                                         ringMax, recorded > 0.0 ? "recorded" : "live");
             }
             catch (const std::exception &error)
             {
@@ -467,7 +494,9 @@ namespace
                a.coreVersion == b.coreVersion && a.coreSource == b.coreSource && a.coreReleaseTag == b.coreReleaseTag &&
                sameInfo(a.validImages, b.validImages) && sameInfo(a.invalidImages, b.invalidImages) &&
                sameInfo(a.validMasks, b.validMasks) && sameInfo(a.invalidMasks, b.invalidMasks) &&
-               sameInfo(a.recordedImages, b.recordedImages) && a.filePath == b.filePath;
+               sameInfo(a.recordedImages, b.recordedImages) && a.filePath == b.filePath &&
+               a.pixelToMicron == b.pixelToMicron && a.pixelToMicronFromFile == b.pixelToMicronFromFile &&
+               a.filteredFrames == b.filteredFrames;
     }
 
     bool sameRows(const std::vector<MonitoringObjectRow> &a, const std::vector<MonitoringObjectRow> &b)
@@ -596,7 +625,7 @@ int main()
     auto checkSurface = [&](const std::string &label) {
         BackendReviewMetadata got;
         MIB_REQUIRE(facade.fetchReviewMetadata(got), label + ": metadata");
-        MIB_EXPECT(sameMetadata(got, oracle.metadata()), label + ": metadata equals the pre-slice facade");
+        MIB_EXPECT(sameMetadata(got, oracle.metadata(factor)), label + ": metadata equals the pre-slice facade");
         for (const bool valid : {true, false})
         {
             const std::uint64_t n = valid ? (got.recordingFile ? got.totalValid : got.validImages.count)
@@ -641,8 +670,12 @@ int main()
         const auto result = facade.dispatch(load);
         RecordingStatusEvent want;
         const bool wantOk = oracle.load(path.string(), readMetadata, want);
+        // Only a path that does not exist is told apart; an empty path and a corrupt file keep the pinned text.
+        const bool wantMissing = !wantOk && !path.empty() && !fs::exists(path);
         MIB_EXPECT(result.ok == wantOk && result.command == BackendCommandType::RecordingLoad &&
-                       result.message == (wantOk ? "Recording loaded" : "Recording load failed") &&
+                       result.message == (wantOk ? "Recording loaded"
+                                                 : wantMissing ? "Recording load failed: file not found"
+                                                               : "Recording load failed") &&
                        result.operationId != 0,
                    label + ": load result");
         std::lock_guard<std::mutex> lk(events.m);
@@ -733,6 +766,103 @@ int main()
                    label + ": gate passes once the failed load closed the file");
     }
     wd.mark("failed loads");
+
+    // A missing path reads differently from a corrupt one in the command result (Qt parity, REVIEW-066);
+    // the event and operation messages keep the pinned text, and so does every other failure.
+    {
+        const std::vector<std::tuple<fs::path, std::string, std::string>> cases{
+            {td.path() / "missing.h5", "Recording load failed: file not found", "missing path"},
+            {notHdf5, "Recording load failed", "existing non-HDF5 file"},
+            {fs::path(), "Recording load failed", "empty path"}};
+        for (const auto &[bad, message, label] : cases)
+        {
+            wd.mark(label.c_str());
+            events.clear();
+            const auto result = facade.dispatch(RecordingLoadCommand{bad.string(), true});
+            MIB_EXPECT(!result.ok && result.command == BackendCommandType::RecordingLoad &&
+                           result.message == message && result.operationId != 0,
+                       label + ": command result message is \"" + message + "\", got \"" + result.message + "\"");
+            std::lock_guard<std::mutex> lk(events.m);
+            MIB_EXPECT(events.errors.size() == 1 && events.errors[0].message == "Recording load failed" &&
+                           events.loadOps.size() == 2 && events.loadOps[1].message == "Recording load failed",
+                       label + ": event and operation messages stay the pinned text");
+        }
+    }
+
+    // ---- calibration: the file's recorded factor, else the live one (Qt parity, REVIEW-068) ----
+    // `full` records 0.25 in its run snapshot, `legacy` records none. The live factor is moved
+    // away from both; the recording file has no snapshot either.
+    {
+        wd.mark("calibration");
+        const double live = 0.5;
+        MIB_REQUIRE(factor != live, "the live factor of this test differs from the default");
+        backend.processing().setPixelToMicronFactor(live);
+        auto parsedCharts = [&] { return nlohmann::json::parse(facade.fetchReviewChartsJson()); };
+        auto metaOf = [&] {
+            BackendReviewMetadata m;
+            MIB_REQUIRE(facade.fetchReviewMetadata(m), "calibration: metadata");
+            return m;
+        };
+        auto closeTo = [](double a, double b) { return std::abs(a - b) <= 1e-9 * std::max(std::abs(a), std::abs(b)); };
+
+        MIB_REQUIRE(loadBoth(full, true, "calibration: full"), "load full");
+        {
+            const auto j = parsedCharts();
+            MIB_EXPECT(j.value("valid", false) && j["pixel_to_micron"].get<double>() == 0.25 &&
+                           j.value("pixel_to_micron_source", "") == "recorded",
+                       "full: charts use the recorded 0.25, not the live factor: " + j.dump().substr(0, 160));
+            // The same rows charted by the live factor: the area range scales by (0.25 / live)^2.
+            Hdf5Service reader;
+            std::vector<ProcessedFrame> rows;
+            MIB_REQUIRE(reader.loadFile(full.string()) && reader.readValidMetadata(rows), "read full's rows");
+            const auto atLive = nlohmann::json::parse(
+                backend::review::reviewChartsJson(rows, full.string(), live, cfg.ring_ratio_min, cfg.ring_ratio_max));
+            const double scale = (0.25 / live) * (0.25 / live);
+            MIB_EXPECT(!atLive.contains("pixel_to_micron_source"), "no source key when the caller names none");
+            MIB_EXPECT(closeTo(j["area_range"][0].get<double>(), atLive["area_range"][0].get<double>() * scale) &&
+                           closeTo(j["area_range"][1].get<double>(), atLive["area_range"][1].get<double>() * scale),
+                       "full: area_range equals the live-factor chart's scaled by (0.25/live)^2");
+            MIB_EXPECT(facade.fetchReviewChartsJson() ==
+                           backend::review::reviewChartsJson(rows, full.string(), 0.25, cfg.ring_ratio_min,
+                                                             cfg.ring_ratio_max, "recorded"),
+                       "full: charts equal reviewChartsJson at 0.25 / recorded");
+            const auto m = metaOf();
+            MIB_EXPECT(m.pixelToMicronFromFile && m.pixelToMicron == 0.25 && m.filteredFrames == 0,
+                       "full: metadata carries the recorded 0.25");
+            // Moving the live factor does not move a recorded file's charts or metadata.
+            backend.processing().setPixelToMicronFactor(0.6);
+            const auto again = parsedCharts();
+            MIB_EXPECT(again["pixel_to_micron"].get<double>() == 0.25 && again.value("pixel_to_micron_source", "") == "recorded" &&
+                           metaOf().pixelToMicron == 0.25,
+                       "full: a changed live factor leaves the recorded file at 0.25");
+            backend.processing().setPixelToMicronFactor(live);
+        }
+
+        MIB_REQUIRE(loadBoth(legacy, true, "calibration: legacy"), "load legacy");
+        {
+            const auto j = parsedCharts();
+            MIB_EXPECT(j.value("valid", false) && j["pixel_to_micron"].get<double>() == live &&
+                           j.value("pixel_to_micron_source", "") == "live",
+                       "legacy: no recorded factor, charts use the live one");
+            const auto m = metaOf();
+            MIB_EXPECT(!m.pixelToMicronFromFile && m.pixelToMicron == live && m.filteredFrames == 0,
+                       "legacy: metadata carries the live factor, from_file false");
+            backend.processing().setPixelToMicronFactor(0.6);
+            MIB_EXPECT(parsedCharts()["pixel_to_micron"].get<double>() == 0.6 && metaOf().pixelToMicron == 0.6,
+                       "legacy: follows the live factor");
+            backend.processing().setPixelToMicronFactor(live);
+        }
+
+        MIB_REQUIRE(loadBoth(recMulti, true, "calibration: recording"), "load recording");
+        {
+            const auto m = metaOf();
+            // writeRecording(..., filteredFrames = 2): the count the recording filtered empty.
+            MIB_EXPECT(m.recordingFile && m.filteredFrames == 2 && !m.pixelToMicronFromFile && m.pixelToMicron == live,
+                       "recording: filteredFrames from the file, live factor");
+        }
+        backend.processing().setPixelToMicronFactor(factor);
+        facade.closeReview();
+    }
 
     // ---- D1 when a read throws after the reader opened (#512 S5 review) -----------
     // Before the fix the exception left the session's reader open while the

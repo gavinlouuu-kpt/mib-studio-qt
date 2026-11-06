@@ -74,7 +74,10 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   an active experiment. Since #512 S5 the loaded file lives in the facade's
   own [[../services/ReviewSession]] (never `AppBackend::hdf5()`, the writer's
   handle); the metadata, page, image, `fetch_run_accounting("review")` and
-  charts shapes are filled from it field for field (no contract change), and
+  charts shapes are filled from it field for field (no contract change; since #867
+  `fetch_review_metadata` adds `pixel_to_micron`, `pixel_to_micron_from_file` and
+  `filtered_frames` as fields of the shared `BridgeReviewMetadata` struct: additive, ABI 45, see
+  `## ABI 45` below; `fetch_review_charts_json` adds the JSON key `pixel_to_micron_source`), and
   a loaded file still keeps `experiment_start` and `start_frame_recording`
   refused with the same gate and messages (decision D1 (a),
   [[ExperimentCoordinator]]).
@@ -519,6 +522,29 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
+
+## ABI 45: the review file's recorded factor in the shared metadata (#867)
+
+Additive over ABI 44. The cxx shared struct `BridgeReviewMetadata` (`crates/mib-bridge/src/lib.rs`)
+gains `pixel_to_micron_from_file: bool` and `filtered_frames: u64` next to `pixel_to_micron`, which
+now says which px->um factor a loaded review file uses and where it came from (the Review tab's Area
+(um^2) column and the charts' provenance line). A shared-struct field changes the C++/Rust layout of
+`fetch_review_metadata`, so the bump follows the precedent of ABI 41's `start_generation`. Review ABI
+is a separate number (7 and 8 are the Review chain's own, `review-contract.json`).
+
+- **Path:** `ReviewSession::metadata()` (`pixelToMicron`, `pixelToMicronFromFile`, `filteredFrames`) ->
+  `BackendFacade::fetchReviewMetadata` -> `shim.cpp` `fetch_review_metadata` -> `mib-app-commands`
+  `ReviewMetadata` -> `desktop/src/bridge.ts`. `fetch_review_charts_json` adds the JSON key
+  `pixel_to_micron_source` (`recorded` | `live`); that key is not an ABI change.
+- **One factor, one resolver:** every surface asks `ReviewSession::resolvePixelToMicron` (see
+  [[../services/ReviewSession]]); the facade registers the live factor as the session's fallback
+  provider, so the metadata, charts, exports and regenerate agree.
+- **ABI touch points:** `bridge-contract.json` `abi_version` 45; `shim.cpp` `bridge_abi_version()`;
+  `contract.rs` `abi_version_is_stable`; the generated `bridgeContract.ts`
+  (`scripts/gen_bridge_contract.py --check`); `dispatch.rs` `run_quick_look_through_dispatch`; the
+  `eventAdapter.test.ts` and `runQuickLook.test.ts` pins.
+- **Tests:** `contract.rs` (`abi_version_is_stable`, the metadata assertions at ~758),
+  `review_bridge.rs` (TD-17 factor), `backend.facade_review_session`, `review.session`.
 
 ## ABI 44: the run quick look (#716 A7a)
 
@@ -992,6 +1018,19 @@ attach to):
   `review_export_metrics/all`, `review_batch_export`,
   `review_regenerate_masks` (`review_regenerate_sources`),
   `review_export_charts` (kind `ExportCharts` = 6),
+  `review_export_fcs` (review ABI 7, #867: kind `ExportFcs` = 9, an explicit
+  `.fcs` path and its event map as one no-replace pair) and
+  `review_batch_export_fcs` (kind `BatchExport`, `<root>/<base>[_N].fcs` per
+  source at its recorded factor, recordings refused),
+  review ABI 8 (#867, the Qt BatchMaskDialog's groups):
+  `fetch_review_regenerate_setup(source, source_path)` → the
+  `review_regenerate_setup` JSON (preview set and frame count, recorded or
+  default config fields, recorded ROI, saved background, Qt's core-mismatch
+  text; refused while a job runs), `fetch_review_regenerate_preview(source,
+  source_path, index)` → a Mono8 `ReviewFrame` (Tauri pull kind `review`), and
+  `review_regenerate_masks_json(request_json)` (the regenerate job with
+  `image_processing`, `roi` and `background` overrides,
+  `ReviewJobs::parseRegenerateMasksJson`),
   `review_compute_core` + `fetch_review_computed_core_json`,
   `review_request_density` + `fetch_review_density` (contract
   `review_density` constants), `review_jobs_busy`; the jobs run one at a

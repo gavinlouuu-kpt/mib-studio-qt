@@ -29,9 +29,10 @@ import { REVIEW_OPERATION_KINDS } from "./reviewContract";
 import { ChartsView } from "./charts/ChartsView";
 import { gatherChartInputs, renderChartPngs, stageCharts, type ChartViewState } from "./charts/chartExport";
 import { JobDialog, SeriesPrompt } from "./exports/ExportDialogs";
-import { defaultMetricsName, dirName, exportDir, joinPath, rememberExportDir, seriesRangeFor, type SeriesChoice } from "./exports/exportHelpers";
+import { defaultFcsName, defaultMetricsName, dirName, exportDir, joinPath, rememberExportDir, seriesRangeFor, withFcsExtension, type SeriesChoice } from "./exports/exportHelpers";
 import { useReviewJobs, type TrackedJob } from "./exports/useReviewJobs";
 import { RegenerateMasksDialog, type RegenerateRequest } from "./RegenerateMasks";
+import { OpenFailureDialog, ReviewStatus, openFailureFor, reviewStatusText, type OpenFailure, type OpenPhase } from "./reviewOpen";
 import { FrameViewer } from "./FrameViewer";
 import { DEFAULT_COLUMNS, METRIC_COLUMNS, pageOffsetFor, toggleColumn, visibleColumns } from "./metricsColumns";
 import {
@@ -121,6 +122,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   const [info, setInfo] = useState<ReviewInfo | null>(null);
   const [fileKey, setFileKey] = useState("");
+  // Qt status label and critical dialog of a failed open (REVIEW-003/004).
+  const [openPhase, setOpenPhase] = useState<OpenPhase>("idle");
+  const [openFailure, setOpenFailure] = useState<OpenFailure | null>(null);
   const [reviewTab, setReviewTab] = useState<ReviewTab>("valid");
   const [rows, setRows] = useState<ReviewRows | null>(null);
   const [rowsOffset, setRowsOffset] = useState(0);
@@ -228,6 +232,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     setInfo(null);
     setFileKey("");
     setReviewTab("valid");
+    setOpenPhase("idle");
     onInfo?.(null);
     onFileChange?.("");
   }, [log, onFileChange, onInfo, resetView]);
@@ -237,14 +242,26 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
       beforeLoad?.();
       resetView();
       onFileChange?.(path);
+      setOpenPhase("loading");
+      // The backend closes the previous file before it opens the next (ReviewSession::open, all or
+      // nothing), so a failed open leaves no file: the old info must not stay on screen (REVIEW-003).
+      const dropFile = () => {
+        setInfo(null);
+        setFileKey("");
+        onInfo?.(null);
+      };
       try {
         const res = await reviewBridge.open(path);
         if (!res.ok) {
           log(`open failed: ${res.message}`);
+          dropFile();
+          setOpenPhase("error");
+          setOpenFailure(openFailureFor(path, res.message));
           return;
         }
         const fresh = await reviewBridge.info();
         setInfo(fresh);
+        setOpenPhase("idle");
         setFileKey(`${path}#${Date.now()}`);
         onInfo?.(fresh);
         log(`opened ${path}${fresh.accounting_summary}`);
@@ -256,6 +273,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         setSelected(setTotalFor(fresh, startTab !== "invalid") > 0 ? 0 : -1);
       } catch (e) {
         log(`open error: ${e}`);
+        dropFile();
+        setOpenPhase("error");
       }
     },
     [beforeLoad, loadRows, log, onFileChange, onInfo, resetView],
@@ -332,6 +351,42 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     }
   }, [info, jobs, log]);
 
+  // Export FCS 3.1 (#576, #867): the Qt dialog ("Export FCS 3.1", FCS + All
+  // Files, `<base>.fcs` in the last export dir, `.fcs` appended); the backend
+  // writes the .fcs and its event map as one pair and never replaces one.
+  const onExportFcs = useCallback(async () => {
+    if (!info) return;
+    try {
+      const dir = exportDir(info.file_path);
+      const name = defaultFcsName(info.file_path, dir ? await reviewBridge.listDir(dir) : []);
+      const picked = await save({
+        title: "Export FCS 3.1",
+        filters: [{ name: "FCS 3.1 Files", extensions: ["fcs"] }, { name: "All Files", extensions: ["*"] }],
+        defaultPath: joinPath(dir, name),
+      });
+      if (!picked) return;
+      const path = withFcsExtension(picked);
+      remember(await jobs.start("Export FCS", REVIEW_OPERATION_KINDS.ExportFcs, () => reviewBridge.exportFcs(path)), dirName(path));
+    } catch (e) {
+      log(`FCS export error: ${e}`);
+    }
+  }, [info, jobs, log]);
+
+  // Batch Export FCS: HDF files, then a folder; one pair per file at its own
+  // recorded factor; recordings refused (the Qt batch).
+  const onBatchFcs = useCallback(async () => {
+    try {
+      const picked = await open({ title: "Select HDF Files for Batch FCS Export", filters: H5_MULTI, multiple: true, defaultPath: info ? dirName(info.file_path) || undefined : undefined });
+      const sources = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+      if (sources.length === 0) return;
+      const root = await open({ title: "Select Directory for FCS Files", directory: true, multiple: false, defaultPath: exportDir(info?.file_path ?? sources[0]) || undefined });
+      if (typeof root !== "string") return;
+      remember(await jobs.start("Batch Export FCS", REVIEW_OPERATION_KINDS.BatchExport, () => reviewBridge.batchExportFcs(sources, root)), root);
+    } catch (e) {
+      log(`batch FCS error: ${e}`);
+    }
+  }, [info, jobs, log]);
+
   const onExportAll = useCallback(async () => {
     if (!info) return;
     try {
@@ -386,7 +441,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     (r: RegenerateRequest) =>
       new Promise<string | null>((settle) => {
         jobs
-          .start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasks(r), undefined, {
+          .start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasksJson(r), undefined, {
             onRefused: (message) => settle(message),
             onStarted: () => {
               settle(null);
@@ -396,8 +451,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           .then(async (job) => {
             // The Qt tab reloads from the regenerated file.
             if (job?.phase === "completed") {
-              rememberExportDir(dirName(r.outputPath));
-              await openPath(r.outputPath);
+              rememberExportDir(dirName(r.output_path));
+              await openPath(r.output_path);
             }
           })
           .catch((e) => {
@@ -408,6 +463,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     [jobs, log, openPath],
   );
 
+  const closeOpenFailure = useCallback(() => setOpenFailure(null), []);
   const pageTo = (offset: number) => void loadRows(validSet, Math.max(0, offset));
 
   const previewPane = (
@@ -439,6 +495,14 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         >
           Export Metrics to CSV…
         </button>
+        <button
+          onClick={onExportFcs}
+          disabled={!isExperiment || jobs.busy}
+          data-tour="review-export-fcs"
+          title={isRecording ? "Recording files carry no object metrics" : "Write an FCS 3.1 file and its event map (recorded px→µm factor)"}
+        >
+          Export FCS…
+        </button>
         <button onClick={onExportAll} disabled={!reviewing || jobs.busy} title="Metrics, images, series and charts into <root>/<file>/">
           Export All…
         </button>
@@ -450,6 +514,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
             <div className="menu-popup" role="menu">
               <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatch(true)}>
                 Batch Metrics…
+              </button>
+              <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatchFcs()}>
+                Batch Export FCS…
               </button>
               <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatch(false)}>
                 Batch Export All…
@@ -484,9 +551,10 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         </span>
         <span className="path-label right" title={info?.file_path}>
           {reviewing && info
-            ? `${info.file_path} · ${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid}, invalid ${info.total_invalid}${info.has_core_identity ? ` · core v${info.core_version}` : ""} · px→µm ${metricNumber(info.pixel_to_micron, 4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}${info.accounting_summary}`
+            ? `${info.file_path} · ${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid}, invalid ${info.total_invalid}${info.has_core_identity ? ` · core v${info.core_version}` : ""} · px→µm ${metricNumber(info.pixel_to_micron, 4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}`
             : "No file selected"}
         </span>
+        <ReviewStatus text={reviewStatusText(openPhase, info, info?.accounting_summary)} />
       </div>
       {noImagesNotice(info) && <p className="pending-note" role="status" data-testid="review-no-images">{noImagesNotice(info)}</p>}
       <div className="subtabs" role="tablist" aria-label="Review views">
@@ -631,6 +699,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           }}
         />
       )}
+      {openFailure && <OpenFailureDialog failure={openFailure} onClose={closeOpenFailure} />}
       {showRegenerate && <RegenerateMasksDialog info={info} onRun={onRegenerate} onCancel={() => setShowRegenerate(false)} />}
       {jobs.job && <JobDialog job={jobs.job} onCancel={jobs.cancel} onClose={jobs.dismiss} />}
       {viewerOpen && reviewing && selected >= 0 && (

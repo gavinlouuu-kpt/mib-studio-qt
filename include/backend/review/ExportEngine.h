@@ -36,12 +36,38 @@ namespace backend::review
         double chartRingMax{10.0};
     };
 
+    // Per-source rules of an export (bridge contract `review_export_json`, #867), applied by
+    // `runExportBatch` to each source before `ExportRunOptions::prepare`.
+    struct ExportSourcePolicy
+    {
+        // `conversion_factor_source: "recorded"`: each source is exported at the px->um factor it
+        // was recorded with (TD-17, ReviewSession::recordedPixelToMicron, as Qt and YOFO Review);
+        // a source that records none uses the request's factor (`conversion_factor`, else the
+        // host's default: the facade's live factor). false: the request's factor for every source.
+        bool recordedFactor{false};
+        // `refuse_recordings: true`: a raw recording is skipped with "recording files do not
+        // contain metrics" (the Qt batch rule) instead of exported. An FCS export refuses
+        // recordings whatever this says.
+        bool refuseRecordings{false};
+        // A raw recording that is not refused is exported as `Images` instead of the request's
+        // format (ReviewJobs' non-metrics batch: a recording has no metrics, only frames).
+        bool recordingsAsImages{false};
+        // The per-file review charts' histogram range is the file's own recorded ring-ratio range
+        // (ReviewSession's rule; the default config's when it records none), not the request's.
+        bool recordedChartRange{false};
+        // The request named `conversion_factor_source`: each per-file result reports the factor
+        // used, where it came from and the exported counts (absent otherwise, so older clients
+        // see the status byte for byte as before).
+        bool reportFactor{false};
+    };
+
     struct ExportBatchRequest
     {
         // Every field but `sourcePath`, shared by every source.
         recording::HdfExportRequest request;
         // `source_paths` (1-256); empty = the host's loaded file.
         std::vector<std::string> sources;
+        ExportSourcePolicy policy;
     };
 
     // Parses and validates a `review_export_json` request. The request's
@@ -74,6 +100,10 @@ namespace backend::review
         // destination). Returning false skips the source: it is recorded as
         // failed with `error`, not attempted, and the batch continues.
         std::function<bool(std::size_t index, recording::HdfExportRequest &request, std::string &error)> prepare;
+        // Batch only: the factor / recording rules applied before `prepare`. An FCS request
+        // without an explicit destination is always given its source's free
+        // "<root>/<base>[_N].fcs" pair (HdfExportService::nextAvailableFcsPath).
+        ExportSourcePolicy policy;
         // Test seam: HdfExportService::setImageWriterForTests.
         recording::HdfExportImageWriter imageWriterForTests;
     };
@@ -87,8 +117,12 @@ namespace backend::review
     struct ExportFileOutcome
     {
         std::string sourcePath;
-        bool attempted{true}; // false: skipped by `ExportRunOptions::prepare`
+        bool attempted{true}; // false: skipped by `ExportRunOptions::prepare` or the policy
         recording::HdfExportResult result;
+        // The factor the source was exported at and where it came from: "recorded" (the file's
+        // own), "fallback" (the file records none) or "request"; "" unless the policy reports it.
+        double conversionFactor{0.0};
+        std::string conversionFactorSource;
     };
 
     struct ExportBatchOutcome

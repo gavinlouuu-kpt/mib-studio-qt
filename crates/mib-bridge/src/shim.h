@@ -125,6 +125,7 @@ public:
     BridgeCommandResult stage_stop();
     BridgeCommandResult stage_apply_profile();
     BridgeStageStatus fetch_stage_status();
+    // ABI 45 (#867): the metadata carries pixel_to_micron, pixel_to_micron_from_file and filtered_frames.
     BridgeReviewMetadata fetch_review_metadata();
     BridgeReviewMetricsPage fetch_review_metrics_page(bool valid, std::uint64_t offset,
                                                       std::uint64_t count);

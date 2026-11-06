@@ -42,6 +42,19 @@ Files larger than 2 GB are fine: frames load as you browse. Recordings
 made in raw recording mode have no masks or metrics. For those, YOFO Review
 shows a single frame list, and only raw image export is available.
 
+The status line on the toolbar says where the file stands, in the Qt
+tab's words: **Ready** (no file), **Loading...** while a file opens,
+**Valid: N, Invalid: M** (and the run's accounting) for a run,
+**Recording: N frames, M empty skipped** for a raw recording, and
+**Error loading file** after a failure.
+
+If a file cannot be opened, a **Cannot Open HDF5 File** box says why:
+**File not found.**, or that the file exists but its HDF5 metadata is
+corrupt, likely from an interrupted write (a crash or a forced close during
+an experiment). Frame data may then be partly recoverable with the
+`h5recover` tool of the HDF5 utilities. The previously open file is closed
+by then, so the window shows no file.
+
 ## Browse frames and charts
 
 Browsing works as in MIB Studio's Review tab (see
@@ -60,12 +73,22 @@ pixel-to-micron factor in use.
 
 ## Export
 
-The toolbar has **Export Metrics to CSV…** and **Export All…**. **More…** holds
-**Batch Metrics**, **Batch Export All**, **Export Charts** and
-**Regenerate masks**.
+The toolbar has **Export Metrics to CSV…**, **Export FCS…** and **Export All…**.
+**More…** holds **Batch Metrics**, **Batch Export FCS**, **Batch Export All**,
+**Export Charts** and **Regenerate masks**.
 
 - **Export Metrics to CSV…** writes `<file>_metrics.csv`. Existing files are never
   overwritten: a `_2`, `_3`, … suffix is added instead.
+- **Export FCS…** saves a FlowJo-compatible FCS 3.1 file (one event per accepted
+  detection) and `<chosen name>_event_map.csv` beside it, which links each event to
+  its frame, object and timestamp. The proposed name is `<file>.fcs` (`<file>_2.fcs`
+  when that pair exists); `.fcs` is added when you leave it out. An existing FCS or
+  event-map file is never replaced. The export uses the px→µm factor recorded in the
+  file (the fallback preference when it records none). Raw recordings have no object
+  metrics, so the button is off for them.
+- **Batch Export FCS** asks for several HDF files, then a folder, and writes one
+  `<file>.fcs` + event-map pair per file, each at that file's own recorded factor.
+  Raw recordings are listed as failed in the summary.
 - **Export All…** writes a folder named after the file, containing
   `metrics.csv`, the frame TIFFs and the chart images. For multi-image
   series it first asks whether to export all series frames, a range (for
@@ -88,20 +111,46 @@ last output folder.
 **More… ▸ Regenerate masks** runs mask processing again over the open file
 (all of it or a frame range), an AVI, or a folder of images. The result is
 a **new** HDF5 file, which opens when it is done; the original is never
-changed.
+changed. The dialog has the three groups of MIB Studio's Qt dialog:
 
-For HDF5 files, YOFO Review uses the processing settings, ROI,
-background and pixel-to-micron factor the file was recorded with, and the
-target group the recording used. Each object's area range and target group
-are checked at that factor (at the factor set under **File ▸
-Preferences…** when the file records none). Untick that option to use the
-default settings instead, which check objects at 0.4886 µm per pixel. AVI
-and image-folder sources always use the defaults.
+- **Input source**: the whole file (the default), a range of valid,
+  invalid or recorded frames (**From image**, numbered from 1, and
+  **Count**, 100 by default; 0 runs to the end), an AVI file or a folder of
+  TIFF / PNG / JPEG images.
+- **Preview & ROI**: a frame of the source with **← Prev** / **Next →** and
+  "Frame i / n". The ROI is the yellow rectangle: for a recorded run it
+  starts as the ROI the file was recorded with. Drag on the frame to draw a
+  new one, type the numbers, or press **Full frame**. **Set as Background**
+  uses the frame on show as the background, **Clear** uses none, and **Use
+  saved** (when the file has a background) goes back to the file's own.
+  "Background: …" says which one the run uses. **Use synthetic background
+  when none selected** (on by default) builds one from the frames when no
+  background is in use.
+- **Processing Config**: Blur kernel, BG threshold, Morph kernel, Morph
+  iters, Area min / max (µm²) and Deform min / max, filled in from the
+  file's recorded settings (the defaults for an AVI, a folder, or a file
+  that records none). Kernels are odd: an even value becomes the next odd
+  one. **Reset to recorded config** puts the file's values back. Every
+  other setting (filters, target group, ring ratio) stays the recorded one.
+  Changes here apply to this run only.
+
+Below the groups the dialog says what the run will be checked at, for
+example "Validated at 0.2500 µm/px (recorded in the file)" and "E from the
+source run's E-LUT …". When the file was recorded with another processing
+core than the one in YOFO Review, it shows the processing-core mismatch
+warning before you run (the new file records the core that made it).
+
+For HDF5 files, YOFO Review uses the pixel-to-micron factor the file was
+recorded with and the target group the recording used. Each object's area
+range and target group are checked at that factor (at the factor set under
+**File ▸ Preferences…** when the file records none, for example a raw
+recording from the YOFO-V1 unit). AVI and image-folder sources record no
+factor: they are checked at 0.4886 µm per pixel.
 
 The new file records the factor it was made with. When that is the file's
 own factor, the status bar shows it, not "(fallback)", when the new file
-opens. When the file recorded none (or you used the default settings), the
-new file says so and opens with "(fallback)". The message at the end of the
+opens. When the file recorded none (or the source is an AVI or a folder),
+the new file says so and opens with "(fallback)". The message at the end of the
 job also names the factor, for example "px→µm 0.2500 recorded".
 
 Young's modulus (E) is computed with the E-modulus look-up table the
@@ -115,10 +164,12 @@ when that is the recording's own table (or none), regenerating it again uses
 the same one. Files recorded before the table was
 recorded keep the earlier behaviour: YOFO Review computes no E for them.
 
-Regenerating never replaces a file. **Save as…** suggests a name that is
-not taken yet (`<name>_remasked.h5`, then `_2`, `_3`, …). If you pick a file
+Regenerating never replaces a file. **Save as…** suggests
+`<name>_remasked.h5` beside the source (inside an image folder, named after
+the folder), then `_2`, `_3`, … when that name is taken. If you pick a file
 that already exists, the regeneration does not start: the dialog says
 "Output already exists; choose a new file" and you can choose another name.
+(MIB Studio's Qt dialog asks to overwrite instead.)
 
 **Files regenerated with review-v1.1.3-beta.1 or earlier** (#737): those
 versions wrote the wrong frame index, timestamp and track first/last frame
@@ -168,11 +219,16 @@ contours match. The visible differences:
 
 - The ring-width histogram spans the ring-ratio limits the file was
   recorded with (MIB Studio uses the current settings).
-- **Batch Export All** writes metrics and images for each file, but no
-  chart images.
+- **Batch Export All** writes the charts of each file as images
+  (`scatter_plot.tiff` and `histogram.tiff`, drawn by the backend at the
+  file's own factor and ring-ratio limits, not from the Charts view).
 - In a batch, the series question is asked once for all files.
-- **Regenerate masks** uses the file's recorded settings by default (see
-  above).
+- **Regenerate masks** starts from the file's recorded settings and keeps
+  the file's saved background unless you choose another (see above); Qt
+  starts from the current live settings and uses no saved background. It
+  never overwrites a file, and it falls back to the Preferences factor
+  where Qt uses the live processing factor (YOFO Review has no live
+  processing).
 - Chart colours and legend order differ slightly.
 
 ## Troubleshooting
