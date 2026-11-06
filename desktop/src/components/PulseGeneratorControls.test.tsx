@@ -215,6 +215,30 @@ describe('Set / Start / Stop (D5): no Service mode, no arm', () => {
     expect(commands().map(c => c.action)).toEqual(['start', 'enable']);
     expect(commands()[1]).toEqual({ action: 'enable', channel: 0, enabled: false });
   });
+  // Review of #881, blocking 1: a Stop pressed during a Stop must not survive and switch off the next Start's output.
+  it('a Stop pressed while a Stop is in flight is sent right after it, never after the next Start', async () => {
+    let finish!: (value: ReturnType<typeof ok>) => void;
+    vi.mocked(bridge.pulseGeneratorCommand).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await render();
+    await click('Stop'); await click('Stop');
+    await act(async () => finish(ok())); await flush();
+    expect(commands().map(c => c.action)).toEqual(['enable', 'enable']);
+    await click('Start'); await flush();
+    expect(commands().map(c => c.action)).toEqual(['enable', 'enable', 'start']);
+  });
+  // Review of #881, blocking 2: a queued Stop waits for the generator's answer only, not for the settings save or status read.
+  it('a Stop queued behind Start is sent when the generator answers, while the settings save is still pending', async () => {
+    let finish!: (value: ReturnType<typeof ok>) => void;
+    vi.mocked(bridge.pulseGeneratorCommand).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await render();
+    let readPrefs!: () => void;
+    vi.mocked(bridge.getPreferences).mockImplementation(() => new Promise(resolve => { readPrefs = () => resolve(structuredClone(prefs)); }));
+    await click('Start'); await click('Stop');
+    await act(async () => finish(ok())); await flush();
+    expect(commands().map(c => c.action)).toEqual(['start', 'enable']);
+    expect(commands()[1]).toEqual({ action: 'enable', channel: 0, enabled: false });
+    await act(async () => readPrefs()); await flush();   // the save completes afterwards (saves are serialised)
+  });
   it('the coordinated live view owns the generator: no write is offered or sent', async () => {
     vi.mocked(bridge.pulseGeneratorStatus).mockResolvedValue(connectedStatus({ owned: true }));
     await render();

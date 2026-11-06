@@ -111,6 +111,17 @@ export function PulseGeneratorControls({ ready, experimentActive, append }: Prop
     if (failure && alive.current) setError(`The pulse generator settings were not saved: ${failure}`);
   }
 
+  /** Frees the command lock as soon as the generator answered and sends a Stop pressed meanwhile at once (D5): a queued Stop
+   *  never waits for the settings save or the status read that follow a command, and never outlives the command it queued
+   *  behind (a Stop pressed during a Stop is sent right after it, not after the next Start). */
+  function releaseLock() {
+    busyRef.current = false; if (alive.current) setBusy(false);
+    if (stopQueued.current) { stopQueued.current = false; void onStop(); }
+  }
+  async function refreshStatus() {
+    try { if (alive.current) setStatus(await bridge.pulseGeneratorStatus()); } catch { /* the next poll reports it */ }
+  }
+
   /** One command at a time (Connect, Disconnect, Set, Start). */
   async function run(action: Exclude<PulseAction, 'stop' | 'refresh' | 'scan'>, build: () => Record<string, unknown>, done: () => string, failed: (message: string) => string, remember: boolean) {
     if (busyRef.current || gate(action)) return;
@@ -118,17 +129,15 @@ export function PulseGeneratorControls({ ready, experimentActive, append }: Prop
     let body: Record<string, unknown>;
     try { body = build(); } catch (failure) { setError(reason(failure)); return; }
     busyRef.current = true; setBusy(true);
+    let applied = false;
     try {
       const result = await bridge.pulseGeneratorCommand(body);
       if (!result.ok) throw new Error(failed(result.message));
-      append(done());
-      if (remember) await save();
+      append(done()); applied = true;
     } catch (failure) { const message = reason(failure); setError(message); append(`pulse generator: ${message}`); }
-    finally {
-      try { if (alive.current) setStatus(await bridge.pulseGeneratorStatus()); } catch { /* the next poll reports it */ }
-      busyRef.current = false; if (alive.current) setBusy(false);
-      if (stopQueued.current) { stopQueued.current = false; void onStop(); }
-    }
+    finally { releaseLock(); }
+    if (applied && remember) await save();
+    await refreshStatus();
   }
 
   async function onStop() {
@@ -144,10 +153,8 @@ export function PulseGeneratorControls({ ready, experimentActive, append }: Prop
       if (!result.ok) throw new Error(`Failed to stop the pulse train: ${result.message}`);
       append(`pulse generator Ch${current.channel}: stopped (output off)`);
     } catch (failure) { const message = reason(failure); setError(message); append(`pulse generator: ${message}`); }
-    finally {
-      try { if (alive.current) setStatus(await bridge.pulseGeneratorStatus()); } catch { /* the next poll reports it */ }
-      busyRef.current = false; if (alive.current) setBusy(false);
-    }
+    finally { releaseLock(); }
+    await refreshStatus();
   }
 
   async function onScan() {

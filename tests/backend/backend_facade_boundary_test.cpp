@@ -473,6 +473,24 @@ int main()
         }
         if (facade.runStartupDiscoveryJson("start").find("\"accepted\":false") == std::string::npos) return 73;
         {
+            // D5 (#868 HW-054): during a run the generator's Set and Start are refused by the idle lock (the backend is
+            // the net behind the disabled buttons, for a stale client or a second one); output off is never refused for it.
+            for (const auto* request : {R"({"action":"set","channel":0,"frequency_hz":1000,"duty_percent":25})",
+                                        R"({"action":"start","channel":0,"frequency_hz":1000,"duty_percent":25})"}) {
+                const auto refused = facade.pulseGeneratorCommandJson(request);
+                if (refused.ok || refused.message != "Experiment must be idle") {
+                    std::cerr << "pulse generator set/start must be refused during a run: " << refused.message << "\n";
+                    facade.shutdown();
+                    return 123;
+                }
+            }
+            if (facade.pulseGeneratorCommandJson(R"({"action":"enable","channel":0,"enabled":false})").message == "Experiment must be idle") {
+                std::cerr << "pulse generator output off must not wait for the idle lock\n";
+                facade.shutdown();
+                return 124;
+            }
+        }
+        {
             // The idle guard refuses review load / close during the run; the experiment's
             // writer handle is never closed or replaced by them (#512 S5).
             bridge::RecordingLoadCommand duringRun;
