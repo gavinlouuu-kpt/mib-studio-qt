@@ -1,5 +1,5 @@
 // The permanent acquisition-mode badge (#858, matrix SHELL-055): Qt's MainWindow::updateDeliveryModeBadge, from the backend's
-// delivery mode (bridge ABI 45 fetch_frame_delivery_mode, #863). Pure: no React or Tauri imports.
+// delivery mode (fetch_frame_delivery_mode, bridge ABI next (#895, set at merge), #863). Pure: no React or Tauri imports.
 
 /** The two fields the badge reads: `active_mode` is CaptureService::activeDeliveryMode() (the camera-confirmed mode while a
  *  capture runs, else the configured one) and `confirmed` is whether a running camera confirmed it. */

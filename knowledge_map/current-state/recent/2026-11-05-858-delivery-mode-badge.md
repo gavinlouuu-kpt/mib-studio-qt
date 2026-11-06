@@ -6,6 +6,6 @@ confirms the mode, with Qt's tooltip. Before, the mode was visible only by readi
 the Connect stage).
 
 - `desktop/src/areas/monitoring/deliveryModeBadgeModel.ts` (the text, pure) and `DeliveryModeBadge.tsx` (reads
-  `fetch_frame_delivery_mode`, bridge ABI 45 of #863 B1, every 2 s and when the camera starts or stops; hidden on the
+  `fetch_frame_delivery_mode`, bridge ABI next (#895, set at merge) of #863 B1, every 2 s and when the camera starts or stops; hidden on the
   PZ7035, before the backend is ready and when the read fails). One additive line in `areas/shell/StatusBar.tsx`.
 - Tests: `deliveryModeBadgeModel.test.ts`, `DeliveryModeBadge.dom.test.tsx`. See [[architecture/Desktop-Shell]].
