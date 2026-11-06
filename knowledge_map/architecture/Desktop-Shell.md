@@ -340,7 +340,11 @@ it fails; never a MindVision camera, as in Qt, whose MindVision branch returns f
 render by `syncScriptSources` from the config area's state): Experiment = Config > Camera script selection,
 else the EGrabber script editor's file, else the active profile folder's `egrabberConfig.js` if it exists
 ("No Experiment camera script: the camera keeps its current window" otherwise); Overview = the profile
-folder's `overviewConfig.js` if it exists. The window box is the geometry's `roi` (profile, else script);
+folder's `overviewConfig.js` if it exists. A remote (browser) client does not look in the profile folder:
+the server reads no `.js` file by path (`camera_document_confined` serves only the PZ7035 document), so
+`scriptExists` answers false there without asking and the no-script notice says why
+(`REMOTE_NO_PROFILE_SCRIPT`). It never claims a file it cannot see: the stage change would stop the camera
+for an apply that then fails. The window box is the geometry's `roi` (profile, else script);
 Qt's snapping (`snapEgrabberWindow`: offsets rounded then snapped down, sizes snapped down) runs while
 dragging and the backend repeats it when `save_camera_window` writes the script and the profile, on release
 and a moment after each W/H/X/Y edit (`useCameraWindow.edit`); a window that changed in the backend (a

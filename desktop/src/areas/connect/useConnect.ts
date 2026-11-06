@@ -12,7 +12,7 @@ import { snapRunWindow, type Rect } from "../../cameraAlignment";
 import { runModeBlockReason, useCameraWindow, type CameraModeError } from "../../cameraWindow";
 import { useViewerOnly } from "../../components/ViewerGate";
 import { DiscoveryRefusedError } from "../../discovery";
-import { invoke } from "../../transport";
+import { invoke, isRemote } from "../../transport";
 import { derivePreflight, type PreflightInput } from "../../preflight";
 import { readAutoSelect } from "../../startupPreference";
 import { deriveQualityGates, type ImageQualityInput, type QualityInput } from "../../quality";
@@ -401,8 +401,12 @@ type WindowingDeps = Pick<ShellState, "ready" | "tab" | "hostProcessing" | "inst
     | "scriptSourcesRef" | "setGeometryError" | "setCapacity">
   & Pick<MonitoringState, "expActive">;
 
-/** Whether a script file can be read: an existing .js file the camera document command opens. */
-export async function scriptExists(path: string): Promise<boolean> {
+/** Whether a script file can be read: an existing .js file the camera document command opens. A remote
+ *  (browser) client cannot tell: the server reads no script file by path (`camera_document_confined` serves
+ *  only the PZ7035 document), so it answers false without asking and the stage change says why. It never
+ *  answers true for a file it cannot see: a stop, then a failed apply, would leave the camera stopped. */
+export async function scriptExists(path: string, remote: boolean = isRemote): Promise<boolean> {
+  if (remote) return false;
   try {
     await invoke("camera_document", { action: "read", path, kind: "js", baseline: "", text: "" });
     return true;
@@ -551,6 +555,7 @@ export function useCameraModeSwitch({
           applyScript: (path, overview) => bridge.applyCameraScriptWithRole(path, overview),
           refreshGeometry: () => refreshCameraGeometry(),
           scriptExists,
+          remote: isRemote,
           setRunning,
           log: append,
         };

@@ -14,6 +14,13 @@ export interface StageNotice { stage: StageName; level: "info" | "warn" | "error
 
 export const NO_EXPERIMENT_SCRIPT = "No Experiment camera script: the camera keeps its current window";
 export const NO_OVERVIEW_SCRIPT = "No Overview camera script: the camera keeps its current mode. Choose one in Camera & Alignment (overviewConfig.js).";
+/** Added to the no-script notice on a remote (browser) client: the server reads no script file by path, so the
+ *  profile folder's egrabberConfig.js / overviewConfig.js is not looked for there (desktop-only, #892 review). */
+export const REMOTE_NO_PROFILE_SCRIPT = "A remote client does not read script files on the instrument, so the profile folder's script is not used.";
+export function noScriptText(overview: boolean, remote: boolean): string {
+  const text = overview ? NO_OVERVIEW_SCRIPT : NO_EXPERIMENT_SCRIPT;
+  return remote ? `${text}${text.endsWith(".") ? "" : "."} ${REMOTE_NO_PROFILE_SCRIPT}` : text;
+}
 /** Qt's wording when the Overview's auto-start fails (MainWindow::onTabChanged). */
 export const START_FAILED = "Failed to start camera. Please check camera connection and try again.";
 export const OVERVIEW_DISABLED_TITLE = "Overview tab is disabled while an experiment is active. Please stop the experiment first.";
@@ -114,6 +121,8 @@ export interface StageIo {
   applyScript(path: string, overview: boolean): Promise<CmdLike>;
   refreshGeometry(): Promise<CameraGeometry | null>;
   scriptExists(path: string): Promise<boolean>;
+  /** A remote (browser) client: the profile folder is not probed (see REMOTE_NO_PROFILE_SCRIPT). */
+  remote?: boolean;
   /** The camera is running (true) or stopped (false) now. */
   setRunning(running: boolean): void;
   log(line: string): void;
@@ -151,7 +160,7 @@ export async function runEgrabberStage(input: StageInput, io: StageIo): Promise<
 
     if (!script) {
       // Qt logs it and leaves the camera as it is; Overview still starts a stopped camera.
-      const notice: StageNotice = { stage, level: "warn", text: overview ? NO_OVERVIEW_SCRIPT : NO_EXPERIMENT_SCRIPT };
+      const notice: StageNotice = { stage, level: "warn", text: noScriptText(overview, io.remote === true) };
       io.log(notice.text);
       if (overview && autoStart) return (await startCamera(io, stage, false)) ?? notice;
       return notice;

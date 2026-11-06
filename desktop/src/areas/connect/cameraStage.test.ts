@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CameraGeometry, CameraSelection } from "../../bridge";
 import {
-  experimentWindowNotice, folderOf, joinPath, NO_EXPERIMENT_SCRIPT, NO_OVERVIEW_SCRIPT, NO_SOURCES, overviewAutoStart,
+  experimentWindowNotice, folderOf, joinPath, NO_EXPERIMENT_SCRIPT, NO_OVERVIEW_SCRIPT, NO_SOURCES, noScriptText, overviewAutoStart,
+  REMOTE_NO_PROFILE_SCRIPT,
   profileFile, resolveExperimentScript, resolveOverviewScript, runEgrabberStage, runOverviewAutoStart, START_FAILED,
   type ScriptSources, type StageIo,
 } from "./cameraStage";
@@ -163,6 +164,20 @@ describe("entering Experiment with an eGrabber camera (#846)", () => {
     expect(calls).toEqual(["selection"]);
     expect(notice).toEqual({ stage: "experiment", level: "warn", text: NO_EXPERIMENT_SCRIPT });
     expect(NO_EXPERIMENT_SCRIPT).toBe("No Experiment camera script: the camera keeps its current window");
+  });
+
+  it("on a remote client says the profile folder is not read, and leaves the camera as it is (#892 review)", async () => {
+    // what useConnect gives a remote client: the probe answers false (the server reads no .js by path)
+    for (const stage of ["experiment", "overview"] as const) {
+      const { io, calls } = fake({ selection: { running: true } });
+      const notice = await runEgrabberStage(input({ stage, sources: sources({ profileConfigPath: "/p/lab/config.json" }) }),
+        { ...io, remote: true });
+      expect(calls).toEqual(["selection"]); // no stop, no apply, no restart
+      expect(notice).toEqual({ stage, level: "warn", text: noScriptText(stage === "overview", true) });
+    }
+    expect(noScriptText(false, true)).toBe(`${NO_EXPERIMENT_SCRIPT}. ${REMOTE_NO_PROFILE_SCRIPT}`);
+    expect(noScriptText(true, true)).toBe(`${NO_OVERVIEW_SCRIPT} ${REMOTE_NO_PROFILE_SCRIPT}`);
+    expect(noScriptText(true, false)).toBe(NO_OVERVIEW_SCRIPT);
   });
 
   it("falls back to the profile's egrabberConfig.js when nothing is chosen", async () => {

@@ -18,6 +18,7 @@ const invokeMock = vi.hoisted(() => vi.fn());
 const sessionState = vi.hoisted(() => ({ current: {} as { clientId?: string; controllerId?: string | null } }));
 vi.mock("../../transport", () => ({
   invoke: invokeMock,
+  isRemote: false,
   transport: { session: { subscribe: () => () => undefined, get: () => sessionState.current } },
 }));
 import { useCameraModeSwitch } from "./useConnect";
