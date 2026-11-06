@@ -173,6 +173,12 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow), backend_(backend)
 {
     ui->setupUi(this);
+    // Rig check F4: the title names the build, the same version Help > About shows.
+    {
+        const QString version = QCoreApplication::applicationVersion();
+        setWindowTitle(version.isEmpty() ? QStringLiteral("MIB Studio Qt")
+                                         : QStringLiteral("MIB Studio Qt %1").arg(version));
+    }
 
     // Connect menu actions
     connect(ui->exitAct, &QAction::triggered, this, &QWidget::close);
@@ -327,16 +333,15 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         openFolder(QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation))
                        .absoluteFilePath(QStringLiteral("MIB_Studio_Qt")));
     });
-    connect(ui->openLogsFolderAct, &QAction::triggered, this, [openFolder]() {
+    // The folder app.log is in (AppBackend::logDir, the data-dir rule of
+    // backend/app/DataDirectory.h): %LOCALAPPDATA%/MIB_Studio_Qt/logs on an
+    // installed Windows build, else <data dir>/logs.
+    connect(ui->openLogsFolderAct, &QAction::triggered, this, [this, openFolder]() {
 #ifdef _WIN32
-        const QString localAppData = qEnvironmentVariable("LOCALAPPDATA");
-        const QString base = localAppData.isEmpty()
-            ? QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
-            : localAppData;
+        openFolder(QString::fromStdWString(backend_.logDir().wstring()));
 #else
-        const QString base = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+        openFolder(QString::fromStdString(backend_.logDir().string()));
 #endif
-        openFolder(QDir(base).absoluteFilePath(QStringLiteral("MIB_Studio_Qt/logs")));
     });
     connect(ui->whatsNewAct, &QAction::triggered, this, [this]() {
         frontend::HelpDialog(false, this).exec();

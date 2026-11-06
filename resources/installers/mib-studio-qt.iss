@@ -114,9 +114,10 @@ Source: "{#SourceDir}resources\isoelastic_curve\*"; DestDir: "{app}\resources\is
 Source: "{#VCRedistPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installvcredist
 #endif
 
-; eGrabber installer (bundled but only run if user selects the task)
+; eGrabber installer (bundled but only extracted and run if the user selects the task
+; and eGrabber is not installed yet)
 #if FileExists(EgrabberPath)
-Source: "{#EgrabberPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installegrabber
+Source: "{#EgrabberPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installegrabber; Check: EGrabberNotInstalled
 #endif
 
 ; MindVision Camera SDK installer (bundled but only run if user selects the task)
@@ -124,11 +125,11 @@ Source: "{#EgrabberPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: i
 Source: "{#MindVisionPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installmindvision
 #endif
 
-[Dirs]
-; Ensure data directory structure exists even if source data directory is empty
-; This is critical for the application to write logs
-Name: "{app}\data"; Flags: uninsneveruninstall
-Name: "{app}\data\logs"; Flags: uninsneveruninstall
+; No [Dirs] entry for {app}\data (rig check F1): a normal user cannot write
+; under Program Files, so the app keeps its state, log and crash reports in
+; %LOCALAPPDATA%\MIB_Studio_Qt (backend/app/DataDirectory.h). An existing
+; {app}\data from an older install is left in place: the app copies its state
+; once on first start, and an uninstall keeps it as before.
 
 [Registry]
 ; Persist the Sentry DSN as a SYSTEM environment variable so every process
@@ -156,9 +157,11 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename:
 Filename: "{tmp}\{#VCRedistInstaller}"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Visual C++ Redistributable..."; Tasks: installvcredist; Flags: runhidden waituntilterminated; Check: VCRuntimeNotInstalled
 #endif
 
-; Run eGrabber installer if selected (silent mode)
+; Run eGrabber installer if selected (silent mode) and eGrabber is not already
+; installed (rig check F3): a re-install or upgrade must not re-run the Euresys
+; installer and its Coaxlink driver. The task stays ticked by default.
 #if FileExists(EgrabberPath)
-Filename: "{tmp}\{#EgrabberInstaller}"; Parameters: "/S"; StatusMsg: "Installing eGrabber SDK..."; Tasks: installegrabber; Flags: runhidden waituntilterminated
+Filename: "{tmp}\{#EgrabberInstaller}"; Parameters: "/S"; StatusMsg: "Installing eGrabber SDK..."; Tasks: installegrabber; Flags: runhidden waituntilterminated; Check: EGrabberNotInstalled
 #endif
 
 ; Run MindVision Camera SDK installer if selected (silent mode)
@@ -220,6 +223,14 @@ begin
 
   // Additional check for eGrabber in different registry locations
   if RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\Euresys', 'eGrabber', Version) then
+  begin
+    Result := False; // Already installed
+    Exit;
+  end;
+
+  // The SDK's GenTL tool in its install folder (the path scripts/win11_bench_camera.ps1 uses);
+  // a file, so an empty folder left by an uninstall does not count.
+  if FileExists(ExpandConstant('{commonpf64}\Euresys\eGrabber\bin\x86_64\gentl.exe')) then
   begin
     Result := False; // Already installed
     Exit;
