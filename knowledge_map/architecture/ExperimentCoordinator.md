@@ -159,9 +159,11 @@
 `ExperimentRunState` lives in `ExperimentReadiness.h` with the bridge
 contract's values (`experiment_states`): `Idle=0, Starting=1, Active=2,
 Stopping=3, Failed=4` (append only). `Failed` is the resting state after a
-failed finalization (fault latched); `Idle` after a clean one. `experimentHoldsCamera(state)` (also in
-`ExperimentReadiness.h`) is true for `Starting`, `Active` and `Stopping`: the camera source, the delivery mode and
-Stop Camera are refused then; a `Failed` run holds nothing. The other
+failed finalization (fault latched); `Idle` after a clean one. `experimentHoldsCamera(status)` (also in
+`ExperimentReadiness.h`) is true for `Starting`, `Active` and `Stopping`, and while the status is `flushing`
+(`finalizeLocked` sets `Failed` before it flushes and closes the file after a fatal save error; Qt's
+`flushInProgress_`): the camera source (`cameraSourceChangeRefusal`, and the Rust `camera_change_refused`), the
+delivery mode and Stop Camera are refused then; a `Failed` run that has finished saving holds nothing. The other
 enums the bridge contract pins carry explicit values too (ABI 13):
 `ExperimentStartOutcome` (`experiment_start_outcomes`, `Started=0 … Busy=6`),
 `ExperimentStopOutcome` (`experiment_stop_outcomes`), `GateStatus`

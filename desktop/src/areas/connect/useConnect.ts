@@ -12,7 +12,7 @@ import { snapRunWindow, type Rect } from "../../cameraAlignment";
 import { runModeBlockReason, useCameraWindow, type CameraModeError } from "../../cameraWindow";
 import { useViewerOnly } from "../../components/ViewerGate";
 import { DiscoveryRefusedError } from "../../discovery";
-import { invoke } from "../../transport";
+import { invoke, isRemote } from "../../transport";
 import { derivePreflight, type PreflightInput } from "../../preflight";
 import { readAutoSelect } from "../../startupPreference";
 import { deriveQualityGates, type ImageQualityInput, type QualityInput } from "../../quality";
@@ -133,7 +133,7 @@ type ConnectionDeps = Pick<ShellState, "ready" | "tab" | "setTab" | "append">
     | "setFrameDir" | "mockFps" | "loopFiles" | "pickedDevices" | "setPickedDevices" | "connectTab" | "discovery" | "camSelection" | "running"
     | "setRunning" | "setScanning" | "setScanNote" | "setActionNote" | "setCameraNotice" | "setDeliveryModeStatus" | "setDesktopStorage"
     | "cameraCommandRef" | "setCameraCommand">
-  & Pick<MonitoringState, "expState">
+  & Pick<MonitoringState, "expState" | "expStatus">
   & Pick<ConfigState, "setCoreStatus"> & Pick<HardwareState, "setAfStatus" | "setSamplePump" | "setSheathPump" | "setTrigStatus">
   & Pick<ReviewState, "setReviewing"> & Pick<PreviewState, "recording" | "setRecording">
   & Pick<StatePollingModel, "tick"> & Pick<LiveFramesModel, "stopLoop">;
@@ -143,7 +143,7 @@ export function useCameraConnection({
   ready, tab, setTab, append, setDiscovery, setCamSelection, setShowMockConfig, showMockConfig, setCamStatus, frameDir, setFrameDir,
   mockFps, loopFiles, pickedDevices, setPickedDevices, connectTab, discovery, camSelection, running, setRunning, setCoreStatus,
   setAfStatus, setSamplePump, setSheathPump, setTrigStatus, setReviewing, recording, setRecording, tick, stopLoop, setScanning,
-  setScanNote, setActionNote, setCameraNotice, setDeliveryModeStatus, setDesktopStorage, cameraCommandRef, setCameraCommand, expState,
+  setScanNote, setActionNote, setCameraNotice, setDeliveryModeStatus, setDesktopStorage, cameraCommandRef, setCameraCommand, expState, expStatus,
 }: ConnectionDeps) {
   // ---- Camera discovery/selection (BE-2) + camera actions ----
 
@@ -348,6 +348,8 @@ export function useCameraConnection({
   // in flight sends nothing. A refused or failed command is a modal warning titled "Camera" and status text (CONNECT-036).
   const expStateRef = useRef(expState);
   expStateRef.current = expState;
+  const expFlushingRef = useRef(false);
+  expFlushingRef.current = !!(expStatus?.valid && expStatus.flushing);
   const runningRef2 = useRef(running);
   runningRef2.current = running;
   const beginCommand = (kind: "start" | "stop") => {
@@ -378,7 +380,9 @@ export function useCameraConnection({
 
   const onStopCamera = useCallback(async () => {
     if (!runningRef2.current) return;
-    const blocked = stopCameraBlockReason({ running: true, expState: expStateRef.current, commandInFlight: !!cameraCommandRef.current });
+    const blocked = stopCameraBlockReason({
+      running: true, expState: expStateRef.current, flushing: expFlushingRef.current, commandInFlight: !!cameraCommandRef.current,
+    });
     if (blocked) { if (!cameraCommandRef.current) refuse("Camera", blocked); return; }
     if (!beginCommand("stop")) return;
     try {
@@ -410,8 +414,12 @@ type WindowingDeps = Pick<ShellState, "ready" | "tab" | "hostProcessing" | "inst
     | "scriptSourcesRef" | "setGeometryError" | "setCapacity" | "camSelection" | "roiOverlay" | "setRoiOverlay" | "roiOverlayRef">
   & Pick<PreviewState, "framePulls"> & Pick<MonitoringState, "expActive">;
 
-/** Whether a script file can be read: an existing .js file the camera document command opens. */
-export async function scriptExists(path: string): Promise<boolean> {
+/** Whether a script file can be read: an existing .js file the camera document command opens. A remote
+ *  (browser) client cannot tell: the server reads no script file by path (`camera_document_confined` serves
+ *  only the PZ7035 document), so it answers false without asking and the stage change says why. It never
+ *  answers true for a file it cannot see: a stop, then a failed apply, would leave the camera stopped. */
+export async function scriptExists(path: string, remote: boolean = isRemote): Promise<boolean> {
+  if (remote) return false;
   try {
     await invoke("camera_document", { action: "read", path, kind: "js", baseline: "", text: "" });
     return true;
@@ -576,6 +584,7 @@ export function useCameraModeSwitch({
           refreshGeometry: () => refreshCameraGeometry(),
           scriptExists,
           createOverviewDefault: ensureOverviewDefault,
+          remote: isRemote,
           setRunning,
           log: append,
         };

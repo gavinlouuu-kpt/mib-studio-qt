@@ -12,7 +12,7 @@ const bridgeMock = vi.hoisted(() => ({
   fetchCameraGeometry: vi.fn(), fetchRecordingCapacity: vi.fn(), fetchRunFps: vi.fn(), saveCameraWindow: vi.fn(), fetchFrame: vi.fn(),
 }));
 vi.mock("../../bridge", () => ({ bridge: bridgeMock }));
-vi.mock("../../transport", () => ({ invoke: vi.fn() }));
+vi.mock("../../transport", () => ({ invoke: vi.fn(), isRemote: false }));
 import { useCameraWindowing } from "./useConnect";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });

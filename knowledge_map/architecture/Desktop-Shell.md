@@ -341,7 +341,11 @@ render by `syncScriptSources` from the config area's state): Experiment = Config
 else the EGrabber script editor's file, else the active profile folder's `egrabberConfig.js` if it exists
 ("No Experiment camera script: the camera keeps its current window" otherwise); Overview = the Overview
 script editor's resolved path (below), made from the bundled default when it is the default file and
-missing. The window box is the geometry's `roi` (profile, else script);
+missing. A remote (browser) client does not look for script files: the server reads no `.js` file by path
+(`camera_document_confined` serves only the PZ7035 document), so `scriptExists` answers false there
+without asking, and the no-script notice says why (`REMOTE_NO_PROFILE_SCRIPT`, also instead of "Overview
+camera script not found"). It never claims a file it cannot see: the stage change would stop the camera
+for an apply that then fails. The window box is the geometry's `roi` (profile, else script);
 Qt's snapping (`snapEgrabberWindow`: offsets rounded then snapped down, sizes snapped down) runs while
 dragging and the backend repeats it when `save_camera_window` writes the script and the profile, on release
 and a moment after each W/H/X/Y edit (`useCameraWindow.edit`); a window that changed in the backend (a
@@ -448,7 +452,9 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
   buttons, with the failure message of this session.
 - **Refusals** (CONNECT-036): a refused or failed Start or Stop is a modal warning titled "Camera" and the
   Connect status line, not only the log. The backend refuses Stop while an experiment is Starting, Active or
-  Stopping (data being saved, CONNECT-038) and reports a device teardown that was not confirmed
+  Stopping, and while the status is `flushing` (data being saved, CONNECT-038; also a Failed run still saving after a
+  fatal save error, as Qt's `flushInProgress_`; `cameraStopRefusal`, mirrored by `stopCameraBlockReason`) and reports
+  a device teardown that was not confirmed
   (`ShutdownFailed` of this session) as a failed command with the camera's message (CONNECT-040).
 - **Raw recording** (CONNECT-039, decision): Qt refuses Stop while a raw recording runs. The Stop Camera button
   finishes the recording first (the file is closed, nothing is lost) and then stops; if the recording cannot be
