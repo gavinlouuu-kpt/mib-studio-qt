@@ -24,9 +24,9 @@ import type { LiveFramesModel, PreviewState } from "../preview/usePreview";
 import type { ReviewState } from "../review/useReview";
 import type { ShellState, StatePollingModel } from "../shell/useShell";
 import {
-  cameraPhase, connectedNote, defaultMockFolder, rowOfSelection, discoveryProblemText, discoveryStatusText, isClickEvent, loadMockSettings,
+  cameraPhase, connectedNote, defaultMockFolder, holdCameraCommand, rowOfSelection, discoveryProblemText, discoveryStatusText, isClickEvent, loadMockSettings,
   MOCK_CONFIGURED_NOTE, MOCK_FPS_DEFAULT, NO_PICK, parseMockFps, pickedRow, preselectDevices, saveMockSettings,
-  startCameraBlockReason, stopCameraBlockReason, VANISHED_NOTE, type DeviceTab, type PickedDevices,
+  startCameraBlockReason, stopCameraBlockReason, VANISHED_NOTE, type CameraCommand, type DeviceTab, type PickedDevices,
 } from "./connectFlow";
 import {
   isEgrabber, NO_SOURCES, resolveExperimentScript, runEgrabberStage, runOverviewAutoStart,
@@ -55,8 +55,8 @@ export function useConnectState() {
   const [deliveryModeStatus, setDeliveryModeStatus] = useState<FrameDeliveryModeStatus | null>(null);
   const [autoSelectStored, setAutoSelectStored] = useState<boolean | null>(() => readAutoSelect(localStorage));
   // Start / Stop Camera: one command in flight (CONNECT-033) and the capture lifecycle behind the phase text (CONNECT-034).
-  const [cameraCommand, setCameraCommand] = useState<"start" | "stop" | null>(null);
-  const cameraCommandRef = useRef<"start" | "stop" | null>(null);
+  const [cameraCommand, setCameraCommand] = useState<CameraCommand | null>(null);
+  const cameraCommandRef = useRef<CameraCommand | null>(null);
   const [lifecycle, setLifecycle] = useState<CaptureLifecycle | null>(null);
   // What the preflight needs from outside the backend's camera state: the camera the active profile was made for
   // (App.tsx:1237) and the data directory's storage on the desktop (preflight.ts:360-363).
@@ -479,13 +479,15 @@ export type CameraWindowingModel = ReturnType<typeof useCameraWindowing>;
 
 type ModeSwitchDeps = Pick<ShellState, "ready" | "tab" | "tabRef" | "append" | "instrumentModes" | "instrumentRef" | "instrumentMode"
     | "instrument" | "runMode">
-  & Pick<ConnectState, "cameraWindowRef" | "setModeError" | "modeRetry" | "modeError" | "setRunning" | "scriptSourcesRef" | "setStageNotice">
+  & Pick<ConnectState, "cameraWindowRef" | "setModeError" | "modeRetry" | "modeError" | "setRunning" | "scriptSourcesRef" | "setStageNotice"
+    | "cameraCommandRef" | "setCameraCommand">
   & Pick<MonitoringState, "expActive"> & Pick<PreviewState, "recording"> & Pick<ReviewState, "setReviewing"> & CameraWindowingModel;
 
 // Qt parity: the tab picks the camera mode (Align / full sensor on Overview, Run / the window on Experiment).
 export function useCameraModeSwitch({
   ready, tab, tabRef, append, instrumentModes, instrumentRef, instrumentMode, instrument, runMode, cameraWindowRef, setModeError,
   modeRetry, modeError, setRunning, expActive, recording, setReviewing, cameraWin, refreshCameraGeometry, scriptSourcesRef, setStageNotice,
+  cameraCommandRef, setCameraCommand,
 }: ModeSwitchDeps) {
   // A browser that only watches (#763) never changes the camera: its stage tabs are navigation, and the
   // controlling client's own change shows through the polled geometry.
@@ -500,6 +502,9 @@ export function useCameraModeSwitch({
   // once per entry, and Overview starts a stopped, configured camera (cameraStage.ts).
   const entered = useRef<StageName | null>(null);
   const stageQueue = useRef<Promise<void>>(Promise.resolve());
+  // The stage change stops, reconfigures and starts the camera itself: it holds Start / Stop Camera's one-command guard
+  // (CONNECT-033) so a click or the space bar cannot start the camera between its stop and its script apply.
+  const commandGuard = { ref: cameraCommandRef, set: setCameraCommand };
   const live = useRef({ expActive, recording });
   live.current = { expActive, recording };
   useEffect(() => {
@@ -551,11 +556,13 @@ export function useCameraModeSwitch({
         };
         // Serialised, and dropped when the operator has moved on before its turn: a script apply is not interrupted.
         stageQueue.current = stageQueue.current.then(async () => {
-          if (tabRef.current !== stage) return;
-          const notice = await runEgrabberStage({
-            stage, expActive: live.current.expActive, recording: live.current.recording, sources: scriptSourcesRef.current, geometry,
-          }, io);
-          setStageNotice(notice);
+          const notice = await holdCameraCommand(commandGuard, async () => {
+            if (tabRef.current !== stage) return undefined;
+            return runEgrabberStage({
+              stage, expActive: live.current.expActive, recording: live.current.recording, sources: scriptSourcesRef.current, geometry,
+            }, io);
+          });
+          if (notice !== undefined) setStageNotice(notice);
         }).catch(() => undefined);
         return;
       }
@@ -570,13 +577,16 @@ export function useCameraModeSwitch({
       // Overview starts a stopped, configured camera, once per entry (not an illuminated MindVision profile).
       if (tab === "overview" && firstEntry && !cancelled) {
         const fresh = geometry?.supported ? await refreshCameraGeometry() : geometry;
-        const notice = await runOverviewAutoStart({ expActive: live.current.expActive, geometry: fresh, instrumentModes }, {
-          fetchSelection: () => bridge.fetchCameraSelection(),
-          startCapture: async () => { setReviewing(false); return bridge.startCapture(); },
-          setRunning,
-          log: append,
+        const notice = await holdCameraCommand(commandGuard, async () => {
+          if (tabRef.current !== "overview") return undefined;
+          return runOverviewAutoStart({ expActive: live.current.expActive, geometry: fresh, instrumentModes }, {
+            fetchSelection: () => bridge.fetchCameraSelection(),
+            startCapture: async () => { setReviewing(false); return bridge.startCapture(); },
+            setRunning,
+            log: append,
+          });
         });
-        setStageNotice(notice);
+        if (notice !== undefined) setStageNotice(notice);
       }
     })();
     return () => { cancelled = true; };

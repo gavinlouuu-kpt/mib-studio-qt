@@ -1,5 +1,5 @@
 // Connect stage rules (epic #863, B1): the wording is Qt's (ConnectTab.cpp showDiscoveryResults, DeviceInitManager.cpp).
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { CameraDiscovery, CameraSelection, CaptureLifecycle, DiscoveredCamera, DiscoveredDevice, DiscoveredFramegrabber, DiscoverySnapshot } from "../../bridge";
 import { CAMERA_SELECTION_MODES, DISCOVERY_ERROR_KINDS, DISCOVERY_JOB_STATES, EXPERIMENT_STATES } from "../../bridgeContract";
 import {
@@ -7,7 +7,7 @@ import {
   deviceRows, foundLine, framegrabberKey, isDecidable, NO_PICK, pickedRow, preselectDevices, refreshBlockReason, rowOfSelection,
   selectionSuffix, startupCameraOutcome, SCANNING_TEXT,
   cameraPhase, defaultMockFolder, loadMockSettings, MOCK_STORAGE_KEY, mockFpsProblem, parseMockFps, saveMockSettings, spaceTogglesCamera,
-  spaceCameraAction, startCameraBlockReason, STOP_WHILE_RECORDING, stopCameraBlockReason,
+  holdCameraCommand, spaceCameraAction, startCameraBlockReason, STOP_WHILE_RECORDING, stopCameraBlockReason, type CameraCommand,
 } from "./connectFlow";
 
 const cam = (p: Partial<DiscoveredCamera>): DiscoveredCamera => ({
@@ -297,5 +297,74 @@ describe("the mock camera dialog's defaults (CONNECT-014/016)", () => {
     store.set(MOCK_STORAGE_KEY, "{broken");
     expect(loadMockSettings(storage)).toEqual({});
     expect(saveMockSettings({ setItem: () => { throw new Error("quota"); } }, { dir: "/x", fps: "1", loop: true })).toBe(false);
+  });
+});
+
+// #863 integration: a stage change (A) stops, reconfigures and restarts the camera, and must not run beside a Start / Stop Camera
+// click (B's one-command guard) or leave the Start button free in between.
+describe("holdCameraCommand", () => {
+  const guard = () => {
+    const ref: { current: CameraCommand | null } = { current: null };
+    const seen: Array<CameraCommand | null> = [];
+    return { ref, seen, set: (c: CameraCommand | null) => { seen.push(c); } };
+  };
+  it("holds the guard while the work runs and releases it after, also when the work throws", async () => {
+    const g = guard();
+    let during: CameraCommand | null = null;
+    await holdCameraCommand(g, async () => { during = g.ref.current; });
+    expect(during).toBe("stage");
+    expect(g.ref.current).toBeNull();
+    expect(g.seen).toEqual(["stage", null]);
+    await expect(holdCameraCommand(g, async () => { throw new Error("boom"); })).rejects.toThrow("boom");
+    expect(g.ref.current).toBeNull();
+    expect(g.seen).toEqual(["stage", null, "stage", null]);
+  });
+  it("returns the work's result", async () => {
+    expect(await holdCameraCommand(guard(), async () => 42)).toBe(42);
+  });
+  it("makes the Start and Stop buttons say a command is in progress while it runs", async () => {
+    const g = guard();
+    let start: string | undefined, stop: string | undefined;
+    await holdCameraCommand(g, async () => {
+      const inFlight = g.ref.current !== null;
+      start = startCameraBlockReason({ updateBusy: false, scriptBusy: false, ready: true, configured: true, running: false, phase: "idle", commandInFlight: inFlight });
+      stop = stopCameraBlockReason({ running: true, expState: EXPERIMENT_STATES.Idle, commandInFlight: inFlight });
+    });
+    expect(start).toBe("A camera command is already in progress.");
+    expect(stop).toBe("A camera command is already in progress.");
+  });
+  it("waits for a Start or Stop that is in flight, then takes the guard", async () => {
+    vi.useFakeTimers();
+    try {
+      const g = guard();
+      g.ref.current = "start";
+      const order: string[] = [];
+      const held = holdCameraCommand(g, async () => { order.push(`work:${g.ref.current}`); });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(order).toEqual([]); // still waiting
+      g.ref.current = null; // the Start finished
+      await vi.advanceTimersByTimeAsync(100);
+      await held;
+      expect(order).toEqual(["work:stage"]);
+      expect(g.ref.current).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("runs without the guard, and leaves the other command's guard alone, when that command never ends", async () => {
+    vi.useFakeTimers();
+    try {
+      const g = guard();
+      g.ref.current = "stop";
+      const order: string[] = [];
+      const held = holdCameraCommand(g, async () => { order.push(`work:${g.ref.current}`); }, 200);
+      await vi.advanceTimersByTimeAsync(300);
+      await held;
+      expect(order).toEqual(["work:stop"]);
+      expect(g.ref.current).toBe("stop");
+      expect(g.seen).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

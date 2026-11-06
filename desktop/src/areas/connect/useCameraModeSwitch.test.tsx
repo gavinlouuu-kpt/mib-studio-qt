@@ -38,6 +38,8 @@ let host: HTMLDivElement, root: Root;
 let current: CameraGeometry | null, sel: CameraSelection, notices: Array<StageNotice | null>, running: boolean[], exists: Set<string>;
 let sources: { current: ScriptSources };
 let tabRef: { current: string };
+// Start / Stop Camera's one-command guard (B's cameraCommandRef) and what the stage change did to it.
+let commandRef: { current: string | null }, commandSeen: Array<string | null>;
 
 type Props = { tab: "connect" | "overview" | "experiment" | "review"; expActive?: boolean; recording?: boolean; ready?: boolean };
 function Harness({ tab, expActive = false, recording = false, ready = true }: Props) {
@@ -48,6 +50,7 @@ function Harness({ tab, expActive = false, recording = false, ready = true }: Pr
     modeRetry: 0, modeError: null, setRunning: (r: boolean) => running.push(r), expActive, recording, setReviewing: () => undefined,
     cameraWin: { placed: false, placedRef: { current: false }, restore: () => undefined } as never,
     refreshCameraGeometry: STABLE_REFRESH, scriptSourcesRef: sources, setStageNotice: (n: StageNotice | null) => notices.push(n),
+    cameraCommandRef: commandRef, setCameraCommand: (c: string | null) => commandSeen.push(c),
   } as never);
   return null;
 }
@@ -59,6 +62,7 @@ beforeEach(() => {
   exists = new Set(["/p/lab/overviewConfig.js", "/p/lab/egrabberConfig.js"]);
   sources = { current: { ...NO_SOURCES, profileConfigPath: "/p/lab/config.json" } };
   tabRef = { current: "connect" };
+  commandRef = { current: null }; commandSeen = [];
   sessionState.current = {};
   for (const fn of Object.values(bridgeMock)) fn.mockReset();
   bridgeMock.fetchCameraSelection.mockImplementation(async () => sel);
@@ -139,6 +143,56 @@ describe("entering a stage with an eGrabber camera", () => {
     await render({ tab: "review" });
     expect(bridgeMock.fetchCameraSelection).not.toHaveBeenCalled();
     expect(bridgeMock.applyCameraScriptWithRole).not.toHaveBeenCalled();
+  });
+});
+
+// #863 integration: the stage change shares Start / Stop Camera's one-command guard (B's CONNECT-033).
+describe("the stage change and Start / Stop Camera's one-command guard", () => {
+  it("holds the guard from the camera stop to the restart, so no Start can slip in while the script is applied", async () => {
+    sel = selection({ running: true });
+    const heldAt: Record<string, string | null> = {};
+    bridgeMock.stopCapture.mockImplementation(async () => { heldAt.stop = commandRef.current; sel = { ...sel, running: false }; return { ok: true, message: "stopped" }; });
+    bridgeMock.applyCameraScriptWithRole.mockImplementation(async () => { heldAt.apply = commandRef.current; return { ok: true, message: "applied" }; });
+    bridgeMock.startCapture.mockImplementation(async () => { heldAt.start = commandRef.current; sel = { ...sel, running: true }; return { ok: true, message: "started" }; });
+    await render({ tab: "experiment" });
+    expect(heldAt).toEqual({ stop: "stage", apply: "stage", start: "stage" });
+    expect(commandRef.current).toBeNull();
+    expect(commandSeen).toEqual(["stage", null]);
+  });
+
+  it("waits for a Start Camera click that is still in flight before it stops and restarts the camera", async () => {
+    commandRef.current = "start"; // the click that moved the operator to the Overview is still waiting for its reply
+    await render({ tab: "overview" });
+    await act(async () => { await new Promise((r) => setTimeout(r, 120)); });
+    expect(bridgeMock.applyCameraScriptWithRole).not.toHaveBeenCalled();
+    expect(bridgeMock.startCapture).not.toHaveBeenCalled();
+    commandRef.current = null; // the Start finished
+    await act(async () => { await new Promise((r) => setTimeout(r, 120)); });
+    expect(bridgeMock.applyCameraScriptWithRole).toHaveBeenCalledTimes(1);
+    expect(bridgeMock.startCapture).toHaveBeenCalledTimes(1);
+    expect(commandRef.current).toBeNull();
+  });
+
+  it("holds the guard while a camera without scripts auto-starts on Overview, and lets it go when the start fails", async () => {
+    current = geometry({ supported: false, camera: "" });
+    sel = selection({ mode: 1 });
+    let during: string | null = null;
+    bridgeMock.startCapture.mockImplementation(async () => { during = commandRef.current; return { ok: false, message: "no frames" }; });
+    await render({ tab: "overview" });
+    expect(during).toBe("stage");
+    expect(commandRef.current).toBeNull();
+    expect(notices[notices.length - 1]).toMatchObject({ level: "error" });
+  });
+
+  it("does not touch the camera when the operator has left the stage before the stage change gets its turn", async () => {
+    commandRef.current = "start";
+    await render({ tab: "overview" });
+    tabRef.current = "review";
+    await render({ tab: "review" });
+    commandRef.current = null;
+    await act(async () => { await new Promise((r) => setTimeout(r, 120)); });
+    expect(bridgeMock.applyCameraScriptWithRole).not.toHaveBeenCalled();
+    expect(bridgeMock.startCapture).not.toHaveBeenCalled();
   });
 });
 

@@ -268,6 +268,31 @@ export function cameraPhase(lifecycle: CaptureLifecycle | null, configured: bool
   return { phase, text: PHASE_TEXT[phase], failureMessage: phase === "failed" ? failureMessage : "" };
 }
 
+/** What holds the one-camera-command-at-a-time guard (`cameraCommandRef`, CONNECT-033): a Start or Stop click, or "stage", a
+ *  sequence that stops, reconfigures and restarts the camera on its own (entering a stage, the Overview editor's Apply). */
+export type CameraCommand = "start" | "stop" | "stage";
+
+export interface CameraCommandGuard {
+  ref: { current: CameraCommand | null };
+  set: (command: CameraCommand | null) => void;
+}
+
+/** Run a camera sequence under the same guard as Start / Stop Camera, so no button, key or second sequence can start or stop
+ *  the camera in the middle of it (the camera is stopped for the length of a script apply; Start Camera was enabled then,
+ *  and a start there made the Rust guard refuse the script, #863 integration). A Start or Stop already in flight is waited for
+ *  (bounded); when it never ends the sequence runs without the guard rather than not at all. */
+export async function holdCameraCommand<T>(guard: CameraCommandGuard, work: () => Promise<T>, waitMs = 15_000): Promise<T> {
+  const until = Date.now() + waitMs;
+  while (guard.ref.current && Date.now() < until) await new Promise<void>((resolve) => { setTimeout(resolve, 25); });
+  const taken = !guard.ref.current;
+  if (taken) { guard.ref.current = "stage"; guard.set("stage"); }
+  try {
+    return await work();
+  } finally {
+    if (taken) { guard.ref.current = null; guard.set(null); }
+  }
+}
+
 /** Why Start Camera cannot be sent now: the shell's own gates, then Qt's (`startEnabled`, `doRequestStart`'s messages). */
 export function startCameraBlockReason(i: {
   updateBusy: boolean; scriptBusy: boolean; ready: boolean; configured: boolean; running: boolean; phase: CameraPhase; commandInFlight: boolean;
