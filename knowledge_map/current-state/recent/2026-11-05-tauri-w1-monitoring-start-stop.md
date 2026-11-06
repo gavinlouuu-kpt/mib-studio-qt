@@ -7,8 +7,10 @@ RunStatusModel, StatisticsPanel) for epic #866 rows MON-003, 004, 008, 009, 010,
 - **Start order and wording** (`desktop/src/experimentStart.ts`, `areas/monitoring/startReadiness.ts`):
   blocking readiness gates (all but `storage.output`) are explained in a modal before the save dialog
   opens, then the discard-ring question, the file dialog (`HDF5 Files (*.h5 *.hdf5)` and `All Files`, no
-  default name on the desktop), the multi-image inline-mode note, readiness for the destination and
-  Start. Every gate is "Blocked — id: reason → remediation" with the Warn advisories after it. A
+  default name on the desktop), the multi-image inline-mode note (Qt's condition: a series of more than
+  one image while the realtime mode is async batch, read from `image_processing.multi_image` and
+  `realtime_processing.mode` of `fetch_processing_config_json`; #877 review), readiness for the
+  destination and Start. Every gate is "Blocked — id: reason → remediation" with the Warn advisories after it. A
   refused Start is worded by its typed `start_outcome` (ABI 40, already in the reply): StaleReadiness
   warning, StorageFailed/ProvenanceFailed critical, Busy/AlreadyActive/InvalidRequest information,
   NotReady re-explained from fresh gates. This also closes SHELL-058.
@@ -45,3 +47,10 @@ RunStatusModel, StatisticsPanel) for epic #866 rows MON-003, 004, 008, 009, 010,
 
 `transport/dialogs.ts` gains `message` (info/warning/error modal; `window.alert` in a browser). See
 [[architecture/Desktop-Shell]] and `docs/howto/desktop-area-ownership.md`.
+
+**Review fixes (#877 non-author review, 2026-11-06).** The MON-008 note read a top-level `multi_image`
+that the config document never has, so it never showed; it now reads the document's real shape and
+Qt's exact condition. The run lock (MON-013) is enforced at the stage setter, not only on the stage
+tabs: `useRunLockedNavigation` wraps the shell's `setTab`, so no route (the context bar's Calibration
+segment, the workflow's next step, a notice's "place the window" link) opens Overview or Review during a
+run; the context bar's segment for a shut stage is disabled with the lock reason.

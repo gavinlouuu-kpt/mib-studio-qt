@@ -3,7 +3,7 @@
 // record store status. Moved from App.tsx (#869 wave 0); studio/useStudioController.ts calls these
 // hooks in App.tsx's original effect order. The Qt-parity behaviour (epic #866, PR D) is in the pure
 // modules beside this file: startReadiness, runStatus, runFinish, statsReadouts, pollHealth, clearBuffer.
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { bridge, type ExperimentStatus, type MonitoringRow, type MonitoringSnapshot, type RunAccounting, type TriggerStatus } from "../../bridge";
 import { EXPERIMENT_STATES } from "../../bridgeContract";
 import { startExperiment, type StartReadiness } from "../../experimentStart";
@@ -25,7 +25,7 @@ import {
 } from "./monitoringSettings";
 import { POLL_HEALTHY, pollHealthAfter, pollNotice, type PollHealth } from "./pollHealth";
 import { accountingDialog } from "./runFinish";
-import { cameraStopBlock, deriveRunPresentation, recordBlock, runProgressText } from "./runStatus";
+import { cameraStopBlock, deriveRunPresentation, recordBlock, runLockedTabChange, runProgressText } from "./runStatus";
 import { sameReadiness, seriesForcesInline, summarizeReadiness } from "./startReadiness";
 
 /** MON-009: Qt's "Save Experiment Data" filter, "HDF5 Files (*.h5 *.hdf5);;All Files (*)". Review shares H5_FILTER
@@ -42,6 +42,19 @@ export const EXPERIMENT_STATE_NAMES: Record<number, string> = {
   [EXPERIMENT_STATES.Stopping]: "Stopping",
   [EXPERIMENT_STATES.Failed]: "Failed",
 };
+
+/** MON-013 (#585 run-lock): wraps the shell's stage setter so every route to a stage the run has shut (stage
+ *  tabs, the context bar, the workflow's next step, a notice's link) keeps the current stage while the run is
+ *  locked (#877 review: the context bar's Calibration segment opened Overview mid-run). The controller sets
+ *  `runLockRef.current` from the render-time `runLocked`; it is read when a navigation happens. No effect. */
+export function useRunLockedNavigation<T extends string>(rawSetTab: Dispatch<SetStateAction<T>>) {
+  const runLockRef = useRef(false);
+  const setTab = useCallback<Dispatch<SetStateAction<T>>>(
+    (next) => rawSetTab((cur) => runLockedTabChange(cur, typeof next === "function" ? next(cur) : next, runLockRef.current)),
+    [rawSetTab],
+  );
+  return { setTab, runLockRef };
+}
 
 export function useMonitoringState() {
   const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files" | "recordings">("preview");
