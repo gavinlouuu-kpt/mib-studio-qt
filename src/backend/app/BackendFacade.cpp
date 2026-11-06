@@ -38,6 +38,7 @@
 #include "backend/recording/Hdf5Service.h"
 #include "backend/app/Tools.h"
 #include "backend/services/AutofocusService.h"
+#include "backend/services/SerialPortClaims.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/CaptureService.h"
 #include "backend/services/SyringePumpService.h"
@@ -4257,6 +4258,11 @@ BackendCommandResult BackendFacade::hostSettingsCommandJson(const std::string& t
                        timeout = number("timeout_ms", 10, 5000, 300);
             if (port.empty() || port.size() > 512 || port.find('\0') != std::string::npos) return refuse("Select a COM port first");
             if (!baud || !start || !end || !timeout || *start > *end) return refuse("Invalid scan range");
+            // Never on a port an exclusive service holds (the connected nanopositioner): a port open is not exclusive on
+            // Linux, so the scan would write Modbus frames onto that device's line. Qt leaves the connected autofocus port
+            // out of the pump combos (SyringePumpSettingsDialog.cpp:170-177). A pump bus session on the port is fine.
+            if (backend::services::portclaims::holder(port) == backend::services::portclaims::Holder::Service)
+                return refuse(port + " is in use by " + backend::services::portclaims::describe(port) + "; not scanned");
             {
                 std::lock_guard<std::mutex> lock(hostScanMutex_);
                 if (hostScan_.state == "running") return refuse("A pump address scan is already running");

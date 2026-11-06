@@ -49,7 +49,9 @@ the operator saves something valid.
   quiet updater at start, so the dialog does not offer it (a saved one is kept and shown as "also left off").
 - **Scan (HW-021).** `scan_pump_addresses {port, baud, start, end, timeout_ms}` runs the new string-port
   `SyringePumpService::scanModbusAddresses` as a tracked `PumpScan` operation (addresses 1-8, 300 ms, as Qt's
-  dialog). One scan at a time. The answer is read by polling `fetch_host_settings` `pump_scan`
+  dialog). One scan at a time. A port an exclusive service holds (the connected nanopositioner,
+  `portclaims::Holder::Service`) is refused before any open, because a Linux open is not exclusive and the scan
+  would write Modbus frames onto that line (Qt hides that port from the pump combos). The answer is read by polling `fetch_host_settings` `pump_scan`
   `{state, operation_id, port, found, error}`, because the existing event-based scan answers only an
   integer COM port and the dialog cannot read events.
 

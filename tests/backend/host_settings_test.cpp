@@ -252,6 +252,14 @@ void scanAndSettingsThroughTheFacade() {
         const auto missing = waitScan();
         MIB_EXPECT(missing.at("state") == "failed" && !missing.at("error").get<std::string>().empty() && missing.at("found").empty(), "COM9: " + missing.dump());
 
+        // Review of #890: a port an exclusive service holds (the connected nanopositioner) is refused, before any open.
+        {
+            auto held = claims::claimForService("COM5", "autofocus test");
+            const auto refused = facade.hostSettingsCommandJson(R"({"action":"scan_pump_addresses","port":"COM5","baud":115200,"start":1,"end":2,"timeout_ms":50})");
+            MIB_EXPECT(!refused.ok && refused.message.find("in use by service:autofocus test") != std::string::npos, "held port refused: " + refused.message);
+            MIB_EXPECT(settings().at("pump_scan").at("port") == "COM9", "a refused scan leaves the last scan as it was");
+        }
+
         // Pump settings through the command: validated whole, reserved at once, readable back.
         MIB_EXPECT(!facade.hostSettingsCommandJson(R"({"action":"set_pumps","settings":{"pump_sample_address":0}})").ok, "range refused");
         MIB_EXPECT(!facade.hostSettingsCommandJson(R"({"action":"set_pumps"})").ok && !facade.hostSettingsCommandJson("not json").ok &&
