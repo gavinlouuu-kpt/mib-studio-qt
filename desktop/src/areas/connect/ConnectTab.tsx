@@ -1,14 +1,29 @@
 // Connect and Overview (epic #863): the Connect stage, device sources and the UX-3 hardware preflight
 // checklist. Moved from App.tsx without change (#869 wave 0).
+import type { FrameDeliveryMode } from "../../bridge";
 import { ViewerGate } from "../../components/ViewerGate";
 import { CHECK_STATUS_LABEL } from "../../preflight";
 import { useStudio } from "../../studio/StudioContext";
+import {
+  cameraSourceBlockReason, connectBlockReason, connectStatusLine, DELIVERY_MODE_HINT, DELIVERY_MODES, deviceRows, pickedRow, refreshBlockReason,
+} from "./connectFlow";
 
 export function ConnectTab() {
   const {
-    connectTab, setConnectTab, pz7035, caps, discovery, pickedDevice, setPickedDevice, refreshCameraState, ready,
+    connectTab, setConnectTab, pz7035, caps, discovery, pickedDevices, setPickedDevices, refreshCameraState, ready,
     onConnectPicked, cameraScript, running, expActive, setShowMockConfig, camSelection, preflight, refreshPreflight,
+    scanning, scanNote, actionNote, deliveryModeStatus, onDeliveryModeChange, autoSelect, onAutoSelectChange,
   } = useStudio();
+  const rows = deviceRows(discovery, connectTab);
+  const blocks = { ready, running, expActive, scriptBusy: cameraScript.busy };
+  const connectBlock = connectBlockReason(blocks, connectTab, pickedRow(discovery, connectTab, pickedDevices));
+  const sourceBlock = cameraSourceBlockReason(blocks);
+  const refreshBlock = refreshBlockReason(ready, scanning);
+  const deliveryBlock = !ready ? "Backend is not initialized" : expActive ? "Cannot change the delivery mode while an experiment is active." : !deliveryModeStatus ? "Delivery mode is not available" : undefined;
+  const deliveryPending = deliveryModeStatus?.capturing && deliveryModeStatus.confirmed && deliveryModeStatus.active_mode !== deliveryModeStatus.mode
+    ? DELIVERY_MODES.find((m) => m.value === deliveryModeStatus.active_mode)?.label : undefined;
+  const noDevices = connectTab === "mindvision" ? "No MindVision cameras found (SDK/hardware required)."
+    : connectTab === "framegrabbers" ? "No framegrabbers found (EGrabber SDK/hardware required)." : "";
   return (
     <>
       <p style={{ margin: "0 0 6px" }}>Available devices:</p>
@@ -24,65 +39,59 @@ export function ConnectTab() {
         </button>}
       </div>
       <div className="subtab-body">
-        <div className="devices-list" role="listbox" aria-label="Discovered devices">
-          {connectTab !== "framegrabbers" &&
-            (discovery?.cameras ?? [])
-              .filter((c) => (connectTab === "mindvision" ? c.camera_type === 1 : c.camera_type !== 1))
-              .map((c) => {
-                const key = `${c.camera_type}:${c.interface_index}:${c.device_index}:${c.camera_index}`;
-                return (
-                  <div key={key} style={{ padding: "2px 0" }}>
-                    <label>
-                      <input
-                        type="radio"
-                        name="device"
-                        checked={pickedDevice === key}
-                        onChange={() => setPickedDevice(key)}
-                      />{" "}
-                      {c.label}
-                    </label>
-                  </div>
-                );
-              })}
-          {connectTab === "framegrabbers" &&
-            (discovery?.framegrabbers ?? []).map((g) => (
-              <div key={`${g.interface_index}:${g.device_index}:${g.stream_index}`} style={{ padding: "2px 0" }}>
-                {g.label}
-              </div>
-            ))}
-          {connectTab === "mindvision" && (discovery?.cameras ?? []).every((c) => c.camera_type !== 1) && (
-            <div>No MindVision cameras found (SDK/hardware required).</div>
-          )}
-          {connectTab === "framegrabbers" && (discovery?.framegrabbers ?? []).length === 0 && (
-            <div>No framegrabbers found (EGrabber SDK/hardware required).</div>
-          )}
+        <div className="devices-list" role="listbox" aria-label="Discovered devices" aria-busy={scanning}>
+          {rows.map((row) => (
+            <div key={row.key} style={{ padding: "2px 0" }}>
+              <label>
+                <input
+                  type="radio"
+                  name={`device-${connectTab}`}
+                  checked={pickedDevices[connectTab] === row.key}
+                  onChange={() => setPickedDevices((p) => ({ ...p, [connectTab]: row.key }))}
+                />{" "}
+                {row.label}
+              </label>
+            </div>
+          ))}
+          {rows.length === 0 && noDevices && <div>{noDevices}</div>}
         </div>
         <div className="toolbar" style={{ marginTop: 8 }}><ViewerGate>
-          <button onClick={refreshCameraState} disabled={!ready}>Refresh</button>
+          <button onClick={refreshCameraState} disabled={!!refreshBlock} title={refreshBlock}>Refresh</button>
           <button
             onClick={onConnectPicked}
-            disabled={!ready || !pickedDevice || cameraScript.busy || running || expActive}
-            title={pickedDevice ? undefined : "Pick a device first"}
+            disabled={!!connectBlock}
+            title={connectBlock}
           >
             Connect
           </button>
+          <label className="delivery-mode" title={deliveryBlock ?? DELIVERY_MODE_HINT}>
+            Delivery mode{" "}
+            <select
+              aria-label="Delivery mode"
+              value={deliveryModeStatus?.mode ?? "everyFrame"}
+              disabled={!!deliveryBlock}
+              onChange={(e) => void onDeliveryModeChange(e.target.value as FrameDeliveryMode)}
+            >
+              {DELIVERY_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </label>
           <div className="right">
-            <button className="btn" onClick={() => setShowMockConfig(true)} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
+            <button className="btn" onClick={() => setShowMockConfig(true)} disabled={!!sourceBlock} title={sourceBlock}>
               Configure Mock…
             </button>
           </div>
         </ViewerGate></div>
-        <p className="path-label">
-          Found {(discovery?.framegrabbers ?? []).length} framegrabber(s),{" "}
-          {(discovery?.cameras ?? []).filter((c) => c.camera_type === 0).length} eGrabber camera(s),{" "}
-          {(discovery?.cameras ?? []).filter((c) => c.camera_type === 1).length} MindVision camera(s)
-          {camSelection?.configured
-            ? ` · selected: ${
-                camSelection.mode === 1
-                  ? `mock (${camSelection.mock_frame_dir || "no folder"})`
-                  : camSelection.label || "camera"
-              }`
-            : " · no camera selected"}
+        {deliveryPending && <p className="path-label">Running with {deliveryPending}; the selected mode applies at the next capture start.</p>}
+        {!caps.autofocus && (
+          <ViewerGate>
+            <label className="auto-select-startup">
+              <input type="checkbox" checked={autoSelect} onChange={(e) => onAutoSelectChange(e.target.checked)} />{" "}
+              Select the camera automatically at startup
+            </label>
+          </ViewerGate>
+        )}
+        <p className="path-label" role="status">
+          {connectStatusLine({ scanning, running, actionNote, scanNote, discovery, selection: camSelection })}
         </p>
       </div>
 
@@ -127,8 +136,9 @@ export function ConnectTab() {
                     <button
                       key={a.kind}
                       className="btn small"
-                      onClick={() => void refreshPreflight()}
-                      disabled={!ready}
+                      // "No camera selected" rescans the devices as well (App.tsx:1802-1811); the other checks re-poll.
+                      onClick={() => void Promise.all([refreshPreflight(), c.id === "camera" ? refreshCameraState() : undefined])}
+                      disabled={!ready || (c.id === "camera" && scanning)}
                     >
                       {a.label}
                     </button>

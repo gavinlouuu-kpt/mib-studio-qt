@@ -2,14 +2,17 @@
 import type { StageTab } from "../../workflow";
 import { useStudio } from "../../studio/StudioContext";
 import { CameraActions } from "../connect/CameraActions";
+import { OVERVIEW_DISABLED_TITLE } from "../connect/cameraStage";
 
 export function StageTabs() {
-  const { tab, setTab, stageByTab } = useStudio();
+  const { tab, setTab, stageByTab, expActive } = useStudio();
   return (
     <div className="tabs-header">
       <div className="tabbar" role="tablist" aria-label="Workflow stages">
         {(["connect", "overview", "experiment", "review"] as StageTab[]).map((t) => {
           const stage = stageByTab[t];
+          // Qt MainWindow::onTabChanged: Overview is disabled while an experiment is active (#863, CONNECT-063).
+          const locked = t === "overview" && expActive;
           return (
             <button
               key={t}
@@ -17,7 +20,8 @@ export function StageTabs() {
               aria-selected={tab === t}
               aria-label={`${stage.title}: ${stage.statusLabel}`}
               className={`stage-tab${tab === t ? " active" : ""}`}
-              title={stage.blocking.length ? stage.blocking.join("; ") : stage.summary}
+              title={locked ? OVERVIEW_DISABLED_TITLE : stage.blocking.length ? stage.blocking.join("; ") : stage.summary}
+              disabled={locked}
               onClick={() => setTab(t)}
             >
               <span className={`stage-dot ${stage.status}`} aria-hidden="true" />

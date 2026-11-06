@@ -102,6 +102,19 @@ adapter's `onSession` callback). Test: `backend.aravis_camera_overview`. If Arav
 request records an unavailable effective source and a null factory so capture
 reports the configuration error; it does not silently substitute MockCamera.
 
+**eGrabber camera window (#863, ABI next (#892, set at merge)).** A selected eGrabber hardware camera is `supported` in
+`cameraGeometry()`: the window is the applied profile's `camera.window`, else the Experiment script's
+own (`chooseEgrabberWindow`; the script last applied or saved a window into, else the applied local
+profile's own `egrabberConfig.js`, `appliedProfileScriptPath`), the steps are Qt's (offset X 16 / Y 4, width 16, height 4, min 64x16) and
+the sensor is what the last script apply read from the camera, else 1920x1080. It has no camera preset:
+`setCameraOverview` stays MindVision / Aravis, and the shells change mode by applying the Overview or
+the Experiment script (`CameraScriptRole`). `saveEgrabberWindow` (`CameraWindowSave.cpp`) is the edit:
+snap, rewrite the Experiment script, update the acquisition profile and the applied local profile with the
+revision the profile store remembers (`profileStoreSaveCameraWindow`, `updateStartupProfileRevision`).
+`lastExperimentScriptPath()` is the script the operator last applied or saved a window into. Tests:
+`backend.camera_window_profile`, `backend.camera_window_save` (an eGrabber selection without the SDK is set
+through `CameraGeometryTestAccess`).
+
 ## Explicit hardware shutdown (2026-09-15)
 
 `shutdown()` disconnects autofocus, both syringe pumps and the pulse
@@ -372,7 +385,9 @@ StoreOverwritten, HDF5 reopen round-trip, legacy file → Unknown).
 - `setHardwareCameraSelection(ifIdx, devIdx, label)` — choose device (no start)
 - `setMindVisionCameraSelection(cameraIndex, label)` — choose a MindVision
   device (no start)
-- `configureMockCamera(options)` — choose mock folder instead
+- `configureMockCamera(options)` — choose mock folder instead;
+  `mockFrameIntervalUs()` is the interval it was given in microseconds (`CameraSelection::mockIntervalMs` is
+  whole milliseconds, 0 above 1000 fps)
 - `applyCameraScriptFromFile(path, errorOut, role)` — push a GenICam JS config
   to the selected device (stops capture first, does not restart). #833: with
   `CameraScriptRole::Experiment` (the default) the profile's camera window

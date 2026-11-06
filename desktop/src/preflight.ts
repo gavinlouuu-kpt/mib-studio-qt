@@ -59,6 +59,8 @@ export interface PreflightInput {
   cameraIdentity: string;
   /** Expected camera identity declared by the profile, or "" if none. */
   cameraExpected: string;
+  /** The model the discovery reported for the selected camera, or "" when unknown (the mock, an old backend). */
+  cameraModel?: string;
   coreValid: boolean;
   corePinSatisfied: boolean;
   coreVersion: string;
@@ -120,6 +122,25 @@ export interface PreflightReport {
 const REFRESH: RecoveryAction = { kind: "refresh", label: "Refresh" };
 const RETRY: RecoveryAction = { kind: "retry", label: "Retry check" };
 
+/** The profile names the camera it was made for (`camera.window.camera_model`, #833); the connected camera matches when
+ *  its model is that name or its label says it (the label is "<interface> ... <model> ..."), compared without case. */
+export function cameraMatchesExpected(expected: string, identity: string, model: string): boolean {
+  const want = expected.trim().toLowerCase();
+  if (!want) return true;
+  return identity === expected || model.trim().toLowerCase() === want || identity.toLowerCase().includes(want);
+}
+
+/** The camera model a profile document declares (`camera.window.camera_model`), or "" when it names none or is not JSON. */
+export function expectedCameraModel(documentJson: string): string {
+  try {
+    const doc = JSON.parse(documentJson) as { camera?: { window?: { camera_model?: unknown } } };
+    const model = doc?.camera?.window?.camera_model;
+    return typeof model === "string" ? model.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 function cameraCheck(i: PreflightInput): PreflightCheck {
   let status: CheckStatus;
   let detail: string;
@@ -134,7 +155,7 @@ function cameraCheck(i: PreflightInput): PreflightCheck {
     status = "failed";
     detail = "No camera selected — pick a device above and Connect.";
     recovery = [REFRESH];
-  } else if (i.cameraExpected !== "" && i.cameraExpected !== i.cameraIdentity) {
+  } else if (i.cameraExpected !== "" && !cameraMatchesExpected(i.cameraExpected, i.cameraIdentity, i.cameraModel ?? "")) {
     status = "warning";
     detail = `Detected ${detected}, but the profile expects ${i.cameraExpected}.`;
     recovery = [REFRESH];
@@ -357,9 +378,10 @@ function storageCheck(i: PreflightInput, requirement: Requirement): PreflightChe
   let recovery: RecoveryAction[] = [];
 
   if (!i.storageKnown) {
-    // An authoritative storage/free-space contract is not bridged yet.
+    // The backend's recording target (fetch_instrument_status.storage) was not read: the Start gates (storage.output,
+    // storage.roundtrip) still check the file chosen at Start.
     status = "not-required";
-    detail = "Storage readiness check is pending a backend status contract.";
+    detail = "The data directory's status has not been read yet; the file chosen at Start is checked then.";
   } else if (requirement === "not-applicable") {
     status = "not-required";
     detail = "Not used by this profile.";

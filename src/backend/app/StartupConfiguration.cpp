@@ -117,6 +117,23 @@ void recordStartupProfile(AppBackend& backend, const std::string& base, const st
     writePointer(backend, Json{{"kind", "profile"}, {"base", base}, {"name", name}, {"revision", revision}});
 }
 
+bool updateStartupProfileRevision(AppBackend& backend, const std::string& base, const std::string& name,
+                                  const std::string& oldRevision, const std::string& newRevision) {
+    try {
+        const auto pointer = readPointer(backend);
+        if (pointer.is_null() || pointer.value("kind", std::string{}) != "profile" ||
+            pointer.value("name", std::string{}) != name || pointer.value("revision", std::string{}) != oldRevision)
+            return false;
+        const auto recorded = fs::path(pointer.value("base", std::string{})).lexically_normal();
+        if (recorded != fs::path(base).lexically_normal()) return false;
+        recordStartupProfile(backend, pointer.value("base", base), name, newRevision);
+        return true;
+    } catch (const std::exception& e) {
+        SPDLOG_WARN("StartupConfiguration: cannot follow the profile revision: {}", e.what());
+        return false;
+    }
+}
+
 void recordStartupCentralMethod(AppBackend& backend, const std::string& revisionId,
                                 const std::string& configSha256) {
     writePointer(backend, Json{{"kind", "central"}, {"revision_id", revisionId}, {"config_sha256", configSha256}});

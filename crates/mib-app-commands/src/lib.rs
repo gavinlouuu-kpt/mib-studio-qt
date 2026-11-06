@@ -127,6 +127,22 @@ pub fn init(state: &AppState, data_dir: &str, resource_dir: &str) -> Result<bool
     Ok(guard.pin_mut().initialize_with_resources(data_dir, resource_dir))
 }
 
+/// Configure the mock camera by frame rate (ABI next (#896, set at merge), #863): `fps` is Qt's spin box, 1 to 10000; the
+/// interval is whole microseconds, so 5000 fps is 200 us (the millisecond field of `configure_mock`
+/// cannot go below 1 ms). A rate outside the range is refused here.
+pub fn configure_mock_fps(
+    state: &AppState,
+    frame_dir: String,
+    fps: f64,
+    loop_files: bool,
+) -> Result<CmdResult, String> {
+    if !fps.is_finite() || !(1.0..=10_000.0).contains(&fps) {
+        return Err("Mock frame rate must be 1 to 10000 fps".into());
+    }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().configure_mock_camera_fps(&frame_dir, fps, loop_files).into())
+}
+
 pub fn configure_mock(
     state: &AppState,
     frame_dir: String,
@@ -521,6 +537,18 @@ pub fn startup_discovery_run(state: &AppState, action: String) -> Result<serde_j
 pub fn startup_discovery_status(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().startup_discovery_status()).map_err(|e| e.to_string())
+}
+
+/// The capture delivery mode (ABI next (#895, set at merge), #863): `mode`, the camera-confirmed `active_mode`, and whether a capture runs.
+pub fn fetch_frame_delivery_mode(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_frame_delivery_mode()).map_err(|e| e.to_string())
+}
+
+/// Set the capture delivery mode ("everyFrame" or "latestFrame"); it applies at the next capture start.
+pub fn set_frame_delivery_mode(state: &AppState, mode: String) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().set_frame_delivery_mode(&mode)).map_err(|e| e.to_string())
 }
 
 pub fn pulse_generator_command(state: &AppState, json: String) -> Result<CmdResult, String> {
@@ -1413,6 +1441,22 @@ pub fn fetch_camera_selection(state: &AppState) -> Result<CameraSelection, Strin
     })
 }
 
+/// Why the camera selection cannot change now, or `None`: the same rule as `select_mindvision_camera`
+/// and `apply_camera_script` (capture running, or an experiment Starting/Active/Stopping or still saving).
+fn camera_change_blocker(guard: &mut std::sync::MutexGuard<'_, cxx::UniquePtr<ffi::BackendBridge>>) -> Option<String> {
+    let selected = guard.pin_mut().fetch_camera_selection();
+    let experiment = guard.pin_mut().fetch_experiment_status();
+    camera_change_refused(selected.valid, selected.running, experiment.valid, experiment.state, experiment.flushing)
+        .then(|| "Stop capture and finalize the experiment before changing camera settings".into())
+}
+
+/// The rule behind `camera_change_blocker`: refused when either status is unknown, while a capture runs, while the
+/// run is Starting (1), Active (2) or Stopping (3), and while it still saves its data (`flushing`, also a Failed run
+/// that is finalizing after a fatal save error; C++ `app::experimentHoldsCamera`).
+fn camera_change_refused(selection_valid: bool, capture_running: bool, experiment_valid: bool, state: u32, flushing: bool) -> bool {
+    !selection_valid || !experiment_valid || capture_running || matches!(state, 1..=3) || flushing
+}
+
 /// Select a hardware (EGrabber) camera.
 pub fn select_hardware_camera(
     state: &AppState,
@@ -1421,6 +1465,11 @@ pub fn select_hardware_camera(
     label: String,
 ) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    // #863 CONNECT-009: like select_mindvision_camera, the camera does not change under a running
+    // capture or a live experiment (the shell disables the button too; this is the backend's own rule).
+    if let Some(reason) = camera_change_blocker(&mut guard) {
+        return Err(reason);
+    }
     Ok(guard
         .pin_mut()
         .select_hardware_camera(interface_index, device_index, &label)
@@ -1457,6 +1506,36 @@ pub fn apply_camera_script(state: &AppState, script_path: String) -> Result<CmdR
     }
 
     Ok(guard.pin_mut().apply_camera_script(&script_path).into())
+}
+
+/// Apply a JS camera script with an explicit role (ABI next (#892, set at merge), #863): `overview` = the Overview script as is
+/// (full sensor), otherwise the Experiment script followed by the profile's camera window. Same guards as
+/// `apply_camera_script`: a stopped camera and an idle experiment.
+pub fn apply_camera_script_with_role(state: &AppState, script_path: String, overview: bool) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let selected = guard.pin_mut().fetch_camera_selection();
+    let experiment = guard.pin_mut().fetch_experiment_status();
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
+        return Err("Stop capture and finalize the experiment before changing camera settings".into());
+    }
+
+    Ok(guard.pin_mut().apply_camera_script_with_role(&script_path, overview).into())
+}
+
+/// Save the eGrabber camera window placed on the Overview (ABI next (#892, set at merge), #863): the backend snaps it, rewrites
+/// the Experiment script's Width/Height/OffsetX/OffsetY lines and updates the applied profile's
+/// `camera.window`. The reply is the backend's JSON; `ok: false` carries the reason.
+pub fn save_camera_window(state: &AppState, script_path: String, x: i32, y: i32, width: i32, height: i32) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().save_camera_window(&script_path, x, y, width, height)).map_err(|e| e.to_string())
+}
+
+/// The recording capacity of the next run (ABI next (#892, set at merge), #863): JSON. `planned` is the window being placed
+/// on the Overview, as `(x, y, width, height)`.
+pub fn fetch_recording_capacity(state: &AppState, planned: Option<(i32, i32, i32, i32)>) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let (x, y, width, height) = planned.unwrap_or((0, 0, 0, 0));
+    serde_json::from_str(&guard.pin_mut().fetch_recording_capacity(planned.is_some(), x, y, width, height)).map_err(|e| e.to_string())
 }
 
 /// Explicit MindVision software exposure trigger; never an automatic startup action.
@@ -1983,6 +2062,30 @@ pub fn fetch_processing_stats(state: &AppState) -> Result<ProcessingStats, Strin
         invalid_fps1s: if s.valid && s.invalid_fps1s.is_finite() { Some(s.invalid_fps1s) } else { None },
         pixel_to_micron: if s.valid && s.pixel_to_micron.is_finite() { Some(s.pixel_to_micron) } else { None },
     })
+}
+
+#[cfg(test)]
+mod camera_change_tests {
+    use super::camera_change_refused;
+
+    // #863 CONNECT-009: the camera selection never changes under a capture or a run that holds the camera.
+    #[test]
+    fn camera_change_is_refused_while_a_run_holds_the_camera() {
+        // idle, nothing running: allowed
+        assert!(!camera_change_refused(true, false, true, 0, false));
+        // a capture runs
+        assert!(camera_change_refused(true, true, true, 0, false));
+        // the run Starts, is Active or Stops, even with the capture already stopped under it
+        for state in 1..=3 {
+            assert!(camera_change_refused(true, false, true, state, false), "state {state}");
+        }
+        // a Failed run (4) still saving its data holds the camera; once saved it holds nothing
+        assert!(camera_change_refused(true, false, true, 4, true));
+        assert!(!camera_change_refused(true, false, true, 4, false));
+        // an unknown selection or experiment status refuses
+        assert!(camera_change_refused(false, false, true, 0, false));
+        assert!(camera_change_refused(true, false, false, 0, false));
+    }
 }
 
 #[cfg(test)]

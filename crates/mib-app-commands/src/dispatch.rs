@@ -39,6 +39,7 @@ pub const COMMANDS: &[&str] = &[
     "abi_version",
     "is_initialized",
     "configure_mock",
+    "configure_mock_fps",
     "start_capture",
     "stop_capture",
     "seek_latest",
@@ -69,6 +70,8 @@ pub const COMMANDS: &[&str] = &[
     "startup_discovery_set_preference",
     "startup_discovery_run",
     "startup_discovery_status",
+    "fetch_frame_delivery_mode",
+    "set_frame_delivery_mode",
     "pulse_generator_command",
     "pulse_generator_status",
     "autofocus_connect_endpoint",
@@ -132,6 +135,9 @@ pub const COMMANDS: &[&str] = &[
     "select_hardware_camera",
     "select_mindvision_camera",
     "apply_camera_script",
+    "apply_camera_script_with_role",
+    "save_camera_window",
+    "fetch_recording_capacity",
     "soft_trigger_camera",
     "reset_hardware_camera",
     "monitoring_set_active",
@@ -218,6 +224,16 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             }
             let a: A = args(value)?;
             crate::configure_mock(state, a.frame_dir, a.frame_interval_ms, a.loop_files).and_then(json)
+        }
+        "configure_mock_fps" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "frameDir")] frame_dir: String,
+                #[serde(rename = "fps")] fps: f64,
+                #[serde(rename = "loopFiles")] loop_files: bool,
+            }
+            let a: A = args(value)?;
+            crate::configure_mock_fps(state, a.frame_dir, a.fps, a.loop_files).and_then(json)
         }
         "start_capture" => crate::start_capture(state).and_then(json),
         "stop_capture" => crate::stop_capture(state).and_then(json),
@@ -352,6 +368,15 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::startup_discovery_run(state, a.action).and_then(json)
         }
         "startup_discovery_status" => crate::startup_discovery_status(state).and_then(json),
+        "fetch_frame_delivery_mode" => crate::fetch_frame_delivery_mode(state).and_then(json),
+        "set_frame_delivery_mode" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "mode")] mode: String,
+            }
+            let a: A = args(value)?;
+            crate::set_frame_delivery_mode(state, a.mode).and_then(json)
+        }
         "pulse_generator_command" => {
             #[derive(Deserialize)]
             struct A {
@@ -727,6 +752,42 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             crate::apply_camera_script(state, a.script_path).and_then(json)
         }
+        "apply_camera_script_with_role" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "scriptPath")] script_path: String,
+                overview: bool,
+            }
+            let a: A = args(value)?;
+            crate::apply_camera_script_with_role(state, a.script_path, a.overview).and_then(json)
+        }
+        "save_camera_window" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "scriptPath", default)] script_path: String,
+                x: i32,
+                y: i32,
+                w: i32,
+                h: i32,
+            }
+            let a: A = args(value)?;
+            crate::save_camera_window(state, a.script_path, a.x, a.y, a.w, a.h).and_then(json)
+        }
+        "fetch_recording_capacity" => {
+            #[derive(Deserialize, Default)]
+            struct A {
+                x: Option<i32>,
+                y: Option<i32>,
+                w: Option<i32>,
+                h: Option<i32>,
+            }
+            let a: A = args(value)?;
+            let planned = match (a.x, a.y, a.w, a.h) {
+                (Some(x), Some(y), Some(w), Some(h)) => Some((x, y, w, h)),
+                _ => None,
+            };
+            crate::fetch_recording_capacity(state, planned).and_then(json)
+        }
         "soft_trigger_camera" => crate::soft_trigger_camera(state).and_then(json),
         "reset_hardware_camera" => crate::reset_hardware_camera(state).and_then(json),
         "monitoring_set_active" => {
@@ -1058,6 +1119,48 @@ mod tests {
             }
             assert!(COMMANDS.contains(&name), "{name} is a Tauri command but not dispatchable");
         }
+    }
+
+    // The eGrabber camera window commands (ABI next (#892, set at merge), #863): strict arguments before the backend is asked, the
+    // Overview role through the same guards as the Experiment one, and the capacity as a read.
+    #[test]
+    #[serial]
+    fn egrabber_window_commands_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_window_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        for (name, bad) in [
+            ("apply_camera_script_with_role", json!({ "scriptPath": "/x.js" })),
+            ("apply_camera_script_with_role", json!({ "overview": true })),
+            ("apply_camera_script_with_role", json!({ "scriptPath": "/x.js", "overview": "yes" })),
+            ("save_camera_window", json!({ "scriptPath": "/x.js", "x": 0, "y": 0, "w": 512 })),
+            ("save_camera_window", json!({ "scriptPath": "/x.js", "x": "0", "y": 0, "w": 512, "h": 96 })),
+        ] {
+            let err = dispatch(&state, &host, name, bad.clone()).unwrap_err();
+            assert!(err.starts_with("INVALID_ARGUMENTS"), "{name} {bad}: {err}");
+        }
+        // Both roles are refused cleanly without a hardware camera.
+        for overview in [true, false] {
+            let Reply::Json(r) = dispatch(&state, &host, "apply_camera_script_with_role", json!({ "scriptPath": "/x.js", "overview": overview })).unwrap() else { panic!("JSON") };
+            assert_eq!(r["ok"], json!(false), "{r}");
+            assert!(r["message"].as_str().unwrap().contains("No hardware camera selected"), "{r}");
+        }
+        // The window save answers in JSON with the reason; an empty script path is allowed when a profile holds the window.
+        let Reply::Json(saved) = dispatch(&state, &host, "save_camera_window", json!({ "scriptPath": "", "x": 0, "y": 0, "w": 512, "h": 96 })).unwrap() else { panic!("JSON") };
+        assert_eq!(saved["ok"], json!(false), "{saved}");
+        assert!(saved["error"].as_str().unwrap().contains("nowhere"), "{saved}");
+        // The capacity: no arguments = no planned window; all four = the planned window.
+        let Reply::Json(unknown) = dispatch(&state, &host, "fetch_recording_capacity", Value::Null).unwrap() else { panic!("JSON") };
+        assert_eq!((unknown["known"].clone(), unknown["planned"].clone()), (json!(false), json!(false)), "{unknown}");
+        let Reply::Json(planned) = dispatch(&state, &host, "fetch_recording_capacity", json!({ "x": 0, "y": 0, "w": 512, "h": 96 })).unwrap() else { panic!("JSON") };
+        assert_eq!((planned["known"].clone(), planned["planned"].clone()), (json!(true), json!(true)), "{planned}");
+        assert_eq!(planned["gates"].as_array().unwrap().len(), 4, "{planned}");
+        // Some but not all four is no plan (never a half window).
+        let Reply::Json(partial) = dispatch(&state, &host, "fetch_recording_capacity", json!({ "x": 0, "y": 0 })).unwrap() else { panic!("JSON") };
+        assert_eq!(partial["planned"], json!(false), "{partial}");
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     // The ring commands (ABI 34): `seq` is a JSON number (u64); a missing, negative or string value is INVALID_ARGUMENTS before the backend is asked, and off the
@@ -1567,6 +1670,70 @@ mod tests {
         assert_eq!(again["runs"][0]["statistics"], run["statistics"]);
         assert!(again["reference"].is_null());
         assert_eq!(std::fs::read(&v3).unwrap(), before, "nothing written");
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // #863 CONNECT-009/013/019: the camera source does not change under a running capture (Rust
+    // guard on select_hardware_camera, backend guard on configure_mock), and the delivery mode is
+    // read and set through dispatch (the WebSocket's path) and the Tauri functions.
+    #[test]
+    #[serial]
+    fn camera_source_guards_and_delivery_mode_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_connect_{}", std::process::id()));
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let frames = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/mock_frames");
+        let json_of = |name: &str, args: Value| match dispatch(&state, &host, name, args) {
+            Ok(Reply::Json(r)) => r,
+            other => panic!("{name}: {other:?}"),
+        };
+        let mock = json!({ "frameDir": frames.to_string_lossy(), "frameIntervalMs": 5, "loopFiles": true });
+        assert_eq!(json_of("configure_mock", mock.clone())["ok"], json!(true));
+
+        // The mock by frame rate (ABI next (#896, set at merge), CONNECT-016): Qt's spin box, 1 to 10000 fps; a rate outside it never reaches the backend.
+        let by_rate = |fps: Value| json!({ "frameDir": frames.to_string_lossy(), "fps": fps, "loopFiles": true });
+        assert_eq!(json_of("configure_mock_fps", by_rate(json!(5000))) ["ok"], json!(true));
+        assert_eq!(json_of("configure_mock_fps", by_rate(json!(1)))["ok"], json!(true));
+        assert_eq!(json_of("configure_mock_fps", by_rate(json!(10000)))["ok"], json!(true));
+        for bad in [json!(0), json!(0.5), json!(10001), json!(-5), json!("fast"), json!(null)] {
+            let e = dispatch(&state, &host, "configure_mock_fps", by_rate(bad.clone())).unwrap_err();
+            assert!(e.starts_with("INVALID_ARGUMENTS") || e.contains("1 to 10000"), "{bad}: {e}");
+        }
+        assert!(dispatch(&state, &host, "configure_mock_fps", json!({ "frameDir": "/x", "loopFiles": true })).unwrap_err().starts_with("INVALID_ARGUMENTS"));
+        assert_eq!(json_of("configure_mock", mock.clone())["ok"], json!(true), "back to the 5 ms mock for the capture below");
+
+        // The delivery mode: Every Frame by default; the setter validates and says when it applies.
+        let mode = json_of("fetch_frame_delivery_mode", Value::Null);
+        assert_eq!((mode["valid"].clone(), mode["mode"].clone(), mode["capturing"].clone()), (json!(true), json!("everyFrame"), json!(false)), "{mode}");
+        let bad = json_of("set_frame_delivery_mode", json!({ "mode": "newest" }));
+        assert_eq!(bad["ok"], json!(false), "{bad}");
+        assert!(dispatch(&state, &host, "set_frame_delivery_mode", json!({})).unwrap_err().starts_with("INVALID_ARGUMENTS"));
+        let set = json_of("set_frame_delivery_mode", json!({ "mode": "latestFrame" }));
+        assert_eq!((set["ok"].clone(), set["applies_at_next_start"].clone(), set["message"].clone()), (json!(true), json!(false), json!("Delivery mode set to Latest Frame.")), "{set}");
+        assert_eq!(json_of("fetch_frame_delivery_mode", Value::Null)["mode"], json!("latestFrame"));
+
+        // A running capture: the source cannot change; the delivery mode may (it applies at the next start).
+        assert_eq!(json_of("start_capture", Value::Null)["ok"], json!(true));
+        let refused = json_of("configure_mock", mock.clone());
+        assert_eq!(refused["ok"], json!(false), "{refused}");
+        assert!(refused["message"].as_str().unwrap().contains("camera is running"), "{refused}");
+        let refused_rate = json_of("configure_mock_fps", by_rate(json!(5000)));
+        assert_eq!(refused_rate["ok"], json!(false), "{refused_rate}");
+        assert!(refused_rate["message"].as_str().unwrap().contains("camera is running"), "{refused_rate}");
+        let Err(err) = crate::select_hardware_camera(&state, 0, 0, "EGrabber 0".into()) else { panic!("selecting a camera under a running capture must be refused") };
+        assert!(err.starts_with("Stop capture and finalize the experiment"), "{err}");
+        let while_running = json_of("set_frame_delivery_mode", json!({ "mode": "everyFrame" }));
+        assert_eq!((while_running["ok"].clone(), while_running["applies_at_next_start"].clone()), (json!(true), json!(true)), "{while_running}");
+        assert_eq!(while_running["message"], json!("Delivery mode set to Every Frame \u{2014} applies at the next capture start."));
+        assert_eq!(json_of("fetch_frame_delivery_mode", Value::Null)["capturing"], json!(true));
+
+        // Stopped again: both work.
+        assert_eq!(json_of("stop_capture", Value::Null)["ok"], json!(true));
+        assert_eq!(json_of("configure_mock", mock)["ok"], json!(true));
+        let selected = crate::select_hardware_camera(&state, 0, 0, "EGrabber 0".into()).expect("selection is allowed once stopped");
+        assert!(selected.ok);
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&data);
     }

@@ -13,6 +13,7 @@ import { downloadUrl } from "../../filesView";
 import { isRemote } from "../../transport";
 import { serverOrigin, tokenFromLocation } from "../../transport/auth";
 import { useStudio } from "../../studio/StudioContext";
+import { CameraStageNotice } from "../connect/CameraStageNotice";
 import { PreviewPanel } from "../preview/PreviewPanel";
 import { MonitoringPanel } from "./MonitoringPanel";
 
@@ -62,6 +63,7 @@ export function ExperimentTab() {
       {instrumentModes && <ViewerGate><RunRateControl status={runFpsStatus} /></ViewerGate>}
       {instrumentModes && <RunWindowNotice tab="experiment" windowPlaced={cameraWin.placed} modeError={modeError}
         onPlaceWindow={() => setTab("overview")} onRetry={() => setModeRetry((n) => n + 1)} />}
+      <CameraStageNotice stage="experiment" />
       {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
       {!expActive && <RunOutcomeNotice outcome={runOutcome} />}
       {/* The finished run's file can be fetched from the browser (G3): the instrument keeps it on its own disk. */}
