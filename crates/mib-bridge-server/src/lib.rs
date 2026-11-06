@@ -182,6 +182,9 @@ const CONTROL_COMMANDS: &[&str] = &[
     "trigger_periodic_stop", "cancel_operation", "review_reanalysis_json", "review_export_json",
     "review_export_csv", "apply_config_document", "profile_command", "restore_startup_configuration",
     "processing_core_command",
+    // Saved pump settings, boot service toggles and the pump address scan (ABI next (#890, set at merge), #868): they change what the next
+    // start and the discovery probes do, so only the controlling client may send them. Reading them stays open.
+    "host_settings_command",
     // Reads and writes files on the instrument (the PZ7035 camera document is confined to <data>/camera/): control only.
     "camera_document",
     "save_preview_buffer", "set_processed_preview_enabled",
@@ -708,6 +711,16 @@ mod stage_control_tests {
         assert!(CONTROL_COMMANDS.contains(&"calibration_apply"), "calibration_apply must be a CONTROL command");
         for cmd in ["calibration_records_list", "calibration_record_get"] {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
+    }
+
+    // Host settings (#868, ABI next (#890, set at merge)): saving pump settings or boot toggles and scanning a pump bus need control; the read is open.
+    #[test]
+    fn host_settings_are_control_only_but_the_read_is_not() {
+        assert!(CONTROL_COMMANDS.contains(&"host_settings_command"), "host_settings_command must be a CONTROL command");
+        assert!(!CONTROL_COMMANDS.contains(&"fetch_host_settings"), "viewers may read the settings");
+        for cmd in ["fetch_host_settings", "host_settings_command"] {
+            assert!(mib_app_commands::dispatch::COMMANDS.contains(&cmd), "the server dispatches {cmd}");
         }
     }
 

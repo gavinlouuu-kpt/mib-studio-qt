@@ -42,6 +42,8 @@
 - [[ISerialPort]] — Qt-free serial transport interface (POSIX/Win32) + factory
 - [[SerialPortClaims]] — in-process port arbitration: discovery probes yield to
   bus sessions, the connected nanopositioner and config.json pump ports
+- [[HostSettings]] — Tauri host's saved pump connection, last rate/unit/direction and boot
+  service toggles (`<data>/host_settings.json`); reserves the saved pump ports against probes
 - [[SimulatedSerial]] — serial-sim rig: fake COM ports, Modbus/OEABT devices,
   startup timing faults, stale holders, ownership ledger (`MIB_SERIAL_MODE=sim`)
 - [[PulseGeneratorService]] — Zhongsheng pulse module (camera ext-trigger

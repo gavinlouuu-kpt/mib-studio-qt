@@ -542,6 +542,15 @@ export interface TriggerStatus {
   last_track_id: number;
   periodic_active: boolean;
   periodic_interval_ms: number;
+  /** Sort-trigger funnel as the Qt status bar shows it (HW-046). Absent from servers older than ABI 44+. */
+  valid_objects?: number;
+  target_group_objects?: number;
+  unserved_target_group_objects?: number;
+  dropped_requests?: number;
+  dropped_pulses?: number;
+  dropped_valid_frames?: number;
+  avg_target_latency_us?: number;
+  max_target_latency_us?: number;
 }
 
 /** Where the science runs (ABI 21). `host_processing` false = the PL processes every frame
@@ -838,6 +847,12 @@ export const bridge = {
   startupDiscoveryStatus: () => invoke<StartupDiscoveryStatus>("startup_discovery_status"),
   pulseGeneratorCommand: (request: Record<string, unknown>) => invokeCommand("pulse_generator_command", {json: JSON.stringify(request)}),
   pulseGeneratorStatus: () => invoke<PulseGeneratorStatus>("pulse_generator_status"),
+  /** Read-only serial port list for the port pickers (HW-049); opens no port. */
+  listSerialPorts: () => invoke<SerialPortList>("list_serial_ports"),
+  /** The instrument host's saved settings (ABI next (#890, set at merge)): pump connection and rate (Qt's config.json keys), boot service toggles, the last pump address scan. */
+  fetchHostSettings: () => invoke<HostSettingsDocument>("fetch_host_settings"),
+  /** `{action: "set_pumps", settings}`, `{action: "set_boot_services", services}` or `{action: "scan_pump_addresses", port, baud, start, end, timeout_ms}` (control only). */
+  hostSettingsCommand: (request: Record<string, unknown>) => invokeCommand("host_settings_command", {json: JSON.stringify(request)}),
   autofocusConnectEndpoint: (backend: string, endpoint: string, comPort: number, baudRate: number, deviceAddress: number) =>
     invokeCommand("autofocus_connect_endpoint", { backend, endpoint, comPort, baudRate, deviceAddress }),
   autofocusConnect: (comPort: number, baudRate: number, deviceAddress: number) =>
@@ -1078,7 +1093,13 @@ export function mono8ToImageData(
   return new ImageData(rgba, width, height);
 }
 
-export interface PulseGeneratorStatus {valid: boolean; connected: boolean; owned: boolean; error: string; port: string; baud: number; address: number; channels: Array<{frequency_hz: number; duty_percent: number; output_enabled: boolean}>}
+export interface PulseGeneratorStatus {valid: boolean; connected: boolean; owned: boolean; error: string; port: string; baud: number; address: number; channels: Array<{frequency_hz: number; duty_percent: number; output_enabled: boolean}>; data_bits?: number; parity?: string; stop_bits?: number; channel_count?: number; min_frequency_hz?: number; max_frequency_hz?: number}
+/** One enumerated serial port (`list_serial_ports`): the Qt port combo's description, S/N and VID:PID. */
+export interface SerialPortEntry {system_name: string; system_location: string; description: string; manufacturer: string; serial_number: string; vendor_id: number; product_id: number}
+export interface SerialPortList {ports: SerialPortEntry[]}
+/** `fetch_host_settings` (ABI next (#890, set at merge)): the saved settings and the last pump address scan. */
+export interface HostPumpScan {state: 'idle' | 'running' | 'completed' | 'failed'; operation_id: string; port: string; found: number[]; error: string}
+export interface HostSettingsDocument {valid: boolean; path: string; settings: Record<string, unknown>; load_error: string; boot_env: string; pump_scan: HostPumpScan}
 
 export interface StartupDiscoveryStatus {preference?: StartupPreference; valid: boolean; camera_running: boolean; nanopositioner_running: boolean; camera_configured: boolean; nanopositioner_connected: boolean; camera: StartupJob; nanopositioner: StartupJob}
 interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}

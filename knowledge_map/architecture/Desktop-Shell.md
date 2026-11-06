@@ -144,11 +144,13 @@ px→µm. Profile (UX-2 #306), operator identity, and storage free-space are
 `desktop/src/commissioning.ts` — `canActuate/canStartPeriodic/canStopPeriodic`
 gate hardware-actuating trigger tests. Every session starts in `operator` mode
 (`DEFAULT_MODE`); a menubar toggle enters `service` mode behind a confirm, with
-a persistent banner. The Monitoring trigger controls (Sort Trigger, Set Pulse,
+a persistent banner. The Monitoring trigger controls (Sort Trigger, pulse duration,
 Periodic Test) render only in service mode behind an **Arm** checkbox, gated by
 those checks; arming is one-shot and clears on mode exit or an active
 experiment. A running periodic test stays stoppable in operator mode as a safety
-fallback. Details:
+fallback, and stops by itself when the Monitoring view is hidden (Qt's hideEvent;
+2026-11-04). A refused `set_service_mode` on an instrument is logged and keeps the
+app in Operator mode (it was swallowed). Details:
 `knowledge_map/task/2026-07-21-ux9-commissioning-mode.md`.
 
 Native **file pickers** use `tauri-plugin-dialog` (registered in `run()`,
@@ -626,7 +628,9 @@ selection, duplicate commands, errors and disabled setup states.
 
 `HardwareControls` stays mounted across tabs so pending command ownership and
 hardware form drafts survive navigation. Connect exposes existing numeric-COM
-pump/autofocus APIs; manual actuation requires the shared service-mode arm,
+pump/autofocus APIs. Since 2026-11-04 the pump and autofocus controls are
+operator controls as in Qt (see "Pump and autofocus operator controls" below);
+only the trigger tests and the pulse generator still use the Service-mode arm,
 which clears on one action. Typed endpoints remain follow-up work.
 
 `configDocument.tsx` owns a saved processing-document draft in App. Open/reload
@@ -669,13 +673,57 @@ read-only asynchronous nanopositioner discovery. Selecting a discovered endpoint
 fills the draft; connection still requires an explicit command. Incomplete/ambiguous
 results are never auto-adopted. The acquisition pulse generator has system-port and
 Modbus-address selection, exact-address scoped discovery, channel frequency/duty and
-output enable/disable controls. Writes consume the shared commissioning arm; mounting,
+output enable/disable controls (superseded on 2026-11-04 by the Qt-parity panel below: no arm for the generator). Mounting,
 polling and discovery do not write. Disconnect does not stop a generator's physical
 pulse output, and the UI explains that distinction. Hardware acceptance remains a
 separate deferred bench run.
 
 Native workflow verification uses Tauri's supported tauri-driver/WebKitWebDriver
 protocol with embedded production assets (`custom-protocol` Cargo feature).
+
+### Pulse generator and trigger tests as in Qt (2026-11-04, #868 wave 1 Hardware PR2)
+
+The acquisition pulse generator panel (`components/PulseGeneratorControls.tsx`; pure rules in
+`pulseGeneratorModel.ts`, persistence in `pulseGeneratorStore.ts`) follows Qt's `ConfigTabs.cpp`
+(decisions D5 and D6 of the epic): it stays in the hardware panel (rendered only with
+`capabilities.trigger`) instead of Qt's hidden "Advanced — Hardware Setup" box.
+
+- **Port and bus:** `list_serial_ports` (ABI next (#881, set at merge), read-only) fills a port combo labelled
+  `name — description, S/N …, VID:PID` with Refresh (disabled while connected); baud 4800–115200
+  (default 9600), data bits 8/7, parity N/E/O, stop bits 1/2, Modbus address 1–247 (Qt's spin box allows 255,
+  the backend and the camera's `live_view` refuse above 247). **Scan** probes addresses 1–16 on that port,
+  read-only (discovery kind PulseGenerator, 250 ms per address), lists pulse generators, other Modbus devices
+  (left untouched) and corrupt replies, and fills the first generator's address; **Cancel scan** cancels the job.
+- **Set / Start / Stop (D5):** no Service mode and no arm. Start is one `pulse_generator_command` (`start`:
+  frequency, duty, output on, under the idle lock); Set is `set` (frequency and duty); Stop gates the output off
+  (`enable false`, bypasses the idle lock) and is queued behind a command in flight, never lost: it is sent as
+  soon as the generator answers that command (not after the settings save or status read that follow), and a
+  Stop pressed during a Stop goes right after it, never after a later Start (review of #881). While an
+  experiment is active Connect, Disconnect, Set and Start are locked (the generator is the acquisition clock);
+  the coordinated live view's ownership refuses every write as before. Frequency 400–40000 Hz and duty 0–100 %
+  (0.01 steps) are refused with a message; the limits come from `pulse_generator_status` (a test pins the
+  fallback to `PulseGeneratorService.h`).
+- **Status label:** Qt's wording ("Verified addr N — ChX: f Hz, d% duty, output ON/off", "Disconnected — <error>",
+  "Scanning…"); while connected the form shows the open connection (a reload keeps the backend connected).
+- **Persistence:** port with its USB identity, serial framing, address, channel, frequency and duty are saved in the
+  instrument's shell preferences (`get_preferences`/`set_preferences`, key `pulseGenerator`: the app config dir
+  or the server's data dir, shared by every client), with a localStorage copy as the fallback; saved after a
+  successful Connect, Set or Start; restored without connecting; a renamed port is found by its saved serial
+  number and VID:PID when exactly one port matches.
+- **XGC + R5D preset:** one click writes Qt's rig preset (512×96 window, rising-edge external trigger,
+  semi-automatic strobe, polarity 0) and a `live_view` block (the selected port, address, channel, framing,
+  1000 Hz, 2 %) into the MindVision camera document (`cameraDocument.tsx` `run("save", text)`). Like Qt it refuses
+  while Live View runs, without a port or with broken JSON; unlike Qt the camera file must already be loaded
+  (Configuration ▸ Camera script) and the **Apply** to the camera stays a separate explicit step.
+- **Trigger tests (`areas/hardware/TriggerTestControls.tsx`, `triggerTestModel.ts`):** Service mode + arm stay (D4,
+  UX-9). Pulse duration 1–1,000,000 µs is applied 300 ms after typing stops and again before Sort Trigger or
+  Periodic Test fire (there is no separate Set Pulse button); periodic interval 10–60000 ms is locked while the
+  test runs; blank, zero or out-of-range input shows a message and nothing is sent. `useServiceMode` stops a
+  running periodic test when the Monitoring view is hidden.
+- **Sort-trigger counters:** `areas/hardware/SortTriggerStats.tsx` renders Qt's status-bar text (Targets, conversion,
+  served, lost, SortLat, DroppedValid) from `fetch_trigger_status` (ABI next (#881, set at merge)), polled once a second on every tab.
+
+Not changed (decisions on the epic): MindVision Soft Trigger keeps its Service mode + arm gate (HW-047).
 A development-URL process-alive launch is not sufficient to verify the UI loads.
 The desktop-shell environment section includes the native WebDriver package.
 
@@ -1023,13 +1071,81 @@ pure and unit tested):
 
 ## Pump model per slot (2026-10-04)
 
-The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:
+The Pumps panel (`PumpControls.tsx`, composed by `HardwareControls.tsx`) has a **Pump model** select per slot:
 Syringe (Longer dLSP) or Peristaltic (Tushui). Peristaltic adds a calibration
 field (µL per revolution, default 25), pre-fills the instrument endpoint
 `/dev/ttyPS1` address 3 when the fields are untouched, hides the syringe
 volume controls and shows head rpm and the estimated delivered volume.
 Connect goes through `pump_connect_model` (ABI 22, [[Rust-Bridge]]), which the
 WebSocket server allows for the controlling client.
+
+## Pump and autofocus operator controls (2026-11-04, #868 parity wave 1, #855)
+
+`HardwareControls.tsx` only composes `StartupDiscoveryControls`, `PumpControls`,
+`AutofocusControls` and `PulseGeneratorControls`; the pure rules live in
+`pumpControlModel.ts` and `hardwareControlModel.ts`.
+
+- **Gating (D1, D2).** Pump connect/disconnect, flow rate, unit, direction, syringe volume, Start and Purge,
+  and autofocus Enable and Jog need a ready backend and a connected device; Service mode, the arm and a running
+  experiment do not matter, and the backend stays ungated as in Qt (`operatorGate`). Command serialisation
+  stays: non-stop pump commands run one at a time through `PumpCommandQueue` (a `HardwareCommandOwner` per pump),
+  waiting for their turn. Autofocus connection and the tuning editor are still locked during an experiment.
+- **Stop (D3, #855).** Stop pump, the purge release and Disable autofocus are disabled only when the backend is
+  not ready. They bypass the queue and the `busy` flag. Stop (and Disconnect, a pump found disconnected, closing
+  the panel) first calls `PumpCommandQueue.invalidate()`: every command still waiting for its turn is dropped
+  (`CommandCancelled`, shown as "Start pump: cancelled by Stop"), checked right before the command reaches the
+  bridge, so a Start/Purge/rate/direction queued behind a slow command cannot run after Stop. A queued command also
+  re-checks that its pump is still connected when its turn comes. A command already sent cannot be taken back. Stop pump also sends `pump_stop_purge`: the dLSP's
+  full-speed purge is a separate register that `pump_stop` does not clear.
+- **Polling (HW-015).** Every 500 ms each connected pump gets `pump_poll_status` (a Modbus read of run state,
+  stall and volume), then `fetch_pump_status`. No lock, no `busy`, no overlap. The backend still serialises the
+  serial bus and the bridge's command mutex, and the WebSocket server handles one request per client at a time
+  (`mib-bridge-server/src/lib.rs`, the `spawn_blocking` awaited in the read loop), so a stop waits for a command or
+  poll already in flight, as it does behind Qt's GUI-thread poll (a few tens of ms on a healthy bus, up to five
+  1 s transaction timeouts on a dead one). Follow-up: a fail-fast `pollStatus`.
+- **Rate, unit, direction (HW-007/008/009).** 0-100000, 4 decimals, filled from the pump's configured values when
+  it connects. Trigger as in Qt (`SyringePumpTab.cpp:107-116`): Enter in the rate field (or leaving it after a
+  change) and a unit or direction change each start a 300 ms timer, then rate before direction is sent, also while
+  running. No keystroke sends anything.
+  Peristaltic pumps keep the rpm unit (head speed x µL/rev); a syringe pump never does.
+- **Exact syringe numbers (D9).** The dLSP holds flow rate and syringe volume as whole numbers 1-9999 and the
+  backend clamps anything else without a message. The panel sends an exact whole number in the chosen unit or
+  the other one (0.5 mL -> 500 µL, 12000 µL/min -> 12 mL/min), or refuses with a message.
+- **Hold-to-purge (HW-012).** `PurgeHold`: press (pointer, Space or Enter) sends `pump_purge` in the selected
+  direction; release, pointer leave/cancel, blur, window blur, hidden page, unmount send `pump_stop_purge`. A
+  release before the start left the queue sends nothing; during the start it is sent as soon as the start
+  returned; a start that reached the device and then reported a failure keeps the hold, so the release still sends
+  `pump_stop_purge` (a lost reply may leave the pump purging; Qt stops on every release); a disconnect forgets the hold.
+- **Connect.** Baud 1200-921600 (standard rates offered, default 115200); Sample address 1, Sheath 2 (peristaltic
+  endpoints 3 and 4); a syringe pump connects with `pump_connect_endpoint`, a peristaltic one with
+  `pump_connect_model` and its calibration.
+
+### Saved pump settings, the settings dialog and boot toggles (2026-11-05, #868 PR4, bridge ABI next (#890, set at merge))
+
+The connection fields left the panel for **Settings > Syringe Pump Settings…** (also the panel's "Pump
+settings…" button), as in Qt's `SyringePumpSettingsDialog`; the panel shows a one-line summary per pump.
+
+- **Dialog (HW-020, HW-004, HW-021).** `PumpSettingsDialog.tsx` + `pumpSettingsModel.ts`: per pump an enumerated
+  port list (`list_serial_ports`; a saved port that is not listed stays selectable) with Refresh, baud, Modbus
+  address, Scan (1-8, 300 ms: the dialog starts `scan_pump_addresses` and polls `fetch_host_settings`
+  `pump_scan`), a result list with Use, and the syringe volume and unit. OK / Cancel / Apply: Apply checks both
+  pumps first and saves them in one write; a volume is also sent to a connected pump (D9 refusal text as in
+  the panel). Escape and the backdrop cancel. Scan messages are Qt's.
+- **Persistence (HW-003, HW-016).** `hostSettingsStore.ts` is the one read/write path (saves are chained; every
+  change is announced with a `mib:host-settings` window event). Connect uses the saved port/baud/address/volume
+  (no saved port: "No COM port configured. Open Pump settings…"). The panel saves
+  rate (when parsable), unit and direction after each successful command, on page hide and on Disconnect, and
+  restores them into the fields once on start, sending nothing.
+  A pump that connects with no rate of its own (configured 0, its unit and direction meaningless) keeps the saved
+  rate, unit and direction together; a pump that has a rate shows its own three.
+- **Startup discovery (HW-037, D8).** The automatic selection is on unless the stored preference is `false`.
+  Saved pump ports are reserved by the host ([[../services/HostSettings]]), so the search and Refresh never
+  probe them (HW-023).
+- **Boot Service Toggles (HW-038).** `BootServicesDialog.tsx`: one checkbox per service, saved to the host;
+  the message is Qt's ("Changes are persisted and applied on next launch"); a `MIB_DISABLED_SERVICES` in the
+  environment is shown as an override. `auto_update` is not offered (no quiet updater in the Tauri app).
+- **Wiring.** `hardwareDialogEvents.ts` (window events) -> `<HardwareDialogs />` mounted once in
+  `areas/shell/Dialogs.tsx`; `areas/shell/MenuBar.tsx` has the two Settings items (disabled for viewers).
 
 ## Remembered discovery and named pump endpoints (2026-09-23)
 

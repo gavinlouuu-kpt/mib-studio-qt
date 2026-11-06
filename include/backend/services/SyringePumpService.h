@@ -158,6 +158,15 @@ public:
         uint8_t startAddress = 1,
         uint8_t endAddress = 8,
         int timeoutMs = 300);
+    // The same probe on any serial endpoint ("COM3", "ttyUSB0", "/dev/ttyUSB0"). `error` says why nothing could be
+    // probed (the port would not open); it stays empty when the port opened, even if no address answered.
+    std::vector<uint8_t> scanModbusAddresses(
+        const std::string& portName,
+        int baudRate,
+        uint8_t startAddress,
+        uint8_t endAddress,
+        int timeoutMs,
+        std::string* error);
 
 private:
     // Modbus RTU helpers

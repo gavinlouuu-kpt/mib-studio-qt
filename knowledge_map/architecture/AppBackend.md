@@ -622,6 +622,12 @@ replaces every COM port in the process with the [[../services/SimulatedSerial]]
 rig. An unreadable scenario or unknown mode fails `initialize()` rather than
 fall back to real ports.
 
+## Boot service toggles from the host store (2026-11-05)
+
+`setBootDisabledServices(csv)` (called by `BackendFacade::initialize` before `initialize()`) supplies the
+disabled-services list when `MIB_DISABLED_SERVICES` is empty or unset; a non-empty environment value wins, as
+in Qt's `main.cpp`. The CSV comes from [[../services/HostSettings]] (`boot_disabled_services`).
+
 ## Saved illuminated Live View (#413)
 
 `stageMindVisionConfigFromFile` selects a next-start camera profile without

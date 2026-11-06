@@ -138,6 +138,9 @@ public:
     rust::String startup_discovery_status();
     BridgeCommandResult pulse_generator_command(rust::Str json);
     rust::String pulse_generator_status();
+    rust::String list_serial_ports();
+    rust::String fetch_host_settings();
+    BridgeCommandResult host_settings_command(rust::Str json);
 
     rust::Vec<uint8_t> render_review_overlay(rust::Str json);
     BridgeFrame fetch_review_reanalysis_preview(rust::Str json);

@@ -126,7 +126,101 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
+    // ABI next (#881, set at merge): #868 HW-046/HW-049 list_serial_ports; fetch_trigger_status carries the sort-trigger funnel;
+    // fetch pulse_generator_status reports its limits and the serial framing.
+    // ABI next (#890, set at merge): #868 HW-003/016/020/021/023/038 fetch_host_settings / host_settings_command: the saved pump settings, the
+    // boot service toggles and the pump address scan.
     assert_eq!(ffi::bridge_abi_version(), 44);
+}
+
+// ABI next (#890, set at merge) (#868 wave 1 hardware PR4): the instrument host's saved settings through the cxx bridge: pump keys are
+// validated and persisted in <data>/host_settings.json, read back, and restored by the next backend on that directory;
+// the boot toggles are validated; the contract describes both commands.
+#[test]
+fn host_settings_abi() {
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_host_settings_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&data_dir);
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let read = |bridge: &mut cxx::UniquePtr<ffi::BackendBridge>| -> serde_json::Value {
+        serde_json::from_str(&bridge.pin_mut().fetch_host_settings()).unwrap()
+    };
+    let fresh = read(&mut bridge);
+    assert_eq!((fresh["valid"].as_bool(), fresh["pump_scan"]["state"].as_str()), (Some(true), Some("idle")));
+    assert!(fresh["settings"].as_object().unwrap().is_empty());
+    // A bad value refuses the whole patch; a good one is saved and read back.
+    for bad in [r#"{"action":"set_pumps","settings":{"pump_sample_address":248}}"#, r#"{"action":"set_pumps","settings":{"pump_sample_address":2,"pump_x":1}}"#,
+                r#"{"action":"set_pumps"}"#, r#"{"action":"set_boot_services","services":["nope"]}"#, r#"{"action":"scan_pump_addresses","port":""}"#,
+                r#"{"action":"bogus"}"#, "not json"] {
+        assert!(!bridge.pin_mut().host_settings_command(bad).ok, "{bad}");
+    }
+    assert!(read(&mut bridge)["settings"].as_object().unwrap().is_empty(), "a refused request changes nothing");
+    let saved = bridge.pin_mut().host_settings_command(r#"{"action":"set_pumps","settings":{"pump_sample_port":"COM3","pump_sample_baud_rate":115200,"pump_sample_address":1,"pump_sample_flow_rate":20.5}}"#);
+    assert!(saved.ok, "{}", saved.message);
+    let toggles = bridge.pin_mut().host_settings_command(r#"{"action":"set_boot_services","services":["Trigger","autofocus"]}"#);
+    assert!(toggles.ok, "{}", toggles.message);
+    let after = read(&mut bridge);
+    assert_eq!(after["settings"]["pump_sample_flow_rate"], 20.5);
+    assert_eq!(after["settings"]["boot_disabled_services"], serde_json::json!(["autofocus", "trigger"]));
+    assert!(after["path"].as_str().unwrap().ends_with("host_settings.json"));
+    bridge.pin_mut().shutdown();
+    // The next backend on the same directory starts with them.
+    let mut next = ffi::new_backend_bridge();
+    assert!(next.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let again = read(&mut next);
+    assert_eq!(again["settings"]["pump_sample_port"], "COM3");
+    assert_eq!(again["settings"]["boot_disabled_services"], serde_json::json!(["autofocus", "trigger"]));
+    next.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data_dir);
+    let contract: serde_json::Value = serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["host_settings"];
+    for (key, needle) in [("fetch_host_settings", "open to every client"), ("fetch_host_settings", "pump_scan"), ("fetch_host_settings", "boot_env"),
+                          ("host_settings_command", "control only"), ("host_settings_command", "set_pumps"), ("host_settings_command", "scan_pump_addresses"),
+                          ("host_settings_command", "set_boot_services")] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "host_settings.{key} mentions {needle}");
+    }
+}
+
+// ABI next (#881, set at merge) (#868 wave 1 hardware PR2): the serial port list, the sort-trigger funnel in the trigger status and the
+// pulse generator's limits and framing, through the cxx bridge; the contract describes them.
+#[test]
+fn hardware_trigger_and_ports_abi() {
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_hw45_data_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    // The port list is read-only JSON {ports: [...]}; every entry carries the documented keys (no port is opened).
+    let ports: serde_json::Value = serde_json::from_str(&bridge.pin_mut().list_serial_ports()).unwrap();
+    for port in ports["ports"].as_array().expect("ports is an array") {
+        for key in ["system_name", "system_location", "description", "manufacturer", "serial_number", "vendor_id", "product_id"] {
+            assert!(port.get(key).is_some(), "port entry has {key}: {port}");
+        }
+    }
+    // A fresh backend has an empty funnel, and the latency is a number.
+    let trigger = bridge.pin_mut().fetch_trigger_status();
+    assert!(trigger.valid);
+    assert_eq!((trigger.valid_objects, trigger.target_group_objects, trigger.unserved_target_group_objects), (0, 0, 0));
+    assert_eq!((trigger.dropped_requests, trigger.dropped_pulses, trigger.dropped_valid_frames, trigger.max_target_latency_us), (0, 0, 0, 0));
+    assert!(trigger.avg_target_latency_us >= 0.0);
+    // The pulse generator reports its limits (so the panel carries no copy) and its serial framing.
+    let pulse: serde_json::Value = serde_json::from_str(&bridge.pin_mut().pulse_generator_status()).unwrap();
+    assert_eq!(pulse["channel_count"], 4);
+    assert_eq!(pulse["min_frequency_hz"], 400.0);
+    assert_eq!(pulse["max_frequency_hz"], 40000.0);
+    assert_eq!((pulse["data_bits"].as_i64(), pulse["parity"].as_str(), pulse["stop_bits"].as_i64()), (Some(8), Some("N"), Some(1)));
+    // Set and Start are validated before any device is asked, and refuse without a connected generator.
+    for request in [r#"{"action":"start","channel":0,"frequency_hz":399,"duty_percent":50}"#, r#"{"action":"set","channel":0,"frequency_hz":1000,"duty_percent":101}"#,
+                    r#"{"action":"start","channel":9,"frequency_hz":1000,"duty_percent":50}"#, r#"{"action":"start","channel":0,"frequency_hz":1000,"duty_percent":50}"#,
+                    r#"{"action":"start","channel":0}"#] {
+        assert!(!bridge.pin_mut().pulse_generator_command(request).ok, "{request}");
+    }
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data_dir);
+    let contract: serde_json::Value = serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["hardware_trigger_and_ports"];
+    for (key, needle) in [("list_serial_ports", "opens no port"), ("list_serial_ports", "open to every client"), ("fetch_trigger_status", "target_group_objects"),
+                          ("fetch_trigger_status", "avg_target_latency_us"), ("pulse_generator_status", "min_frequency_hz"), ("pulse_generator_status", "stop_bits")] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "hardware_trigger_and_ports.{key} mentions {needle}");
+    }
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.

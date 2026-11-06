@@ -61,7 +61,11 @@
   message ("Pump stop failed: write failed: serial write timed out ...");
   messages on success are unchanged.
 - Provide `scanModbusAddresses(comPort, baudRate, start, end, timeoutMs)` for
-  settings-time address discovery on a selected serial port.
+  settings-time address discovery on a selected serial port. An overload takes a
+  system port name (`scanModbusAddresses(portName, baudRate, start, end, timeoutMs,
+  std::string* error)`, reason on failure; the int version delegates through
+  `comPortName`). The Tauri pump settings dialog uses it for Scan 1-8 at 300 ms
+  through the `scan_pump_addresses` host-settings action ([[HostSettings]]).
 
 ## Enums
 
@@ -159,7 +163,10 @@ pump; the next one does).
 - Dialog-provided `baudRate` and `modbusAddress` must match the hardware.
 - dLSP `setFlowRate` writes `clamp(rate, 1, 9999)` truncated to an integer
   but keeps the unclamped rate in `PumpConfig`; the snapshot's setpoint is
-  the written value (`AppliedSettings`).
+  the written value (`AppliedSettings`). The desktop pump panel therefore sends only an exact whole number
+  1-9999 (in µL/min or mL/min) and refuses the rest (`desktop/src/components/pumpControlModel.ts`);
+  `setSyringeVolume` clamps the same way. A pump status read (`pollStatus`) is up to five transactions, each
+  with a 1 s timeout, and holds the pump mutex (and the bridge command mutex): a Stop waits for it.
 - See `docs/dLSP_pump.pdf` for pump protocol reference (shipped in repo).
 - Peristaltic: which way Infuse pushes liquid depends on how the tubing is
   loaded in the head; swap the tubing ends rather than the mapping.

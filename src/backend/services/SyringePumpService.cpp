@@ -558,8 +558,23 @@ std::vector<uint8_t> SyringePumpService::scanModbusAddresses(
     uint8_t startAddress,
     uint8_t endAddress,
     int timeoutMs) {
+    if (comPort <= 0) {
+        return {};
+    }
+    return scanModbusAddresses(comPortName(comPort), baudRate, startAddress, endAddress, timeoutMs, nullptr);
+}
+
+std::vector<uint8_t> SyringePumpService::scanModbusAddresses(
+    const std::string& portName,
+    int baudRate,
+    uint8_t startAddress,
+    uint8_t endAddress,
+    int timeoutMs,
+    std::string* error) {
     std::vector<uint8_t> addresses;
-    if (comPort <= 0 || baudRate <= 0) {
+    if (error) error->clear();
+    if (portName.empty() || baudRate <= 0) {
+        if (error) *error = "no serial port or baud rate";
         return addresses;
     }
     if (startAddress == 0 || endAddress == 0 || startAddress > endAddress) {
@@ -569,10 +584,11 @@ std::vector<uint8_t> SyringePumpService::scanModbusAddresses(
     serialbus::SerialSettings settings;
     settings.baudRate = baudRate;
     serialbus::BusError busError = serialbus::BusError::None;
-    auto bus = busManager_.acquire(comPortName(comPort), settings, &busError, nullptr);
+    auto bus = busManager_.acquire(portName, settings, &busError, nullptr);
     if (!bus) {
-        SPDLOG_WARN("SyringePumpService: scan failed to open COM{}: {}",
-                    comPort, serialbus::toString(busError));
+        SPDLOG_WARN("SyringePumpService: scan failed to open {}: {}",
+                    portName, serialbus::toString(busError));
+        if (error) *error = std::string("could not open the port: ") + serialbus::toString(busError);
         return addresses;
     }
 

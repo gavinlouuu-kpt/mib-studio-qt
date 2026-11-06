@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { hardwareGate, HardwareCommandOwner, numericInput, validateFocusConfig } from './hardwareControlModel';
+import { hardwareGate, HardwareCommandOwner, numericInput, operatorGate, validateFocusConfig } from './hardwareControlModel';
 import type { AutofocusConfig, CmdResult } from '../bridge';
 const allowed = {ready: true, experimentActive: false, connected: true, mode: 'service' as const, armed: true};
 export const focusConfig: AutofocusConfig = {valid: true, focus_setpoint: 1, focus_range: .1, voltage_step: 1, fine_voltage_step: .1, min_voltage: 0, max_voltage: 100, initial_voltage: 50, manual_voltage_step: 1, ring_ratio_stale_ms: 500, min_samples_per_step: 1, safe_shutdown_voltage: 0, require_new_sample_per_step: true, focus_direction: true};
@@ -14,6 +14,14 @@ describe('hardware command safeguards', () => {
   it('requires service mode, arming and connection for actuation', () => {
     expect(hardwareGate(allowed, 'actuate')).toBe('');
     for (const change of [{mode: 'operator' as const}, {armed: false}, {connected: false}, {experimentActive: true}, {ready: false}]) expect(hardwareGate({...allowed, ...change}, 'actuate')).not.toBe('');
+  });
+  it('gates the operator pump and autofocus controls only on readiness and the connection (D1-D3)', () => {
+    expect(operatorGate({ready: true, connected: true}, 'command')).toBe('');
+    expect(operatorGate({ready: true, connected: false}, 'command')).toBe('Device is not connected.');
+    expect(operatorGate({ready: false, connected: true}, 'command')).toBe('Backend is not ready.');
+    // Stop and its kin are refused only when the backend is not ready: not for a missing connection or status.
+    expect(operatorGate({ready: true, connected: false}, 'stop')).toBe('');
+    expect(operatorGate({ready: false, connected: false}, 'stop')).toBe('Backend is not ready.');
   });
   it('rejects blank, infinite, fractional and out-of-range serial fields', () => {
     for (const value of ['', ' ', 'NaN', 'Infinity', '1.5', '0', '248']) expect(() => numericInput(value, 'address', 1, 247, true)).toThrow();

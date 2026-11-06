@@ -197,6 +197,19 @@ operating hardware. Changing Requested FPS preserves the requested camera
 trigger pulse duration by adjusting duty; it does not change exposure or
 strobe width/delay. The FPS control is disabled for manual profiles.
 
+### The same setup in the new desktop app (React/Tauri)
+
+The new desktop app has the same pulse generator controls in its **Hardware** panel (Connect stage), without the
+**Advanced — Hardware Setup** box: **Port** (with description, serial number and USB id) and **Refresh**, **Baud**,
+data bits, parity, stop bits, **Addr** with a read-only **Scan** of addresses 1–16, **Connect**, then **Ch**, **Freq
+(Hz)** and **Duty (%)** with **Set**, **Start** and **Stop**. Start writes the frequency, the duty and turns the output
+on in one click; no Service mode is needed. While an experiment is active **Connect**, **Set** and **Start** are
+locked, because the generator is the acquisition clock; **Stop** always works. The settings are remembered across
+restarts. **Use XGC + R5D preset for Live View** saves the same preset into the MindVision camera file loaded in
+**Configuration ▸ Camera script**; it does not start hardware, and the saved file is applied to the camera as a
+separate step. The trigger tests in **Monitoring** still need Service mode and the arm; the pulse duration
+(1–1,000,000 µs) applies as you type and the periodic interval is 10–60000 ms.
+
 ### Troubleshooting illuminated Live View
 
 - **No generator found or more than one matches** — check generator power,

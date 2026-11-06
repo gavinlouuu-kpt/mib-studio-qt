@@ -47,7 +47,7 @@ Waves are from #869: wave 1 starts after this split merges, wave 2 follows.
 | `preview`: frame pulls and drawing, display rates, live and PZ7035 Run preview, frame-ring playback, Record, ROI, background, preview buffer | [#865](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/865) | 2 | `usePreview.ts`, `PreviewPanel.tsx`, `ring-playback.css` | `framePullScheduler.ts`, `framePacket.ts`, `previewBuffer.tsx`, `previewPacing.ts`, `runPreview.ts`, `ringPlayback.ts`, `processedPreview.ts`, `components/{RingPlaybackPanel,ProcessedPreview,ProcessingSetupControls,BackgroundCalibrationControls}.tsx` |
 | `monitoring`: Experiment stage frame (sub-tabs, Start/Stop Experiment, readiness and outcome, SSD, Files, Recordings), Monitoring sub-tab | [#866](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/866) | 1 | `useMonitoring.ts`, `ExperimentTab.tsx`, `MonitoringPanel.tsx`, `run-status.css`, `ssd.css` | `experimentStart.ts`, `runOutcome.ts`, `resultsRates.ts`, `monitoringCells.ts`, `ssdView.ts`, `filesView.ts`, `components/{MonitoringCharts,RunRateControl,RunOutcomeNotice,SsdStrip,SsdRunsPanel,FilesPanel,ResultMetricCells}.tsx` |
 | `review`: MIB Studio's Review stage (open/close, scrubbers, metrics pages, exports, re-analysis, charts) | [#867](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/867) | 1 | `useReview.ts`, `ReviewTab.tsx` | `exportControls.tsx`, `reviewExport.ts`, `reanalysisControls.tsx`, `components/{ReviewCharts,SavedReviewImage}.tsx`; YOFO Review (`desktop/src/review/**`, [YofoReview](../../knowledge_map/frontend/YofoReview.md)) |
-| `hardware`: Operator/Service mode and the actuation arm, device panel (pumps, nanopositioner/autofocus, pulse generator, Z stage), trigger tests, PZ7035 LED controls | [#868](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/868) | 1 | `useHardware.ts`, `ServiceMode.tsx`, `HardwarePanel.tsx`, `TriggerTestControls.tsx`, `InstrumentLedPanel.tsx`, `service-mode.css` | `commissioning.ts`, `pumpRate.ts`, `components/{HardwareControls,StageControls,PulseGeneratorControls,InstrumentLedControls,EndpointDiscovery,StartupDiscoveryControls}.tsx` (+ their `.css` and `*Model.ts`), `discovery.ts`, `startupPreference.ts` |
+| `hardware`: Operator/Service mode and the actuation arm, device panel (pumps, nanopositioner/autofocus, pulse generator, Z stage), trigger tests, PZ7035 LED controls | [#868](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/868) | 1 | `useHardware.ts`, `ServiceMode.tsx`, `HardwarePanel.tsx`, `TriggerTestControls.tsx`, `triggerTestModel.ts`, `SortTriggerStats.tsx`, `sortTriggerModel.ts`, `InstrumentLedPanel.tsx`, `service-mode.css` | `commissioning.ts`, `pumpRate.ts`, `components/{HardwareControls,PumpControls,AutofocusControls,HardwareConnectionFields,StageControls,PulseGeneratorControls,InstrumentLedControls,EndpointDiscovery,StartupDiscoveryControls,PumpSettingsDialog,BootServicesDialog,HardwareDialogs}.tsx`, `components/{hostSettingsStore,hardwareDialogEvents,pumpSettingsModel}.ts` (+ their `.css` and `*Model.ts`, `pulseGeneratorStore.ts`), `discovery.ts`, `startupPreference.ts` |
 
 **Shared, change only with a note in the PR (the orchestrator merges them):** `App.tsx`, `App.css`,
 `studio/**`, `styles/**`, `bridge.ts`, `bridgeContract.ts`, `eventAdapter.ts`, `transport/**`,
@@ -63,12 +63,15 @@ Waves are from #869: wave 1 starts after this split merges, wave 2 follows.
 | Host view | Hosted part (owner) |
 |---|---|
 | `shell/MenuBar.tsx` (menu row) | `hardware/ServiceMode.tsx` `ModeToggle` |
+| `shell/MenuBar.tsx` Settings items (Syringe Pump Settings…, Boot Service Toggles…); `shell/Dialogs.tsx` | `components/hardwareDialogEvents.ts` (the open events) and `components/HardwareDialogs.tsx` (mounted once) (hardware) |
 | `shell/Workflow.tsx` `StageTabs` (tab header) | `connect/CameraActions.tsx` |
 | `connect/OverviewTab.tsx` toolbar | the host ROI fields: state and `onApplyRoi` are preview's (`usePreview.ts`); the JSX stays in the Overview toolbar |
 | `monitoring/ExperimentTab.tsx` | `preview/PreviewPanel.tsx` (Preview sub-tab), `monitoring/MonitoringPanel.tsx` |
 | `preview/PreviewPanel.tsx` | `hardware/InstrumentLedPanel.tsx`, `config/ConfigPanel.tsx` (configuration sub-tabs) |
 | `monitoring/MonitoringPanel.tsx` toolbar | `hardware/TriggerTestControls.tsx` |
 | `shell/Dialogs.tsx` | `CentralMethodsPanel.tsx` (config) |
+| `shell/StatusBar.tsx` (metrics span) | `hardware/SortTriggerStats.tsx` (sort-trigger counters) |
+| `components/PulseGeneratorControls.tsx` | the MindVision camera document model (`config`'s `useCameraDocument`, read through `StudioContext`) for the XGC + R5D preset |
 
 ## Rules that keep the split safe
 

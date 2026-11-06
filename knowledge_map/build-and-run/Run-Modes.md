@@ -71,6 +71,9 @@ Sample frames ship at `data/mock_frames/frame_00000.tiff`.
 The GUI Settings action **Boot Service Toggles...** stores a persisted
 `QSettings` value (`Startup/DisabledServices`) that `main.cpp` maps into
 `MIB_DISABLED_SERVICES` before backend startup (unless the env var is already set externally).
+The desktop (Tauri) app's Settings > **Boot Service Toggles…** saves the same list in
+`<data>/host_settings.json` (`boot_disabled_services`), read by `BackendFacade::initialize` before the backend
+starts; the environment variable still wins ([[../services/HostSettings]]).
 - The startup camera mode picker now recognizes `mock`, `mindvision`, `aravis`, and the
   hardware/eGrabber default path.
 

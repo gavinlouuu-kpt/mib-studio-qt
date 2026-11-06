@@ -41,7 +41,7 @@ Jump to the notes that match your task:
 | Device discovery (camera / nanopositioner / pulse-generator scans, startup auto-select) | [[services/DeviceDiscoveryService]] + [[frontend/System-Utilities]] (`DeviceInitManager`) + [[task/2026-09-15-device-discovery-service]] |
 | Hidden desktop / hardware held after close | [[frontend/DesktopInstance]] + [[task/2026-09-15-hardware-shutdown]] |
 | COM port races at startup, simulated serial hardware | [[services/SimulatedSerial]] + [[services/SerialPortClaims]] + `docs/howto/simulated-serial.md` |
-| Syringe pumps | [[services/SyringePumpService]] (serial via [[services/ISerialPort]]) + [[frontend/SyringePumpTab]] |
+| Syringe pumps | [[services/SyringePumpService]] (serial via [[services/ISerialPort]]) + [[frontend/SyringePumpTab]]; Tauri saved pump settings and boot toggles: [[services/HostSettings]] |
 | Crashes / observability | [[services/CrashReporter]] + [[diagnostics/CrashStateMirror]] |
 | React + Tauri migration / Rust bridge | [[architecture/Rust-Bridge]] + `docs/decisions/0003-rust-cxx-bridge.md` |
 | React + Tauri desktop app (`desktop/`) | [[architecture/Desktop-Shell]]; which stream owns which classic-view file: `docs/howto/desktop-area-ownership.md` |

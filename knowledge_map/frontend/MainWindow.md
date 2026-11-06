@@ -268,6 +268,9 @@ created in `setupStatusSurfaces()`:
   backend initialization (unless the env var is already explicitly set).
 - `auto_update` is honored in `MainWindow` startup: updater construction and
   quiet update checks are skipped when disabled.
+- The desktop (Tauri) app has the same dialog (Settings > Boot Service Toggles…); it saves the CSV in
+  `host_settings.json` and the facade applies it before the backend starts, the environment variable
+  still winning ([[../services/HostSettings]]).
 
 ## Gotchas
 

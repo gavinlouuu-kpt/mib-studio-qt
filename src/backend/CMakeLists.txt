@@ -505,6 +505,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewCharts.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingConfigTransaction.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/HostSettings.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileCatalog.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreTrust.cpp

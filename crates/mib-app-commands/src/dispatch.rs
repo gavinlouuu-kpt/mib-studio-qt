@@ -71,6 +71,9 @@ pub const COMMANDS: &[&str] = &[
     "startup_discovery_status",
     "pulse_generator_command",
     "pulse_generator_status",
+    "list_serial_ports",
+    "fetch_host_settings",
+    "host_settings_command",
     "autofocus_connect_endpoint",
     "autofocus_connect",
     "autofocus_disconnect",
@@ -361,6 +364,16 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::pulse_generator_command(state, a.json).and_then(json)
         }
         "pulse_generator_status" => crate::pulse_generator_status(state).and_then(json),
+        "list_serial_ports" => crate::list_serial_ports(state).and_then(json),
+        "fetch_host_settings" => crate::fetch_host_settings(state).and_then(json),
+        "host_settings_command" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "json")] json: String,
+            }
+            let a: A = args(value)?;
+            crate::host_settings_command(state, a.json).and_then(json)
+        }
         "autofocus_connect_endpoint" => {
             #[derive(Deserialize)]
             struct A {
@@ -1510,6 +1523,57 @@ mod tests {
         assert_eq!(apply("beads"), beads, "and back");
         let tauri = serde_json::to_value(crate::fetch_experiment_readiness(&state, out.clone()).unwrap()).unwrap();
         assert_eq!(tauri["method_calibration"], beads, "the Tauri function serialises the same report");
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // ABI next (#881, set at merge), #868: the serial port list is a read through dispatch (the WebSocket's path); the trigger status
+    // carries the sort-trigger funnel and the pulse generator status its limits.
+    #[test]
+    #[serial]
+    fn hardware_reads_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_hw45_{}", std::process::id()));
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let Reply::Json(ports) = dispatch(&state, &host, "list_serial_ports", Value::Null).unwrap() else { panic!("JSON") };
+        assert!(ports["ports"].is_array(), "{ports}");
+        let Reply::Json(trigger) = dispatch(&state, &host, "fetch_trigger_status", Value::Null).unwrap() else { panic!("JSON") };
+        for key in ["valid_objects", "target_group_objects", "unserved_target_group_objects", "dropped_requests", "dropped_pulses",
+                    "dropped_valid_frames", "avg_target_latency_us", "max_target_latency_us"] {
+            assert!(trigger.get(key).is_some_and(|v| v.is_number()), "trigger status has {key}: {trigger}");
+        }
+        let Reply::Json(pulse) = dispatch(&state, &host, "pulse_generator_status", Value::Null).unwrap() else { panic!("JSON") };
+        assert_eq!((pulse["channel_count"].as_i64(), pulse["min_frequency_hz"].as_f64(), pulse["max_frequency_hz"].as_f64()), (Some(4), Some(400.0), Some(40000.0)));
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // ABI next (#890, set at merge), #868 HW-003/023/038: the host settings through dispatch (the WebSocket's path): a read, a control command
+    // whose argument is the request text, a refusal that changes nothing, and the restart.
+    #[test]
+    #[serial]
+    fn host_settings_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_host_settings_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let read = || {
+            let Reply::Json(v) = dispatch(&state, &host, "fetch_host_settings", Value::Null).unwrap() else { panic!("JSON") };
+            v
+        };
+        let command = |request: Value| {
+            let Reply::Json(v) = dispatch(&state, &host, "host_settings_command", json!({ "json": request.to_string() })).unwrap() else { panic!("JSON") };
+            v
+        };
+        assert_eq!((read()["valid"].clone(), read()["settings"].clone()), (json!(true), json!({})));
+        assert_eq!(command(json!({"action": "set_pumps", "settings": {"pump_sheath_address": 0}}))["ok"], json!(false));
+        assert_eq!(read()["settings"], json!({}));
+        let saved = command(json!({"action": "set_pumps", "settings": {"pump_sheath_port": "/dev/ttyUSB0", "pump_sheath_address": 2}}));
+        assert_eq!(saved["ok"], json!(true), "{saved}");
+        assert_eq!(read()["settings"], json!({"pump_sheath_port": "/dev/ttyUSB0", "pump_sheath_address": 2}));
+        assert!(dispatch(&state, &host, "host_settings_command", json!({})).unwrap_err().starts_with("INVALID_ARGUMENTS"));
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&data);
     }

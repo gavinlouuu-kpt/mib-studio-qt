@@ -6,7 +6,8 @@
 **Source:** `src/frontend/tabs/SyringePumpTab.cpp`,
 `include/frontend/tabs/SyringePumpTab.h`
 **Related:** [[../services/SyringePumpService]],
-[[Dialogs]] (`SyringePumpSettingsDialog`)
+[[Dialogs]] (`SyringePumpSettingsDialog`); the desktop (Tauri/React) counterpart is `PumpControls.tsx`,
+which follows this tab's behaviour (see [[../architecture/Desktop-Shell]], "Pump and autofocus operator controls")
 
 ## Responsibility
 
@@ -18,6 +19,9 @@
   `SyringePumpSettingsDialog`.
 - `SyringePumpSettingsDialog` now includes per-pump baud/address fields and
   in-dialog address scan; tab connect buttons consume those persisted values.
+- `saveConfig` / `loadConfig` keep each pump's last rate, unit and direction in config.json
+  (`pump_*_flow_rate`, `_flow_unit`, `_direction`) and restore them into the fields (never sent).
+  The desktop app keeps the same keys in `host_settings.json` ([[../services/HostSettings]]).
 
 ## Gotchas
 

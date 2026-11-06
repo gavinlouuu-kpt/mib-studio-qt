@@ -1,0 +1,12 @@
+/* Syringe Pump Settings and Boot Service Toggles dialogs (hardware area; the shared .modal chrome is styles/modal.css). */
+.modal.pump-settings { max-width: 640px; width: 92vw; max-height: 90vh; overflow: auto; }
+.pump-settings-help { margin: 0 0 .6rem; font-size: .85rem; color: var(--muted); }
+.pump-settings-pumps { display: grid; gap: .8rem; }
+.pump-settings-pump { min-width: 0; border: 1px solid var(--border); border-radius: .4rem; padding: .6rem .8rem; }
+.pump-settings-row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: end; margin: .4rem 0; }
+.pump-settings-row label { display: flex; flex-direction: column; gap: .2rem; }
+.pump-settings-row select, .pump-settings-row input { max-width: 16rem; }
+.pump-settings-row select[aria-label$="serial port"] { width: 24rem; max-width: 100%; }
+.pump-settings .pump-settings-problem, .modal.boot-services .pump-settings-problem { color: var(--err); }
+.modal.boot-services label.boot-service { display: flex; flex-direction: row; align-items: center; gap: .5rem; margin: .3rem 0; }
+.modal.boot-services ul { margin: .4rem 0 .4rem 1rem; padding: 0; }

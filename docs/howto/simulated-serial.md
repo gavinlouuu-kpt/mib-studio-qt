@@ -49,7 +49,9 @@ The built-in bench (`serialsim::makeBenchRig`):
 | COM5 | CH340, enumerates after 1.2 s, silent 150 ms after open | OEABT nanopositioner |
 | COM6 | FT231X (0403:6015) | ZC300 Z stage addr 1 (identity registers) |
 
-Point the pump settings at COM3, the generator at COM4 (9600 baud). An
+Point the pump settings at COM3, the generator at COM4 (9600 baud). In the Tauri app the pump port is chosen in
+Settings > Syringe Pump Settings… and saved to `host_settings.json`; a saved pump port is reserved, so the startup
+search never writes onto it (no `ForeignFrame` on COM3, see `knowledge_map/services/HostSettings.md`). An
 unreadable or invalid scenario stops the backend from starting. It never
 falls back to the real ports while you believe they are simulated. The
 CoreMorrow vendor DLL opens ports itself, so CoreMorrow endpoints are not

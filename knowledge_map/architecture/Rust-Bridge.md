@@ -181,7 +181,7 @@ TypeScript via the generated `desktop/src/bridgeContract.ts`
 (`scripts/gen_bridge_contract.py --check` is a desktop-CI drift gate).
 
 The command/event set is a versioned schema: `bridge_abi_version()` returns the
-current version (`42` since #716 A4a; each later bump has its own `## ABI N` section below)
+current version (`44` since #716 A7a; #868 hardware PR2 and PR4 take the next numbers when they merge, see `## ABI next (#881, set at merge)` and `## ABI next (#890, set at merge)`; each bump has its own `## ABI N` section below)
 (the early history:v2 added the review commands — `load_recording`, `playback_seek_index`,
 `fetch_frame_by_index`; v3 added the processing commands — `apply_processing`,
 `fetch_processing_stats`; v4 added operation state, `cancel_operation`,
@@ -519,6 +519,56 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
+
+## ABI next (#890, set at merge): the host's saved pump and boot settings (#868 wave 1 hardware PR4)
+
+Additive over #881's ABI, for the Syringe Pump Settings and Boot Service Toggles dialogs (HW-003, HW-004, HW-016,
+HW-020, HW-021, HW-023, HW-038). Contract: the top-level `host_settings` object. Backend: [[../services/HostSettings]].
+
+- **`fetch_host_settings`:** `-> {valid, path, settings, load_error, boot_env, pump_scan}`; `settings` holds
+  only the keys the store knows; `boot_env` is the `MIB_DISABLED_SERVICES` value that overrides the saved
+  boot toggles ("" when unset); `pump_scan` is `{state: idle|running|completed|failed, operation_id, port,
+  found, error}`. A read for every client (not in `CONTROL_COMMANDS`).
+- **`host_settings_command`:** a JSON object with `action` (64 KiB at most; a control command, refused for
+  viewers by the server):
+  - `set_pumps {settings: {...}}`: merge-patch of the pump keys, all checked first (one bad value refuses the
+    patch, naming the key), `null` removes a key; reserves the saved ports against probes at once.
+  - `set_boot_services {services: [...]}`: the services to leave off at the next start; unknown tokens refused.
+  - `scan_pump_addresses {port, baud, start, end, timeout_ms}`: starts the tracked `PumpScan` operation
+    (one at a time) and returns its `operation_id`; the answer is the next `fetch_host_settings` whose
+    `pump_scan.operation_id` matches and is no longer `running`.
+- **Path:** C++ `BackendFacade::fetchHostSettingsJson` / `hostSettingsCommandJson` -> cxx `fetch_host_settings`,
+  `host_settings_command` -> `mib-app-commands` -> Tauri commands (`desktop/src-tauri/src/lib.rs`, two thin
+  wrappers) and dispatch -> `bridge.ts` `fetchHostSettings`, `hostSettingsCommand`.
+- **ABI touch points:** `bridge-contract.json` `abi_version` (44 until the merge-time bump) and `host_settings`; `shim.cpp`
+  `bridge_abi_version()`; `contract.rs` `abi_version_is_stable` and `host_settings_abi`; `dispatch.rs`
+  `host_settings_through_dispatch`; the server's `CONTROL_COMMANDS`; the generated `bridgeContract.ts`; the
+  `eventAdapter.test.ts` pin. C++ test: `backend.host_settings`.
+
+## ABI next (#881, set at merge): serial ports, the sort-trigger funnel, pulse generator limits (#868 wave 1 hardware PR2)
+
+Additive over ABI 44, for the pulse generator panel and the status bar of the desktop app (HW-046, HW-049,
+HW-054, HW-055). Contract: `hardware_trigger_and_ports`.
+
+- **`list_serial_ports`:** `-> {ports: [{system_name, system_location, description, manufacturer,
+  serial_number, vendor_id, product_id}]}`; the host's `enumerateSerialPorts()` (the simulated rig's under
+  `MIB_SERIAL_MODE=sim`); opens no port; a read for every client (not in `CONTROL_COMMANDS`). Path: C++
+  `BackendFacade::listSerialPortsJson` -> cxx `list_serial_ports` -> `mib-app-commands` -> Tauri command and
+  dispatch -> `bridge.ts` `listSerialPorts`.
+- **`fetch_trigger_status`** gains the Qt status bar's funnel: `valid_objects`, `target_group_objects`,
+  `unserved_target_group_objects` (ProcessingService identification counters), `dropped_requests`,
+  `dropped_pulses` (TriggerService), `dropped_valid_frames`, `avg_target_latency_us`, `max_target_latency_us`
+  (PipelineTimingRecorder). The panel derives conversion, lost and served as `StatsDisplayManager.cpp` does.
+- **`pulse_generator_status`** gains `data_bits`, `parity`, `stop_bits` and `channel_count`, `min_frequency_hz`,
+  `max_frequency_hz` (the `PulseGeneratorService` constants); `pulse_generator_command` validates against the same
+  constants and gains the actions `set` and `start` (`channel`, `frequency_hz`, `duty_percent`): frequency, then
+  duty, then (start) the output, as one command under `withIdleConfiguration`, so a refused value or a failed
+  write stops the sequence and an experiment cannot start between the writes.
+- **ABI touch points:** `bridge-contract.json` `abi_version` (44 until the merge-time bump) and `hardware_trigger_and_ports`; `shim.cpp`
+  `bridge_abi_version()`; `contract.rs` `abi_version_is_stable` and `hardware_trigger_and_ports_abi`;
+  `dispatch.rs` `hardware_reads_through_dispatch`; the generated `bridgeContract.ts`; the
+  `eventAdapter.test.ts` pin. C++ test: `backend.facade_boundary` (limits, port list, funnel, and Set / Start /
+  Stop against the simulated bench generator).
 
 ## ABI 44: the run quick look (#716 A7a)
 
