@@ -164,7 +164,8 @@ int main()
             liveSeenDuringJob = live.size() == 1 && near(live[0].validation.analysisPixelToMicronFactor, 0.7);
         });
         MIB_REQUIRE(outcome.published, "recorded run published: " + outcome.error);
-        MIB_EXPECT(near(outcome.pixelToMicron, kRecorded) && outcome.pixelToMicronRecorded,
+        MIB_EXPECT(near(outcome.pixelToMicron, kRecorded) && outcome.pixelToMicronRecorded() &&
+                       outcome.pixelToMicronSource == backend::review::PixelToMicronSource::Recorded,
                    "outcome: the recorded 0.25");
         const auto o = readOutput(out);
         MIB_EXPECT(allObjects(o, true, true), "validity and target group at 0.25");
@@ -197,7 +198,9 @@ int main()
         r.useRecordedPixelToMicron = false;
         const auto outcome = backend::review::runReanalysis(r, kernel, flag(), {});
         MIB_REQUIRE(outcome.published, "default run: " + outcome.error);
-        MIB_EXPECT(near(outcome.pixelToMicron, kDefault) && !outcome.pixelToMicronRecorded, "outcome: the default");
+        MIB_EXPECT(near(outcome.pixelToMicron, kDefault) && !outcome.pixelToMicronRecorded() &&
+                       outcome.pixelToMicronSource == backend::review::PixelToMicronSource::Fallback,
+                   "outcome: the default");
         const auto o = readOutput(out);
         MIB_EXPECT(allObjects(o, false, false), "invalid, no target group at 0.4886");
         MIB_EXPECT(o.recordedFactor && near(*o.recordedFactor, kDefault), "the output records 0.4886");
@@ -209,8 +212,20 @@ int main()
         r.pixelToMicron = kRecorded;
         auto outcome = backend::review::runReanalysis(r, kernel, flag(), {});
         MIB_REQUIRE(outcome.published, "no-factor run: " + outcome.error);
-        MIB_EXPECT(near(outcome.pixelToMicron, kRecorded) && !outcome.pixelToMicronRecorded, "the fallback, not recorded");
+        MIB_EXPECT(near(outcome.pixelToMicron, kRecorded) && !outcome.pixelToMicronRecorded() &&
+                       outcome.pixelToMicronSource == backend::review::PixelToMicronSource::Fallback,
+                   "the fallback, not recorded");
         MIB_EXPECT(allObjects(readOutput(r.outputPath), true, true), "validated at the fallback 0.25");
+        // #867: the same source, with the factor supplied by the operator: the one enum says Operator,
+        // and the output's `@pixel_to_micron_source` agrees (the session shows it as the file's own).
+        auto op = hdfRequest(none, td / "engine_none_operator.h5", flip);
+        op.pixelToMicron = kRecorded;
+        op.pixelToMicronExplicit = true;
+        const auto operatorOutcome = backend::review::runReanalysis(op, kernel, flag(), {});
+        MIB_REQUIRE(operatorOutcome.published, "operator-factor run: " + operatorOutcome.error);
+        MIB_EXPECT(near(operatorOutcome.pixelToMicron, kRecorded) && !operatorOutcome.pixelToMicronRecorded() &&
+                       operatorOutcome.pixelToMicronSource == backend::review::PixelToMicronSource::Operator,
+                   "an explicit factor for a source that records none is the operator's");
         ReanalysisRequest f;
         f.sourceKind = "folder";
         f.sourcePath = folder.string();

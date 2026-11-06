@@ -29,9 +29,11 @@ import { REVIEW_OPERATION_KINDS } from "./reviewContract";
 import { ChartsView } from "./charts/ChartsView";
 import { gatherChartInputs, renderChartPngs, stageCharts, type ChartViewState } from "./charts/chartExport";
 import { JobDialog, SeriesPrompt } from "./exports/ExportDialogs";
-import { defaultMetricsName, dirName, exportDir, joinPath, rememberExportDir, seriesRangeFor, type SeriesChoice } from "./exports/exportHelpers";
+import { baseName, defaultFcsName, defaultMetricsName, dirName, exportDir, joinPath, rememberExportDir, seriesRangeFor, withFcsExtension, type SeriesChoice } from "./exports/exportHelpers";
+import { withTiffExtension } from "./exports/frameExport";
 import { useReviewJobs, type TrackedJob } from "./exports/useReviewJobs";
 import { RegenerateMasksDialog, type RegenerateRequest } from "./RegenerateMasks";
+import { OpenFailureDialog, ReviewStatus, openFailureFor, reviewStatusText, type OpenFailure, type OpenPhase } from "./reviewOpen";
 import { FrameViewer } from "./FrameViewer";
 import { DEFAULT_COLUMNS, METRIC_COLUMNS, pageOffsetFor, toggleColumn, visibleColumns } from "./metricsColumns";
 import {
@@ -45,6 +47,8 @@ import {
   type ReviewRows,
 } from "./reviewBridge";
 import { ThumbnailGrid } from "./ThumbnailGrid";
+import { useImageZoom, zoomedSize } from "./imageZoom";
+import { leaveTab, newTabMemory, recallSelection } from "./tabMemory";
 import "./review.css";
 
 export const H5_FILTER = [{ name: "HDF5", extensions: ["h5", "hdf5"] }];
@@ -121,6 +125,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   const [info, setInfo] = useState<ReviewInfo | null>(null);
   const [fileKey, setFileKey] = useState("");
+  // Qt status label and critical dialog of a failed open (REVIEW-003/004).
+  const [openPhase, setOpenPhase] = useState<OpenPhase>("idle");
+  const [openFailure, setOpenFailure] = useState<OpenFailure | null>(null);
   const [reviewTab, setReviewTab] = useState<ReviewTab>("valid");
   const [rows, setRows] = useState<ReviewRows | null>(null);
   const [rowsOffset, setRowsOffset] = useState(0);
@@ -133,6 +140,11 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rowsRef = useRef<ReviewRows | null>(null);
   rowsRef.current = rows;
+  // Each set keeps its own selection and thumbnail scroll position (Qt onTabChanged, REVIEW-018).
+  const tabMemory = useRef(newTabMemory());
+  // The Charts frame pane zooms with Ctrl+wheel and goes back with Fit to Window (REVIEW-032).
+  const paneZoom = useImageZoom(canvasRef);
+  const [paneSize, setPaneSize] = useState({ w: 0, h: 0 });
 
   const reviewing = !!info?.file_open;
   const isRecording = !!info?.recording_file;
@@ -150,6 +162,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     canvas.width = p.width;
     canvas.height = p.height;
     canvas.getContext("2d")?.putImageData(packetToImageData(p), 0, 0);
+    setPaneSize((s) => (s.w === p.width && s.h === p.height ? s : { w: p.width, h: p.height }));
   }, []);
 
   useEffect(() => scheduler.mount("review", draw, (e) => log(`review frame error: ${e}`)), [scheduler, draw, log]);
@@ -207,15 +220,19 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
   }, [scheduler]);
 
+  // Qt onTabChanged: the tab left keeps its selection and scroll position, the
+  // tab entered gets its own back (the first time, its first item).
   const selectTab = useCallback(
     async (tab: ReviewTab) => {
+      leaveTab(tabMemory.current, fileKey, reviewTab, selected);
       resetView();
       setReviewTab(tab);
       if (tab === "charts") return;
-      await loadRows(tab !== "invalid", 0);
-      setSelected(0);
+      const start = recallSelection(tabMemory.current, fileKey, tab, setTotalFor(info, tab !== "invalid"));
+      await loadRows(tab !== "invalid", pageOffsetFor(start, METRICS_PAGE_SIZE));
+      setSelected(start);
     },
-    [loadRows, resetView],
+    [fileKey, info, loadRows, resetView, reviewTab, selected],
   );
 
   const closeFile = useCallback(async () => {
@@ -228,6 +245,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     setInfo(null);
     setFileKey("");
     setReviewTab("valid");
+    setOpenPhase("idle");
     onInfo?.(null);
     onFileChange?.("");
   }, [log, onFileChange, onInfo, resetView]);
@@ -237,14 +255,26 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
       beforeLoad?.();
       resetView();
       onFileChange?.(path);
+      setOpenPhase("loading");
+      // The backend closes the previous file before it opens the next (ReviewSession::open, all or
+      // nothing), so a failed open leaves no file: the old info must not stay on screen (REVIEW-003).
+      const dropFile = () => {
+        setInfo(null);
+        setFileKey("");
+        onInfo?.(null);
+      };
       try {
         const res = await reviewBridge.open(path);
         if (!res.ok) {
           log(`open failed: ${res.message}`);
+          dropFile();
+          setOpenPhase("error");
+          setOpenFailure(openFailureFor(path, res.message));
           return;
         }
         const fresh = await reviewBridge.info();
         setInfo(fresh);
+        setOpenPhase("idle");
         setFileKey(`${path}#${Date.now()}`);
         onInfo?.(fresh);
         log(`opened ${path}${fresh.accounting_summary}`);
@@ -256,6 +286,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         setSelected(setTotalFor(fresh, startTab !== "invalid") > 0 ? 0 : -1);
       } catch (e) {
         log(`open error: ${e}`);
+        dropFile();
+        setOpenPhase("error");
       }
     },
     [beforeLoad, loadRows, log, onFileChange, onInfo, resetView],
@@ -279,10 +311,12 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   useImperativeHandle(ref, () => ({ openFile, openPath, closeFile }), [openFile, openPath, closeFile]);
 
-  // A new file starts from an unopened Charts view (data extent, prefs).
+  // A new file starts from an unopened Charts view (data extent, prefs) and an unzoomed pane.
+  const fitPane = paneZoom.fit;
   useEffect(() => {
     chartView.current = null;
-  }, [fileKey]);
+    fitPane();
+  }, [fileKey, fitPane]);
 
   // TD-17 fallback factor: files without a recorded factor use it; the info
   // (and scatter µm²) follow a change.
@@ -316,8 +350,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   // Export Charts.
   const stageChartSnapshots = useCallback(async () => {
     if (!info) return;
-    await stageCharts(await renderChartPngs(await gatherChartInputs(info, chartView.current)));
-  }, [info]);
+    await stageCharts(await renderChartPngs(await gatherChartInputs(info, chartView.current, log)));
+  }, [info, log]);
 
   const onExportMetrics = useCallback(async () => {
     if (!info) return;
@@ -329,6 +363,67 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
       remember(await jobs.start("Export Metrics", REVIEW_OPERATION_KINDS.ExportMetrics, () => reviewBridge.exportMetrics(picked)), dirName(picked));
     } catch (e) {
       log(`export error: ${e}`);
+    }
+  }, [info, jobs, log]);
+
+  // Frame viewer ▸ Export as TIFF… (#867 REVIEW-031), the Qt onExportFrame: a save
+  // dialog proposing frame_N[_series_K].tiff, ".tiff" appended when missing, the
+  // displayed image (overlay and ROI burned in). The PNG is staged like a chart
+  // snapshot and the Export Charts job writes it as a TIFF into the chosen folder.
+  const onExportFrame = useCallback(
+    async (defaultName: string, png: () => Promise<Uint8Array>) => {
+      if (!info) return;
+      try {
+        const dir = exportDir(info.file_path);
+        const picked = await save({
+          title: "Export Frame as TIFF",
+          filters: [{ name: "TIFF Files", extensions: ["tiff", "tif"] }, { name: "All Files", extensions: ["*"] }],
+          defaultPath: joinPath(dir, defaultName),
+        });
+        if (!picked) return;
+        const target = withTiffExtension(picked);
+        const prepare = { label: "Encoding frame…", work: async () => stageCharts([{ name: baseName(target), bytes: await png() }]) };
+        remember(await jobs.start("Export Frame as TIFF", REVIEW_OPERATION_KINDS.ExportCharts, () => reviewBridge.exportCharts(dirName(target)), prepare), dirName(target));
+      } catch (e) {
+        log(`frame export error: ${e}`);
+      }
+    },
+    [info, jobs, log],
+  );
+
+  // Export FCS 3.1 (#576, #867): the Qt dialog ("Export FCS 3.1", FCS + All
+  // Files, `<base>.fcs` in the last export dir, `.fcs` appended); the backend
+  // writes the .fcs and its event map as one pair and never replaces one.
+  const onExportFcs = useCallback(async () => {
+    if (!info) return;
+    try {
+      const dir = exportDir(info.file_path);
+      const name = defaultFcsName(info.file_path, dir ? await reviewBridge.listDir(dir) : []);
+      const picked = await save({
+        title: "Export FCS 3.1",
+        filters: [{ name: "FCS 3.1 Files", extensions: ["fcs"] }, { name: "All Files", extensions: ["*"] }],
+        defaultPath: joinPath(dir, name),
+      });
+      if (!picked) return;
+      const path = withFcsExtension(picked);
+      remember(await jobs.start("Export FCS", REVIEW_OPERATION_KINDS.ExportFcs, () => reviewBridge.exportFcs(path)), dirName(path));
+    } catch (e) {
+      log(`FCS export error: ${e}`);
+    }
+  }, [info, jobs, log]);
+
+  // Batch Export FCS: HDF files, then a folder; one pair per file at its own
+  // recorded factor; recordings refused (the Qt batch).
+  const onBatchFcs = useCallback(async () => {
+    try {
+      const picked = await open({ title: "Select HDF Files for Batch FCS Export", filters: H5_MULTI, multiple: true, defaultPath: info ? dirName(info.file_path) || undefined : undefined });
+      const sources = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+      if (sources.length === 0) return;
+      const root = await open({ title: "Select Directory for FCS Files", directory: true, multiple: false, defaultPath: exportDir(info?.file_path ?? sources[0]) || undefined });
+      if (typeof root !== "string") return;
+      remember(await jobs.start("Batch Export FCS", REVIEW_OPERATION_KINDS.BatchExport, () => reviewBridge.batchExportFcs(sources, root)), root);
+    } catch (e) {
+      log(`batch FCS error: ${e}`);
     }
   }, [info, jobs, log]);
 
@@ -386,7 +481,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     (r: RegenerateRequest) =>
       new Promise<string | null>((settle) => {
         jobs
-          .start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasks(r), undefined, {
+          .start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasksJson(r), undefined, {
             onRefused: (message) => settle(message),
             onStarted: () => {
               settle(null);
@@ -396,8 +491,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           .then(async (job) => {
             // The Qt tab reloads from the regenerated file.
             if (job?.phase === "completed") {
-              rememberExportDir(dirName(r.outputPath));
-              await openPath(r.outputPath);
+              rememberExportDir(dirName(r.output_path));
+              await openPath(r.output_path);
             }
           })
           .catch((e) => {
@@ -408,18 +503,29 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     [jobs, log, openPath],
   );
 
+  const closeOpenFailure = useCallback(() => setOpenFailure(null), []);
   const pageTo = (offset: number) => void loadRows(validSet, Math.max(0, offset));
 
+  // The Charts pane may be zoomed (Ctrl+wheel); the Frames preview follows the View ▸ Fit preference only.
+  const inCharts = reviewTab === "charts";
+  const paneZoomed = inCharts && paneZoom.zoom !== null;
   const previewPane = (
-    <div className="canvas-wrap preview" onDoubleClick={() => selected >= 0 && setViewerOpen(true)} title="Double-click to open the viewer">
-      <canvas ref={canvasRef} className={fitWindow ? "fit" : ""} />
-      <span className="preview-caption mono">
-        {selected >= 0
-          ? `#${selected + 1} of ${setTotal}${selectedRow ? ` · frame ${selectedRow.frame_index}` : ""}`
-          : reviewTab === "charts"
-            ? "Click a point to show its cell"
-            : "—"}
-      </span>
+    <div
+      ref={inCharts ? paneZoom.wrapRef : undefined}
+      className="canvas-wrap preview"
+      onDoubleClick={() => selected >= 0 && setViewerOpen(true)}
+      title="Double-click to open the viewer"
+    >
+      <canvas
+        ref={canvasRef}
+        className={fitWindow && !paneZoomed ? "fit" : ""}
+        style={paneZoomed ? { width: zoomedSize(paneSize.w, paneZoom.zoom as number), height: zoomedSize(paneSize.h, paneZoom.zoom as number) } : undefined}
+      />
+      {!inCharts && (
+        <span className="preview-caption mono">
+          {selected >= 0 ? `#${selected + 1} of ${setTotal}${selectedRow ? ` · frame ${selectedRow.frame_index}` : ""}` : "—"}
+        </span>
+      )}
     </div>
   );
 
@@ -439,6 +545,14 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         >
           Export Metrics to CSV…
         </button>
+        <button
+          onClick={onExportFcs}
+          disabled={!isExperiment || jobs.busy}
+          data-tour="review-export-fcs"
+          title={isRecording ? "Recording files carry no object metrics" : "Write an FCS 3.1 file and its event map (recorded px→µm factor)"}
+        >
+          Export FCS…
+        </button>
         <button onClick={onExportAll} disabled={!reviewing || jobs.busy} title="Metrics, images, series and charts into <root>/<file>/">
           Export All…
         </button>
@@ -450,6 +564,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
             <div className="menu-popup" role="menu">
               <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatch(true)}>
                 Batch Metrics…
+              </button>
+              <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatchFcs()}>
+                Batch Export FCS…
               </button>
               <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatch(false)}>
                 Batch Export All…
@@ -484,9 +601,10 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         </span>
         <span className="path-label right" title={info?.file_path}>
           {reviewing && info
-            ? `${info.file_path} · ${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid}, invalid ${info.total_invalid}${info.has_core_identity ? ` · core v${info.core_version}` : ""} · px→µm ${metricNumber(info.pixel_to_micron, 4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}${info.accounting_summary}`
+            ? `${info.file_path} · ${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid}, invalid ${info.total_invalid}${info.has_core_identity ? ` · core v${info.core_version}` : ""} · px→µm ${metricNumber(info.pixel_to_micron, 4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}`
             : "No file selected"}
         </span>
+        <ReviewStatus text={reviewStatusText(openPhase, info, info?.accounting_summary)} />
       </div>
       {noImagesNotice(info) && <p className="pending-note" role="status" data-testid="review-no-images">{noImagesNotice(info)}</p>}
       <div className="subtabs" role="tablist" aria-label="Review views">
@@ -531,6 +649,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
             validTotal={setTotal}
             onSelect={select}
             framePane={previewPane}
+            selectedFrameIndex={selectedRow?.frame_index}
+            onFitPane={paneZoom.fit}
+            onOpenViewer={() => selected >= 0 && setViewerOpen(true)}
             refreshInfo={refreshInfo}
             onViewChange={onChartViewChange}
             log={log}
@@ -546,6 +667,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
               fileKey={fileKey}
               imageWidth={imageDims(info, validSet).w}
               imageHeight={imageDims(info, validSet).h}
+              scrollMemory={tabMemory.current}
               onSelect={select}
               onOpen={(i) => {
                 select(i);
@@ -631,8 +753,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           }}
         />
       )}
+      {openFailure && <OpenFailureDialog failure={openFailure} onClose={closeOpenFailure} />}
       {showRegenerate && <RegenerateMasksDialog info={info} onRun={onRegenerate} onCancel={() => setShowRegenerate(false)} />}
-      {jobs.job && <JobDialog job={jobs.job} onCancel={jobs.cancel} onClose={jobs.dismiss} />}
+      {jobs.job && <JobDialog job={jobs.job} onCancel={jobs.cancel} onClose={jobs.dismiss} log={log} />}
       {viewerOpen && reviewing && selected >= 0 && (
         <FrameViewer
           scheduler={scheduler}
@@ -641,8 +764,12 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           total={setTotal}
           overlay={isRecording ? OVERLAY.None : overlay}
           roiOverlay={!isRecording && roiOverlay}
+          recording={isRecording}
           row={selectedRow}
           onIndexChange={select}
+          onOverlayChange={setOverlay}
+          onRoiOverlayChange={setRoiOverlay}
+          onExportFrame={(name, png) => void onExportFrame(name, png)}
           onClose={() => setViewerOpen(false)}
           log={log}
         />

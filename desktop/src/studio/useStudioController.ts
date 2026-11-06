@@ -63,7 +63,7 @@ export function useStudioController() {
   // (VIEWER_ONLY); the controls that send them are disabled (ViewerGate) instead of failing in the log.
   const viewerOnly = useViewerOnly();
   const documents = useConfigDocuments({ ...states, ...configSync, ...cores }); // config
-  const reviewJobs = useReviewJobs(states); // review
+  const reviewJobs = useReviewJobs({ ...states, openReviewPath: reviewSource.openReviewPath }); // review
   const composed = {
     ...states, ...liveFrames, ...polling, ...monitoringPolling, ...preferences, ...configSync, ...connection,
     ...livePreview, ...ssd, ...reviewSource, ...experiment, ...windowing, ...modeSwitch, ...cameraSetup,

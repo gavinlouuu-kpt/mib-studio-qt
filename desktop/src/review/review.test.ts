@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { gridGeometry, imageBand, pagesFor, PageCache, scrollToReveal, THUMB_PAGE, THUMB_SIZE, tileRgba, visibleRange } from "./thumbnails";
+import { gridGeometry, imageBand, pagesFor, PageCache, scrollToReveal, THUMB_PAGE, THUMB_SIZE, thumbTooltip, tileRgba, visibleRange } from "./thumbnails";
 import { FRAME_PACKET } from "../bridgeContract";
-import { DEFAULT_COLUMNS, METRIC_COLUMNS, pageOffsetFor, toggleColumn, visibleColumns } from "./metricsColumns";
+import { columnText, DEFAULT_COLUMNS, METRIC_COLUMNS, pageOffsetFor, toggleColumn, visibleColumns } from "./metricsColumns";
 import type { ReviewInfo, ReviewRow } from "./reviewBridge";
 import { initialTab } from "./ReviewPanel";
+import { leaveTab, newTabMemory, recallScroll, recallSelection, rememberScroll } from "./tabMemory";
 
 describe("thumbnail grid geometry", () => {
   it("fits whole columns and rounds rows up", () => {
@@ -94,11 +95,30 @@ describe("metrics columns", () => {
     expect(METRIC_COLUMNS.length).toBeGreaterThanOrEqual(23);
     const byId = Object.fromEntries(METRIC_COLUMNS.map((c) => [c.id, c.format(row)]));
     expect(byId.frame_index).toBe("42");
-    expect(byId.area).toBe("120.0");
-    expect(byId.deformability).toBe("0.1235");
     expect(byId.laplacian_variance).toBe("—");
     expect(byId.bbox).toBe("1,2 10×8");
-    expect(byId.brightness).toBe("1.0 / 2.0 / 3.0 / 4.0");
+  });
+
+  // HdfMetricsModel::data (REVIEW-020): deformability 3 dp, area (px and µm²) 2 dp,
+  // area ratio 3 dp, ring ratio 3 dp, brightness 2 dp, E 3 dp, Yes / No.
+  it("formats numbers like the Qt model", () => {
+    const text = (id: string, r: ReviewRow = row) => columnText(id, r);
+    expect(text("deformability")).toBe("0.123");
+    expect(text("area")).toBe("120.04");
+    expect(text("area_um2")).toBe("30.01");
+    expect(text("area_ratio")).toBe("1.010");
+    expect(text("ring_ratio")).toBe("0.500");
+    expect(text("brightness")).toBe("1.00 / 2.00 / 3.00 / 4.00");
+    expect(text("youngs_modulus")).toBe("2.345");
+    expect(text("valid")).toBe("Yes");
+    expect(text("target_group")).toBe("No");
+    expect(text("touches_border")).toBe("No");
+    expect(text("inner_contour_count")).toBe("1");
+  });
+
+  it("leaves E blank when it is NaN (JSON null or non-finite)", () => {
+    for (const e of [null, NaN, Infinity, undefined]) expect(columnText("youngs_modulus", { ...row, youngs_modulus: e as never })).toBe("");
+    expect(columnText("youngs_modulus", { ...row, youngs_modulus: 0 })).toBe("0.000");
   });
 
   it("recording files show index and timestamp only", () => {
@@ -119,6 +139,14 @@ describe("metrics columns", () => {
   });
 });
 
+describe("thumbnail tooltip", () => {
+  // HdfReviewTab.cpp setToolTip: "Frame %1\nDouble-click to view details", %1 the tile's 0-based position.
+  it("is the Qt text", () => {
+    expect(thumbTooltip(0)).toBe("Frame 0\nDouble-click to view details");
+    expect(thumbTooltip(42)).toBe("Frame 42\nDouble-click to view details");
+  });
+});
+
 describe("initial review tab", () => {
   const info = (valid: number, invalid: number, recording = false) =>
     ({
@@ -132,5 +160,54 @@ describe("initial review tab", () => {
     expect(initialTab(info(0, 200))).toBe("invalid");
     expect(initialTab(info(0, 0))).toBe("valid");
     expect(initialTab(info(5, 0, true))).toBe("valid");
+  });
+});
+
+describe("REVIEW-018 per-tab memory", () => {
+  it("keeps each set's scroll position, per file", () => {
+    const m = newTabMemory();
+    expect(recallScroll(m, "a", "valid")).toBeNull();
+    rememberScroll(m, "a", "valid", 300);
+    rememberScroll(m, "a", "invalid", 40);
+    expect(recallScroll(m, "a", "valid")).toBe(300);
+    expect(recallScroll(m, "a", "invalid")).toBe(40);
+    // Another file starts from nothing, as Qt resets both values on load.
+    expect(recallScroll(m, "b", "valid")).toBeNull();
+    rememberScroll(m, "b", "invalid", 7);
+    expect(recallScroll(m, "b", "valid")).toBeNull();
+    expect(recallScroll(m, "a", "valid")).toBeNull();
+    rememberScroll(m, "b", "valid", -5);
+    expect(recallScroll(m, "b", "valid")).toBe(0);
+  });
+
+  it("returns to the selection a set was left on, else its first item", () => {
+    const m = newTabMemory();
+    expect(recallSelection(m, "a", "valid", 250)).toBe(0);
+    expect(recallSelection(m, "a", "invalid", 0)).toBe(-1);
+    leaveTab(m, "a", "valid", 57);
+    leaveTab(m, "a", "invalid", 1);
+    expect(recallSelection(m, "a", "valid", 250)).toBe(57);
+    expect(recallSelection(m, "a", "invalid", 2)).toBe(1);
+    // A remembered position past the end of a (reloaded) set, or another file, falls back to the first.
+    expect(recallSelection(m, "a", "valid", 50)).toBe(0);
+    expect(recallSelection(m, "b", "valid", 250)).toBe(0);
+  });
+
+  it("leaving with nothing selected remembers nothing", () => {
+    const m = newTabMemory();
+    leaveTab(m, "a", "valid", 12);
+    leaveTab(m, "a", "valid", -1);
+    expect(recallSelection(m, "a", "valid", 250)).toBe(12);
+  });
+
+  it("a cell chosen on the scatter belongs to the Valid set and drops its stale scroll position", () => {
+    const m = newTabMemory();
+    leaveTab(m, "a", "valid", 3);
+    rememberScroll(m, "a", "valid", 900);
+    leaveTab(m, "a", "charts", 3); // nothing new chosen: the scroll still says where the cell is
+    expect(recallScroll(m, "a", "valid")).toBe(900);
+    leaveTab(m, "a", "charts", 100);
+    expect(recallSelection(m, "a", "valid", 250)).toBe(100);
+    expect(recallScroll(m, "a", "valid")).toBeNull(); // the grid reveals the new selection instead
   });
 });

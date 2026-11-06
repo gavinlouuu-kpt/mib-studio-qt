@@ -7,6 +7,7 @@
 // append, never renumber.
 #pragma once
 
+#include "backend/processing/BatchMaskSources.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/recording/RunProvenanceRecord.h"
@@ -24,6 +25,27 @@ namespace backend::review
     // Review contract `review_probe.max_paths`: the most paths one identity
     // probe accepts (the experiment library probes a folder in pages).
     inline constexpr std::size_t kReviewProbeMaxPaths = 256;
+
+    // Where a px->um factor came from (#867): the one vocabulary every Review surface shares
+    // (exports, charts, regenerate, the session). It is the enum the regenerated file's
+    // `@pixel_to_micron_source` attribute is written from, so a surface cannot invent its own:
+    //   Recorded - the file's own calibration (ReviewSession::recordedPixelToMicron);
+    //   Operator - supplied explicitly for this output (a regenerate request's factor);
+    //   Fallback - the file records none: the host's live/preferred factor.
+    using PixelToMicronSource = services::batch_masks::PixelToMicronSource;
+
+    // A factor and its source: the file's recorded factor, else the operator's, else the fallback.
+    struct ResolvedPixelToMicron
+    {
+        double factor{0.0};
+        PixelToMicronSource source{PixelToMicronSource::Fallback};
+        bool recorded() const { return source == PixelToMicronSource::Recorded; }
+    };
+
+    // "recorded" | "operator" | "fallback": the spelling of regenerate's `pixel_to_micron_source`
+    // and the reprocess label. The other surfaces keep their wire spellings on top of the one enum
+    // (exports say "request" for Operator, charts say "live" for Fallback), mapped at the surface.
+    const char *pixelToMicronSourceName(PixelToMicronSource source);
 
     // Review contract `review_track_rows.max_rows` (#717 B3b): the most rows
     // one linked-records query returns.

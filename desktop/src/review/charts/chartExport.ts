@@ -43,9 +43,9 @@ export interface ChartExportInputs {
 /** Inputs for the open file: the view's state when the Charts tab is
  * mounted, otherwise the persisted toggles and the data extent. Density
  * levels are used when a ready result for this file exists. */
-export async function gatherChartInputs(info: ReviewInfo, view: ChartViewState | null): Promise<ChartExportInputs> {
+export async function gatherChartInputs(info: ReviewInfo, view: ChartViewState | null, log?: (line: string) => void): Promise<ChartExportInputs> {
   const prefs = loadChartPrefs();
-  const [scatter, rawDensity, curves] = await Promise.all([reviewBridge.scatter(), reviewBridge.density(), loadCurves()]);
+  const [scatter, rawDensity, curves] = await Promise.all([reviewBridge.scatter(), reviewBridge.density(), loadCurves(log)]);
   const density = rawDensity.valid && rawDensity.ready && rawDensity.levels.length === scatter.area_um2.length ? rawDensity : null;
   const showCurves = view ? view.showCurves : prefs.curves;
   return {
@@ -83,6 +83,14 @@ export function scatterModel(inp: ChartExportInputs): ScatterModel {
   };
 }
 
+/** A canvas as PNG bytes (the encoding the backend decodes and writes as a
+ * TIFF; also the frame viewer's Export as TIFF, #867 REVIEW-031). */
+export async function canvasToPng(c: HTMLCanvasElement): Promise<Uint8Array> {
+  const blob = await new Promise<Blob | null>((resolve) => c.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("chart encoding failed");
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 async function canvasPng(draw: (g: CanvasRenderingContext2D) => void): Promise<Uint8Array> {
   const c = document.createElement("canvas");
   c.width = CHART_EXPORT_SIZE;
@@ -90,9 +98,7 @@ async function canvasPng(draw: (g: CanvasRenderingContext2D) => void): Promise<U
   const g = c.getContext("2d");
   if (!g) throw new Error("no 2D canvas context");
   draw(g);
-  const blob = await new Promise<Blob | null>((resolve) => c.toBlob(resolve, "image/png"));
-  if (!blob) throw new Error("chart encoding failed");
-  return new Uint8Array(await blob.arrayBuffer());
+  return canvasToPng(c);
 }
 
 /** Both charts as PNG bytes, named as the Qt tab names its TIFFs. */

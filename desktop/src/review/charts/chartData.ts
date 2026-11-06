@@ -10,16 +10,71 @@ export const FULL_RUN_COLOUR = "#2a78d6";
 export const LIVE_COLOUR = "#eb6834";
 
 let curvesOnce: Promise<IsoCurve[]> | null = null;
-/** Embedded isoelastic curves (fetched once per window). */
-export function loadCurves(): Promise<IsoCurve[]> {
+/** Embedded isoelastic curves (fetched once per window). A failed fetch draws
+ * no curves, says so through `log` (the module's log drawer) and is retried by
+ * the next call. */
+export function loadCurves(log?: (line: string) => void): Promise<IsoCurve[]> {
   curvesOnce ??= reviewBridge
     .isoelasticCurves()
     .then((c) => c.curves)
-    .catch(() => {
+    .catch((e) => {
       curvesOnce = null; // retry next time
+      log?.(`isoelastic curves unavailable: ${e}`);
       return [];
     });
   return curvesOnce;
+}
+
+// KDE core share (#867 REVIEW-036/037): the Qt tab reads QSettings
+// `Monitoring/KdeCoreFraction` when it computes a full-run core contour
+// (HdfReviewTab.cpp `onComputeFullRunCore`): default 0.9, an unreadable or
+// non-finite value falls back to 0.9, then clamped to 0.05 – 1. The Monitoring
+// settings dialog edits it as an integer percent (5 – 100 %, step 5).
+export const CORE_FRACTION_KEY = "yofo.review.kdeCoreFraction";
+export const CORE_FRACTION_DEFAULT = 0.9;
+export const CORE_FRACTION_MIN = 0.05;
+export const CORE_FRACTION_MAX = 1;
+
+export function clampCoreFraction(value: unknown): number {
+  const v = typeof value === "string" ? (value.trim() === "" ? NaN : Number(value)) : value;
+  const f = typeof v === "number" && Number.isFinite(v) ? v : CORE_FRACTION_DEFAULT;
+  return Math.min(CORE_FRACTION_MAX, Math.max(CORE_FRACTION_MIN, f));
+}
+
+export function loadCoreFraction(storage: Pick<Storage, "getItem"> | null = safeStorage()): number {
+  try {
+    return clampCoreFraction(storage?.getItem(CORE_FRACTION_KEY));
+  } catch {
+    return CORE_FRACTION_DEFAULT;
+  }
+}
+
+export function saveCoreFraction(fraction: number, storage: Pick<Storage, "setItem"> | null = safeStorage()): number {
+  const f = clampCoreFraction(fraction);
+  try {
+    storage?.setItem(CORE_FRACTION_KEY, String(f));
+  } catch {
+    // Storage unavailable: the choice lasts for this session only.
+  }
+  return f;
+}
+
+function safeStorage(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** The embedded frame pane's title (HdfReviewTab::refreshFramePane): the
+ * recorded frame index first, the 1-based valid row second, and a note for a
+ * valid-set frame that has no point on the scatter. With no cell selected it
+ * is the Qt empty-state text. */
+export function framePaneTitle(frameIndex: string | undefined, selected: number, validTotal: number, onScatter: boolean): string {
+  if (selected < 0) return "Click a point on the scatter to view the cell";
+  const base = `Frame ${frameIndex ?? "…"} · valid row ${selected + 1} of ${validTotal}`;
+  return onScatter ? base : `${base} · failed validation, not on the scatter`;
 }
 
 // Per-viewer chart toggles (density colours, isoelastic curves).

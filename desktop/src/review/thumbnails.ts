@@ -12,6 +12,12 @@ export const THUMB_SIZE = 128;
  * within the contract's max_dimension (8192): 64 × 128 = 8192. */
 export const THUMB_PAGE = 64;
 
+/** Tile tooltip, the Qt text (HdfReviewTab.cpp `setToolTip`): "Frame N" with
+ * N the tile's 0-based position in its set, then the double-click hint. */
+export function thumbTooltip(position: number): string {
+  return `Frame ${position}\nDouble-click to view details`;
+}
+
 export interface GridGeometry {
   columns: number;
   cell: number; // px, cell height (row pitch) including the gap

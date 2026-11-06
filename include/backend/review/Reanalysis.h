@@ -48,6 +48,7 @@
 #pragma once
 
 #include "backend/processing/ProcessingService.h"
+#include "backend/review/ReviewTypes.h"
 #include "backend/review/SourceEModulusLut.h"
 
 #include <atomic>
@@ -156,9 +157,11 @@ namespace backend::review
         std::size_t produced{0};         // frames the kernel returned
         std::size_t valid{0};            // of those, the valid ones
         // The factor the objects were validated at (0 when processing never
-        // ran) and whether it is the source's recorded one (#758).
+        // ran) and where it came from (#758, #867: the one px->um source
+        // enum, ReviewSession::resolvePixelToMicron).
         double pixelToMicron{0.0};
-        bool pixelToMicronRecorded{false};
+        PixelToMicronSource pixelToMicronSource{PixelToMicronSource::Fallback};
+        bool pixelToMicronRecorded() const { return pixelToMicron > 0.0 && pixelToMicronSource == PixelToMicronSource::Recorded; }
         // The E-LUT E was computed with (#764), set once the source was read:
         // Source (`eModulusLut` names the source run's own), NotLoaded (no
         // E: the source loaded none) or Legacy (the source records none: the

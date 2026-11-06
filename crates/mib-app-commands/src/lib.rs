@@ -911,6 +911,12 @@ pub struct ReviewMetadata {
     invalid_masks: ReviewDatasetInfo,
     recorded_images: ReviewDatasetInfo,
     file_path: String,
+    /// The file's recorded pixel_to_micron (`pixel_to_micron_from_file`),
+    /// else the live backend factor: what the review charts use.
+    pixel_to_micron: f64,
+    pixel_to_micron_from_file: bool,
+    /// Recording files: frames filtered empty at record time.
+    filtered_frames: u64,
 }
 
 /// One page of review metrics (schema v9, BE-6).
@@ -959,6 +965,9 @@ pub fn fetch_review_metadata(state: &AppState) -> Result<ReviewMetadata, String>
         invalid_masks: dataset_info(m.invalid_masks),
         recorded_images: dataset_info(m.recorded_images),
         file_path: m.file_path,
+        pixel_to_micron: m.pixel_to_micron,
+        pixel_to_micron_from_file: m.pixel_to_micron_from_file,
+        filtered_frames: m.filtered_frames,
     })
 }
 

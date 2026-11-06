@@ -195,14 +195,33 @@
   background: #dbe8f8;
 }
 
+.viewer-series,
+.viewer-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.viewer .toolbar select {
+  font: inherit;
+}
+
+/* The info header above the image (FrameViewerDialog frameInfoLabel). */
+.viewer-info {
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  background: #f0f0f0;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .viewer-image {
   flex: 1;
   min-height: 0;
   overflow: auto;
   background: #111;
   display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .viewer-image.fit canvas {
@@ -213,28 +232,91 @@
 
 .viewer-image canvas {
   image-rendering: pixelated;
-}
-
-.viewer-metrics {
-  padding: 4px 8px;
-  border-top: 1px solid var(--border);
+  /* Centred, yet scrollable to every edge once zoomed past the window. */
+  margin: auto;
 }
 
 /* ---- Charts view (PR 3): scatter | (frame pane over histogram) ------- */
 .review-charts {
   display: flex;
-  gap: 8px;
   height: 100%;
   min-height: 0;
   outline: none;
 }
 
+/* Two draggable splits: scatter | (frame pane over histogram), positions kept
+   in localStorage (charts/SplitPane.tsx; the Qt QSplitters). */
+.split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split.row {
+  flex-direction: row;
+}
+
+.split.column {
+  flex-direction: column;
+}
+
+.split-first,
+.split-second {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.splitter {
+  flex: 0 0 8px;
+  position: relative;
+  touch-action: none;
+  outline: none;
+}
+
+.splitter.row {
+  cursor: col-resize;
+}
+
+.splitter.column {
+  cursor: row-resize;
+}
+
+.splitter::after {
+  content: "";
+  position: absolute;
+  background: var(--border);
+  border-radius: 1px;
+}
+
+.splitter.row::after {
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+}
+
+.splitter.column::after {
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 2px;
+}
+
+.splitter:hover::after,
+.splitter:focus-visible::after,
+.splitter.dragging::after {
+  background: var(--accent);
+}
+
 .charts-left {
-  flex: 3;
-  min-width: 420px;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -276,28 +358,40 @@
   top: auto;
 }
 
-.charts-right {
-  flex: 2;
-  min-width: 320px;
+.charts-frame {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-height: 0;
+  gap: 4px;
 }
 
-.charts-frame {
-  flex: 3;
-  min-height: 140px;
-  display: flex;
+/* The frame pane's title (Qt reviewFramePaneTitle) and its Previous / Next /
+   Fit / Open in window row. */
+.frame-pane-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.frame-pane-title.empty {
+  color: var(--muted);
+}
+
+.frame-pane-bar {
+  margin-bottom: 0;
 }
 
 .charts-frame .canvas-wrap.preview {
   flex: 1;
+  min-height: 0;
+  /* Centred, yet scrollable to every edge once Ctrl+wheel zoomed. */
+  align-items: flex-start;
+  justify-content: flex-start;
 }
 
-.charts-right .histogram-wrap {
-  flex: 2;
-  min-height: 140px;
+.charts-frame .canvas-wrap.preview canvas {
+  margin: auto;
 }
 
 @media (max-width: 760px) {
@@ -310,9 +404,19 @@
   .review-charts {
     flex-direction: column;
   }
-  .charts-left,
-  .charts-right {
-    min-width: 0;
+  /* Narrow windows stack the panes: no splitters, natural heights. */
+  .review-charts .split {
+    flex-direction: column;
+    overflow: auto;
+  }
+  .review-charts .split-first,
+  .review-charts .split-second {
+    flex: none !important;
+    min-width: 0 !important;
+    min-height: 200px !important;
+  }
+  .review-charts .splitter {
+    display: none;
   }
 }
 

@@ -1,6 +1,6 @@
 {
   "$comment": "YOFO Review's own contract (ADR 0014, plan 2026-10-01-standalone-review-app): the review bridge (crates/mib-bridge/src/review_bridge.rs, review_shim.cpp) and the YOFO Review shell. Separate from bridge-contract.json, the MIB Studio backend bridge ABI, which it never changes. C++ ties to these values via static_asserts in review_shim.cpp; Rust via tests/review_bridge.rs; TypeScript via the generated desktop/src/review/reviewContract.ts and desktop/src-tauri/src/review_packet_contract.rs (scripts/gen_bridge_contract.py --check fails CI on drift). Additive changes only: append values, never renumber or repurpose.",
-  "review_abi_version": 6,
+  "review_abi_version": 8,
   "run_identity": {
     "source": "run snapshot v3 (#712, /run_provenance @run_snapshot_json) and the planned annotation (/experiment_annotation @annotation_json, @annotation_schema_version); fetch_review_info.identity for the open file, review_probe_runs per file (review ABI 2, #717 B1a; emodulus_lut and profile_id since review ABI 3, #717 B3b; since review ABI 5, #783, emodulus_lut also reads a regenerated file's /experiment_info @emodulus_lut_json, named by emodulus_lut_provenance)",
     "members": "snapshot_version, run_id, experiment_id, run_index, sample_ref, calibration_record_id, operator (id, name), annotation (sample, condition, experimental_unit, concentration {value, unit}, channel, medium, temperature_c, notes, free key/values sorted by key, schema_version), emodulus_lut (loaded, lut_id, revision, source, sha256, catalog_sha256, checksum_status: the snapshot v3 record, else a regenerated file's @emodulus_lut_json; the snapshot record wins, as in recording::readFileEModulusLut), emodulus_lut_provenance (review ABI 5, #783: one of emodulus_lut_provenances; snapshot = the run snapshot v3 record, the run's own; recorded = a regenerated file's record carried over from its source run; host = a regenerated file's record of the host's E-LUT at regeneration, the source recording none; absent exactly when emodulus_lut is), profile_id (the snapshot's profile_id, a non-empty string)",
@@ -88,7 +88,10 @@
     "RegenerateMasks": 3,
     "ComputeCore": 4,
     "Density": 5,
-    "ExportCharts": 6
+    "ExportCharts": 6,
+    "Export": 7,
+    "Reanalysis": 8,
+    "ExportFcs": 9
   },
   "review_regenerate_sources": {
     "CurrentValid": 0,
@@ -96,6 +99,26 @@
     "WholeFile": 2,
     "Avi": 3,
     "Folder": 4
+  },
+  "review_regenerate_setup": {
+    "semantics": "Review ABI 8 (#867, the Qt BatchMaskDialog's Input source / Preview & ROI / Processing Config groups): fetch_review_regenerate_setup(source, source_path) -> JSON read before a run (gated on the job lanes like review_probe: refused while a review job runs, HDF5 is not thread-safe, #722). Members: ok, error, preview_dataset (the open file's /valid_frames/images, /invalid_frames/images or /recorded_frames/images for review_regenerate_sources 0-2, as Qt's hdf5ImageDatasetPath; \"\" for AVI / folder), frame_count (decimal string: that set's frames; AVI CAP_PROP_FRAME_COUNT; folder TIFF/PNG/JPEG files), config (gaussian_blur_size, bg_subtract_threshold, morph_kernel_size, morph_iterations, area_threshold_min, area_threshold_max, deformability_threshold_min, deformability_threshold_max of the recorded config, else the defaults), config_recorded, roi {x,y,w,h} (/experiment_info's when it records a positive size, else zeros = full frame), roi_recorded, has_background, core_warning (Qt's processing-core mismatch text when the file's recorded core differs from the active one, else \"\"). fetch_review_regenerate_preview(source, source_path, index) -> one Mono8 frame packet (pull kind review) of that set, an independent reader (batch_masks::loadPreview, 64 MiB frame limit); valid false past its end or while a job runs."
+  },
+  "review_regenerate_masks_json": {
+    "request": {
+      "source": "review_regenerate_sources value; default WholeFile",
+      "source_path": "AVI file or image folder (sources 3, 4)",
+      "start": "nonnegative integer, 0-based in the chosen set; default 0",
+      "count": "nonnegative integer; 0 = to the end; default 0",
+      "output_path": "new HDF5 path; never overwritten (#512 S8, D6)",
+      "use_recorded_config": "boolean, default true: the open file's recorded config, ROI, background and pixel-to-micron factor as the base (review_regenerate_masks)",
+      "synthesize_background": "boolean, default false: a median-of-32 background when none is in use",
+      "image_processing": "optional partial config.json image_processing object merged onto that base (present keys only); never applies elsewhere",
+      "roi": "optional {x,y,w,h} nonnegative integers <= 1000000; w or h 0 = the full frame; replaces the recorded ROI",
+      "background": "recorded (default: the saved one with use_recorded_config, else none) | none | frame",
+      "background_index": "with background frame: the source frame (0-based in background_dataset of the open file, or in the AVI / folder)",
+      "background_dataset": "with background frame and sources 0-2: /valid_frames/images, /invalid_frames/images or /recorded_frames/images"
+    },
+    "semantics": "Review ABI 8 (#867): the regenerate-masks job of review_regenerate_masks (operation kind RegenerateMasks, the D6 semantics) with the Qt BatchMaskDialog's overrides; a malformed request or config is refused before the job starts."
   },
   "review_density": {
     "level_count": 8,

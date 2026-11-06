@@ -270,7 +270,11 @@ int main()
                         return std::string("throw ") + typeid(e).name() + ": " + e.what();
                     }
                 };
-                const auto got = json_or_throw(backend::review::reviewChartsJson);
+                // The five-argument call the pre-slice facade made (no source key); a lambda because the
+                // function has a sixth, defaulted parameter now and cannot be passed as a five-argument callable.
+                const auto got = json_or_throw([](const auto &r, const std::string &s, double f, double lo, double hi) {
+                    return backend::review::reviewChartsJson(r, s, f, lo, hi);
+                });
                 const auto want = json_or_throw(oracle::chartsJson);
                 MIB_EXPECT(got == want, "charts JSON equals the pre-slice output (" + std::to_string(rows.size()) +
                                             " rows, factor " + std::to_string(factor) + "): " + got.substr(0, 120));
@@ -307,6 +311,17 @@ int main()
             R"("pixel_to_micron":0.5,"resolution":128,"ring_range":[1.0,3.0],"rows":"4","source_path":"/data/small.h5",)"
             R"("valid":true})";
         MIB_EXPECT(pinned.dump() == expected, "small fixture JSON: " + pinned.dump());
+        // The optional source of the factor (REVIEW-068): emitted next to pixel_to_micron when named,
+        // and the rest of the JSON is unchanged.
+        for (const char *source : {"recorded", "live"})
+        {
+            auto named = json::parse(backend::review::reviewChartsJson(small, "/data/small.h5", 0.5, 1.0, 3.0, source));
+            MIB_EXPECT(named.value("pixel_to_micron_source", "") == source && named["pixel_to_micron"] == 0.5,
+                       std::string("pixel_to_micron_source ") + source);
+            named.erase("pixel_to_micron_source");
+            named.erase("curves");
+            MIB_EXPECT(named.dump() == expected, "naming the source adds only that key");
+        }
     }
     MIB_EXPECT(backend::review::reviewChartsErrorJson("No HDF file open") == R"({"error":"No HDF file open","valid":false})",
                "error JSON");

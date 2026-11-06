@@ -6,7 +6,7 @@ import { useState } from "react";
 import { isRemote } from "../../transport";
 import { revealItemInDir } from "../../transport/dialogs";
 import { REVIEW_OPERATION_KINDS } from "../reviewContract";
-import { batchSummaryText, parseBatchSummary, parseSeriesRange, type SeriesChoice } from "./exportHelpers";
+import { batchSummaryText, eventMapPathOf, parseBatchSummary, parseSeriesRange, type SeriesChoice } from "./exportHelpers";
 import type { TrackedJob } from "./useReviewJobs";
 
 /** Why "Show in folder" is unavailable in a browser: the output is on the
@@ -19,7 +19,22 @@ export function outputPathOf(job: TrackedJob): string {
   if (job.kind === REVIEW_OPERATION_KINDS.ExportMetrics || job.kind === REVIEW_OPERATION_KINDS.ExportAll) return job.message;
   if (job.kind === REVIEW_OPERATION_KINDS.RegenerateMasks) return job.message.replace(/ \(\d+ images:.*\)$/, "");
   if (job.kind === REVIEW_OPERATION_KINDS.ExportCharts) return job.message.replace(/^exported \d+ chart\(s\) to /, "");
+  if (job.kind === REVIEW_OPERATION_KINDS.ExportFcs) return parseFcsOutcome(job.message).path;
   return "";
+}
+
+/** Export FCS's terminal message: `<path> (N events: V valid, I invalid)`. */
+export function parseFcsOutcome(message: string): { path: string; events?: number; valid?: number; invalid?: number } {
+  const m = /^(.*) \((\d+) events: (\d+) valid, (\d+) invalid\)$/s.exec(message);
+  return m ? { path: m[1], events: Number(m[2]), valid: Number(m[3]), invalid: Number(m[4]) } : { path: message };
+}
+
+/** The Qt success text of Export FCS ("Exported N FCS 3.1 events (V valid,
+ * I invalid) to … Event map: …"). */
+export function fcsOutcomeText(message: string): string {
+  const o = parseFcsOutcome(message);
+  const counts = o.events === undefined ? "" : ` ${o.events} FCS 3.1 events (${o.valid} valid, ${o.invalid} invalid)`;
+  return `Exported${counts} to ${o.path}. Event map: ${eventMapPathOf(o.path)}`;
 }
 
 /** Progress text with paths shortened to their file name
@@ -44,14 +59,25 @@ export function outcomeText(job: TrackedJob): string {
         return s ? batchSummaryText(s) : job.message;
       }
       if (job.kind === REVIEW_OPERATION_KINDS.ExportCharts) return capitalize(job.message);
+      if (job.kind === REVIEW_OPERATION_KINDS.ExportFcs) return fcsOutcomeText(job.message);
       const path = outputPathOf(job);
       return path ? `Written to ${path}` : capitalize(job.message);
     }
   }
 }
 
-export function JobDialog(props: { job: TrackedJob; onCancel: () => void; onClose: () => void; extraAction?: { label: string; onClick: () => void } }) {
-  const { job, onCancel, onClose, extraAction } = props;
+export function JobDialog(props: { job: TrackedJob; onCancel: () => void; onClose: () => void; extraAction?: { label: string; onClick: () => void }; log?: (line: string) => void }) {
+  const { job, onCancel, onClose, extraAction, log } = props;
+  // "Show in folder" can fail (no file manager, a folder that is gone): say so here and in the log.
+  const [revealError, setRevealError] = useState("");
+  const reveal = (path: string) => {
+    setRevealError("");
+    revealItemInDir(path).catch((e) => {
+      const message = String(e instanceof Error ? e.message : e);
+      setRevealError(message);
+      log?.(`show in folder failed: ${message}`);
+    });
+  };
   const running = job.phase === "running";
   const pct = job.total > 0 ? Math.min(100, Math.round((job.progress / job.total) * 100)) : null;
   const batch = job.kind === REVIEW_OPERATION_KINDS.BatchExport && job.phase === "completed" ? parseBatchSummary(job.message) : null;
@@ -75,6 +101,11 @@ export function JobDialog(props: { job: TrackedJob; onCancel: () => void; onClos
             ))}
           </ul>
         )}
+        {revealError && (
+          <p className="form-error" role="alert">
+            Could not open the folder: {revealError}
+          </p>
+        )}
         <div className="actions">
           {running ? (
             <button className="btn" onClick={onCancel} disabled={job.cancelling}>
@@ -88,7 +119,7 @@ export function JobDialog(props: { job: TrackedJob; onCancel: () => void; onClos
                     Show in folder
                   </button>
                 ) : (
-                  <button className="btn" onClick={() => void revealItemInDir(path).catch(() => {})}>
+                  <button className="btn" onClick={() => reveal(path)}>
                     Show in folder
                   </button>
                 ))}

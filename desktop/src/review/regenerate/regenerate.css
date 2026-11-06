@@ -1,0 +1,136 @@
+/* The Qt BatchMaskDialog's groups (#867), shared by YOFO Review's Regenerate masks dialog and
+   MIB Studio's Review stage panel (RegeneratePanels.tsx). */
+.regen-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.regen-columns > * {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.regen-columns > .regen-config {
+  flex: 0 0 230px;
+}
+
+.regen-group {
+  border: 1px solid var(--border, #c8c8c8);
+  border-radius: 3px;
+  margin: 0 0 8px;
+  padding: 4px 10px 8px;
+  min-width: 0;
+}
+
+.regen-canvas-wrap {
+  position: relative;
+  min-height: 120px;
+  background: #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+}
+
+.regen-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  image-rendering: pixelated;
+  cursor: crosshair;
+}
+
+.regen-canvas-empty {
+  color: #bbb;
+  font-size: 12px;
+  padding: 12px;
+  text-align: center;
+}
+
+.regen-nav,
+.regen-bg,
+.regen-roi {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.regen-frame-label {
+  flex: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.regen-roi label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.regen-roi input[type="number"] {
+  width: 64px;
+}
+
+.regen-bg-label {
+  flex: 1 1 140px;
+  color: var(--muted, #666);
+}
+
+.regen-subgroup {
+  margin-bottom: 6px;
+}
+
+.regen-subtitle {
+  font-weight: 600;
+  font-size: 12px;
+  margin: 4px 0 2px;
+}
+
+.regen-field {
+  display: grid;
+  grid-template-columns: 96px 1fr auto;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0;
+}
+
+.regen-field input[type="number"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.regen-calibration {
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.regen-warning {
+  color: #9a6700;
+  white-space: pre-line;
+  margin: 6px 0;
+}
+
+/* The row, hint and error styles review.css gives YOFO Review, for MIB Studio's Review stage
+   too (App.css has none): scoped to the regenerate groups. */
+.regen-columns .radio-row,
+.regen-columns .check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.regen-columns .hint {
+  color: var(--muted, #666);
+  font-size: 12px;
+}
+
+.regen-columns .form-error {
+  color: #b42318;
+  margin: 6px 0 0;
+}

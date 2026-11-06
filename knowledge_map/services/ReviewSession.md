@@ -80,7 +80,28 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   factor; `fallbackPixelToMicron()` reads it back); `pixelToMicronFromFile`
   says which applied. The static `recordedPixelToMicron(reader)` is that
   read (0 when absent), shared with the Qt tab, the batch job and the
-  reanalysis engine. A file without a run snapshot factor falls back to
+  reanalysis engine.
+
+  **One resolver (#867 F889-1).** `ReviewSession::resolvePixelToMicron(reader, fallback,
+  operatorFactor = 0)` is the one place the rule lives and returns `ResolvedPixelToMicron{factor,
+  source}` with `source` the single enum `backend::review::PixelToMicronSource` (an alias of
+  `services::batch_masks::PixelToMicronSource`: `Recorded` | `Operator` | `Fallback`). Order: the
+  file's recorded factor (as below), else a finite operator factor > 0, else the fallback. The
+  session, the export engine (`applySourcePolicy`), the reanalysis engine, the regenerate job, the
+  Qt tab (`HdfReviewTab::pixelToMicronOf`) and the batch-mask dialog all call it, so no call site
+  re-derives the "recorded else fallback" half. Each surface keeps its wire spelling behind the one
+  enum (`pixelToMicronSourceName`: `recorded` | `operator` | `fallback`): exports say
+  `recorded|fallback|request` (the request's own factor is `request`), charts `recorded|live`,
+  regenerate `recorded|fallback|operator`. **Live fallback:** the facade registers
+  `setFallbackPixelToMicronProvider(...)` returning `ProcessingService::getPixelToMicronFactor()`;
+  it is called with the session mutex held on every read, wins while it returns a finite value > 0
+  (else `setFallbackPixelToMicron()`'s value applies), and so follows every setter of the live factor
+  (config apply, calibration apply, config watcher) without a push. Before this the facade never
+  set the session fallback, so a file that recorded no factor was exported and regenerated at the
+  0.4886 default while the charts and the Area column used the live factor; now all agree.
+  Tests: `review.session` ("#867" block: recorded wins, operator, fallback, provider, a recorded
+  factor beats the provider), `review.reanalysis_pixel_factor`, `review.export_engine` (request-only
+  run, source "request"), `backend.facade_review_session` (charts and metadata follow the live factor). A file without a run snapshot factor falls back to
   `/experiment_info @pixel_to_micron`, the factor a regenerated or
   reanalysed file was validated at (#758), so such a file reopens at it
   instead of the fallback, unless its `@pixel_to_micron_source` (#764) says
@@ -285,6 +306,37 @@ facade's events and status match a run cancelled on entry. A start holds its
 own reference to the runner state throughout. A worker that cannot be created gets its one Failed
 terminal and frees the lane (before S7 the lane stayed busy).
 
+**The regenerate dialog's inputs (review ABI 8, #867, the Qt BatchMaskDialog).**
+`RegenerateMasksRequest` gained the dialog's overrides, all defaulting to the
+old behaviour: `imageProcessingJson` (a partial config.json `image_processing`
+object merged with `config_json::fromJson` on top of the config the run uses
+otherwise, the recorded one or `config`; malformed → refused before the job,
+"Processing config: …"), `overrideRoi` + `roi` (w or h 0 = the full frame),
+and `background` (`RegenerateBackground`: `Recorded` keeps the saved one with
+`useRecordedConfig`, `None` clears it so `synthesizeBackground` can build one,
+`Frame` loads `backgroundDataset` row `backgroundIndex` of the open file, or
+frame `backgroundIndex` of the AVI / folder, through the engine's
+`backgroundIndex`). `parseRegenerateMasksJson` reads the bridge's
+`review_regenerate_masks_json` request. `regenerateSetup(source, path)` returns
+what the dialog shows before a run (`RegenerateSetup`, as
+`regenerateSetupJson`): the preview set (`regeneratePreviewDataset`: a
+recording's recorded images, else valid; the invalid range its invalid set;
+AVI / folder "") and its frame count (`batch_masks::countSourceFrames` for AVI
+/ folder), the recorded config or the defaults, the `/experiment_info` ROI,
+whether a background is saved, and Qt's processing-core mismatch text when
+the file's recorded `ProcessingCoreIdentity` differs from the kernel's active
+one. `regeneratePreview(source, path, index)` reads one Mono8 frame of that
+set with `batch_masks::loadPreview`. Both hold the lanes' lock and are refused
+while either lane is claimed (the probe's rule, #722). Tests: `review.jobs`
+("regenerate dialog inputs", mutation-checked).
+
+**Reanalysis status names its calibration (#867 REVIEW-064).** A completed
+`reanalysisTerminalStatusJson` adds `pixel_to_micron` (number),
+`pixel_to_micron_source` (`recorded` | `fallback` | `operator`, from `ReanalysisOutcome::pixelToMicronSource`,
+the resolver's enum) and
+`emodulus_lut` (`reanalysisEModulusLutPhrase`); cancelled and failed statuses
+are unchanged (`review.reanalysis` pins the bytes).
+
 **The JSON jobs (the facade's, #512 S7).** `startExportJson(ExportBatchRequest)`
 and `startReanalysisJson(ReanalysisRequest, kernel)` are the facade's
 `review_export_json` / `review_reanalysis_json` workers moved here verbatim:
@@ -296,9 +348,9 @@ engine's outcome stands). The lane holds each job's status snapshot,
 `exportStatusJson()` / `reanalysisStatusJson()` (the S2 / S3 formatters,
 written before each event: validating / loading once the id exists and
 before the worker starts, then progress, then terminal; start failed; `{"state":"idle"}`
-before the first). `ReviewJobKind::Export` (7) and `Reanalysis` (8) are not in
-`review-contract.json` (S12 proposes them with these values); the review
-bridge never starts them. The two export cancel models stay as they were:
+before the first). `ReviewJobKind::Export` (7) and `Reanalysis` (8) are listed in
+`review-contract.json` since review ABI 7 (#867) only so the kinds stay
+contiguous below `ExportFcs` (9); the review bridge never starts them. The two export cancel models stay as they were:
 `Direct` for the JSON export, `AtProgress` for ReviewJobs' own exports.
 
 - `startExportMetrics(path)` / `startExportAll(root, series, charts)` /
@@ -307,13 +359,26 @@ bridge never starts them. The two export cancel models stay as they were:
   `runExportBatch`, cancel applied at each progress report, since #512 S3)
   with **each source's own recorded** factor (the
   fallback for files without one; 2026-10-04 — before, every source used the
-  open file's factor); chart snapshots arrive
+  open file's factor); since #867 (REVIEW-049) every experiment file's Export All also
+  gets the backend-rendered charts (`generateReviewCharts`, at the file's own factor and
+  its recorded ring-ratio range: `scatter_plot.tiff` + `histogram.tiff`, decision D5);
+  chart snapshots of a single Export All arrive
   encoded (PNG/TIFF) from the shell and are written beside the images; batch
   continues after per-file failures and reports them in the terminal
   message ("exported N of M file(s); failed: …"); batch metrics names
   follow the service's `<base>_metrics_N.csv` rule; recording files export
   images only, and Batch Metrics refuses them per file ("<name>: recording
   files do not contain metrics", the Qt wording) instead of attempting them.
+- `startExportFcs(path)` (review ABI 7, #867, kind `ExportFcs` = 9, export
+  lane): FCS 3.1 of the valid detections at the session's factor into an
+  explicit `.fcs` path, its `<stem>_event_map.csv` published with it as one
+  no-replace pair; refused up front for a recording; the completed message is
+  `<path> (N events: V valid, I invalid)`. `BatchExportRequest::fcs` makes
+  `startBatchExport` an FCS batch on the engine's `ExportSourcePolicy`
+  (recorded factor, recordings refused, `<root>/<base>[_N].fcs`). The non-FCS
+  batch (metrics-only or All) uses the same policy and no probe of its own
+  (#873 review): `recordedFactor`, `refuseRecordings` for a metrics batch,
+  `recordingsAsImages` for an All batch.
 - `startExportCharts({outputDir, charts})` (PR 4, contract kind
   `ExportCharts` = 6): the shell's snapshots decoded and written as files
   into an existing directory, all or nothing (temporary
@@ -328,7 +393,7 @@ bridge never starts them. The two export cancel models stay as they were:
   file is valid rows then invalid rows. The job has no frame or byte budget.
   The recorded config (read here, its target group from `@config_json`), ROI,
   background and pixel-to-micron factor (#758: the file's recorded one, the
-  session's `fallbackPixelToMicron()` when it records none) are used by
+  session's `fallbackPixelToMicron()` when it records none; the facade's is live, #867) are used by
   default. Otherwise the request's config and ROI apply, the background is
   cleared and objects are validated at the default 0.4886 µm/px, as for AVI
   and folder sources. The factor goes to the engine per request; the bundled
@@ -386,11 +451,17 @@ byte against the pre-slice facade code, kept in the test as the oracle).
 The builders behind the backend bridge's `fetch_review_charts_json` and
 `render_review_overlay` (MIB Studio, YOFO Studio), moved verbatim out of
 `src/backend/app/ReviewCharts.cpp`, which keeps the policy: the loaded file
-(its own reader, "Charts require an experiment HDF file"), the **live** factor
-and ring-ratio range (D3 / D4 keep them for the facade's JSON commands), and
+(its own reader, "Charts require an experiment HDF file"), the factor (since #867 the
+file's **recorded** one, the live one only for a file that records none; D3 is closed),
+the **live** ring-ratio range (D4 keeps it for the facade's JSON commands), and
 the facade's ROI style:
 
-- `reviewChartsJson(rows, source, factor, ringMin, ringMax)`:
+- `reviewChartsJson(rows, source, factor, ringMin, ringMax, factorSource = {})`:
+  `factorSource` ("recorded" | "live") is emitted as `pixel_to_micron_source` next to
+  `pixel_to_micron` when named (empty emits nothing, so the pinned JSON of the five-argument
+  call is unchanged); the facade names it from `ValidSet::pixelToMicronFromFile`, and the factor
+  is `ValidSet::pixelToMicron` (the session's resolved factor, so the live one only through the
+  session's fallback provider).
   `recording::makeReviewChartData`, the 128 × 128 density (conserves every
   finite point), the exact 0.5-wide histogram, the bundled isoelastic curves,
   counters as decimal strings. It throws what `makeReviewChartData` throws (an
@@ -510,9 +581,27 @@ the snapshot are ReviewJobs' export lane, `startExportJson`):
 - `parseExportRequest(json, defaults, out, error)`: the contract request
   (`output_root`, 1-256 `source_paths`, `explicit_destination` (single source
   only; an empty root becomes "."), `format` metrics_csv / images / all /
-  charts, `frames`, `series`, `conversion_factor`, `keep_partial_on_failure`,
+  charts / fcs, `frames`, `fcs_frames`, `series`, `conversion_factor`,
+  `conversion_factor_source`, `refuse_recordings`, `keep_partial_on_failure`,
   `isoelastic_overlays`) with the facade's messages; `defaults` carries the
   host's factor and chart range; the source is left to the host.
+- **`ExportSourcePolicy` (#867)**, applied by `runExportBatch` to every source
+  before `options.prepare` (`ExportBatchRequest::policy`, passed through
+  `startExportJson`): `conversion_factor_source: "recorded"` exports each file
+  at its recorded factor (TD-17, as Qt; `ReviewSession::resolvePixelToMicron`), the request's factor (else the
+  facade's live one) only for a file that records none; `refuse_recordings`
+  skips raw recordings with "recording files do not contain metrics" (not
+  attempted); `recordingsAsImages` exports a recording that is not refused
+  as `Images` instead of the request's format (ReviewJobs' All batch); `recordedChartRange`
+  reads each experiment file's recorded ring-ratio range for its backend-rendered charts
+  (YOFO's Export All, #867 REVIEW-049; the batch no longer probes files itself); an FCS
+  request always refuses them and, without an explicit
+  destination, gets `HdfExportService::nextAvailableFcsPath` (the first free
+  `<root>/<base>[_N].fcs` pair). With `conversion_factor_source` present each
+  `results` entry adds `conversion_factor`, `conversion_factor_source`
+  (recorded | fallback | request), `valid_count`, `invalid_count`; without
+  it the status is byte for byte as before. MIB Studio's Review stage
+  (`exportControls.tsx`) sends `recorded` for every export (#854).
 - `runExportBatch(request, sources, cancel, onProgress, options)`: one
   [[HdfExportService]] run per source on the caller's thread; continue after a
   failed source, stop on a cancelled one or on a cancel seen before a source
@@ -540,13 +629,25 @@ and YOFO Studio's review commands read it: `load_recording` →
 field, `fetch_review_metrics_page` → `framesPage` mapped to
 `MonitoringObjectRow`, `fetch_review_image` → `readRaw` (Mono8, channel 0),
 `fetch_run_accounting("review")` → the accounting read at open,
-`fetch_review_charts_json` → `validSet()` (one snapshot; no second reader),
+`fetch_review_charts_json` → `validSet()` (one snapshot; no second reader; it carries
+`pixelToMicron` / `pixelToMicronFromFile` beside the rows, so the factor and the rows
+belong to the same file),
 and `review_export_json`'s default source → `filePath()`. The load event's
 counts come from the same metadata. Nothing in the facade holds review state
 of its own any more, and none of it touches `AppBackend::hdf5()` (the
 experiment writer's handle): a load beside an open writer handle is refused
 only by the guards, and the writer is never closed or replaced by load or
 close.
+
+`fetch_review_metadata` also reports `pixel_to_micron` (the file's recorded factor, else
+the **live** processing factor, as the charts), `pixel_to_micron_from_file` and
+`filtered_frames` (recording files: frames filtered empty at record time), additive
+fields for MIB Studio's Area (µm²) column and its "Recording: N frames, M empty skipped"
+status (#867). A failed `open()` names the cause the way Qt's open dialog does
+(`QFile::exists`): "File not found: <path>" or "Cannot read the HDF5 file (corrupt or not
+an HDF5 review file): <path>"; the facade's load result stays "Recording load failed",
+except "Recording load failed: file not found" for the missing file (its event and
+operation messages keep the pinned text).
 
 The guards stay the facade's policy around `open()` / `close()`, inside the
 coordinator's idle transaction: "Experiment must be idle before loading review

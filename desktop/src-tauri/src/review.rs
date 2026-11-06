@@ -940,6 +940,24 @@ pub fn review_export_metrics(state: State<AppState>, output_path: String) -> Res
     Ok(guard.pin_mut().review_export_metrics(&output_path).into())
 }
 
+/// Export FCS 3.1 (#867, review ABI 7): `output_path` is the `.fcs` file.
+#[tauri::command]
+pub fn review_export_fcs(state: State<AppState>, output_path: String) -> Result<ReviewCmdResult, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_export_fcs(&output_path).into())
+}
+
+/// Batch Export FCS (#867, review ABI 7): one pair per source under `output_root`.
+#[tauri::command]
+pub fn review_batch_export_fcs(
+    state: State<AppState>,
+    sources: Vec<String>,
+    output_root: String,
+) -> Result<ReviewCmdResult, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_batch_export_fcs(sources, &output_root).into())
+}
+
 #[tauri::command]
 pub fn review_export_all(
     state: State<AppState>,
@@ -996,6 +1014,36 @@ pub fn review_regenerate_masks(
         .pin_mut()
         .review_regenerate_masks(source, &source_path, start, n, &output_path, use_recorded_config, synthesize_background)
         .into())
+}
+
+/// Review ABI 8 (#867): the regenerate dialog's setup JSON for `source`.
+#[tauri::command]
+pub fn fetch_review_regenerate_setup(state: State<AppState>, source: u32, source_path: String) -> Result<String, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().fetch_review_regenerate_setup(source, &source_path))
+}
+
+/// Review ABI 8 (#867): frame `index` of the regenerate preview set (pull kind 3).
+#[tauri::command]
+pub fn fetch_review_regenerate_preview(
+    state: State<AppState>,
+    source: u32,
+    source_path: String,
+    index: String,
+) -> Result<Response, String> {
+    let index = parse_u64(&index)?;
+    let frame = {
+        let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+        guard.pin_mut().fetch_review_regenerate_preview(source, &source_path, index)
+    };
+    review_packet::encode(frame, review_packet::PULL_KIND_REVIEW).map(Response::new)
+}
+
+/// Review ABI 8 (#867): regenerate masks with the dialog's overrides (JSON request).
+#[tauri::command]
+pub fn review_regenerate_masks_json(state: State<AppState>, json: String) -> Result<ReviewCmdResult, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_regenerate_masks_json(&json).into())
 }
 
 #[tauri::command]

@@ -179,7 +179,7 @@
     "cmd": "fetch_review_series_packet",
     "args": {
      "index": "0",
-     "k": "0",
+     "k": "1",
      "overlay": 0,
      "roiOverlay": false
     }
@@ -188,7 +188,7 @@
     "cmd": "fetch_review_series_packet",
     "args": {
      "index": "0",
-     "k": "1",
+     "k": "2",
      "overlay": 0,
      "roiOverlay": false
     }
@@ -197,15 +197,6 @@
     "cmd": "fetch_review_series_count",
     "args": {
      "index": "1"
-    }
-   },
-   {
-    "cmd": "fetch_review_series_packet",
-    "args": {
-     "index": "1",
-     "k": "1",
-     "overlay": 0,
-     "roiOverlay": false
     }
    },
    {
@@ -595,6 +586,99 @@
   ]
  },
  {
+  "flow": "export fcs",
+  "calls": [
+   {
+    "cmd": "review_list_dir",
+    "args": {
+     "dir": "/data/out"
+    }
+   },
+   {
+    "cmd": "plugin:dialog|save",
+    "args": {
+     "options": {
+      "title": "Export FCS 3.1",
+      "filters": [
+       {
+        "name": "FCS 3.1 Files",
+        "extensions": [
+         "fcs"
+        ]
+       },
+       {
+        "name": "All Files",
+        "extensions": [
+         "*"
+        ]
+       }
+      ],
+      "defaultPath": "/data/out/run.fcs"
+     }
+    }
+   },
+   {
+    "cmd": "review_export_fcs",
+    "args": {
+     "outputPath": "/data/out/run_cells.fcs"
+    }
+   },
+   {
+    "cmd": "plugin:opener|reveal_item_in_dir",
+    "args": {
+     "paths": [
+      "/data/out/run_cells.fcs"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "flow": "batch export fcs",
+  "calls": [
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Select HDF Files for Batch FCS Export",
+      "filters": [
+       {
+        "name": "HDF5",
+        "extensions": [
+         "h5",
+         "hdf5"
+        ]
+       }
+      ],
+      "multiple": true,
+      "defaultPath": "/data"
+     }
+    }
+   },
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Select Directory for FCS Files",
+      "directory": true,
+      "multiple": false,
+      "defaultPath": "/data/out"
+     }
+    }
+   },
+   {
+    "cmd": "review_batch_export_fcs",
+    "args": {
+     "sources": [
+      "/data/a.h5",
+      "/data/b.h5"
+     ],
+     "outputRoot": "/data/out"
+    }
+   }
+  ]
+ },
+ {
   "flow": "charts and core contour",
   "calls": [
    {
@@ -617,7 +701,7 @@
    {
     "cmd": "review_compute_core",
     "args": {
-     "coreFraction": 0.8
+     "coreFraction": 0.9
     }
    },
    {
@@ -663,6 +747,21 @@
   "flow": "regenerate masks",
   "calls": [
    {
+    "cmd": "fetch_review_regenerate_setup",
+    "args": {
+     "source": 2,
+     "sourcePath": ""
+    }
+   },
+   {
+    "cmd": "fetch_review_regenerate_preview",
+    "args": {
+     "source": 2,
+     "sourcePath": "",
+     "index": "0"
+    }
+   },
+   {
     "cmd": "plugin:dialog|open",
     "args": {
      "options": {
@@ -680,9 +779,24 @@
     }
    },
    {
+    "cmd": "fetch_review_regenerate_setup",
+    "args": {
+     "source": 3,
+     "sourcePath": "/data/clip.avi"
+    }
+   },
+   {
+    "cmd": "fetch_review_regenerate_preview",
+    "args": {
+     "source": 3,
+     "sourcePath": "/data/clip.avi",
+     "index": "0"
+    }
+   },
+   {
     "cmd": "review_list_dir",
     "args": {
-     "dir": "/data/out"
+     "dir": "/data"
     }
    },
    {
@@ -690,7 +804,7 @@
     "args": {
      "options": {
       "title": "Save regenerated masks",
-      "defaultPath": "/data/out/clip_remasked.h5",
+      "defaultPath": "/data/clip_remasked.h5",
       "filters": [
        {
         "name": "HDF5",
@@ -703,21 +817,15 @@
     }
    },
    {
-    "cmd": "review_regenerate_masks",
+    "cmd": "review_regenerate_masks_json",
     "args": {
-     "source": 3,
-     "sourcePath": "/data/clip.avi",
-     "startIndex": "0",
-     "count": "0",
-     "outputPath": "/data/out/clip_remasked.h5",
-     "useRecordedConfig": false,
-     "synthesizeBackground": false
+     "json": "{\"source\":3,\"source_path\":\"/data/clip.avi\",\"start\":0,\"count\":0,\"output_path\":\"/data/clip_remasked.h5\",\"use_recorded_config\":false,\"synthesize_background\":true,\"image_processing\":{\"gaussian_blur_size\":3,\"bg_subtract_threshold\":8,\"morph_kernel_size\":3,\"morph_iterations\":1,\"area_threshold_min\":60,\"area_threshold_max\":290,\"deformability_threshold_min\":0,\"deformability_threshold_max\":1},\"roi\":{\"x\":0,\"y\":0,\"w\":0,\"h\":0},\"background\":\"none\"}"
     }
    },
    {
     "cmd": "review_open",
     "args": {
-     "path": "/data/out/clip_remasked.h5"
+     "path": "/data/clip_remasked.h5"
     }
    },
    {
@@ -756,7 +864,7 @@
     "cmd": "plugin:opener|reveal_item_in_dir",
     "args": {
      "paths": [
-      "/data/out/clip_remasked.h5"
+      "/data/clip_remasked.h5"
      ]
     }
    }
@@ -765,6 +873,21 @@
  {
   "flow": "regenerate masks into an existing file",
   "calls": [
+   {
+    "cmd": "fetch_review_regenerate_setup",
+    "args": {
+     "source": 2,
+     "sourcePath": ""
+    }
+   },
+   {
+    "cmd": "fetch_review_regenerate_preview",
+    "args": {
+     "source": 2,
+     "sourcePath": "",
+     "index": "0"
+    }
+   },
    {
     "cmd": "plugin:dialog|open",
     "args": {
@@ -783,9 +906,24 @@
     }
    },
    {
+    "cmd": "fetch_review_regenerate_setup",
+    "args": {
+     "source": 3,
+     "sourcePath": "/data/clip.avi"
+    }
+   },
+   {
+    "cmd": "fetch_review_regenerate_preview",
+    "args": {
+     "source": 3,
+     "sourcePath": "/data/clip.avi",
+     "index": "0"
+    }
+   },
+   {
     "cmd": "review_list_dir",
     "args": {
-     "dir": "/data/out"
+     "dir": "/data"
     }
    },
    {
@@ -793,7 +931,7 @@
     "args": {
      "options": {
       "title": "Save regenerated masks",
-      "defaultPath": "/data/out/clip_remasked_2.h5",
+      "defaultPath": "/data/clip_remasked_2.h5",
       "filters": [
        {
         "name": "HDF5",
@@ -806,21 +944,15 @@
     }
    },
    {
-    "cmd": "review_regenerate_masks",
+    "cmd": "review_regenerate_masks_json",
     "args": {
-     "source": 3,
-     "sourcePath": "/data/clip.avi",
-     "startIndex": "0",
-     "count": "0",
-     "outputPath": "/data/out/clip_remasked.h5",
-     "useRecordedConfig": false,
-     "synthesizeBackground": false
+     "json": "{\"source\":3,\"source_path\":\"/data/clip.avi\",\"start\":0,\"count\":0,\"output_path\":\"/data/clip_remasked.h5\",\"use_recorded_config\":false,\"synthesize_background\":true,\"image_processing\":{\"gaussian_blur_size\":3,\"bg_subtract_threshold\":8,\"morph_kernel_size\":3,\"morph_iterations\":1,\"area_threshold_min\":60,\"area_threshold_max\":290,\"deformability_threshold_min\":0,\"deformability_threshold_max\":1},\"roi\":{\"x\":0,\"y\":0,\"w\":0,\"h\":0},\"background\":\"none\"}"
     }
    },
    {
     "cmd": "review_list_dir",
     "args": {
-     "dir": "/data/out"
+     "dir": "/data"
     }
    },
    {
@@ -828,7 +960,7 @@
     "args": {
      "options": {
       "title": "Save regenerated masks",
-      "defaultPath": "/data/out/clip_remasked_2.h5",
+      "defaultPath": "/data/clip_remasked_2.h5",
       "filters": [
        {
         "name": "HDF5",
@@ -841,21 +973,15 @@
     }
    },
    {
-    "cmd": "review_regenerate_masks",
+    "cmd": "review_regenerate_masks_json",
     "args": {
-     "source": 3,
-     "sourcePath": "/data/clip.avi",
-     "startIndex": "0",
-     "count": "0",
-     "outputPath": "/data/out/clip_remasked_2.h5",
-     "useRecordedConfig": false,
-     "synthesizeBackground": false
+     "json": "{\"source\":3,\"source_path\":\"/data/clip.avi\",\"start\":0,\"count\":0,\"output_path\":\"/data/clip_remasked_2.h5\",\"use_recorded_config\":false,\"synthesize_background\":true,\"image_processing\":{\"gaussian_blur_size\":3,\"bg_subtract_threshold\":8,\"morph_kernel_size\":3,\"morph_iterations\":1,\"area_threshold_min\":60,\"area_threshold_max\":290,\"deformability_threshold_min\":0,\"deformability_threshold_max\":1},\"roi\":{\"x\":0,\"y\":0,\"w\":0,\"h\":0},\"background\":\"none\"}"
     }
    },
    {
     "cmd": "review_open",
     "args": {
-     "path": "/data/out/clip_remasked_2.h5"
+     "path": "/data/clip_remasked_2.h5"
     }
    },
    {
@@ -874,8 +1000,292 @@
     "cmd": "plugin:opener|reveal_item_in_dir",
     "args": {
      "paths": [
-      "/data/out/clip_remasked_2.h5"
+      "/data/clip_remasked_2.h5"
      ]
+    }
+   }
+  ]
+ },
+ {
+  "flow": "regenerate masks with the dialog's preview, ROI and config (#867)",
+  "calls": [
+   {
+    "cmd": "fetch_review_regenerate_setup",
+    "args": {
+     "source": 2,
+     "sourcePath": ""
+    }
+   },
+   {
+    "cmd": "fetch_review_regenerate_preview",
+    "args": {
+     "source": 2,
+     "sourcePath": "",
+     "index": "0"
+    }
+   },
+   {
+    "cmd": "fetch_review_regenerate_preview",
+    "args": {
+     "source": 2,
+     "sourcePath": "",
+     "index": "1"
+    }
+   },
+   {
+    "cmd": "review_list_dir",
+    "args": {
+     "dir": "/data"
+    }
+   },
+   {
+    "cmd": "plugin:dialog|save",
+    "args": {
+     "options": {
+      "title": "Save regenerated masks",
+      "defaultPath": "/data/clip_remasked_2_remasked.h5",
+      "filters": [
+       {
+        "name": "HDF5",
+        "extensions": [
+         "h5"
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "cmd": "review_regenerate_masks_json",
+    "args": {
+     "json": "{\"source\":2,\"source_path\":\"\",\"start\":0,\"count\":0,\"output_path\":\"/data/clip_remasked_2_remasked.h5\",\"use_recorded_config\":true,\"synthesize_background\":true,\"image_processing\":{\"gaussian_blur_size\":5,\"bg_subtract_threshold\":8,\"morph_kernel_size\":3,\"morph_iterations\":1,\"area_threshold_min\":60,\"area_threshold_max\":290,\"deformability_threshold_min\":0,\"deformability_threshold_max\":1},\"roi\":{\"x\":0,\"y\":0,\"w\":512,\"h\":96},\"background\":\"none\"}"
+    }
+   },
+   {
+    "cmd": "review_open",
+    "args": {
+     "path": "/data/clip_remasked_2_remasked.h5"
+    }
+   },
+   {
+    "cmd": "fetch_review_info",
+    "args": {}
+   },
+   {
+    "cmd": "fetch_review_rows",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 100
+    }
+   },
+   {
+    "cmd": "plugin:opener|reveal_item_in_dir",
+    "args": {
+     "paths": [
+      "/data/clip_remasked_2_remasked.h5"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "flow": "viewer overlay, ROI and export as TIFF",
+  "calls": [
+   {
+    "cmd": "fetch_review_series_count",
+    "args": {
+     "index": "0"
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 2,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 1,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "plugin:dialog|save",
+    "args": {
+     "options": {
+      "title": "Export Frame as TIFF",
+      "filters": [
+       {
+        "name": "TIFF Files",
+        "extensions": [
+         "tiff",
+         "tif"
+        ]
+       },
+       {
+        "name": "All Files",
+        "extensions": [
+         "*"
+        ]
+       }
+      ],
+      "defaultPath": "/data/frame_0_series_0.tiff"
+     }
+    }
+   },
+   {
+    "cmd": "review_clear_charts",
+    "args": {}
+   },
+   {
+    "cmd": "review_stage_chart",
+    "args": {
+     "rawBytes": [
+      137,
+      80,
+      78,
+      71,
+      13,
+      10,
+      26,
+      10,
+      5,
+      255,
+      0
+     ]
+    },
+    "options": {
+     "headers": {
+      "x-chart-name": "frame_0_series_0.tiff"
+     }
+    }
+   },
+   {
+    "cmd": "review_export_charts",
+    "args": {
+     "outputDir": "/data"
+    }
+   },
+   {
+    "cmd": "plugin:opener|reveal_item_in_dir",
+    "args": {
+     "paths": [
+      "/data"
+     ]
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 1,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 2,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 2,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 2,
+     "roiOverlay": true
     }
    }
   ]
