@@ -539,7 +539,7 @@ pub fn startup_discovery_status(state: &AppState) -> Result<serde_json::Value, S
     serde_json::from_str(&guard.pin_mut().startup_discovery_status()).map_err(|e| e.to_string())
 }
 
-/// The capture delivery mode (ABI 45, #863): `mode`, the camera-confirmed `active_mode`, and whether a capture runs.
+/// The capture delivery mode (ABI next (#895, set at merge), #863): `mode`, the camera-confirmed `active_mode`, and whether a capture runs.
 pub fn fetch_frame_delivery_mode(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().fetch_frame_delivery_mode()).map_err(|e| e.to_string())

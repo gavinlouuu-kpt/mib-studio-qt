@@ -3,6 +3,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -89,6 +90,14 @@ namespace backend
         bool initialize(const std::string &dataDir);
         // Shell-resolved read-only install resources; set before initialize.
         void setResourceRoot(std::string path) { resourceRoot_ = std::move(path); }
+        // The shell's data-dir resolution (app/DataDirectory.h, rig check F1): initialize() logs
+        // the reason, and copies the state an older build left in legacyDataDir into the data dir
+        // once (migrateLegacyState). Empty legacyDataDir = nothing to migrate. Before initialize().
+        void setDataDirOrigin(std::string reason, std::filesystem::path legacyDataDir)
+        {
+            dataDirReason_ = std::move(reason);
+            legacyDataDir_ = std::move(legacyDataDir);
+        }
 
         // Inject the HTTP GET used to fetch the E-modulus LUT manifest/blob
         // (ADR 0002); the shell supplies it so the backend links no Qt
@@ -144,6 +153,8 @@ namespace backend
         void setSsdStoreForTesting(std::unique_ptr<pz::SsdStore> store);
         // The data directory given to initialize() (recordings default under it).
         const std::string &dataDir() const { return dataDir_; }
+        // Where initialize() put app.log (datadir::logDirFor); empty before initialize().
+        const std::filesystem::path &logDir() const { return logDir_; }
         // The storage root (#762): the data directory, absolute with symlinks resolved; "" before
         // initialize(). fetch_instrument_status reports it as storage.path, and a relative path a
         // client gives a writer resolves under it.
@@ -658,6 +669,9 @@ namespace backend
         mutable std::mutex aravisSessionMutex_;
         AravisSessionGeometry aravisSession_;
         std::string dataDir_;
+        std::string dataDirReason_;
+        std::filesystem::path legacyDataDir_;
+        std::filesystem::path logDir_;
         std::string aravisProfilePath() const;
         void loadAravisProfile();
         bool saveAravisProfile(const AravisProfile& profile, std::string* errorOut);

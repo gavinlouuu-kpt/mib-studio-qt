@@ -10,17 +10,31 @@ const status = {valid: true, camera_running: false, nanopositioner_running: fals
 beforeEach(() => {Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT: true}); const saved = new Map<string, string>(); vi.stubGlobal('localStorage', {getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value)}); vi.clearAllMocks(); vi.mocked(bridge.startupDiscoverySetPreference).mockImplementation(async preference => ({accepted: true, message: 'Applied', preference})); vi.mocked(bridge.startupDiscoveryStatus).mockResolvedValue(status); vi.mocked(bridge.startupDiscoveryRun).mockResolvedValue({accepted: true, message: 'Scheduled'}); host = document.createElement('div'); document.body.append(host); root = createRoot(host);});
 afterEach(async () => {await act(async () => root.unmount()); host.remove();});
 async function render(active = false) {await act(async () => root.render(<StartupDiscoveryControls ready experimentActive={active} append={() => {}} />));}
-it('auto-selects on first mount by default, as Qt does (#852)', async () => {await render(); expect(bridge.startupDiscoveryRun).toHaveBeenCalledWith('start'); expect(bridge.startupDiscoveryRun).toHaveBeenCalledOnce(); expect((host.querySelector('input[type=checkbox]') as HTMLInputElement).checked).toBe(true);});
-it('stays off after the operator opted out, and the opt-out is stored', async () => {
-  localStorage.setItem('mib.startup.auto-select-hardware', 'false');
+it('auto-selects on first mount of a fresh profile, as Qt starts discovery unconditionally (HW-037, D8)', async () => {
+  await render();
+  expect(bridge.startupDiscoveryRun).toHaveBeenCalledWith('start');
+  expect(bridge.startupDiscoveryRun).toHaveBeenCalledOnce();
+  expect((host.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Auto-select hardware now')!.click());
+  expect(bridge.startupDiscoveryRun).toHaveBeenCalledTimes(2);
+});
+it('keeps an operator opt-out, remembers it, and does not run discovery while opted out', async () => {
+  await render();
+  await act(async () => (host.querySelector('input[type="checkbox"]') as HTMLInputElement).click());
+  expect(localStorage.getItem('mib.startup.auto-select-hardware')).toBe('false');
+  await act(async () => root.unmount()); root = createRoot(host);
+  vi.mocked(bridge.startupDiscoveryRun).mockClear();
+  await render();
+  expect((host.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false);
+  expect(bridge.startupDiscoveryRun).not.toHaveBeenCalled();
+  await act(async () => (host.querySelector('input[type="checkbox"]') as HTMLInputElement).click());
+  expect(localStorage.getItem('mib.startup.auto-select-hardware')).toBe('true');
+});
+it('stays manual when the browser storage cannot be read: the remembered selection is unknown, so nothing is guessed', async () => {
+  vi.stubGlobal('localStorage', {getItem: () => {throw new Error('blocked');}, setItem: () => {throw new Error('blocked');}});
   await render();
   expect(bridge.startupDiscoveryRun).not.toHaveBeenCalled();
-  expect((host.querySelector('input[type=checkbox]') as HTMLInputElement).checked).toBe(false);
-  await act(async () => (host.querySelector('input[type=checkbox]') as HTMLInputElement).click());
-  expect(localStorage.getItem('mib.startup.auto-select-hardware')).toBe('true');
-  await act(async () => (host.querySelector('input[type=checkbox]') as HTMLInputElement).click());
-  expect(localStorage.getItem('mib.startup.auto-select-hardware')).toBe('false');
-  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Auto-select hardware now')!.click()); expect(bridge.startupDiscoveryRun).toHaveBeenCalledWith('start');
+  expect(host.textContent).toContain('automatic selection skipped');
 });
 it('runs saved startup preference only once per ready session', async () => {localStorage.setItem('mib.startup.auto-select-hardware', 'true'); await render(); await render(); expect(bridge.startupDiscoveryRun).toHaveBeenCalledOnce();});
 it('blocks startup changes while experiment active', async () => {localStorage.setItem('mib.startup.auto-select-hardware', 'true'); await render(true); expect(bridge.startupDiscoveryRun).not.toHaveBeenCalled(); expect([...host.querySelectorAll('button')].every(button => button.disabled)).toBe(true);});

@@ -85,11 +85,11 @@ Source: "{#SourceDir}{#BuildDir}\tls\*"; DestDir: "{app}\tls"; Flags: ignorevers
 ; Isoelastic curve data files
 Source: "{#SourceDir}resources\isoelastic_curve\*"; DestDir: "{app}\resources\isoelastic_curve"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-[Dirs]
-; Ensure data directory structure exists even if source data directory is empty
-; This is critical for the application to write logs
-Name: "{app}\data"; Flags: uninsneveruninstall
-Name: "{app}\data\logs"; Flags: uninsneveruninstall
+; No [Dirs] entry for {app}\data (rig check F1): a normal user cannot write
+; under Program Files, so the app keeps its state, log and crash reports in
+; %LOCALAPPDATA%\MIB_Studio_Qt (backend/app/DataDirectory.h). An existing
+; {app}\data from an older install is left in place: the app copies its state
+; once on first start, and an uninstall keeps it as before.
 
 [Registry]
 ; Keep the system-wide Sentry env vars in sync with the latest release.

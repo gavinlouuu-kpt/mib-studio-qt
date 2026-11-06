@@ -1444,7 +1444,7 @@ rust::String BackendBridge::startup_discovery_set_preference(rust::Str json) {
 
 rust::String BackendBridge::startup_discovery_run(rust::Str action) { return rust::String(impl_->facade.runStartupDiscoveryJson(toStd(action))); }
 rust::String BackendBridge::startup_discovery_status() { return rust::String(impl_->facade.fetchStartupDiscoveryStatusJson()); }
-// ABI 45 (#863 CONNECT-019/020): the capture delivery mode (Every Frame / Latest Frame).
+// ABI next (#895, set at merge) (#863 CONNECT-019/020): the capture delivery mode (Every Frame / Latest Frame).
 rust::String BackendBridge::fetch_frame_delivery_mode() { return rust::String(impl_->facade.fetchFrameDeliveryModeJson()); }
 rust::String BackendBridge::set_frame_delivery_mode(rust::Str mode) { return rust::String(impl_->facade.setFrameDeliveryModeJson(toStd(mode))); }
 
@@ -2731,7 +2731,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 45; }
+std::uint32_t bridge_abi_version() { return 44; }
 
 } // namespace mib_bridge
 

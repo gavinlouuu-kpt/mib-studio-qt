@@ -1083,7 +1083,7 @@ pub mod ffi {
         fn startup_discovery_set_preference(self: Pin<&mut BackendBridge>, json: &str) -> String;
         fn startup_discovery_run(self: Pin<&mut BackendBridge>, action: &str) -> String;
         fn startup_discovery_status(self: Pin<&mut BackendBridge>) -> String;
-        /// ABI 45 (#863): the capture delivery mode as JSON {valid, mode, active_mode, confirmed, capturing}, and its setter
+        /// ABI next (#895, set at merge) (#863): the capture delivery mode as JSON {valid, mode, active_mode, confirmed, capturing}, and its setter
         /// ({ok, mode, applies_at_next_start, message}); "everyFrame" or "latestFrame", applied at the next capture start.
         fn fetch_frame_delivery_mode(self: Pin<&mut BackendBridge>) -> String;
         fn set_frame_delivery_mode(self: Pin<&mut BackendBridge>, mode: &str) -> String;
