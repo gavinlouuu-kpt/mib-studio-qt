@@ -9,6 +9,7 @@
 #include <QSysInfo>
 
 #include "backend/app/AppBackend.h"
+#include "backend/app/DataDirectory.h"
 #include "frontend/system/LutHttpFetcher.h"
 #include "frontend/system/RegistryHttpTransport.h"
 #include "frontend/system/QtLogBridge.h"
@@ -71,10 +72,10 @@ namespace {
     void writeEarlyError(const std::string& errorMsg) {
         try {
 #ifdef _WIN32
-            char tempPath[MAX_PATH];
-            if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, tempPath))) {
-                std::string logPath = std::string(tempPath) + "\\MIB_Studio_Qt\\crash_log.txt";
-                std::ofstream logFile(logPath, std::ios::app);
+            const std::filesystem::path localAppData = backend::app::datadir::localAppDataDir();
+            if (!localAppData.empty()) {
+                std::ofstream logFile(localAppData / backend::app::datadir::kUserFolderName / "crash_log.txt",
+                                      std::ios::app);
                 if (logFile.is_open()) {
                     logFile << errorMsg << std::endl;
                     logFile.close();
@@ -97,24 +98,29 @@ namespace {
 #endif
     }
 
-    // Resolve a user-writable directory for crash artifacts (.dmp + .json).
-    // Falls back to {exeDir}/data/crashes if AppData lookup fails.
-    std::filesystem::path resolveCrashDir(const QString& exeDir) {
+    std::filesystem::path toPath(const QString& path) {
 #ifdef _WIN32
-        char appDataPath[MAX_PATH];
-        if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL,
-                                       SHGFP_TYPE_CURRENT, appDataPath))) {
-            return std::filesystem::path(appDataPath) / "MIB_Studio_Qt" / "crashes";
-        }
+        return std::filesystem::path(path.toStdWString());
+#else
+        return std::filesystem::path(path.toStdString());
 #endif
-        return std::filesystem::path(exeDir.toStdString()) / "data" / "crashes";
+    }
+
+    QString toQString(const std::filesystem::path& path) {
+#ifdef _WIN32
+        return QDir::toNativeSeparators(QString::fromStdWString(path.wstring()));
+#else
+        return QString::fromStdString(path.string());
+#endif
     }
 
     // Install the crash reporter as early as possible. Must be safe to call
     // before QApplication exists (uses Qt only for QString helpers below).
-    void installCrashReporter(const QString& exeDir, const std::string& dataDir) {
+    // crashDir: %LOCALAPPDATA%/MIB_Studio_Qt/crashes on Windows, else
+    // <data dir>/crashes (backend::app::datadir::resolve).
+    void installCrashReporter(const std::filesystem::path& crashDir, const std::string& dataDir) {
         backend::services::CrashReporter::Config cfg;
-        cfg.crashDir = resolveCrashDir(exeDir);
+        cfg.crashDir = crashDir;
         cfg.databaseDir = cfg.crashDir / "sentry-db";
         cfg.release = std::string("mib_studio_qt@") + MIB_STUDIO_QT_VERSION_FULL;
         cfg.environment =
@@ -222,18 +228,23 @@ int main(int argc, char* argv[]) {
         // Apply GUI-persisted startup disable list unless env already specifies it.
         applyBootDisabledServicesFromSettings();
         
-        // Get executable directory and resolve data path
-        QString exeDir = QCoreApplication::applicationDirPath();
-        QString dataDir = QDir(exeDir).filePath("data");
+        // Resolve the data dir once (rig check F1, backend/app/DataDirectory.h):
+        // MIB_DATA_DIR, else %LOCALAPPDATA%/MIB_Studio_Qt/data for a Windows
+        // install under Program Files or an unwritable <exe dir>/data, else
+        // <exe dir>/data. The log and crash dirs come from the same layout.
+        const QString exeDir = QCoreApplication::applicationDirPath();
+        const backend::app::datadir::Layout dataLayout =
+            backend::app::datadir::resolve(backend::app::datadir::currentInputs(toPath(exeDir)));
+        const QString dataDir = toQString(dataLayout.dataDir);
 
         // Convert to std::string for backend
-        std::string dataDirStd = dataDir.toStdString();
+        const std::string dataDirStd = backend::app::datadir::toBackendString(dataLayout.dataDir);
 
         // Install crash reporter BEFORE Logger / AppBackend so that crashes
         // during backend init are still captured. Logger init happens inside
         // AppBackend::initialize() and CrashReporter uses spdlog for its own
         // diagnostic messages once Logger comes online.
-        installCrashReporter(exeDir, dataDirStd);
+        installCrashReporter(dataLayout.crashDir, dataDirStd);
         // Route Qt's process-wide log stream to spdlog/Sentry. The handler used
         // to live in the backend CrashReporter; it now lives here so the backend
         // links no Qt (epic #246).
@@ -242,7 +253,9 @@ int main(int argc, char* argv[]) {
         // Early diagnostic output
         std::cout << "MIB Studio Qt starting..." << std::endl;
         std::cout << "Executable directory: " << exeDir.toStdString() << std::endl;
-        std::cout << "Data directory: " << dataDirStd << std::endl;
+        std::cout << "Data directory: " << dataDirStd << " ("
+                  << backend::app::datadir::sourceName(dataLayout.source) << ": "
+                  << dataLayout.reason << ")" << std::endl;
 
         // Initialize backend with proper path
         backend::AppBackend backend;
@@ -255,18 +268,14 @@ int main(int argc, char* argv[]) {
         backend.setProfileRegistryTransport(mib::frontend::makeQtRegistryHttpTransport());
         backend.setLutAppDataDir(
             QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString());
+        // Install resources (bundled LUT) sit beside the exe; the data dir is
+        // no longer always <exe dir>/data, so its parent is not the exe dir.
+        backend.setResourceRoot(backend::app::datadir::toBackendString(toPath(exeDir)));
+        backend.setDataDirOrigin(std::string(backend::app::datadir::sourceName(dataLayout.source)) + ": " +
+                                     dataLayout.reason,
+                                 dataLayout.legacyDataDir);
         if (!backend.initialize(dataDirStd)) {
-            // Determine log location (may be in user AppData if installed in Program Files)
-            QString logLocation = dataDir + "\\logs\\app.log";
-#ifdef _WIN32
-            QString dataDirLower = dataDir.toLower();
-            if (dataDirLower.contains("program files")) {
-                char appDataPath[MAX_PATH];
-                if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, appDataPath))) {
-                    logLocation = QString::fromStdString(std::string(appDataPath) + "\\MIB_Studio_Qt\\logs\\app.log");
-                }
-            }
-#endif
+            const QString logLocation = toQString(dataLayout.logDir / "app.log");
             QString errorMsg = QString("Failed to initialize application backend.\n\n"
                                       "Data directory: %1\n"
                                       "Log file: %2\n\n"
