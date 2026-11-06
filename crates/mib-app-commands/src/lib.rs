@@ -1426,14 +1426,19 @@ pub fn fetch_camera_selection(state: &AppState) -> Result<CameraSelection, Strin
 }
 
 /// Why the camera selection cannot change now, or `None`: the same rule as `select_mindvision_camera`
-/// and `apply_camera_script` (capture running, or an experiment Starting/Active/Stopping).
+/// and `apply_camera_script` (capture running, or an experiment Starting/Active/Stopping or still saving).
 fn camera_change_blocker(guard: &mut std::sync::MutexGuard<'_, cxx::UniquePtr<ffi::BackendBridge>>) -> Option<String> {
     let selected = guard.pin_mut().fetch_camera_selection();
     let experiment = guard.pin_mut().fetch_experiment_status();
-    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
-        return Some("Stop capture and finalize the experiment before changing camera settings".into());
-    }
-    None
+    camera_change_refused(selected.valid, selected.running, experiment.valid, experiment.state, experiment.flushing)
+        .then(|| "Stop capture and finalize the experiment before changing camera settings".into())
+}
+
+/// The rule behind `camera_change_blocker`: refused when either status is unknown, while a capture runs, while the
+/// run is Starting (1), Active (2) or Stopping (3), and while it still saves its data (`flushing`, also a Failed run
+/// that is finalizing after a fatal save error; C++ `app::experimentHoldsCamera`).
+fn camera_change_refused(selection_valid: bool, capture_running: bool, experiment_valid: bool, state: u32, flushing: bool) -> bool {
+    !selection_valid || !experiment_valid || capture_running || matches!(state, 1..=3) || flushing
 }
 
 /// Select a hardware (EGrabber) camera.
@@ -2011,6 +2016,30 @@ pub fn fetch_processing_stats(state: &AppState) -> Result<ProcessingStats, Strin
         invalid_fps1s: if s.valid && s.invalid_fps1s.is_finite() { Some(s.invalid_fps1s) } else { None },
         pixel_to_micron: if s.valid && s.pixel_to_micron.is_finite() { Some(s.pixel_to_micron) } else { None },
     })
+}
+
+#[cfg(test)]
+mod camera_change_tests {
+    use super::camera_change_refused;
+
+    // #863 CONNECT-009: the camera selection never changes under a capture or a run that holds the camera.
+    #[test]
+    fn camera_change_is_refused_while_a_run_holds_the_camera() {
+        // idle, nothing running: allowed
+        assert!(!camera_change_refused(true, false, true, 0, false));
+        // a capture runs
+        assert!(camera_change_refused(true, true, true, 0, false));
+        // the run Starts, is Active or Stops, even with the capture already stopped under it
+        for state in 1..=3 {
+            assert!(camera_change_refused(true, false, true, state, false), "state {state}");
+        }
+        // a Failed run (4) still saving its data holds the camera; once saved it holds nothing
+        assert!(camera_change_refused(true, false, true, 4, true));
+        assert!(!camera_change_refused(true, false, true, 4, false));
+        // an unknown selection or experiment status refuses
+        assert!(camera_change_refused(false, false, true, 0, false));
+        assert!(camera_change_refused(true, false, false, 0, false));
+    }
 }
 
 #[cfg(test)]
