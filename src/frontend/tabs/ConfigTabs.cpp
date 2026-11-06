@@ -2145,25 +2145,23 @@ QString ConfigTabs::sanitizeProfileName(const QString& name) const {
     return n;
 }
 
+// Profile files are written as UTF-8 bytes with the content's own '\n' line
+// endings on every platform, through the same checked atomic writer as the
+// editors and the tune panel. QIODevice::Text wrote CRLF on Windows only,
+// so the bytes on disk differed from the text the app serialized (#904).
 bool ConfigTabs::writeTextFile(const QString& path, const QString& content, QString* err) const {
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        if (err) *err = f.errorString();
-        return false;
-    }
-    QTextStream out(&f);
-    out << content;
-    return true;
+    const ConfigWriteResult wr = ConfigDocumentStore::writeText(path, content);
+    if (!wr.ok && err) *err = wr.error;
+    return wr.ok;
 }
 
 bool ConfigTabs::readTextFile(const QString& path, QString* out, QString* err) const {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (err) *err = f.errorString();
+    const ConfigReadResult rr = ConfigDocumentStore::readDocument(path);
+    if (!rr.ok) {
+        if (err) *err = rr.error;
         return false;
     }
-    QTextStream in(&f);
-    *out = in.readAll();
+    *out = QString::fromUtf8(rr.bytes);
     return true;
 }
 

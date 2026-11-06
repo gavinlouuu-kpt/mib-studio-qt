@@ -1432,6 +1432,20 @@ set_target_properties(config_document_state_test PROPERTIES RUNTIME_OUTPUT_DIREC
 add_test(NAME frontend.config_document_state COMMAND $<TARGET_FILE:config_document_state_test>)
 set_tests_properties(frontend.config_document_state PROPERTIES LABELS "frontend;utility;safety" TIMEOUT 30)
 
+# Issue #906: default folder of the Start Experiment save dialog (header-only
+# resolver; QtCore only).
+add_executable(experiment_save_location_test
+    ${PROJECT_SOURCE_DIR}/tests/frontend/experiment_save_location_test.cpp
+)
+target_include_directories(experiment_save_location_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/tests
+)
+target_link_libraries(experiment_save_location_test PRIVATE Qt6::Core)
+set_target_properties(experiment_save_location_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
+add_test(NAME frontend.experiment_save_location COMMAND $<TARGET_FILE:experiment_save_location_test>)
+set_tests_properties(frontend.experiment_save_location PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
+
 # Issue #364: pure processing tune-panel draft model (field mapping, patch
 # precision, dirty/conflict/apply lifecycle). QtCore + the Qt-free backend
 # types only.

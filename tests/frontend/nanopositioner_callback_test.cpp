@@ -6,6 +6,11 @@
 #include "support/watchdog.h"
 #include <QApplication>
 #include <QCoreApplication>
+#include <QDateTime>
+#include <QDoubleSpinBox>
+#include <QFile>
+#include <QFileInfo>
+#include <QTimer>
 #include <QLabel>
 #include <QSettings>
 #include <fstream>
@@ -87,6 +92,46 @@ int main(int argc, char** argv) {
     std::ifstream(configPath) >> config;
     MIB_EXPECT(config.at("autofocus_initial_voltage") == 47.5,
                "nonzero observation also preserves configured voltage");
+    // #907: auto-connect at launch and aboutToQuit at close do not rewrite
+    // an unchanged config. A CRLF profile (Windows) keeps its bytes and mtime.
+    {
+        const QString cfg = QString::fromStdString(configPath.string());
+        auto bytesOf = [&cfg] {
+            QFile f(cfg);
+            return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+        };
+        QByteArray crlf = bytesOf();
+        crlf.replace("\n", "\r\n");
+        {
+            QFile f(cfg);
+            MIB_REQUIRE(f.open(QIODevice::WriteOnly | QIODevice::Truncate) && f.write(crlf) == crlf.size(),
+                        "CRLF profile fixture");
+        }
+        const QDateTime old = QDateTime::fromSecsSinceEpoch(1577934245); // 2020-01-02
+        auto stampOld = [&] {
+            QFile f(cfg);
+            MIB_REQUIRE(f.open(QIODevice::ReadWrite) && f.setFileTime(old, QFileDevice::FileModificationTime),
+                        "set old mtime");
+        };
+        auto untouched = [&] {
+            return bytesOf() == crlf && QFileInfo(cfg).lastModified().toSecsSinceEpoch() == old.toSecsSinceEpoch();
+        };
+        stampOld();
+        tab->applyAutoConnectResult(endpoint);
+        MIB_EXPECT(untouched(), "auto-connect with nothing changed leaves the CRLF profile untouched");
+        stampOld();
+        QTimer::singleShot(0, &app, &QCoreApplication::quit);
+        app.exec(); // aboutToQuit -> saveConfig
+        MIB_EXPECT(untouched(), "quit with nothing changed leaves the CRLF profile untouched");
+        auto* setpoint = tab->findChild<QDoubleSpinBox*>("targetRingWidthSpinBox");
+        MIB_REQUIRE(setpoint, "setpoint spin box");
+        const double target = setpoint->value() + 0.5 <= setpoint->maximum() ? setpoint->value() + 0.5 : setpoint->value() - 0.5;
+        setpoint->setValue(target); // valueChanged -> onTargetRingWidthChanged -> saveConfig
+        std::ifstream(configPath) >> config;
+        MIB_EXPECT(config.at("autofocus_focus_setpoint") == setpoint->value() && config.at("autofocus_initial_voltage") == 47.5
+                       && !bytesOf().contains('\r'),
+                   "a real change is still written (binary, LF)");
+    }
     backend.autofocus().disconnect();
     for (int cycle = 0; cycle < 50; ++cycle) {
         if (cycle) tab = new frontend::NanopositionerTab(backend);

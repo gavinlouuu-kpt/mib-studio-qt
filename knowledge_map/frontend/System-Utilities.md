@@ -61,7 +61,12 @@
   path or malformed JSON. A successful write updates the document
   fingerprint and emits one queued `configFileChanged`; `onFileChanged`
   skips events whose on-disk fingerprint equals the loaded document (the
-  self-write echo), so nothing is applied or broadcast twice.
+  self-write echo), so nothing is applied or broadcast twice. Every one of
+  these fingerprints hashes the **raw file bytes** read through
+  `ConfigDocumentStore::readDocument` (#904): the load used to read with
+  `QIODevice::Text`, which drops the `\r` of CRLF, so on a CRLF profile
+  (every Windows profile) each Apply was refused as a conflict and the
+  echo check never matched. Guard: `frontend.config_apply` section 5.
   `writeBackCameraConfig` uses the same checked store. The old
   `writeBackProcessingConfig` (rewrite the whole section from runtime) is
   gone. Guard: `frontend.config_apply`.
@@ -247,6 +252,11 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
   nothing written), then writes through `QSaveFile` with a checked
   `commit()`, returning `ConfigWriteResult{ok, conflict, error, fingerprint,
   bytesWritten}`. Atomic replacement, not a cross-process compare-and-swap.
+  `readDocument(path)` → `ConfigReadResult{ok, exists, bytes, fingerprint,
+  error}` is the one binary read behind every config fingerprint (#904);
+  `currentFingerprint` uses it. Never read a config document with
+  `QIODevice::Text` when the result feeds a fingerprint: Qt drops `\r` on
+  every platform.
   Pure companion `ConfigDocumentState` (`frontend/models/`) holds
   path/fingerprints/dirty/conflict/last-save. Its disk fingerprint hashes exact
   file bytes; loaded/current editor fingerprints track normalized text so CRLF
@@ -323,6 +333,13 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
   but programmatic write-back now emits a direct change notification after
   persisting the file so sibling tabs do not depend on filesystem watcher
   timing.
+- Config documents are written as binary UTF-8 with `\n` line endings
+  (`QJsonDocument::toJson`, `ConfigDocumentStore::writeText`), also on
+  Windows. An existing CRLF profile is read and fingerprinted as is and
+  becomes LF at the app's next write of it (#904). The nanopositioner,
+  syringe pump, playback ROI and conversion-factor writers still edit
+  `config.json` themselves; the tabs' `saveConfig` skips unchanged writes
+  (#907), the other two are user-triggered and still use Text mode.
 - Profile catalog checks are manual only. `ConfigTabs` now owns the user
   interaction, while `ProfileManager` handles the file/network/hash work and
   keeps local metadata synchronized with updated local profiles.

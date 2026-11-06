@@ -81,6 +81,7 @@ set(FRONTEND_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/EgrabberConfigParser.h
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/FileIOUtils.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/FileIOUtils.h
+    ${PROJECT_SOURCE_DIR}/include/frontend/utils/ExperimentSaveLocation.h
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/JsonFlatten.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/utils/JsonFlatten.h
     ${PROJECT_SOURCE_DIR}/src/frontend/utils/JsonConfigMerge.cpp

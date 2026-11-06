@@ -271,6 +271,15 @@ created in `setupStatusSurfaces()`:
 
 ## Gotchas
 
+- **Start Experiment save dialog folder (#906).** The dialog starts in
+  `resolveExperimentSaveDirectory(save_directory, Documents)`
+  (`frontend/utils/ExperimentSaveLocation.h`, header-only): the active
+  config's `save_directory` when absolute, else
+  `<Documents>/MIB_Studio_Qt/<save_directory>` (created if missing; the same
+  root as Help ▸ Open Data Folder). It used to pass `""`, so Windows opened
+  the working directory, which for the Start-menu shortcut is
+  `C:\Program Files\MIB Studio Qt`. Guard: `frontend.experiment_save_location`.
+
 - **The window never touches `Hdf5Service` for a run.** Flush, the
   stop-time remainder, metadata, accounting, provenance and `closeFile()`
   live in [[../architecture/ExperimentCoordinator]] (the 2026-09-08 bench
