@@ -533,8 +533,8 @@ No develop UI uses them; the workspace Prepare card (A4b) will. Guard:
 
 **Live cell images (ABI 41, #716 A6a).** `monitoringCells.ts` types and checks
 the backend's live cell store ([[../services/MonitoringCellStore]]):
-`bridge.fetchMonitoringCells()` (`fetch_monitoring_cells` → the strip of recent
-cells and the pins, `MONITORING_CELLS_INVALID` on a reply that breaks the
+`bridge.fetchMonitoringCells()` (`fetch_monitoring_cells` → the strip of recent valid
+cells, the `invalid_strip` of recent invalid cells with their `reasons` (ABI next (#880, set at merge)) and the pins, `MONITORING_CELLS_INVALID` on a reply that breaks the
 contract or its caps), `bridge.monitoringCellPin(key)` (args
 `{expectedStartGeneration, captureEpoch, frameIndex, objectId}`, a pin reply with
 `outcome` from `MONITORING_CELL_PIN_OUTCOMES`, `CaptureMismatch` (6) when the key names
@@ -556,8 +556,35 @@ listing cell or a monitoring snapshot row (`MonitoringRow.start_generation` and
 canonical decimal strings and throws
 `INVALID_U64` / `INVALID_OBJECT_ID` before anything is sent. Pin, unpin and
 clear are control commands on the remote server (`VIEWER_ONLY` for a viewer).
-No develop UI uses them; the workspace Live view (A6b) will. Guard:
-`monitoringCells.test.ts`, `framePacket.test.ts` (the cell golden).
+The workspace Live view (A6b) uses the strip and the pins; the classic Monitoring sub-tab shows
+the strips (below). Guard: `monitoringCells.test.ts`, `framePacket.test.ts` (the cell golden).
+
+**Monitoring cell strips (ABI next (#880, set at merge), #866 MON-052 .. MON-055).** `areas/monitoring/CellStrips.tsx`, below
+the charts of the Monitoring sub-tab, shows the Qt tab's two strips: the last 25 **valid** and the last
+25 **invalid** cells as 100 px thumbnails, five per row in a scrollable box
+(`cellStripsModel.ts` `THUMBNAIL_SIZE` / `GRID_COLUMNS` / `STRIP_CELLS`). Thumbnails are the backend's
+object-centred crops of the processing ROI (not the whole ROI scaled down as Qt draws it: a crop
+is at most 256 px, so a wide ROI would be unreadable at 100 px). Each invalid cell carries the red
+9 px short reasons joined by " | " (No contour, Border, Area, Ring, Deform, Ratio, Focus, Wall) and a
+tooltip with the measured value and range per reason, from `fetch_monitoring_cells`
+`invalid_strip[].reasons` (the shared classifier's codes; the labels and Qt's wording are
+`REASON_LABELS` / `reasonTooltip`). A "Show Overlay" checkbox per strip (off until ticked, as Qt)
+paints the mask crop over the image on the thumbnail's canvas: the filled inner contours tinted 30 %
+and every contour outlined, blue for the target group, green valid, red invalid (`overlayRegions`,
+`composeThumbnail`: a pixel re-implementation of `createOverlayImage` without OpenCV). Empty strips,
+a row without an image (the backend's `no_image_reason`), a pull that found the cell gone or failed
+and a new capture clearing the strips (`last_capture_change`) are each said in words.
+`useMonitoringCells.ts` is the consumer of `bridge.fetchMonitoringCells` /
+`fetchMonitoringCellImage` (formerly without one): it polls the listing every 500 ms **only while the
+Monitoring sub-tab is shown** (the `isMonitoringVisible` predicate the snapshot polling uses), applies a
+listing only when its `revision` moved, pulls the crop and mask of cells the cache does not hold (a
+crop never changes) four at a time, prunes the cache to the cells the listing names (at most two
+strips) and retries a failed pull once: no per-frame or per-row work between revisions (the Qt bug
+#857 pattern is not ported), and a thumbnail redraws only when its own pixels or overlay flag change.
+It sends no command, so it is outside `ViewerGate`. Anchors: `data-tour="monitoring-cell-strips"`,
+`monitoring-valid-cells`, `monitoring-invalid-cells`, `monitoring-valid-overlay`,
+`monitoring-invalid-overlay`. Guard: `cellStripsModel.test.ts`, `CellStrips.dom.test.tsx`,
+`monitoringCells.test.ts`.
 
 ## Central profile registry (ABI 25, issue #398)
 

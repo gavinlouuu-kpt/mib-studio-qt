@@ -1300,7 +1300,12 @@ mod tests {
                 "rows carry capture_epoch as a string");
 
         let listing = reply("fetch_monitoring_cells", Value::Null);
+        // ABI next (#880, set at merge): the invalid strip is listed beside the strip (here the blobs are all valid), and
+        // every cell carries its reasons ([] for a valid one).
+        assert!(listing["invalid_strip"].as_array().is_some_and(|a| a.is_empty()), "{listing}");
+        assert_eq!(listing["caps"]["invalid_strip_max_cells"], json!(25));
         let cell = listing["strip"].as_array().unwrap().last().cloned().expect("a strip cell");
+        assert_eq!(cell["reasons"], json!([]), "a valid cell has no reasons: {cell}");
         let id = json!({ "startGeneration": cell["start_generation"], "captureEpoch": cell["capture_epoch"],
                          "frameIndex": cell["frame_index"], "objectId": cell["object_id"], "layer": "image" });
         let p = packet(id.clone());

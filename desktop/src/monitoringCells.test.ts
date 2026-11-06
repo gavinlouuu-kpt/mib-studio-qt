@@ -1,4 +1,5 @@
-// Bridge ABI 41 (#716 A6a): the live cell client against a mocked transport. Identities travel as
+// Bridge ABI 41 (#716 A6a), ABI next (#880, set at merge) (#866: the invalid strip and the rejection reasons): the live
+// cell client against a mocked transport. Identities travel as
 // canonical decimal strings, malformed ones never reach the transport, the listing and pin replies
 // are checked against the contract, and the pixels come back as frame packets of kind 5 / 6. An
 // image pull of another capture is the CAPTURE_MISMATCH error (review round 2); a pin of an ended
@@ -6,7 +7,9 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import cellGolden from "../../crates/mib-bridge/contract/fixtures/monitoring-cell-v2.json";
 import { bridge } from "./bridge";
-import { MONITORING_CELLS, MONITORING_CELL_ERROR_CODES, MONITORING_CELL_PIN_OUTCOMES } from "./bridgeContract";
+import {
+  MONITORING_CELLS, MONITORING_CELL_ERROR_CODES, MONITORING_CELL_PIN_OUTCOMES, MONITORING_CELL_REASON_CODES,
+} from "./bridgeContract";
 import {
   cellKeyArgs, cellKeyString, decodeMonitoringCellPinReply, decodeMonitoringCells, monitoringCellCaptureMismatch, pinOutcomeName,
 } from "./monitoringCells";
@@ -19,23 +22,30 @@ const cell = (frame: string, extra: Record<string, unknown> = {}) => ({
   start_generation: "18446744073709551615", capture_epoch: "3", frame_index: frame, object_id: 0, timestamp_ns: "9007199254740993",
   valid: true, target_group: false, object_count: 1, track_id: -1, centroid_x: 50, centroid_y: 38,
   bbox: { x: 40, y: 30, w: 20, h: 16 }, area: 250, deformability: 0.05, area_ratio: 1.02, ring_ratio: null,
-  youngs_modulus: 0, pixel_to_micron: 0.5,
+  youngs_modulus: 0, pixel_to_micron: 0.5, reasons: [],
   image: { width: 40, height: 36, crop_x: 30, crop_y: 20, source_width: 512, source_height: 96, has_mask: true, bytes: "2880" },
   no_image_reason: null, ...extra,
 });
+// An invalid cell as the backend lists it: valid false and why.
+const rejected = (frame: string, reasons: unknown[], extra: Record<string, unknown> = {}) =>
+  cell(frame, { valid: false, reasons, ...extra });
+const areaReason = { code: "area", value: 154.2, min: 60, max: 290 };
 const listing = (extra: Record<string, unknown> = {}) => ({
   valid: true, scope_start_generation: "18446744073709551615", ring_start_generation: "0", ring_capture_epoch: "3", revision: "17",
-  strip: [cell("9007199254740993")],
+  strip: [cell("9007199254740993")], invalid_strip: [],
   pins: [cell("12", { image: null, no_image_reason: "no image: the frame left the monitoring buffer before it was pinned" })],
   last_capture_change: null,
   stats: { strip_cells: 1, strip_bytes: "2880", pins: 1, pin_bytes: "0" },
-  caps: { strip_max_cells: 24, max_pins: 16 }, ...extra,
+  caps: { strip_max_cells: 25, invalid_strip_max_cells: 25, max_pins: 16 }, ...extra,
 });
 const golden = () => Uint8Array.from(cellGolden.hex.match(/../g)!, h => parseInt(h, 16)).buffer;
 
 it("pins the contract's outcomes and caps", () => {
   expect(MONITORING_CELL_PIN_OUTCOMES).toEqual({ Pinned: 0, PinnedWithoutImage: 1, AlreadyPinned: 2, RunMismatch: 3, NotFound: 4, LimitReached: 5, CaptureMismatch: 6 });
-  expect(MONITORING_CELLS).toMatchObject({ strip_max_cells: 24, max_pins: 16, crop_max_side: 256, strip_max_bytes: 4194304, pin_max_bytes: 4194304 });
+  expect(MONITORING_CELLS).toMatchObject({ strip_max_cells: 25, invalid_strip_max_cells: 25, invalid_strip_max_bytes: 4194304,
+    max_pins: 16, crop_max_side: 256, strip_max_bytes: 4194304, pin_max_bytes: 4194304 });
+  // The reason codes, in the classifier's order (pinned in the C++ store test and crates/mib-bridge/tests/contract.rs too).
+  expect(MONITORING_CELL_REASON_CODES).toEqual(["no_contour", "border", "area", "ring", "deform", "area_ratio", "focus", "wall"]);
   expect(pinOutcomeName(3)).toBe("RunMismatch");
   expect(pinOutcomeName(6)).toBe("CaptureMismatch");
   expect(pinOutcomeName(undefined)).toBe("unknown");
@@ -58,10 +68,10 @@ it("fetches and checks the listing: exact identities, image xor reason", async (
   // ended keeps its identity and measurements, without an image.
   const ended = cell("12", { image: null, no_image_reason: "no image: capture 3 ended (the camera stopped); the pin keeps its measurements" });
   invoke.mockResolvedValueOnce(listing({ ring_capture_epoch: "4", strip: [], pins: [ended],
-    last_capture_change: { capture_epoch: "4", reason: "the camera stopped", pins_ended: 1, pins_dropped: 0, strip_dropped: 7 } }));
+    last_capture_change: { capture_epoch: "4", reason: "the camera stopped", pins_ended: 1, pins_dropped: 0, strip_dropped: 7, invalid_strip_dropped: 3 } }));
   const changed = await bridge.fetchMonitoringCells();
   if (!changed.valid) throw new Error("valid listing expected");
-  expect(changed.last_capture_change).toEqual({ capture_epoch: "4", reason: "the camera stopped", pins_ended: 1, pins_dropped: 0, strip_dropped: 7 });
+  expect(changed.last_capture_change).toEqual({ capture_epoch: "4", reason: "the camera stopped", pins_ended: 1, pins_dropped: 0, strip_dropped: 7, invalid_strip_dropped: 3 });
   expect([changed.pins[0].capture_epoch, changed.pins[0].image, changed.pins[0].area]).toEqual(["3", null, 250]);
   expect(changed.pins[0].no_image_reason).toContain("capture 3 ended (the camera stopped)");
   invoke.mockResolvedValueOnce({ valid: false });
@@ -73,7 +83,18 @@ it.each([
   ["image and reason together", { strip: [cell("1", { no_image_reason: "x" })] }],
   ["neither image nor reason", { strip: [cell("1", { image: null })] }],
   ["a crop larger than crop_max_side", { strip: [cell("1", { image: { ...cell("1").image, width: 257 } })] }],
-  ["a strip over its cap", { strip: Array.from({ length: 25 }, (_, i) => cell(String(i))) }],
+  ["a strip over its cap", { strip: Array.from({ length: 26 }, (_, i) => cell(String(i))) }],
+  ["an invalid strip over its cap", { invalid_strip: Array.from({ length: 26 }, (_, i) => rejected(String(i), [])) }],
+  ["a listing without its invalid strip", { invalid_strip: undefined }],
+  ["a valid cell in the invalid strip", { invalid_strip: [cell("1")] }],
+  ["an invalid cell in the strip", { strip: [rejected("1", [areaReason])] }],
+  ["an invalid strip cell of another capture", { invalid_strip: [rejected("1", [], { capture_epoch: "2" })] }],
+  ["a cell without its reasons", { invalid_strip: [rejected("1", [], { reasons: undefined })] }],
+  ["a valid cell with reasons", { strip: [cell("1", { reasons: [areaReason] })] }],
+  ["an unknown reason code", { invalid_strip: [rejected("1", [{ ...areaReason, code: "blurry" }])] }],
+  ["a reason listed twice", { invalid_strip: [rejected("1", [areaReason, areaReason])] }],
+  ["a reason without its value", { invalid_strip: [rejected("1", [{ code: "area", min: 1, max: 2 }])] }],
+  ["a reason with a non-numeric range", { invalid_strip: [rejected("1", [{ ...areaReason, max: "290" }])] }],
   ["pins over their cap", { pins: Array.from({ length: 17 }, (_, i) => cell(String(i))) }],
   ["a non-canonical generation", { scope_start_generation: "07" }],
   ["a cell without its capture epoch", { strip: [cell("1", { capture_epoch: undefined })] }],
@@ -81,12 +102,36 @@ it.each([
   ["a strip cell of another capture", { strip: [cell("1", { capture_epoch: "2" })] }],
   ["a pin of another capture with an image", { pins: [cell("1", { capture_epoch: "2" })] }],
   ["a listing without last_capture_change", { last_capture_change: undefined }],
-  ["a capture change without its reason", { last_capture_change: { capture_epoch: "3", reason: 1, pins_ended: 0, pins_dropped: 0, strip_dropped: 0 } }],
-  ["a capture change with a rounded epoch", { last_capture_change: { capture_epoch: 3, reason: "x", pins_ended: 0, pins_dropped: 0, strip_dropped: 0 } }],
-  ["a capture change without its ended pins", { last_capture_change: { capture_epoch: "3", reason: "x", pins_dropped: 0, strip_dropped: 0 } }],
+  ["a capture change without its reason", { last_capture_change: { capture_epoch: "3", reason: 1, pins_ended: 0, pins_dropped: 0, strip_dropped: 0, invalid_strip_dropped: 0 } }],
+  ["a capture change with a rounded epoch", { last_capture_change: { capture_epoch: 3, reason: "x", pins_ended: 0, pins_dropped: 0, strip_dropped: 0, invalid_strip_dropped: 0 } }],
+  ["a capture change without its ended pins", { last_capture_change: { capture_epoch: "3", reason: "x", pins_dropped: 0, strip_dropped: 0, invalid_strip_dropped: 0 } }],
+  ["a capture change without its invalid strip count", { last_capture_change: { capture_epoch: "3", reason: "x", pins_ended: 0, pins_dropped: 0, strip_dropped: 0 } }],
 ])("rejects %s", async (_why, extra) => {
   invoke.mockResolvedValueOnce(listing(extra));
   await expect(bridge.fetchMonitoringCells()).rejects.toThrow("MONITORING_CELLS_INVALID");
+});
+
+it("decodes the invalid strip with each cell's reasons (the classifier's codes, value and range)", async () => {
+  const reasons = [
+    { code: "area", value: 154.2, min: 60, max: 290 },
+    { code: "ring", value: 5, min: 15, max: 25 },
+    { code: "area_ratio", value: 2.25, min: null, max: 1.5 },
+    { code: "focus", value: null, min: 5, max: 50 }, // a variance that could not be computed
+    { code: "wall", value: 7.5, min: null, max: null },
+  ];
+  invoke.mockResolvedValueOnce(listing({
+    invalid_strip: [rejected("20", reasons), rejected("21", [{ code: "no_contour", value: null, min: null, max: null }]), rejected("22", [])],
+    stats: { strip_cells: 1, invalid_strip_cells: 3, invalid_strip_bytes: "8640" },
+  }));
+  const l = await bridge.fetchMonitoringCells();
+  if (!l.valid) throw new Error("valid listing expected");
+  expect(l.invalid_strip.map(c => c.frame_index)).toEqual(["20", "21", "22"]);
+  expect(l.invalid_strip.every(c => !c.valid && c.capture_epoch === l.ring_capture_epoch)).toBe(true);
+  expect(l.invalid_strip[0].reasons).toEqual(reasons);
+  expect(l.invalid_strip[1].reasons).toEqual([{ code: "no_contour", value: null, min: null, max: null }]);
+  expect(l.invalid_strip[2].reasons).toEqual([]); // the config no longer rejects it
+  expect(l.strip[0].reasons).toEqual([]);
+  expect(l.invalid_strip[0].image?.has_mask).toBe(true);
 });
 
 it("pins by identity with decimal strings; refusals keep their message", async () => {
@@ -186,5 +231,8 @@ it("reports an image of another capture as CAPTURE_MISMATCH with the plain reaso
 
 it("decodes a listing straight from the decoder too", () => {
   const l = decodeMonitoringCells(listing({ strip: [], pins: [] }));
-  expect(l.valid && l.strip.length === 0 && l.pins.length === 0).toBe(true);
+  expect(l.valid && l.strip.length === 0 && l.invalid_strip.length === 0 && l.pins.length === 0).toBe(true);
+  // A pin of an invalid cell carries its reasons.
+  const pinned = decodeMonitoringCellPinReply({ ok: true, outcome: 0, message: "pinned", cell: rejected("5", [areaReason]) });
+  expect(pinned.cell?.reasons).toEqual([areaReason]);
 });

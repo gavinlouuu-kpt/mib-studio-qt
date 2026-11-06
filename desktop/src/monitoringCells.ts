@@ -1,11 +1,15 @@
-// Live cell images for the Monitoring / Live views (bridge ABI 41, #716 A6a).
+// Live cell images for the Monitoring / Live views (bridge ABI 41, #716 A6a; ABI next (#880, set at merge), #866: the
+// invalid strip and the rejection reasons).
 //
-// The backend owns the copies: a bounded strip of the most recently detected
-// cells and the operator's pins (bridge-contract.json `monitoring_cells`).
+// The backend owns the copies: a bounded strip of the most recently detected valid cells, a strip
+// of the most recent invalid ones (each with why it failed validation) and the operator's pins
+// (bridge-contract.json `monitoring_cells`).
 // This module only types and checks what the commands return. Pixels never
 // travel in JSON: `bridge.fetchMonitoringCellImage` pulls a frame packet
 // (pull kind 5 = image, 6 = mask) by the cell's identity.
-import { MONITORING_CELLS, MONITORING_CELL_ERROR_CODES, MONITORING_CELL_PIN_OUTCOMES } from "./bridgeContract";
+import {
+  MONITORING_CELLS, MONITORING_CELL_ERROR_CODES, MONITORING_CELL_PIN_OUTCOMES, MONITORING_CELL_REASON_CODES,
+} from "./bridgeContract";
 import { decimalU64 } from "./framePacket";
 
 /** A monitoring row's identity: the run active when its frame entered processing (0 = outside a
@@ -39,6 +43,19 @@ export interface MonitoringCellImageInfo {
   bytes: string;
 }
 
+export type MonitoringCellReasonCode = (typeof MONITORING_CELL_REASON_CODES)[number];
+
+/** One reason an invalid cell failed validation (the shared classifier's, the one the live
+ *  invalid-reason histogram uses): `value` is what was measured and [min, max] the configured range
+ *  it was held against. null where a reason has none (no_contour, border; no minimum for
+ *  area_ratio; no band for wall when none is configured) or the number is not finite. */
+export interface MonitoringCellReason {
+  code: MonitoringCellReasonCode;
+  value: number | null;
+  min: number | null;
+  max: number | null;
+}
+
 /** One cell: the row's measurements as recorded, and either the crop's geometry or the plain reason
  *  it has none. Non-finite numbers arrive as null. Centroid, bbox and crop_x / crop_y are in the
  *  row image's coordinates (the processing ROI, source_width x source_height) in every mode. */
@@ -57,6 +74,9 @@ export interface MonitoringCell extends MonitoringCellKey {
   ring_ratio: number | null;
   youngs_modulus: number | null;
   pixel_to_micron: number | null;
+  /** Why an invalid cell failed validation, in the classifier's order; [] for a valid cell (and for
+   *  a pin whose row only the bounded index still describes). */
+  reasons: MonitoringCellReason[];
   image: MonitoringCellImageInfo | null;
   no_image_reason: string | null;
 }
@@ -74,6 +94,8 @@ export interface MonitoringCaptureChange {
   /** Pins removed (a run start). */
   pins_dropped: number;
   strip_dropped: number;
+  /** Cells the invalid strip held when the capture changed. */
+  invalid_strip_dropped: number;
 }
 
 export interface MonitoringCellsListing {
@@ -87,8 +109,11 @@ export interface MonitoringCellsListing {
   ring_capture_epoch: string;
   /** Bumps whenever the strip or the pins change. */
   revision: string;
-  /** Oldest -> newest. */
+  /** The most recent valid cells, oldest -> newest (at most caps.strip_max_cells). */
   strip: MonitoringCell[];
+  /** The most recent invalid cells, oldest -> newest (at most caps.invalid_strip_max_cells), each
+   *  with its reasons. */
+  invalid_strip: MonitoringCell[];
   /** In pin order; a pin whose capture ended has no image until it is unpinned. */
   pins: MonitoringCell[];
   /** null when the capture has not changed since the backend started. */
@@ -160,6 +185,26 @@ export function cellKeyString(key: MonitoringCellKeyInput): string {
   return `${decimalU64(key.start_generation)}:${decimalU64(key.capture_epoch)}:${decimalU64(key.frame_index)}:${key.object_id}`;
 }
 
+const REASON_CODES = new Set<string>(MONITORING_CELL_REASON_CODES);
+
+function decodeReasons(raw: unknown): MonitoringCellReason[] {
+  if (!Array.isArray(raw)) return invalid("reasons is not an array");
+  if (raw.length > MONITORING_CELL_REASON_CODES.length) invalid("more reasons than reason codes");
+  const seen = new Set<string>();
+  return raw.map((r, i) => {
+    if (!isObject(r)) return invalid(`reasons[${i}] is not an object`);
+    if (typeof r.code !== "string" || !REASON_CODES.has(r.code)) return invalid(`reasons[${i}].code is not a contract reason code`);
+    if (seen.has(r.code)) invalid(`reasons[${i}].code ${r.code} is listed twice`);
+    seen.add(r.code);
+    return {
+      code: r.code as MonitoringCellReasonCode,
+      value: numberOrNull(r.value, `reasons[${i}].value`),
+      min: numberOrNull(r.min, `reasons[${i}].min`),
+      max: numberOrNull(r.max, `reasons[${i}].max`),
+    };
+  });
+}
+
 export function decodeMonitoringCell(raw: unknown): MonitoringCell {
   if (!isObject(raw)) invalid("cell is not an object");
   const bbox = isObject(raw.bbox) ? raw.bbox : invalid("bbox");
@@ -182,6 +227,9 @@ export function decodeMonitoringCell(raw: unknown): MonitoringCell {
   }
   const reason = raw.no_image_reason;
   if (reason !== null && typeof reason !== "string") invalid("no_image_reason");
+  const reasons = decodeReasons(raw.reasons);
+  const valid = boolean(raw.valid, "valid");
+  if (valid && reasons.length > 0) invalid("a valid cell lists reasons");
   if ((image === null) === (reason === null)) invalid("exactly one of image and no_image_reason");
   return {
     start_generation: decimal(raw.start_generation, "start_generation"),
@@ -189,7 +237,7 @@ export function decodeMonitoringCell(raw: unknown): MonitoringCell {
     frame_index: decimal(raw.frame_index, "frame_index"),
     object_id: integer(raw.object_id, "object_id"),
     timestamp_ns: decimal(raw.timestamp_ns, "timestamp_ns"),
-    valid: boolean(raw.valid, "valid"),
+    valid,
     target_group: boolean(raw.target_group, "target_group"),
     object_count: integer(raw.object_count, "object_count"),
     track_id: integer(raw.track_id, "track_id"),
@@ -207,6 +255,7 @@ export function decodeMonitoringCell(raw: unknown): MonitoringCell {
     ring_ratio: numberOrNull(raw.ring_ratio, "ring_ratio"),
     youngs_modulus: numberOrNull(raw.youngs_modulus, "youngs_modulus"),
     pixel_to_micron: numberOrNull(raw.pixel_to_micron, "pixel_to_micron"),
+    reasons,
     image,
     no_image_reason: reason as string | null,
   };
@@ -217,8 +266,10 @@ export function decodeMonitoringCells(raw: unknown): MonitoringCellsReply {
   if (!isObject(raw)) invalid("listing is not an object");
   if (raw.valid === false) return { valid: false };
   if (raw.valid !== true) invalid("valid");
-  if (!Array.isArray(raw.strip) || !Array.isArray(raw.pins)) invalid("strip / pins are not arrays");
+  if (!Array.isArray(raw.strip) || !Array.isArray(raw.invalid_strip) || !Array.isArray(raw.pins))
+    invalid("strip / invalid_strip / pins are not arrays");
   if (raw.strip.length > MONITORING_CELLS.strip_max_cells) invalid("strip over its cap");
+  if (raw.invalid_strip.length > MONITORING_CELLS.invalid_strip_max_cells) invalid("invalid_strip over its cap");
   if (raw.pins.length > MONITORING_CELLS.max_pins) invalid("pins over their cap");
   if (!isObject(raw.stats) || !isObject(raw.caps)) invalid("stats / caps");
   let change: MonitoringCaptureChange | null = null;
@@ -232,14 +283,20 @@ export function decodeMonitoringCells(raw: unknown): MonitoringCellsReply {
       pins_ended: integer(c.pins_ended, "last_capture_change.pins_ended"),
       pins_dropped: integer(c.pins_dropped, "last_capture_change.pins_dropped"),
       strip_dropped: integer(c.strip_dropped, "last_capture_change.strip_dropped"),
+      invalid_strip_dropped: integer(c.invalid_strip_dropped, "last_capture_change.invalid_strip_dropped"),
     };
   }
   const ringCaptureEpoch = decimal(raw.ring_capture_epoch, "ring_capture_epoch");
   const strip = raw.strip.map(decodeMonitoringCell);
+  const invalidStrip = raw.invalid_strip.map(decodeMonitoringCell);
   const pins = raw.pins.map(decodeMonitoringCell);
   // The strip holds cells of the current capture only, and a pin of another capture has no image:
   // anything else is a contract breach.
   if (strip.some(c => c.capture_epoch !== ringCaptureEpoch)) invalid("a strip cell of another capture is listed");
+  if (invalidStrip.some(c => c.capture_epoch !== ringCaptureEpoch)) invalid("an invalid strip cell of another capture is listed");
+  // Each strip holds one kind: a valid cell in the invalid strip (or the reverse) is a contract breach.
+  if (strip.some(c => !c.valid)) invalid("an invalid cell is listed in the valid strip");
+  if (invalidStrip.some(c => c.valid)) invalid("a valid cell is listed in the invalid strip");
   if (pins.some(c => c.capture_epoch !== ringCaptureEpoch && c.image !== null))
     invalid("a pin of an ended capture is listed with an image");
   return {
@@ -249,6 +306,7 @@ export function decodeMonitoringCells(raw: unknown): MonitoringCellsReply {
     ring_capture_epoch: ringCaptureEpoch,
     revision: decimal(raw.revision, "revision"),
     strip,
+    invalid_strip: invalidStrip,
     pins,
     last_capture_change: change,
     stats: raw.stats as Record<string, number | string>,

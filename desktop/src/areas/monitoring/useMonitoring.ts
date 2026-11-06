@@ -60,10 +60,14 @@ export type MonitoringState = ReturnType<typeof useMonitoringState>;
 type MonitoringPollingDeps = Pick<ShellState, "ready" | "tab"> & Pick<MonitoringState, "expTab" | "setMonSnapshot">
   & Pick<HardwareState, "setTrigStatus">;
 
+/** The one visibility predicate of Monitoring (BE-5): the Experiment stage with its Monitoring
+ *  sub-tab shown. The snapshot polling and the live cell strips (CellStrips.tsx) both gate on it. */
+export const isMonitoringVisible = (tab: string, expTab: string): boolean => tab === "experiment" && expTab === "monitoring";
+
 export function useMonitoringPolling({ ready, tab, expTab, setMonSnapshot, setTrigStatus }: MonitoringPollingDeps) {
   // Monitoring is visibility-gated (BE-5): accumulation and its per-frame
   // image clones run only while the Monitoring view is actually shown.
-  const monitoringVisible = tab === "experiment" && expTab === "monitoring";
+  const monitoringVisible = isMonitoringVisible(tab, expTab);
   useEffect(() => {
     if (!ready) return;
     bridge.monitoringSetActive(monitoringVisible).catch(() => {});

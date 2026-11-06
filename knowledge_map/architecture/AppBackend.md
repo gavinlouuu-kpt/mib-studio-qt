@@ -564,7 +564,9 @@ the store is destroyed before the ring it reads. [[ExperimentCoordinator]]
 calls `beginRun` when a run reaches Active; the facade serves
 `fetchMonitoringCellsJson` / `pinMonitoringCellJson` / `unpinMonitoringCell` /
 `clearMonitoringCellPins` / `fetchMonitoringCellImage` and feeds the rows
-`fetchMonitoringSnapshot` served into the store's bounded row index.
+`fetchMonitoringSnapshot` served into the store's bounded row index. Since ABI next (#880, set at merge)
+(#866) the listing also carries the invalid strip with each cell's rejection
+reasons (`monitoringCellJson`).
 
 **Capture changes (review rounds 2-3 of #749).** Pins belong to the capture
 that made them. [[../services/MonitoringCellStore]] is the one authority for the
