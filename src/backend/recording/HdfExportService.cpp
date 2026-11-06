@@ -175,6 +175,19 @@ std::string HdfExportService::nextAvailableName(const std::string& parentDir, co
     return (parent / (prefix + std::to_string(candidate) + suffix)).string();
 }
 
+std::string HdfExportService::nextAvailableFcsPath(const std::string& parentDir, const std::string& base)
+{
+    const fs::path parent(parentDir);
+    std::error_code ec;
+    for (int suffix = 1; suffix < 1000000; ++suffix) {
+        const std::string stem = suffix == 1 ? base : base + "_" + std::to_string(suffix);
+        const fs::path fcs = parent / (stem + ".fcs");
+        const fs::path map = parent / (stem + "_event_map.csv");
+        if (!fs::exists(fcs, ec) && !fs::exists(map, ec)) return fcs.string();
+    }
+    return (parent / (base + "_1000000.fcs")).string();
+}
+
 HdfExportResult HdfExportService::run(const HdfExportRequest& request, const HdfExportCancelToken& cancel,
                                       const HdfExportProgressFn& onProgress) const
 {

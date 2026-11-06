@@ -283,6 +283,27 @@ bool loadFromAvi(const std::string& aviPath,
     return true;
 }
 
+size_t countSourceFrames(const std::string& kind,const std::string& path) {
+    std::error_code ec;
+    if(kind=="folder") {
+        if(!fs::is_directory(path,ec))return 0;
+        size_t count=0;
+        for(auto& entry:fs::directory_iterator(path,ec)) {
+            if(ec)break;
+            if(entry.is_regular_file(ec) && isSupportedImageExt(entry.path().extension().string()))++count;
+        }
+        return count;
+    }
+    if(kind=="avi") {
+        if(!fs::is_regular_file(path,ec))return 0;
+        cv::VideoCapture cap(path);
+        if(!cap.isOpened())return 0;
+        const double frames=cap.get(cv::CAP_PROP_FRAME_COUNT);
+        return frames>0 ? static_cast<size_t>(frames) : 0;
+    }
+    return 0;
+}
+
 bool loadPreview(const std::string& kind,const std::string& path,const std::string& dataset,size_t index,cv::Mat& image) {
     constexpr size_t maxBytes=64*1024*1024;
     if(kind=="hdf") {

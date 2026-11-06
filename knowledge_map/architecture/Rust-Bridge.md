@@ -992,6 +992,19 @@ attach to):
   `review_export_metrics/all`, `review_batch_export`,
   `review_regenerate_masks` (`review_regenerate_sources`),
   `review_export_charts` (kind `ExportCharts` = 6),
+  `review_export_fcs` (review ABI 7, #867: kind `ExportFcs` = 9, an explicit
+  `.fcs` path and its event map as one no-replace pair) and
+  `review_batch_export_fcs` (kind `BatchExport`, `<root>/<base>[_N].fcs` per
+  source at its recorded factor, recordings refused),
+  review ABI 8 (#867, the Qt BatchMaskDialog's groups):
+  `fetch_review_regenerate_setup(source, source_path)` → the
+  `review_regenerate_setup` JSON (preview set and frame count, recorded or
+  default config fields, recorded ROI, saved background, Qt's core-mismatch
+  text; refused while a job runs), `fetch_review_regenerate_preview(source,
+  source_path, index)` → a Mono8 `ReviewFrame` (Tauri pull kind `review`), and
+  `review_regenerate_masks_json(request_json)` (the regenerate job with
+  `image_processing`, `roi` and `background` overrides,
+  `ReviewJobs::parseRegenerateMasksJson`),
   `review_compute_core` + `fetch_review_computed_core_json`,
   `review_request_density` + `fetch_review_density` (contract
   `review_density` constants), `review_jobs_busy`; the jobs run one at a

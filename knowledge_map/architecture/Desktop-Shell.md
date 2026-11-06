@@ -638,12 +638,37 @@ ROI/calibration/realtime/camera settings. The old live JSON editor remains a
 separate, non-persistent path. DOM tests cover conflict, partial outcomes, repeated
 saves, navigation, command failures and duplicate submissions.
 
-`exportControls.tsx` uses the shared export engine for CSV/images/all, retains
-status across navigation, and exposes cancellation and partial paths. Polls are
-single-flight and status errors do not erase command failures. Conversion uses
-known current calibration or delegates to the backend's current factor; no
-fabricated UI fallback value is sent. Chart images/series range controls remain
-unexposed. Config and export controls have interaction tests, not just codec tests.
+`exportControls.tsx` uses the shared export engine for CSV/images/all/charts and
+FCS (#867), retains status across navigation, and exposes cancellation and partial
+paths. Polls are single-flight and status errors do not erase command failures.
+Every export sends `conversion_factor_source: "recorded"`: each file is exported at
+the px→µm factor it records, and the live processing factor (when known; else the
+backend's) is only the fallback for a file that records none (#854, as Qt). Dialogs
+follow the Qt tab (`reviewExport.ts` `exportDialogPlan`: titles, `<base>_metrics.csv`
+and `<base>.fcs` defaults, HDF5 + All Files), the folder of the last successful export
+is remembered (`mib.review.lastExportDir`), batch metrics / FCS refuse recordings, and
+keep-partial is an option (default off). Config and export controls have interaction
+tests, not just codec tests.
+
+`reanalysisControls.tsx` (the Review stage's Regenerate masks panel, #867) follows the Qt
+`BatchMaskDialog` on the components it shares with YOFO Review
+(`desktop/src/review/regenerate/`: `RoiPreviewPanel`, `ProcessingConfigGroup`,
+`regenerateForm.ts`). **Input source**: the open HDF file with "Regenerate entire HDF5 file"
+(default on: dataset `all`) or a range (dataset, 0-based Start, Count 100), an image folder or
+an AVI. **Preview & ROI**: frames by `fetch_review_reanalysis_preview` with Prev / Next and
+"Frame i / n" (folder / AVI "Frame i": the facade has no frame count), the ROI pre-filled from
+the review metadata and drawn by dragging (Full frame sends the frame's own size, since the
+facade refuses a zero-size ROI and would otherwise keep the recorded one), Set as Background /
+Clear / Use saved, the synthetic box on by default. **Processing Config**: the eight Qt fields
+from the live config, "Reset to live defaults" re-fetches it; only those eight are sent as
+`image_processing`. The input budget defaults to the contract maxima (1 000 000 frames /
+16 384 MiB); the Save dialog proposes `<base>_remasked.h5` beside the source. Before Run the
+panel shows Qt's processing-core mismatch text (metadata version / source / tag against
+`fetch_processing_core_status`) and what the run is validated at; the completed status names
+the factor, its source and the E-LUT (`pixel_to_micron*`, `emodulus_lut`). A run started here
+opens its output in the Review stage once (`useReview.ts` `openReviewPath`). The draft lives
+in the `useReanalysis` hook, so it survives leaving Review. `data-tour` anchors:
+`studio-regen-source`, `studio-regen-run` and the shared `regen-*` ones.
 
 
 Monitoring placeholders are now bounded SVG plots over existing snapshot rows:
@@ -759,6 +784,11 @@ owned session. Desktop CI now runs this in addition to unit tests and launch smo
 Initial local pass: 2 persistence-admitted/committed frames, 2 exported images.
 The gate exposed and drove fixes for the disabled Start button and missing
 realtime processing consumer. It does not establish physical hardware timing.
+It finds each GTK dialog by window title. The Review open dialog is matched as
+`Open HDF File|Open recording` (an xdotool regex), because MIB Studio's Review tab
+now uses Qt's "Open HDF File" title (#873) and the YOFO Review panel keeps "Open recording".
+The Export All folder picker is matched as `Select Export Root Directory` (Qt's title, `exportDialogPlan` in
+`reviewExport.ts`), which replaced "Choose export parent folder" when #873 moved the Review tab to Qt's titles.
 
 ### Managed profiles and startup provenance
 

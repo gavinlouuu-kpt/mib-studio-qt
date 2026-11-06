@@ -30,6 +30,7 @@ fn review_bridge_reads_the_fixture_file() {
     assert_eq!(contract["review_abi_version"].as_u64().unwrap() as u32, ffi::review_bridge_abi_version());
     assert_eq!(contract["review_pixel_formats"]["Rgb8"].as_u64().unwrap(), RGB8);
     assert_eq!(contract["overlay_modes"]["FilteredMask"].as_u64().unwrap(), 4);
+    assert_eq!(contract["review_operation_kinds"]["ExportFcs"].as_u64().unwrap(), 9);
 
     let mut bridge = ffi::new_review_bridge();
     assert!(bridge.pin_mut().initialize(""));
@@ -153,6 +154,41 @@ fn review_bridge_reads_the_fixture_file() {
     assert!(text.starts_with("Frame Type"), "csv header");
     assert!(!bridge.review_jobs_busy());
     let _ = std::fs::remove_file(&csv);
+    // Export FCS (review ABI 7, #867): kind ExportFcs 9, the .fcs path as the
+    // message, the event map beside it; an existing pair is never replaced.
+    let fcs = fixture_path("fcs").with_extension("fcs");
+    let map = fcs.with_file_name(format!("{}_event_map.csv", fcs.file_stem().unwrap().to_string_lossy()));
+    let _ = std::fs::remove_file(&fcs);
+    let _ = std::fs::remove_file(&map);
+    let started = bridge.pin_mut().review_export_fcs(&fcs.to_string_lossy());
+    assert!(started.ok && started.operation_id != 0, "{}", started.message);
+    let done = wait_terminal(&mut bridge, started.operation_id);
+    assert_eq!((done.kind, done.state), (9, 2), "fcs: {}", done.message);
+    assert_eq!(done.message, format!("{} (10 events: 10 valid, 0 invalid)", fcs.to_string_lossy()));
+    assert!(std::fs::read(&fcs).unwrap().starts_with(b"FCS3.1"), "an FCS 3.1 file");
+    assert!(std::fs::read_to_string(&map).unwrap().starts_with("fcs_event_index,"), "its event map");
+    let again = bridge.pin_mut().review_export_fcs(&fcs.to_string_lossy());
+    assert!(again.ok, "{}", again.message);
+    let done = wait_terminal(&mut bridge, again.operation_id);
+    assert_eq!((done.kind, done.state), (9, 3), "existing pair refused: {}", done.message);
+    // Batch Export FCS: one <base>[_N].fcs pair per source (kind BatchExport).
+    let root = std::env::temp_dir().join(format!("mib_bridge_fcs_batch_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let source = path.to_string_lossy().into_owned();
+    let started = bridge.pin_mut().review_batch_export_fcs(vec![source.clone(), source.clone()], &root.to_string_lossy());
+    assert!(started.ok, "{}", started.message);
+    let done = wait_terminal(&mut bridge, started.operation_id);
+    assert_eq!((done.kind, done.state), (2, 2), "fcs batch: {}", done.message);
+    assert!(done.message.starts_with("exported 2 of 2"), "{}", done.message);
+    let base = path.file_stem().unwrap().to_string_lossy().into_owned();
+    for stem in [base.clone(), format!("{base}_2")] {
+        assert!(root.join(format!("{stem}.fcs")).is_file() && root.join(format!("{stem}_event_map.csv")).is_file(), "{stem}");
+    }
+    assert!(!bridge.pin_mut().review_batch_export_fcs(Vec::new(), &root.to_string_lossy()).ok);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&fcs);
+    let _ = std::fs::remove_file(&map);
     // Density: one level per scatter point; the fixture has a stored record,
     // so nothing is computed.
     let started = bridge.pin_mut().review_request_density(1.0, 0.9, 8, true);
@@ -208,6 +244,35 @@ fn review_bridge_reads_the_fixture_file() {
     );
     let _ = std::fs::remove_file(&existing);
     let _ = std::fs::remove_file(&fresh);
+    // Review ABI 8 (#867): the Qt BatchMaskDialog's setup, preview and
+    // overrides. The fixture: 10 valid frames, recorded ROI and background.
+    let setup: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_review_regenerate_setup(2, "")).unwrap();
+    assert_eq!(setup["ok"], true, "{setup}");
+    assert_eq!(setup["preview_dataset"], "/valid_frames/images");
+    assert_eq!(setup["frame_count"], "10");
+    assert_eq!(setup["roi_recorded"], true);
+    assert!(setup["roi"]["w"].as_u64().unwrap() > 0 && setup["config"]["gaussian_blur_size"].is_i64(), "{setup}");
+    let refused: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_review_regenerate_setup(99, "")).unwrap();
+    assert_eq!(refused["ok"], false);
+    let preview = bridge.pin_mut().fetch_review_regenerate_preview(2, "", 9);
+    assert!(preview.valid && preview.frame_index == 9 && preview.data.len() as u64 == preview.width * preview.height);
+    assert!(!bridge.pin_mut().fetch_review_regenerate_preview(2, "", 10).valid, "past the set");
+    let dialog = fixture_path("regen_dialog");
+    let _ = std::fs::remove_file(&dialog);
+    let request = serde_json::json!({
+        "source": 2, "output_path": dialog.to_string_lossy(), "use_recorded_config": true,
+        "image_processing": {"gaussian_blur_size": 5, "area_threshold_min": 1},
+        "roi": {"x": 0, "y": 0, "w": 0, "h": 0}, "background": "frame",
+        "background_index": 3, "background_dataset": "/valid_frames/images",
+    });
+    let started = bridge.pin_mut().review_regenerate_masks_json(&request.to_string());
+    assert!(started.ok, "{}", started.message);
+    let done = wait_terminal(&mut bridge, started.operation_id);
+    assert_eq!((done.kind, done.state), (3, 2), "regenerate json: {}", done.message);
+    assert!(dialog.exists());
+    let _ = std::fs::remove_file(&dialog);
+    let bad = bridge.pin_mut().review_regenerate_masks_json(r#"{"output_path":"x.h5","background":"saved"}"#);
+    assert!(!bad.ok && bad.operation_id == 0 && bad.message.contains("background"), "{}", bad.message);
     // Refusals: unknown regenerate source, empty batch.
     assert!(!bridge.pin_mut().review_regenerate_masks(99, "", 0, 0, "x.h5", true, false).ok);
     assert!(!bridge.pin_mut().review_batch_export(Vec::new(), "/tmp", true, true, 0, u64::MAX).ok);
@@ -338,8 +403,8 @@ fn run_identity_in_info_and_the_probe() {
         serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
     assert_eq!(
         ffi::review_bridge_abi_version(),
-        6,
-        "review ABI 6 (#716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
+        8,
+        "review ABI 8 (#867 regenerate setup / preview / JSON request; 7 is #867 Export FCS; 6 is #716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
     );
     let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
     assert_eq!(max_paths, 256);

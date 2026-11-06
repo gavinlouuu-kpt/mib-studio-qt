@@ -29,7 +29,7 @@ import { REVIEW_OPERATION_KINDS } from "./reviewContract";
 import { ChartsView } from "./charts/ChartsView";
 import { gatherChartInputs, renderChartPngs, stageCharts, type ChartViewState } from "./charts/chartExport";
 import { JobDialog, SeriesPrompt } from "./exports/ExportDialogs";
-import { defaultMetricsName, dirName, exportDir, joinPath, rememberExportDir, seriesRangeFor, type SeriesChoice } from "./exports/exportHelpers";
+import { defaultFcsName, defaultMetricsName, dirName, exportDir, joinPath, rememberExportDir, seriesRangeFor, withFcsExtension, type SeriesChoice } from "./exports/exportHelpers";
 import { useReviewJobs, type TrackedJob } from "./exports/useReviewJobs";
 import { RegenerateMasksDialog, type RegenerateRequest } from "./RegenerateMasks";
 import { FrameViewer } from "./FrameViewer";
@@ -332,6 +332,42 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     }
   }, [info, jobs, log]);
 
+  // Export FCS 3.1 (#576, #867): the Qt dialog ("Export FCS 3.1", FCS + All
+  // Files, `<base>.fcs` in the last export dir, `.fcs` appended); the backend
+  // writes the .fcs and its event map as one pair and never replaces one.
+  const onExportFcs = useCallback(async () => {
+    if (!info) return;
+    try {
+      const dir = exportDir(info.file_path);
+      const name = defaultFcsName(info.file_path, dir ? await reviewBridge.listDir(dir) : []);
+      const picked = await save({
+        title: "Export FCS 3.1",
+        filters: [{ name: "FCS 3.1 Files", extensions: ["fcs"] }, { name: "All Files", extensions: ["*"] }],
+        defaultPath: joinPath(dir, name),
+      });
+      if (!picked) return;
+      const path = withFcsExtension(picked);
+      remember(await jobs.start("Export FCS", REVIEW_OPERATION_KINDS.ExportFcs, () => reviewBridge.exportFcs(path)), dirName(path));
+    } catch (e) {
+      log(`FCS export error: ${e}`);
+    }
+  }, [info, jobs, log]);
+
+  // Batch Export FCS: HDF files, then a folder; one pair per file at its own
+  // recorded factor; recordings refused (the Qt batch).
+  const onBatchFcs = useCallback(async () => {
+    try {
+      const picked = await open({ title: "Select HDF Files for Batch FCS Export", filters: H5_MULTI, multiple: true, defaultPath: info ? dirName(info.file_path) || undefined : undefined });
+      const sources = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+      if (sources.length === 0) return;
+      const root = await open({ title: "Select Directory for FCS Files", directory: true, multiple: false, defaultPath: exportDir(info?.file_path ?? sources[0]) || undefined });
+      if (typeof root !== "string") return;
+      remember(await jobs.start("Batch Export FCS", REVIEW_OPERATION_KINDS.BatchExport, () => reviewBridge.batchExportFcs(sources, root)), root);
+    } catch (e) {
+      log(`batch FCS error: ${e}`);
+    }
+  }, [info, jobs, log]);
+
   const onExportAll = useCallback(async () => {
     if (!info) return;
     try {
@@ -386,7 +422,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     (r: RegenerateRequest) =>
       new Promise<string | null>((settle) => {
         jobs
-          .start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasks(r), undefined, {
+          .start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasksJson(r), undefined, {
             onRefused: (message) => settle(message),
             onStarted: () => {
               settle(null);
@@ -396,8 +432,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           .then(async (job) => {
             // The Qt tab reloads from the regenerated file.
             if (job?.phase === "completed") {
-              rememberExportDir(dirName(r.outputPath));
-              await openPath(r.outputPath);
+              rememberExportDir(dirName(r.output_path));
+              await openPath(r.output_path);
             }
           })
           .catch((e) => {
@@ -439,6 +475,14 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         >
           Export Metrics to CSV…
         </button>
+        <button
+          onClick={onExportFcs}
+          disabled={!isExperiment || jobs.busy}
+          data-tour="review-export-fcs"
+          title={isRecording ? "Recording files carry no object metrics" : "Write an FCS 3.1 file and its event map (recorded px→µm factor)"}
+        >
+          Export FCS…
+        </button>
         <button onClick={onExportAll} disabled={!reviewing || jobs.busy} title="Metrics, images, series and charts into <root>/<file>/">
           Export All…
         </button>
@@ -450,6 +494,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
             <div className="menu-popup" role="menu">
               <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatch(true)}>
                 Batch Metrics…
+              </button>
+              <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatchFcs()}>
+                Batch Export FCS…
               </button>
               <button role="menuitem" disabled={!ready || jobs.busy} onClick={() => void onBatch(false)}>
                 Batch Export All…
