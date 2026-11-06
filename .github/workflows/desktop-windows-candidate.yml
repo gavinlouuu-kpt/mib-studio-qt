@@ -1,6 +1,19 @@
 name: Windows Tauri candidate
+# Dispatch runs show the mode and the ref; push runs keep the default title (blank run-name).
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Windows Tauri candidate ({0}) {1}', inputs.camera_sdk && 'eGrabber' || 'SDK-free', inputs.ref || github.ref_name) || '' }}
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag or full 40-character SHA to build (empty: the dispatch ref)'
+        required: false
+        default: ''
+        type: string
+      camera_sdk:
+        description: 'Build with the eGrabber SDK (camera-enabled rig candidate; uses the eGrabber runtime installed on the PC)'
+        required: false
+        default: false
+        type: boolean
   push:
     branches: [dev/react-tauri]
     paths:
@@ -20,7 +33,9 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: windows-tauri-candidate-${{ github.ref }}
+  # One queue per workflow ref, built ref and mode, so dispatches for different PR heads do not
+  # replace each other's pending run. Push runs have empty inputs: still one group per branch.
+  group: windows-tauri-candidate-${{ github.ref }}-${{ inputs.ref }}-${{ inputs.camera_sdk && 'egrabber' || 'sdk-free' }}
   cancel-in-progress: false
 jobs:
   candidate:
@@ -33,8 +48,23 @@ jobs:
       MIB_CAMERA_MODE: mock
       MIB_DISABLED_SERVICES: auto_update
       MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: file:///nonexistent/mib-lut-manifest.json
+      # 'true' only for a camera_sdk dispatch; 'false' on push and SDK-free dispatches.
+      CAMERA_SDK: ${{ inputs.camera_sdk && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Empty input: the dispatch or push ref, as before. Only this workflow file comes from the
+          # dispatch ref; every script and tool below comes from the built ref.
+          ref: ${{ inputs.ref }}
+      - name: Record the built commit
+        id: src
+        run: |
+          $sha = git rev-parse HEAD
+          if ($LASTEXITCODE) { throw 'git rev-parse failed' }
+          "sha=$sha" >> $env:GITHUB_OUTPUT
+          $kind = if ($env:CAMERA_SDK -eq 'true') { 'egrabber' } else { 'sdk-free' }
+          "artifact=unsigned-$kind-windows-tauri-$sha" >> $env:GITHUB_OUTPUT
+          Write-Host "Building $sha ($kind; workflow from ${{ github.ref }} at ${{ github.sha }})"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -56,6 +86,13 @@ jobs:
           $tokens = $null; $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'desktop/scripts/package-windows-candidate.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors.Count) { throw ($errors | Out-String) }
+      - name: Validate rig GUI probe syntax
+        if: hashFiles('desktop/scripts/rig-tauri-gui-probe.ps1') != ''
+        run: |
+          $tokens = $null; $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD 'desktop/scripts/rig-tauri-gui-probe.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { throw ($errors | Out-String) }
+          if ((Get-Content desktop/scripts/rig-tauri-gui-probe.ps1 -Raw) -match '[^\x00-\x7F]') { throw 'The probe must stay ASCII (Windows PowerShell 5.1 reads it as ANSI)' }
       - name: Verify Windows link-manifest XML parsing
         run: |
           python tools/test_gen_bridge_link_manifest.py
@@ -99,7 +136,39 @@ jobs:
         with:
           path: ~/.conan2/p
           key: ${{ steps.conan-cache.outputs.cache-primary-key }}
+      # camera_sdk only. Same installer, URL, size check and silent install as build-windows.yml
+      # (which has no hash check; this lane also pins the SHA-256). The SDK is needed at build time
+      # for its headers; the package never ships its DLLs or GenTL producer.
+      - name: Download and install eGrabber SDK
+        if: env.CAMERA_SDK == 'true'
+        run: |
+          $sdkUrl = "https://updates.yofo.bio/egrabber-sdk-installer/egrabber-win-x86_64-25.10.0.57.exe"
+          $sdkSha256 = '75828864e131675a512474cf6514888a27c57de32de7d2d58d7aa3e724fe0c7b'
+          curl.exe --fail --location --retry 3 --output egrabber-sdk.exe $sdkUrl
+          $sdkSize = (Get-Item egrabber-sdk.exe).Length
+          if ($sdkSize -lt 100MB) {
+            Write-Host "ERROR: Downloaded eGrabber SDK is unexpectedly small: $sdkSize bytes" -ForegroundColor Red
+            exit 1
+          }
+          $hash = (Get-FileHash egrabber-sdk.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $sdkSha256) { throw "eGrabber SDK installer SHA-256 $hash is not the pinned $sdkSha256" }
+          $installer = Start-Process -FilePath .\egrabber-sdk.exe -ArgumentList '/S' -Wait -PassThru
+          if ($installer.ExitCode -ne 0) {
+            Write-Host "ERROR: eGrabber SDK installer failed with exit code $($installer.ExitCode)" -ForegroundColor Red
+            exit $installer.ExitCode
+          }
+          if (!(Test-Path "C:\Program Files\Euresys\eGrabber\include")) {
+            Write-Host "ERROR: eGrabber SDK headers not found" -ForegroundColor Red
+            exit 1
+          }
+          Remove-Item egrabber-sdk.exe
+          Write-Host "eGrabber SDK installed ($sdkSize bytes, sha256 $hash)"
+          # What the installer sets up on a PC; the candidate relies on the same on the rig.
+          $machineEnv = [Environment]::GetEnvironmentVariables('Machine')
+          $machineEnv.Keys | Where-Object { $_ -match 'EURESYS|GENICAM' } | Sort-Object | ForEach-Object { "  machine env $_=$($machineEnv[$_])" }
+          Get-ChildItem 'C:\Program Files\Euresys\eGrabber' -Recurse -Filter *.cti -ErrorAction SilentlyContinue | ForEach-Object { "  GenTL producer $($_.FullName)" }
       - name: Build SDK-free backend and export MSVC link manifest
+        if: env.CAMERA_SDK != 'true'
         run: |
           cmake --preset windows-default -DMIB_BUILD_BACKEND_ONLY=ON -DBUILD_TESTING=ON -DMIB_ENABLE_HARDWARE_SDKS=OFF -DMIB_ENABLE_COREMOR=OFF -DMIB_ENABLE_MINDVISION=OFF -DMIB_ENABLE_WINDOWS_PACKAGING=OFF -DMIB_USE_SENTRY=OFF
           if ($LASTEXITCODE) { throw 'Backend configure failed' }
@@ -108,6 +177,30 @@ jobs:
           python tools/gen_bridge_link_manifest.py --build-dir build --config Release
           if ($LASTEXITCODE) { throw 'Bridge link manifest failed' }
           $manifest = Get-Content build/mib-bridge-link-manifest.json -Raw | ConvertFrom-Json
+          $manifest.runtime_dirs | ForEach-Object { $_ >> $env:GITHUB_PATH }
+          "MIB_BRIDGE_LINK_MANIFEST=$PWD/build/mib-bridge-link-manifest.json" >> $env:GITHUB_ENV
+      # camera_sdk only. Flags as the Qt Windows build sets them for the backend: hardware SDKs
+      # (eGrabber) on, CoreMOR at its Windows default (on), the processing-core signer pin from the
+      # same repository variable. MindVision off (its SDK is not provisioned here). Sentry and the
+      # Qt installer targets stay off: a candidate has no DSN and no installer.
+      - name: Build eGrabber backend and export MSVC link manifest
+        if: env.CAMERA_SDK == 'true'
+        env:
+          PROCESSING_CORE_SIGNER_SPKI_SHA256: ${{ vars.MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256 }}
+        run: |
+          $flags = @('--preset', 'windows-default', '-DMIB_BUILD_BACKEND_ONLY=ON', '-DBUILD_TESTING=ON', '-DMIB_ENABLE_HARDWARE_SDKS=ON', '-DMIB_ENABLE_MINDVISION=OFF', '-DMIB_ENABLE_WINDOWS_PACKAGING=OFF', '-DMIB_USE_SENTRY=OFF')
+          if ($env:PROCESSING_CORE_SIGNER_SPKI_SHA256) { $flags += "-DMIB_PROCESSING_CORE_SIGNER_SPKI_SHA256=$env:PROCESSING_CORE_SIGNER_SPKI_SHA256" }
+          cmake @flags | Tee-Object -Variable configureLog
+          if ($LASTEXITCODE) { throw 'Backend configure failed' }
+          if (-not ($configureLog -match 'EGrabber SDK integration: ON')) { throw 'Configure did not report "EGrabber SDK integration: ON"' }
+          cmake --build build --config Release --target mib_backend mib_processing mib_backend_smoke_test --parallel 4
+          if ($LASTEXITCODE) { throw 'Backend build failed' }
+          python tools/gen_bridge_link_manifest.py --build-dir build --config Release
+          if ($LASTEXITCODE) { throw 'Bridge link manifest failed' }
+          $manifest = Get-Content build/mib-bridge-link-manifest.json -Raw | ConvertFrom-Json
+          $features = @($manifest.defines | Where-Object { $_ -match '^MIB_HAS_|^MIB_USE_SENTRY' })
+          Write-Host "Link manifest features: $($features -join ' ')"
+          if ($manifest.defines -notcontains 'MIB_HAS_EGRABBER=1') { throw 'Link manifest does not define MIB_HAS_EGRABBER=1' }
           $manifest.runtime_dirs | ForEach-Object { $_ >> $env:GITHUB_PATH }
           "MIB_BRIDGE_LINK_MANIFEST=$PWD/build/mib-bridge-link-manifest.json" >> $env:GITHUB_ENV
       - name: Frontend and native bridge checks
@@ -130,6 +223,31 @@ jobs:
           if ($LASTEXITCODE) { throw 'Desktop Clippy check failed' }
       - name: Package unsigned portable candidate with DLL closure
         run: ./desktop/scripts/package-windows-candidate.ps1
+      # camera_sdk only, inline so it works for any built ref (the packaging script comes from it).
+      - name: Check the camera candidate ships no eGrabber runtime, and label it
+        if: env.CAMERA_SDK == 'true'
+        run: |
+          $dest = 'build/tauri-windows-candidate'
+          $sdk = @(Get-ChildItem $dest -Recurse -File | Where-Object { $_.Name -match '\.cti$|^EGrabber|^EGenTL|^GenTL|^GCBase|^GenApi|^Euresys|^coaxlink|^grablink|^gigelink|^playlink' })
+          $sdk += @(Get-Content "$dest/native-runtime-files.txt" | Where-Object { $_ -match 'Euresys' })
+          if ($sdk.Count) { throw "eGrabber runtime files must not be packaged: $($sdk -join ', ')" }
+          $features = (Get-Content build/mib-bridge-link-manifest.json -Raw | ConvertFrom-Json).defines | Where-Object { $_ -match '^MIB_HAS_' }
+          @"
+          UNSIGNED eGrabber-enabled Windows x64 Tauri candidate for rig tests. Not a Qt replacement release.
+          Built from ${{ steps.src.outputs.sha }} by ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Backend features: $($features -join ' ')
+          Extract the entire directory. Requires Microsoft Edge WebView2 Evergreen Runtime.
+          The eGrabber runtime and GenTL producer are NOT in this package. The PC needs the Euresys
+          eGrabber 25.10.0.57 install that MIB Studio (Qt) uses (C:\Program Files\Euresys\eGrabber,
+          with its Coaxlink driver and GenTL producer). Without it the app runs but finds no eGrabber camera.
+          No Qt updater feed, release tag, installer registry state, signing or publication.
+          Run mib-studio-desktop.exe. Keep the runtime DLLs and resources beside it.
+          "@ -split "`n" | ForEach-Object { $_.Trim() } | Set-Content "$dest/README.txt"
+          Get-ChildItem $dest -Recurse -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetRelativePath((Resolve-Path $dest), $_.FullName))"
+          } | Set-Content "$dest/SHA256SUMS.txt"
+          Remove-Item "$dest.zip"
+          Compress-Archive -Path "$dest/*" -DestinationPath "$dest.zip"
       - name: Smoke staged application without development DLL search paths
         run: |
           $env:PATH = "$env:SystemRoot/System32;$env:SystemRoot"
@@ -143,8 +261,43 @@ jobs:
           } finally {
             if (!$process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
+      # camera_sdk only. eGrabber is header-only and opens its GenTL producer at run time, so the exe
+      # imports no eGrabber DLL; the proof is the manifest define and backend code that only an
+      # MIB_HAS_EGRABBER=1 build contains.
+      - name: Prove the eGrabber backend is linked
+        if: env.CAMERA_SDK == 'true'
+        run: |
+          $exe = (Resolve-Path 'build/tauri-windows-candidate/mib-studio-desktop.exe').Path
+          $manifest = Get-Content build/mib-bridge-link-manifest.json -Raw | ConvertFrom-Json
+          $define = $manifest.defines | Where-Object { $_ -eq 'MIB_HAS_EGRABBER=1' }
+          Write-Host "link manifest: $define"
+          $text = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($exe))
+          $present = 'AppBackend: configuring hardware EGrabber camera'
+          $absent = 'EGrabber SDK is unavailable in this build'
+          Write-Host "exe contains '$present': $($text.Contains($present))"
+          Write-Host "exe contains '$absent': $($text.Contains($absent))"
+          if (-not $text.Contains($present) -or $text.Contains($absent)) { throw 'The exe does not contain the eGrabber backend' }
+          $deps = dumpbin /nologo /dependents $exe
+          if ($LASTEXITCODE) { throw 'dumpbin failed' }
+          $deps | Write-Host
+          if ($deps -match 'Euresys|EGrabber|EGenTL|GenTL|\.cti') { throw 'The exe imports an eGrabber DLL directly' }
+          $exeSha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $zipSha = (Get-FileHash 'build/tauri-windows-candidate.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "exe sha256 $exeSha"
+          Write-Host "zip sha256 $zipSha"
+          @"
+          ### eGrabber Windows Tauri candidate
+          | | |
+          |---|---|
+          | Built commit | ``${{ steps.src.outputs.sha }}`` |
+          | Artifact | ``${{ steps.src.outputs.artifact }}`` |
+          | mib-studio-desktop.exe sha256 | ``$exeSha`` |
+          | tauri-windows-candidate.zip sha256 | ``$zipSha`` |
+          | Link manifest | ``$define`` |
+          | Backend code present | ``$present`` |
+          "@ -split "`n" | ForEach-Object { $_.Trim() } | Add-Content $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         with:
-          name: unsigned-sdk-free-windows-tauri-${{ github.sha }}
+          name: ${{ steps.src.outputs.artifact }}
           path: build/tauri-windows-candidate.zip
           if-no-files-found: error
