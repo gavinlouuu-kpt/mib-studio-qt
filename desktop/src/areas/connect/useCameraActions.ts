@@ -6,7 +6,6 @@ import { bridge } from "../../bridge";
 import { configDocument } from "../../configDocument";
 import { expectedCameraModel } from "../../preflight";
 import type { ConfigDocumentsModel } from "../config/useConfig";
-import type { HardwareState } from "../hardware/useHardware";
 import type { MonitoringState } from "../monitoring/useMonitoring";
 import type { PreviewState } from "../preview/usePreview";
 import type { ShellState } from "../shell/useShell";
@@ -71,12 +70,11 @@ export function useCameraShortcut(deps: ShortcutDeps) {
   }, []);
 }
 
-type ProfileDeps = Pick<ShellState, "ready" | "tab"> & Pick<ConnectState, "setExpectedCamera" | "setFocusStaleMs">
-  & Pick<ConfigDocumentsModel, "profiles"> & Pick<HardwareState, "afStatus"> & Pick<ShellState, "caps">;
+type ProfileDeps = Pick<ShellState, "ready"> & Pick<ConnectState, "setExpectedCamera"> & Pick<ConfigDocumentsModel, "profiles">;
 
-// App.tsx:1237 / App.tsx:1306: the camera the active profile was made for (camera.window.camera_model, #833) and the staleness
-// of the focus metric the operator configured (ring_ratio_stale_ms), both read where the profile and the autofocus config are.
-export function useProfileCameraContext({ ready, tab, caps, profiles, afStatus, setExpectedCamera, setFocusStaleMs }: ProfileDeps) {
+// App.tsx:1237: the camera the active profile was made for (camera.window.camera_model, #833), read where the profile is.
+// (App.tsx:1306, the focus gate's staleness, is #883's: HW-034 reads ring_ratio_stale_ms into the shell as afStaleMs.)
+export function useProfileCameraContext({ ready, profiles, setExpectedCamera }: ProfileDeps) {
   const path = profiles.activeProfile?.path ?? "", revision = profiles.activeProfile?.revision ?? "";
   useEffect(() => {
     if (!ready || !path) { setExpectedCamera(""); return; }
@@ -86,14 +84,4 @@ export function useProfileCameraContext({ ready, tab, caps, profiles, afStatus, 
       .catch(() => { if (alive) setExpectedCamera(""); });
     return () => { alive = false; };
   }, [ready, path, revision]);
-
-  const connected = afStatus?.connected ?? false;
-  useEffect(() => {
-    if (!ready || !caps.autofocus || (tab !== "overview" && tab !== "connect")) return;
-    let alive = true;
-    bridge.fetchAutofocusConfig()
-      .then((config) => { if (alive && config.valid && config.ring_ratio_stale_ms > 0) setFocusStaleMs(config.ring_ratio_stale_ms); })
-      .catch(() => { /* keep the last known staleness */ });
-    return () => { alive = false; };
-  }, [ready, caps.autofocus, tab, revision, connected]);
 }

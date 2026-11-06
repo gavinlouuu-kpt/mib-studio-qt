@@ -8,7 +8,7 @@ import { bridge, type CaptureLifecycle } from "../../bridge";
 import { configDocument } from "../../configDocument";
 import { useCameraPhase, useCameraShortcut, useProfileCameraContext } from "./useCameraActions";
 
-vi.mock("../../bridge", () => ({ bridge: { fetchCaptureLifecycle: vi.fn(), fetchAutofocusConfig: vi.fn() } }));
+vi.mock("../../bridge", () => ({ bridge: { fetchCaptureLifecycle: vi.fn() } }));
 vi.mock("../../configDocument", () => ({ configDocument: { read: vi.fn() } }));
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -162,13 +162,12 @@ describe("the space bar", () => {
   });
 });
 
-describe("the camera the active profile expects and the configured focus staleness", () => {
+describe("the camera the active profile expects", () => {
   type Deps = Parameters<typeof useProfileCameraContext>[0];
-  const setExpectedCamera = vi.fn(), setFocusStaleMs = vi.fn();
-  beforeEach(() => { vi.mocked(bridge.fetchAutofocusConfig).mockResolvedValue({ valid: false, ring_ratio_stale_ms: 0 } as never); });
+  const setExpectedCamera = vi.fn();
   function Context(props: Partial<Deps>) {
     useProfileCameraContext({
-      ready: true, tab: "overview", caps: { autofocus: true }, profiles: { activeProfile: null }, afStatus: null, setExpectedCamera, setFocusStaleMs, ...props,
+      ready: true, profiles: { activeProfile: null }, setExpectedCamera, ...props,
     } as never);
     return null;
   }
@@ -199,23 +198,5 @@ describe("the camera the active profile expects and the configured focus stalene
     vi.mocked(configDocument.read).mockRejectedValue(new Error("ipc"));
     await mount({ profiles: profile("r4") });
     expect(setExpectedCamera).toHaveBeenLastCalledWith("");
-  });
-
-  it("the focus gate's staleness is the autofocus config's ring_ratio_stale_ms", async () => {
-    vi.mocked(bridge.fetchAutofocusConfig).mockResolvedValue({ valid: true, ring_ratio_stale_ms: 2500 } as never);
-    await mount();
-    expect(setFocusStaleMs).toHaveBeenLastCalledWith(2500);
-  });
-
-  it("an invalid or zero configuration, a failed read, or an instrument without autofocus keeps the last value", async () => {
-    vi.mocked(bridge.fetchAutofocusConfig).mockResolvedValue({ valid: false, ring_ratio_stale_ms: 2500 } as never);
-    await mount();
-    vi.mocked(bridge.fetchAutofocusConfig).mockResolvedValue({ valid: true, ring_ratio_stale_ms: 0 } as never);
-    await mount({ tab: "connect" });
-    vi.mocked(bridge.fetchAutofocusConfig).mockRejectedValue(new Error("ipc"));
-    await mount({ tab: "overview" });
-    await mount({ caps: { autofocus: false } as never });
-    await mount({ tab: "review" });
-    expect(setFocusStaleMs).not.toHaveBeenCalled();
   });
 });

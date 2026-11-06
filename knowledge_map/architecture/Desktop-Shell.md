@@ -410,8 +410,8 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
 - **Storage** (preflight.ts:360-363): the preflight's Storage check reads `fetch_instrument_status.storage` (the
   recording target, answered on every server) with the preflight poll; the Start gates still check the file
   chosen at Start.
-- **Focus staleness** (App.tsx:1306): the Overview focus gate uses the autofocus config's `ring_ratio_stale_ms`
-  (read when the Overview or Connect stage opens), 1500 ms (the config's default) until then.
+- **Focus staleness** (App.tsx:1306) is not changed here: #883 (HW-034) reads the autofocus config's
+  `ring_ratio_stale_ms` into the shell (`afStaleMs`) and the Overview focus gate uses it; one implementation.
 - **Not changed here** (App.tsx:1229, `experimentCompleted` in `areas/shell/workflowModel.ts`): the constant
   `false` is the shell's (#862) and the experiment epic's. The retained terminal outcome its comment waits for now
   exists in `fetch_experiment_status` (`terminal`, `finalization_ok`, `cancelled`, `completion`); deriving Complete

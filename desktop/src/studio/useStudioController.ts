@@ -76,7 +76,7 @@ export function useStudioController() {
   const closeGuard = useShellCloseGuard(composed); // shell
   // Render-time values (no hooks).
   const startExperiment = experimentModel(composed); // monitoring
-  useProfileCameraContext(composed); // connect: the profile's expected camera, the configured focus staleness
+  useProfileCameraContext(composed); // connect: the profile's expected camera
   const connectView = connectModel(composed); // connect: Start Camera gate, preflight, quality gates
   useCameraShortcut({ ...composed, ...connectView }); // connect: the space bar toggles the camera
   const workflow = shellWorkflow({ ...composed, ...connectView }); // shell: workflow stages, context bar

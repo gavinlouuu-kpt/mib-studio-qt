@@ -27,10 +27,6 @@ import {
   startCameraBlockReason, stopCameraBlockReason, VANISHED_NOTE, type DeviceTab, type PickedDevices,
 } from "./connectFlow";
 
-// The autofocus staleness the Overview focus gate uses until the configured one is read: the autofocus config's own
-// ring_ratio_stale_ms default (AutofocusService.h; the gate used a hard-coded 1000 before, App.tsx:1306).
-const DEFAULT_FOCUS_STALE_MS = 1500;
-
 export function useConnectState() {
   const [running, setRunning] = useState(false);
   const [camStatus, setCamStatus] = useState("unconfigured");
@@ -56,12 +52,10 @@ export function useConnectState() {
   const [cameraCommand, setCameraCommand] = useState<"start" | "stop" | null>(null);
   const cameraCommandRef = useRef<"start" | "stop" | null>(null);
   const [lifecycle, setLifecycle] = useState<CaptureLifecycle | null>(null);
-  // What the preflight and the quality gates need from outside the backend's camera state: the camera the active profile was
-  // made for (App.tsx:1237), the data directory's storage on the desktop (preflight.ts:360-363) and the autofocus staleness
-  // the operator configured (App.tsx:1306).
+  // What the preflight needs from outside the backend's camera state: the camera the active profile was made for
+  // (App.tsx:1237) and the data directory's storage on the desktop (preflight.ts:360-363).
   const [expectedCamera, setExpectedCamera] = useState("");
   const [desktopStorage, setDesktopStorage] = useState<RecordingTargetState | null>(null);
-  const [focusStaleMs, setFocusStaleMs] = useState(DEFAULT_FOCUS_STALE_MS);
 
   // Mock camera configuration modal.
   const [showMockConfig, setShowMockConfig] = useState(false);
@@ -94,7 +88,7 @@ export function useConnectState() {
     deliveryModeStatus, setDeliveryModeStatus, autoSelectStored, setAutoSelectStored,
     showMockConfig, setShowMockConfig, frameDir, setFrameDir, mockFps, setMockFps, loopFiles, setLoopFiles,
     cameraCommand, setCameraCommand, cameraCommandRef, lifecycle, setLifecycle, expectedCamera, setExpectedCamera,
-    desktopStorage, setDesktopStorage, focusStaleMs, setFocusStaleMs,
+    desktopStorage, setDesktopStorage,
     liveCanvasRef, alignImage, setAlignImage, alignBestRef, alignImageMs,
     cameraGeometry, setCameraGeometry, cameraGeometryRef, cameraWindowRef, refreshCameraGeometryRef,
     modeError, setModeError, modeRetry, setModeRetry, runFpsStatus, setRunFpsStatus,
@@ -502,7 +496,7 @@ export function useCameraModeSwitch({
 
 type ConnectModelDeps = Pick<ShellState, "ready" | "caps" | "instrument" | "pz7035" | "instrumentModes">
   & Pick<ConnectState, "camSelection" | "running" | "alignImage" | "discovery" | "lifecycle" | "cameraCommand" | "expectedCamera"
-    | "desktopStorage" | "focusStaleMs"> & Pick<ConfigState, "coreStatus" | "stats">
+    | "desktopStorage"> & Pick<ConfigState, "coreStatus" | "stats">
   & Pick<HardwareState, "afStatus" | "samplePump" | "sheathPump" | "trigStatus">
   & Pick<PreviewState, "backgroundSet" | "roiFields" | "lastMeta"> & CoresModel & Pick<CameraSetupModel, "cameraScript">;
 
@@ -510,7 +504,7 @@ type ConnectModelDeps = Pick<ShellState, "ready" | "caps" | "instrument" | "pz70
 export function connectModel({
   ready, caps, instrument, pz7035, instrumentModes, camSelection, running, alignImage, coreStatus, stats, afStatus,
   samplePump, sheathPump, trigStatus, backgroundSet, roiFields, lastMeta, cores, cameraScript, discovery, lifecycle, cameraCommand,
-  expectedCamera, desktopStorage, focusStaleMs,
+  expectedCamera, desktopStorage,
 }: ConnectModelDeps) {
   const cameraConfigured = camSelection?.configured ?? false;
   const phase = cameraPhase(lifecycle, cameraConfigured, running);
@@ -566,14 +560,16 @@ export function connectModel({
   const preflight = derivePreflight(preflightInput);
 
   // ---- UX-4 Camera & Alignment quality gates (issue #308) ----
-  // Focus staleness threshold: the autofocus config's ring_ratio_stale_ms (read by useProfileCameraContext), 1000 ms until then.
+  // Focus staleness threshold: the autofocus config's ring_ratio_stale_ms is
+  // not polled into the shell yet, so use a conservative default until it is.
+  const FOCUS_STALE_MS = 1000;
   const qualityInput: QualityInput = {
     cameraRunning: running,
     focusConnected: afStatus?.connected ?? false,
     focusMetric: afStatus?.median_ring_ratio ?? 0,
     focusUpdatedUs: afStatus?.last_ring_ratio_update_us ?? 0,
     focusAgeMs: afStatus ? afStatus.ring_ratio_age_us / 1000 : 0,
-    focusStaleMs,
+    focusStaleMs: FOCUS_STALE_MS,
     backgroundSet,
     roiW: Number(roiFields.w) || 0,
     roiH: Number(roiFields.h) || 0,

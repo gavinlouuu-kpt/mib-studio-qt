@@ -8,6 +8,6 @@ confirmed is a failed Stop with the camera's message, and the space bar toggles 
 guarded commands. Configure Mock Camera takes the frame rate in fps (1 to 10000, 5000 by default) through the new
 `configure_mock_fps` (whole-microsecond interval; bridge ABI stays 45) and starts from the last folder used, else
 the backend's mock folder, else Documents. The preflight now warns when the connected camera is not the active
-profile's `camera.window.camera_model`, checks the data directory's storage, and the focus gate uses the autofocus
-config's `ring_ratio_stale_ms`. Decisions (raw recording on Stop, display rate, `experimentCompleted`) are in
+profile's `camera.window.camera_model` and checks the data directory's storage. The focus gate's staleness
+(`ring_ratio_stale_ms`) is #883's (HW-034, `afStaleMs`); this PR leaves it. Decisions (raw recording on Stop, display rate, `experimentCompleted`) are in
 [[architecture/Desktop-Shell]]. See also [[architecture/Rust-Bridge]], [[architecture/AppBackend]].
