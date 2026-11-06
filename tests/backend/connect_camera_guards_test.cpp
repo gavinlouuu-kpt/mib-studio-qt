@@ -240,6 +240,19 @@ int main()
                                  status(ExperimentRunState::Stopping, true), status(ExperimentRunState::Failed, true)})
             MIB_EXPECT(cameraSourceChangeRefusal(false, held) == "Cannot change camera connection while an experiment is active.",
                        "a run that holds the camera refuses with the capture stopped");
+        // Stop Camera (#863 CONNECT-038): Qt's words per state; a Failed run still saving refuses as "being saved".
+        using backend::app::cameraStopRefusal;
+        MIB_EXPECT(cameraStopRefusal(status(ExperimentRunState::Idle, false)).empty() &&
+                       cameraStopRefusal(status(ExperimentRunState::Failed, false)).empty(),
+                   "idle or saved: Stop allowed");
+        MIB_EXPECT(cameraStopRefusal(status(ExperimentRunState::Active, false)) ==
+                       "Cannot stop camera while experiment is active. Please stop the experiment first.", "Active");
+        MIB_EXPECT(cameraStopRefusal(status(ExperimentRunState::Starting, false)) ==
+                       "Cannot stop camera while an experiment is starting.", "Starting");
+        for (const auto& saving : {status(ExperimentRunState::Stopping, true), status(ExperimentRunState::Failed, true)})
+            MIB_EXPECT(cameraStopRefusal(saving) ==
+                           "Cannot stop camera while experiment data is being saved. Wait for the save to finish.",
+                       "Stopping, or Failed while still saving");
     }
 
     // ---- delivery mode ---------------------------------------------------------------

@@ -111,7 +111,7 @@ type ConnectionDeps = Pick<ShellState, "ready" | "tab" | "setTab" | "append">
     | "setFrameDir" | "mockFps" | "loopFiles" | "pickedDevices" | "setPickedDevices" | "connectTab" | "discovery" | "camSelection" | "running"
     | "setRunning" | "setScanning" | "setScanNote" | "setActionNote" | "setCameraNotice" | "setDeliveryModeStatus" | "setDesktopStorage"
     | "cameraCommandRef" | "setCameraCommand">
-  & Pick<MonitoringState, "expState">
+  & Pick<MonitoringState, "expState" | "expStatus">
   & Pick<ConfigState, "setCoreStatus"> & Pick<HardwareState, "setAfStatus" | "setSamplePump" | "setSheathPump" | "setTrigStatus">
   & Pick<ReviewState, "setReviewing"> & Pick<PreviewState, "recording" | "setRecording">
   & Pick<StatePollingModel, "tick"> & Pick<LiveFramesModel, "stopLoop">;
@@ -121,7 +121,7 @@ export function useCameraConnection({
   ready, tab, setTab, append, setDiscovery, setCamSelection, setShowMockConfig, showMockConfig, setCamStatus, frameDir, setFrameDir,
   mockFps, loopFiles, pickedDevices, setPickedDevices, connectTab, discovery, camSelection, running, setRunning, setCoreStatus,
   setAfStatus, setSamplePump, setSheathPump, setTrigStatus, setReviewing, recording, setRecording, tick, stopLoop, setScanning,
-  setScanNote, setActionNote, setCameraNotice, setDeliveryModeStatus, setDesktopStorage, cameraCommandRef, setCameraCommand, expState,
+  setScanNote, setActionNote, setCameraNotice, setDeliveryModeStatus, setDesktopStorage, cameraCommandRef, setCameraCommand, expState, expStatus,
 }: ConnectionDeps) {
   // ---- Camera discovery/selection (BE-2) + camera actions ----
 
@@ -326,6 +326,8 @@ export function useCameraConnection({
   // in flight sends nothing. A refused or failed command is a modal warning titled "Camera" and status text (CONNECT-036).
   const expStateRef = useRef(expState);
   expStateRef.current = expState;
+  const expFlushingRef = useRef(false);
+  expFlushingRef.current = !!(expStatus?.valid && expStatus.flushing);
   const runningRef2 = useRef(running);
   runningRef2.current = running;
   const beginCommand = (kind: "start" | "stop") => {
@@ -356,7 +358,9 @@ export function useCameraConnection({
 
   const onStopCamera = useCallback(async () => {
     if (!runningRef2.current) return;
-    const blocked = stopCameraBlockReason({ running: true, expState: expStateRef.current, commandInFlight: !!cameraCommandRef.current });
+    const blocked = stopCameraBlockReason({
+      running: true, expState: expStateRef.current, flushing: expFlushingRef.current, commandInFlight: !!cameraCommandRef.current,
+    });
     if (blocked) { if (!cameraCommandRef.current) refuse("Camera", blocked); return; }
     if (!beginCommand("stop")) return;
     try {

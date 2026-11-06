@@ -7,3 +7,7 @@ now takes the `ExperimentStatus` and holds the camera while `flushing` too (Qt `
 guards call, unit-tested with the capture stopped under a run. `backend_facade_boundary_test` refuses Configure Mock
 and the delivery mode while the run Starts, is Active and Stops. The startup auto-select default is #890's
 HW-037 line (one implementation). See [[architecture/ExperimentCoordinator]], [[architecture/Desktop-Shell]].
+
+B2 (#896, its non-author review): Stop Camera uses the same status rule (`cameraStopRefusal`): a Failed run still
+flushing refuses with "Cannot stop camera while experiment data is being saved. Wait for the save to finish.", and
+the shell's `stopCameraBlockReason` reads the status's `flushing` too.

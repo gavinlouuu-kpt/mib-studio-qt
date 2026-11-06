@@ -368,6 +368,19 @@ inline std::string cameraSourceChangeRefusal(bool captureRunning, const Experime
     return {};
 }
 
+// Why Stop Camera is refused now, or empty (#863 CONNECT-038, Qt CameraController::doRequestStop and
+// flushInProgress_): the camera does not stop under a run, nor while its data is still being saved, also by a Failed
+// run that is finalizing after a fatal save error.
+inline std::string cameraStopRefusal(const ExperimentStatus& s)
+{
+    if (s.state == ExperimentRunState::Active)
+        return "Cannot stop camera while experiment is active. Please stop the experiment first.";
+    if (s.state == ExperimentRunState::Starting) return "Cannot stop camera while an experiment is starting.";
+    if (s.state == ExperimentRunState::Stopping || s.flushing)
+        return "Cannot stop camera while experiment data is being saved. Wait for the save to finish.";
+    return {};
+}
+
 // Serialize the frozen run snapshot for HDF5 provenance (stable key order).
 std::string runSnapshotToJson(const RunConfigurationSnapshot& snapshot);
 std::string readinessToJson(const ExperimentReadinessSnapshot& readiness);

@@ -213,6 +213,9 @@ describe("one camera command at a time and why a command is blocked (CONNECT-033
     expect(stopCameraBlockReason(stop)).toBeUndefined();
     expect(stopCameraBlockReason({ ...stop, running: false })).toBe("Camera is not running");
     expect(stopCameraBlockReason({ ...stop, expState: EXPERIMENT_STATES.Failed })).toBeUndefined();
+    // A Failed run still saving after a fatal save error (status.flushing; Qt flushInProgress_) holds the camera too.
+    expect(stopCameraBlockReason({ ...stop, expState: EXPERIMENT_STATES.Failed, flushing: true })).toBe("Cannot stop camera while experiment data is being saved. Wait for the save to finish.");
+    expect(stopCameraBlockReason({ ...stop, expState: EXPERIMENT_STATES.Failed, flushing: false })).toBeUndefined();
     expect(stopCameraBlockReason({ ...stop, expState: EXPERIMENT_STATES.Active })).toBe("Cannot stop camera while experiment is active. Please stop the experiment first.");
     expect(stopCameraBlockReason({ ...stop, expState: EXPERIMENT_STATES.Stopping })).toBe("Cannot stop camera while experiment data is being saved. Wait for the save to finish.");
     expect(stopCameraBlockReason({ ...stop, expState: EXPERIMENT_STATES.Starting })).toBe("Cannot stop camera while an experiment is starting.");

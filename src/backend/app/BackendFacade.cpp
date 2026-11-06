@@ -867,15 +867,9 @@ namespace backend::bridge
             // Qt-parity precondition: the camera cannot stop underneath an experiment — stop the
             // experiment first (BE-4) — nor while its data is still being saved (Qt flushInProgress_,
             // #863 CONNECT-038): Stopping is the final flush, Starting has not got its camera yet.
-            const auto experimentState = backend_.experiment().state();
-            if (app::experimentHoldsCamera(experimentState))
+            // A Failed run still flushing after a fatal save error is saving too (cameraStopRefusal).
+            if (const std::string message = app::cameraStopRefusal(backend_.experiment().status()); !message.empty())
             {
-                const std::string message =
-                    experimentState == app::ExperimentRunState::Active
-                        ? "Cannot stop camera while experiment is active. Please stop the experiment first."
-                    : experimentState == app::ExperimentRunState::Stopping
-                        ? "Cannot stop camera while experiment data is being saved. Wait for the save to finish."
-                        : "Cannot stop camera while an experiment is starting.";
                 emitEvent(BackendErrorEvent{BackendErrorSource::Camera,
                                             BackendCommandType::Camera, message});
                 return {false, BackendCommandType::Camera, message};
