@@ -678,7 +678,7 @@ describe('hold-to-purge (HW-012)', () => {
     await down(); await tick(0);
     expect(alertText()).toContain('Pump purge failed: timeout');
     await up();
-    expect(bridge.pumpStopPurge).not.toHaveBeenCalled();         // the start failed and the operator was still holding: nothing to release
+    expect(bridge.pumpStopPurge).toHaveBeenCalledTimes(1);       // the start reached the pump, so its release stops it although the reply failed (Qt)
     vi.mocked(bridge.pumpPurge).mockResolvedValue(ok());
     vi.mocked(bridge.pumpStopPurge).mockResolvedValue({...ok(), ok: false, message: 'Pump purge stop failed'});
     await down(); await tick(0); await up(); await tick(0);

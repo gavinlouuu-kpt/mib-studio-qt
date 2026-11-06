@@ -1068,7 +1068,8 @@ WebSocket server allows for the controlling client.
 - **Hold-to-purge (HW-012).** `PurgeHold`: press (pointer, Space or Enter) sends `pump_purge` in the selected
   direction; release, pointer leave/cancel, blur, window blur, hidden page, unmount send `pump_stop_purge`. A
   release before the start left the queue sends nothing; during the start it is sent as soon as the start
-  returned; a disconnect forgets the hold.
+  returned; a start that reached the device and then reported a failure keeps the hold, so the release still sends
+  `pump_stop_purge` (a lost reply may leave the pump purging; Qt stops on every release); a disconnect forgets the hold.
 - **Connect.** Baud 1200-921600 (standard rates offered, default 115200); Sample address 1, Sheath 2 (peristaltic
   endpoints 3 and 4); a syringe pump connects with `pump_connect_endpoint`, a peristaltic one with
   `pump_connect_model` and its calibration.

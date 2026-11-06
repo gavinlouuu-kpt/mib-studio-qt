@@ -139,7 +139,9 @@ export class PurgeHold {
         this.phase = 'idle';
         // The device may hold a purge even when the start reported a failure; stop it unless the connection is gone.
         if (sent && !this.abandoned) this.sendStop();
-      } else this.phase = accepted ? 'held' : 'idle';
+      // Still held: a start that reached the device stays held even when it reported a failure (a lost reply may leave the
+      // pump purging), so the release sends the stop, as Qt's release always does (SyringePumpTab.cpp:79-81).
+      } else this.phase = accepted || sent ? 'held' : 'idle';
     });
   }
   release(): void {
