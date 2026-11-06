@@ -4,7 +4,7 @@ import { useCameraSetup, useConfigDocuments, useConfigState, useConfigSync, useC
 import {
   connectModel, useAlignPeakReset, useCameraConnection, useCameraModeSwitch, useCameraWindowing, useConnectState,
 } from "../areas/connect/useConnect";
-import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
+import { useHardwarePanel, useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
 import {
   experimentModel, useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useSsdStatus,
 } from "../areas/monitoring/useMonitoring";
@@ -77,8 +77,10 @@ export function useStudioController() {
   const telemetry = shellTelemetry(composed); // shell: sidebar and status-bar rates
   const serviceMode = useServiceMode(composed); // hardware
   const landing = useWorkflowLanding({ ...composed, ...connectView, ...workflow }); // shell
+  const hardwarePanel = useHardwarePanel(composed); // hardware: right-hand panel visibility, width, narrow window (HW-018, HW-042)
   return {
     ...composed, ...closeGuard, ...startExperiment, ...connectView, ...workflow, ...telemetry, ...serviceMode, ...landing,
+    ...hardwarePanel,
   };
 }
 

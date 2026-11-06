@@ -2,7 +2,7 @@ import { PanelErrorBoundary } from "./components/PanelErrorBoundary";
 import { ConnectTab } from "./areas/connect/ConnectTab";
 import { MockCameraDialog } from "./areas/connect/MockCameraDialog";
 import { OverviewTab } from "./areas/connect/OverviewTab";
-import { HardwarePanel } from "./areas/hardware/HardwarePanel";
+import { HardwareDock } from "./areas/hardware/HardwareDock";
 import { ServiceBanner } from "./areas/hardware/ServiceMode";
 import { ExperimentTab } from "./areas/monitoring/ExperimentTab";
 import { ReviewTab } from "./areas/review/ReviewTab";
@@ -45,7 +45,6 @@ export default function App() {
             <RecoveryBanners />
             <div className="tab-body">
               <PanelErrorBoundary>{() => <>
-                <HardwarePanel />
                 {/* ---- Connect ---- */}
                 {tab === "connect" && <ConnectTab />}
                 {/* ---- Overview ---- */}
@@ -57,6 +56,9 @@ export default function App() {
               </>}</PanelErrorBoundary>
             </div>
           </main>
+
+          {/* ---- Hardware panel: collapsible, resizable, beside every stage tab (HW-018) ---- */}
+          <HardwareDock />
         </div>
 
         {/* ---- Status bar ---- */}
