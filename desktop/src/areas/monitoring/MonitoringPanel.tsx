@@ -7,6 +7,7 @@ import { ResultMetricCells } from "../../components/ResultMetricCells";
 import { ViewerGate } from "../../components/ViewerGate";
 import { useStudio } from "../../studio/StudioContext";
 import { TriggerTestControls } from "../hardware/TriggerTestControls";
+import { latestRows, MONITORING_TABLE_ROWS } from "./monitoringChartModel";
 
 export function MonitoringPanel() {
   const { append, ready, caps, trigStatus, monSnapshot, expActive, setExpTab, setConfigTab } = useStudio();
@@ -63,7 +64,7 @@ export function MonitoringPanel() {
             </tr>
           </thead>
           <tbody>
-            {(monSnapshot?.rows ?? []).slice(-15).map((r) => (
+            {latestRows(monSnapshot?.rows ?? [], MONITORING_TABLE_ROWS).map((r) => (
               <tr key={`${r.frame_index}:${r.object_id}`}>
                 <td>{r.frame_index}</td>
                 <td>{r.object_id}</td>
