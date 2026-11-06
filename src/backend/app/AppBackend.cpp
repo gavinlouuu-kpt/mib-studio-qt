@@ -4,6 +4,7 @@
 #endif
 #include "backend/app/AppBackend.h"
 #include "backend/app/ApplicationIdentity.h"
+#include "backend/app/DataDirectory.h"
 #include <thread>
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
@@ -202,40 +203,6 @@ namespace backend
             index, path, nullptr, session, overview,
             path.empty() ? std::nullopt : std::make_optional(effective), std::move(capabilitySink));
     }
-
-        // Get a user-writable log path, falling back to dataDir if needed
-        std::string getLogPath(const std::string &dataDir)
-        {
-            std::filesystem::path dataPath(dataDir);
-            std::string logPath;
-
-#ifdef _WIN32
-            // Check if dataDir is in Program Files (requires admin to write)
-            std::string dataDirLower = dataDir;
-            std::transform(dataDirLower.begin(), dataDirLower.end(), dataDirLower.begin(),
-                           [](unsigned char c)
-                           { return static_cast<char>(std::tolower(c)); });
-
-            // Check if path contains "program files" (common install location)
-            if (dataDirLower.find("program files") != std::string::npos ||
-                dataDirLower.find("program files (x86)") != std::string::npos)
-            {
-                // Use user-writable location instead
-                char appDataPath[MAX_PATH];
-                if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, appDataPath)))
-                {
-                    std::filesystem::path userLogDir = std::filesystem::path(appDataPath) / "MIB_Studio_Qt" / "logs";
-                    std::filesystem::create_directories(userLogDir);
-                    logPath = (userLogDir / "app.log").string();
-                    return logPath;
-                }
-            }
-#endif
-            // Default: use dataDir/logs/app.log
-            std::filesystem::create_directories(dataPath / "logs");
-            logPath = (dataPath / "logs" / "app.log").string();
-            return logPath;
-        }
 
         BackgroundFramePixelFormat pixelFormatForMatType(int type)
         {
@@ -446,12 +413,30 @@ namespace backend
     bool AppBackend::initialize(const std::string &dataDir)
     {
         dataDir_ = dataDir;
+        // Rig check F1: copy the state an older build left in <exe dir>/data, once, before
+        // anything (the SSD store included) can create state here. Logged once the logger is up.
+        std::optional<app::datadir::MigrationResult> migration;
+        if (!legacyDataDir_.empty())
+            migration = app::datadir::migrateLegacyState(legacyDataDir_, std::filesystem::path(dataDir));
         createSsdStore();
         std::filesystem::create_directories(dataDir);
 
-        // Use user-writable location for logs if dataDir is in Program Files
-        std::string logPath = getLogPath(dataDir);
-        backend::services::Logger::init(logPath);
+        // The log directory follows the data-dir rule (app/DataDirectory.h): the user-local one
+        // on Windows installs, else <dataDir>/logs.
+        logDir_ = app::datadir::logDirFor(std::filesystem::path(dataDir));
+        std::filesystem::create_directories(logDir_);
+        backend::services::Logger::init((logDir_ / "app.log").string());
+        SPDLOG_INFO("AppBackend: data dir {} ({}), log dir {}", dataDir,
+                    dataDirReason_.empty() ? "given by the caller" : dataDirReason_, logDir_.string());
+        if (migration)
+        {
+            if (!migration->attempted)
+                SPDLOG_INFO("AppBackend: no state migrated from {}: {}", legacyDataDir_.string(), migration->note);
+            for (const auto &entry : migration->copied)
+                SPDLOG_INFO("AppBackend: migrated {} from {} to {}", entry, legacyDataDir_.string(), dataDir);
+            for (const auto &failure : migration->failed)
+                SPDLOG_WARN("AppBackend: could not migrate {} from {}", failure, legacyDataDir_.string());
+        }
 
         // Simulated serial hardware (MIB_SERIAL_MODE=sim), before any service
         // can enumerate or open a port. A rig a test already installed stays.

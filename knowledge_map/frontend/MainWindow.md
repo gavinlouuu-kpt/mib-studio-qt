@@ -230,7 +230,13 @@ created in `setupStatusSurfaces()`:
 ## Menu bar
 
 - **File:** Open Data Folder (`Documents/MIB_Studio_Qt`), Open Logs Folder
-  (`%LOCALAPPDATA%/MIB_Studio_Qt/logs`), Exit.
+  (`AppBackend::logDir()`: `%LOCALAPPDATA%/MIB_Studio_Qt/logs` for an installed
+  Windows build, else `<data dir>/logs`), Exit.
+- **Title:** `MIB Studio Qt <version>`, the `QCoreApplication::applicationVersion()`
+  Help ▸ About shows (`MIB_STUDIO_QT_VERSION_FULL`, e.g. `1.2.0-beta.<sha>`);
+  plain `MIB Studio Qt` when the version is empty. It was the placeholder
+  "MIB Studio Qt Scaffold" until rig check F4 (2026-11-06);
+  `frontend.mainwindow_shutdown` checks it.
 - **Settings:** Processing / Monitoring / Pixel-to-Micron / Syringe Pump
   settings, **Processing Core…** ([[ProcessingCoreDialog]]), Boot Service
   Toggles (added in code), and **Profiles…** (navigates to Experiment ▸

@@ -1824,6 +1824,11 @@ set_tests_properties(profiles.registry_facade PROPERTIES LABELS "backend;profile
 mib_add_backend_test_executable(instrument_identity_test profiles/instrument_identity_test.cpp)
 add_test(NAME profiles.instrument_identity COMMAND $<TARGET_FILE:mib_backend_tests> instrument_identity_test)
 set_tests_properties(profiles.instrument_identity PROPERTIES LABELS "backend;profiles;fault-injection" TIMEOUT 30)
+# Rig check F1: the data dir resolver (Program Files -> %LOCALAPPDATA%) and the
+# one-time migration of <exe dir>/data state.
+mib_add_backend_test_executable(data_directory_test backend/data_directory_test.cpp)
+add_test(NAME backend.data_directory COMMAND $<TARGET_FILE:mib_backend_tests> data_directory_test)
+set_tests_properties(backend.data_directory PROPERTIES LABELS "backend;regression;roundtrip;fault-injection" TIMEOUT 60)
 
 mib_add_backend_test_executable(registry_method_test profiles/registry_method_test.cpp)
 mib_backend_test_link(registry_method_test PRIVATE Threads::Threads)
@@ -1905,6 +1910,8 @@ endif()
 if(Python3_Interpreter_FOUND)
     add_test(NAME installers.vc_runtime_check COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/installers/vc_runtime_check_test.py)
     set_tests_properties(installers.vc_runtime_check PROPERTIES LABELS "installer;regression" TIMEOUT 10)
+    add_test(NAME installers.data_dir_and_egrabber COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/installers/data_dir_and_egrabber_test.py)
+    set_tests_properties(installers.data_dir_and_egrabber PROPERTIES LABELS "installer;regression" TIMEOUT 10)
 endif()
 # Issue 403: persistent regressions backed by the mock-camera lifecycle harness.
 foreach(scenario IN ITEMS byte_pressure partial_series partial_series_no_frames partial_series_restart)
