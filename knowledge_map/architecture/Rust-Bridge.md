@@ -609,10 +609,10 @@ WebSocket shells, three commands (contract: `dot_grid`):
   `DotGridPose`) -> `areas/connect/useWaferGrid.ts`.
 - **Profile apply:** `config.json`'s `dot_grid` section is still reported "Qt shell only" and not
   applied; the Overview toggle is the way to switch decoding on (decision in the CONNECT-054 report).
-- **ABI touch points:** `bridge-contract.json` `abi_version` 45 and `dot_grid` (`max_dots` pinned by a
-  `static_assert` on `BackendFacade::kDotGridMaxDots`); `shim.cpp` `bridge_abi_version()`;
-  `contract.rs` `abi_version_is_stable`; generated `bridgeContract.ts`; the `eventAdapter.test.ts` and
-  `runQuickLook.test.ts` pins.
+- **ABI touch points:** ABI next (#878, set at merge). The merge-time bump moves `bridge-contract.json`
+  `abi_version`, `shim.cpp` `bridge_abi_version()`, `contract.rs` `abi_version_is_stable`, the `dispatch.rs`
+  test, the generated `bridgeContract.ts` and the `eventAdapter.test.ts` / `runQuickLook.test.ts` pins. The
+  contract's new `dot_grid` section pins `max_dots` by a `static_assert` on `BackendFacade::kDotGridMaxDots`.
 - **Tests:** `contract.rs` `dot_grid_is_described` and `dot_grid_commands_decode_the_mock_camera_view`
   (a rendered `wafer-sort-rt` view in `tests/fixtures/` through the mock camera: refused before init,
   paused and off after init, enable loads one design, a valid pose at 40000 / 52000 um, an unchanged
