@@ -4,6 +4,7 @@ import { useCameraSetup, useConfigDocuments, useConfigState, useConfigSync, useC
 import {
   connectModel, useAlignPeakReset, useCameraConnection, useCameraModeSwitch, useCameraWindowing, useConnectState,
 } from "../areas/connect/useConnect";
+import { useStartupSelection } from "../areas/connect/useStartupSelection";
 import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
 import {
   experimentModel, useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useSsdStatus,
@@ -47,6 +48,7 @@ export function useStudioController() {
   const preferences = useShellPreferences(states); // shell
   const configSync = useConfigSync(states); // config
   const connection = useCameraConnection({ ...states, ...liveFrames, ...polling }); // connect
+  const startup = useStartupSelection(states); // connect: the startup camera step's outcome, the no-camera dialog
   const livePreview = useLivePreview({ ...states, ...liveFrames, ...configSync }); // preview
   const ssd = useSsdStatus(states); // monitoring
   const reviewSource = useReviewSource({ ...states, ...liveFrames, ...polling }); // review
@@ -65,7 +67,7 @@ export function useStudioController() {
   const documents = useConfigDocuments({ ...states, ...configSync, ...cores }); // config
   const reviewJobs = useReviewJobs(states); // review
   const composed = {
-    ...states, ...liveFrames, ...polling, ...monitoringPolling, ...preferences, ...configSync, ...connection,
+    ...states, ...liveFrames, ...polling, ...monitoringPolling, ...preferences, ...configSync, ...connection, ...startup,
     ...livePreview, ...ssd, ...reviewSource, ...experiment, ...windowing, ...modeSwitch, ...cameraSetup,
     ...previewBuffer, ...cores, viewerOnly, ...documents, ...reviewJobs,
   };

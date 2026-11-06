@@ -10,3 +10,8 @@
 .run-outcome.attention { border-left-color: var(--warn); color: var(--warn); }
 .run-outcome.loss, .run-outcome.unknown { border-left-color: var(--warn); color: var(--warn); }
 .run-outcome.failed { border-left-color: var(--err); color: var(--err); }
+
+/* The permanent acquisition-mode badge in the status bar (#858, SHELL-055; Qt colours #2e7d32 / #b06a00, a secondary cue) */
+.delivery-mode-badge { margin-left: 8px; padding: 0 6px; white-space: nowrap; font-weight: 600; }
+.delivery-mode-badge.every { color: var(--ok); }
+.delivery-mode-badge.latest { color: var(--warn); }

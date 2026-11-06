@@ -173,7 +173,7 @@ const CONTROL_COMMANDS: &[&str] = &[
     "close_review", "experiment_start", "experiment_stop", "experiment_cancel", "experiment_acknowledge_fault",
     "apply_processing", "apply_processing_config_json", "set_processing_roi", "set_background_from_current_frame",
     "clear_background_image", "background_calibration_command", "startup_discovery_set_preference",
-    "startup_discovery_run", "start_device_discovery", "start_camera_discovery", "cancel_device_discovery",
+    "startup_discovery_run", "set_frame_delivery_mode", "start_device_discovery", "start_camera_discovery", "cancel_device_discovery",
     "pulse_generator_command", "autofocus_connect_endpoint", "autofocus_connect", "autofocus_disconnect",
     "autofocus_set_enabled", "autofocus_jog", "autofocus_set_config", "pump_connect_endpoint", "pump_connect_model", "pump_connect",
     "pump_disconnect", "pump_set_flow_rate", "pump_set_direction", "pump_start", "pump_stop", "pump_purge",

@@ -326,6 +326,57 @@ held at ~10 fps by per-byte frame copies in the bridge.
 `vitest` discovery is limited to `src/` (`vite.config.ts`): crawling
 `src-tauri/target`'s cxx symlink loop hung `vitest run`.
 
+## Connect stage (Qt parity, epic #863 B1)
+
+`areas/connect/` mirrors Qt's `ConnectTab` and `DeviceInitManager`. Pure rules (wording, selection,
+block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCameraConnection`
+(`useConnect.ts`); the startup follow-up in `useStartupSelection.ts`; modals in `CameraDialogs.tsx`.
+
+- **Status line.** One line, as Qt's `statusLabel`: "Scanning for cameras and framegrabbers..." while a scan
+  runs; the last action ("Connected to <label> (not capturing)", "Mock camera configured (not capturing)",
+  "Delivery mode set to ..."); else the last scan with the selection. A cancelled scan reads "Camera scan
+  cancelled.", an incomplete one "(incomplete: <provider> <kind>)" (a compiled-out SDK is not a gap), a
+  refused or timed-out one "Camera discovery incomplete: <reason>"; none reads as "0 cameras found".
+  `CameraDiscovery` carries the job `state` and `errors` for this (`discovery.ts`).
+- **Scans.** One at a time: Refresh and every other refresh join the scan in flight; Refresh is disabled
+  while scanning but not while capturing (the backend's refusal is the status line). Row 0 of every list is
+  selected after a scan (a row the operator picked that is still listed stays); the synthetic mock source is
+  never preselected. Framegrabber rows are selectable; Connect uses the shown sub-tab's pick.
+- **Connect / Configure Mock** are blocked, with the reason as tooltip, while the camera runs, an experiment
+  is active or a script apply is in flight; backend guards back them (`select_hardware_camera` in Rust,
+  `ConfigureMockCamera` in the facade). A refusal is a modal warning ("Connect Device", "Configure Mock
+  Camera") and status text, in Qt's words ("Cannot change camera connection while camera is running. Please stop the
+  camera first.", "Please select a <device> from the list."). After Connect or Configure Mock the selection is read
+  and the stage moves to Overview at once, the device rescan runs behind it; the Overview stage applies its script
+  and starts the live view (separate stream).
+- **Startup.** `useStartupSelection` polls `startup_discovery_status` (500 ms) and reports each camera job of
+  the startup coordinator once: lists refreshed from that job's snapshot, then the auto-selected camera is
+  highlighted with its sub-tab open and the stage moves to Overview; no camera shows "No cameras found." and
+  the "No camera found" dialog (check power, green LED; Try again runs the immediate camera step, OK) and
+  forces the Connect stage; several cameras and incomplete scans say so on the status line. The shell mirrors
+  the backend's `decideCamera` (`startupCameraOutcome`) because the facade installs no outcome listener.
+  The startup selection is on by default; the Hardware controls start it where they exist (they install the
+  nanopositioner preference first), `useStartupSelection` on other instruments (after its first status reading, so
+  a scan that ends at once is reported, not taken for a job from before a webview reload), whose Connect stage
+  shows the opt-out checkbox. Nanopositioner step wording stays with the hardware area (#868). The Hardware
+  controls' checkbox default (`StartupDiscoveryControls`, on unless the operator stored `false`) is the one line
+  HW-037 (#890) also writes; #895 carries it verbatim so that the two PRs merge cleanly in either order, and
+  `startupPreference.ts` (`readAutoSelect`/`resolveAutoSelect`) reads the same key for the Connect stage.
+- **Delivery mode.** A select on the Connect stage ("Every Frame (preserves sequence)" / "Latest Frame (lowest
+  latency, may drop)"), read with the preflight poll (so a profile apply shows within one poll) and set with
+  `set_frame_delivery_mode` (see [[Rust-Bridge]]). Decision: it is not written back to the saved profile (Qt
+  rewrites the watched config.json; here the applied profile is a revisioned file and the startup restore is pinned
+  to its revision, so a rewrite would make the next launch refuse the profile). The choice holds for the session,
+  the run's method records it as a change after apply, and the control's tooltip says to edit
+  `camera.frame_delivery_mode` in the profile to keep it.
+- **Acquisition-mode badge (#858, SHELL-055).** `areas/monitoring/DeliveryModeBadge.tsx` sits at the end of the
+  status bar on every stage, as Qt's permanent widget (`MainWindow::updateDeliveryModeBadge`): "▶ EVERY FRAME ·
+  sequence preserved" or "⏩ LATEST FRAME · drops stale frames", with " (requested)" until a running camera confirms
+  the mode, Qt's tooltip, and green / amber as a secondary cue (`deliveryModeBadgeModel.ts`). It reads
+  `fetch_frame_delivery_mode` itself (`active_mode`, `confirmed`) every 2 s and at once when the camera starts or
+  stops, because the Connect stage's preflight poll runs only on that stage; nothing shows on the PZ7035 (no
+  live-camera delivery in Run), before the backend is ready, or when the read fails.
+
 ## Command layer
 
 Thin wrappers over the bridge (all take the managed `AppState`; bodies in
@@ -717,7 +768,8 @@ backend Start transaction (which rechecks readiness). A synchronous pending owne
 prevents duplicate chooser/start requests; Starting joins Active/Stopping guards.
 
 Startup discovery is now available through an explicit auto-select/retry panel and a
-persisted opt-in preference for subsequent startup sessions (off by default). Scheduling
+persisted preference for subsequent startup sessions (on by default since #852 and the Connect parity
+work below; an opt-out is remembered; the PZ7035 defaults off). Scheduling
 acceptance is distinct from camera-configured/nanopositioner-connected completion.
 `onSelectionChanged` refreshes shell-owned camera state when startup results change it.
 

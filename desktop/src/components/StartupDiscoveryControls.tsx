@@ -3,7 +3,7 @@ import {bridge, type StartupDiscoveryStatus} from '../bridge';
 import {loadStartupPreference, saveStartupPreference, validateStartupPreference, type StartupPreference} from '../startupPreference';
 const preferenceKey = 'mib.startup.auto-select-hardware';
 export function StartupDiscoveryControls({ready, experimentActive, append, onSelectionChanged}: {ready: boolean; experimentActive: boolean; append: (message: string) => void; onSelectionChanged?: () => void}) {
-  const [auto, setAuto] = useState(() => {try {return localStorage.getItem(preferenceKey) === 'true';} catch {return false;}});
+  const [auto, setAuto] = useState(() => {try {return localStorage.getItem(preferenceKey) !== 'false';} catch {return true;}}); // on unless the operator opted out (HW-037, D8: Qt starts discovery unconditionally)
   const [remembered, setRemembered] = useState(() => loadStartupPreference(localStorage));
   const [backend, setBackend] = useState(remembered.preference.backend), [endpoint, setEndpoint] = useState(remembered.preference.endpoint);
   const [port, setPort] = useState(String(remembered.preference.com_port)), [baud, setBaud] = useState(String(remembered.preference.baud)), [address, setAddress] = useState(String(remembered.preference.address));
