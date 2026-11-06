@@ -228,9 +228,14 @@ jobs:
         if: env.CAMERA_SDK == 'true'
         run: |
           $dest = 'build/tauri-windows-candidate'
-          $sdk = @(Get-ChildItem $dest -Recurse -File | Where-Object { $_.Name -match '\.cti$|^EGrabber|^EGenTL|^GenTL|^GCBase|^GenApi|^Euresys|^coaxlink|^grablink|^gigelink|^playlink' })
+          # Every DLL the eGrabber install provides, by name (the app-local MSVC runtime may share names).
+          $euresys = @(Get-ChildItem 'C:\Program Files\Euresys' -Recurse -File -Include *.dll -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.Name.ToLowerInvariant() } | Where-Object { $_ -notmatch '^(msvcp140|vcruntime140|concrt140|vccorlib140|vcomp140)' } | Sort-Object -Unique)
+          if ($euresys.Count -lt 5) { throw "Expected the eGrabber install's DLLs to compare against, found $($euresys.Count)" }
+          $sdk = @(Get-ChildItem $dest -Recurse -File | Where-Object { $_.Extension -eq '.cti' -or ($_.Extension -eq '.dll' -and $euresys -contains $_.Name.ToLowerInvariant()) })
           $sdk += @(Get-Content "$dest/native-runtime-files.txt" | Where-Object { $_ -match 'Euresys' })
           if ($sdk.Count) { throw "eGrabber runtime files must not be packaged: $($sdk -join ', ')" }
+          Write-Host "No GenTL producer and none of the $($euresys.Count) eGrabber install DLL names in the package"
           $features = (Get-Content build/mib-bridge-link-manifest.json -Raw | ConvertFrom-Json).defines | Where-Object { $_ -match '^MIB_HAS_' }
           @"
           UNSIGNED eGrabber-enabled Windows x64 Tauri candidate for rig tests. Not a Qt replacement release.
