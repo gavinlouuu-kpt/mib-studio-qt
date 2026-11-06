@@ -1089,7 +1089,7 @@ pub mod ffi {
         fn pulse_generator_status(self: Pin<&mut BackendBridge>) -> String;
         /// Read-only serial port list for the port pickers (HW-049): JSON `{"ports":[...]}`.
         fn list_serial_ports(self: Pin<&mut BackendBridge>) -> String;
-        /// Instrument-host settings (HW-003/016/020/021/023/038, ABI 46): the saved pump settings, the boot service
+        /// Instrument-host settings (HW-003/016/020/021/023/038, ABI next (#890, set at merge)): the saved pump settings, the boot service
         /// toggles and the last pump address scan, as JSON `{"valid":..,"settings":{..},"pump_scan":{..},..}`.
         fn fetch_host_settings(self: Pin<&mut BackendBridge>) -> String;
         /// `{"action":"set_pumps"|"set_boot_services"|"scan_pump_addresses",..}` (BackendFacade::hostSettingsCommandJson).

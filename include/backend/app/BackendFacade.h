@@ -1273,7 +1273,7 @@ namespace backend::bridge
         // {"ports":[{system_name,system_location,description,manufacturer,serial_number,vendor_id,product_id}]}.
         std::string listSerialPortsJson() const;
 
-        // Instrument-host settings (HW-003/016/020/021/023/038, ABI 46): the saved pump connection and last rate, unit
+        // Instrument-host settings (HW-003/016/020/021/023/038, ABI next (#890, set at merge)): the saved pump connection and last rate, unit
         // and direction (Qt's config.json keys), the boot service toggles, and the pump address scan. Stored in
         // <data>/host_settings.json (HostSettings.h); the saved pump ports are reserved against discovery probes from
         // initialize() on.

@@ -1527,7 +1527,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
-    // ABI 45 (#868): the serial port list is a read through dispatch (the WebSocket's path); the trigger status
+    // ABI next (#881, set at merge), #868: the serial port list is a read through dispatch (the WebSocket's path); the trigger status
     // carries the sort-trigger funnel and the pulse generator status its limits.
     #[test]
     #[serial]
@@ -1549,7 +1549,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
-    // ABI 46 (#868 HW-003/023/038): the host settings through dispatch (the WebSocket's path): a read, a control command
+    // ABI next (#890, set at merge), #868 HW-003/023/038: the host settings through dispatch (the WebSocket's path): a read, a control command
     // whose argument is the request text, a refusal that changes nothing, and the restart.
     #[test]
     #[serial]
@@ -1593,7 +1593,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(46)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

@@ -4,7 +4,7 @@
 // The keys are Qt's (`pump_sample_com_port`, `_baud_rate`, `_address`, `_syringe_vol`, `_syringe_unit`, `_flow_rate`,
 // `_flow_unit`, `_direction`, and the Sheath's likewise) plus `pump_*_port`, the exact endpoint text, because this app
 // also takes system paths (`/dev/ttyUSB0`) that an integer COM number cannot name. The instrument host keeps them
-// (host_settings.json, ABI 46) and reserves the saved ports against discovery probes.
+// (host_settings.json, ABI next (#890, set at merge)) and reserves the saved ports against discovery probes.
 import type { PlatformCapabilities, SerialPortEntry } from '../bridge';
 import { numericInput } from './hardwareControlModel';
 import { BAUD_MAX, BAUD_MIN, DEFAULT_BAUD, UNIT_ML, UNIT_UL, VOLUME_DECIMALS, VOLUME_MAX, VOLUME_MIN, parseDecimal, syringeVolumeForDevice } from './pumpControlModel';

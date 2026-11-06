@@ -126,18 +126,18 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    // v45 (#868 HW-046/HW-049) list_serial_ports; fetch_trigger_status carries the sort-trigger funnel;
+    // ABI next (#881, set at merge): #868 HW-046/HW-049 list_serial_ports; fetch_trigger_status carries the sort-trigger funnel;
     // fetch pulse_generator_status reports its limits and the serial framing.
-    // v46 (#868 HW-003/016/020/021/023/038) fetch_host_settings / host_settings_command: the saved pump settings, the
+    // ABI next (#890, set at merge): #868 HW-003/016/020/021/023/038 fetch_host_settings / host_settings_command: the saved pump settings, the
     // boot service toggles and the pump address scan.
-    assert_eq!(ffi::bridge_abi_version(), 46);
+    assert_eq!(ffi::bridge_abi_version(), 44);
 }
 
-// ABI 46 (#868 wave 1 hardware PR4): the instrument host's saved settings through the cxx bridge: pump keys are
+// ABI next (#890, set at merge) (#868 wave 1 hardware PR4): the instrument host's saved settings through the cxx bridge: pump keys are
 // validated and persisted in <data>/host_settings.json, read back, and restored by the next backend on that directory;
 // the boot toggles are validated; the contract describes both commands.
 #[test]
-fn host_settings_abi_46() {
+fn host_settings_abi() {
     let data_dir = std::env::temp_dir().join(format!("mib_bridge_host_settings_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&data_dir);
     let mut bridge = ffi::new_backend_bridge();
@@ -181,10 +181,10 @@ fn host_settings_abi_46() {
     }
 }
 
-// ABI 45 (#868 wave 1 hardware PR2): the serial port list, the sort-trigger funnel in the trigger status and the
+// ABI next (#881, set at merge) (#868 wave 1 hardware PR2): the serial port list, the sort-trigger funnel in the trigger status and the
 // pulse generator's limits and framing, through the cxx bridge; the contract describes them.
 #[test]
-fn hardware_trigger_and_ports_abi_45() {
+fn hardware_trigger_and_ports_abi() {
     let data_dir = std::env::temp_dir().join(format!("mib_bridge_hw45_data_{}", std::process::id()));
     let mut bridge = ffi::new_backend_bridge();
     assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));

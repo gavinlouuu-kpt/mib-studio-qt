@@ -1,8 +1,8 @@
-## 2026-11-05 — Tauri pump settings dialog, saved connection, reserved pump ports, boot toggles (#868, bridge ABI 46)
+## 2026-11-05 — Tauri pump settings dialog, saved connection, reserved pump ports, boot toggles (#868, bridge ABI next (#890, set at merge))
 
 Parity wave 1, hardware stream, PR4 (stacked on PR1 #875 and PR2 #881). The desktop app gets Qt's
 `SyringePumpSettingsDialog` and the pump settings that survive a restart. New host store
-[[services/HostSettings]] (`<data>/host_settings.json`, Qt's key names); bridge ABI 46
+[[services/HostSettings]] (`<data>/host_settings.json`, Qt's key names); bridge ABI next (#890, set at merge)
 (`fetch_host_settings`, `host_settings_command`, see [[architecture/Rust-Bridge]]).
 
 - **HW-020, HW-004, HW-021.** Settings > Syringe Pump Settings… (and a "Pump settings…" button on the pump

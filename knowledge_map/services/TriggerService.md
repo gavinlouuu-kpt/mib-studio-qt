@@ -195,7 +195,7 @@ The #595 trigger timing harness retains zero missed pulses (500 ms per-request d
 
 ## Status for the desktop status bar (2026-11-04, #868)
 
-Since ABI 45 `fetch_trigger_status` also reports the sort-trigger funnel Qt's status bar shows: the processing
+Since ABI next (#881, set at merge) `fetch_trigger_status` also reports the sort-trigger funnel Qt's status bar shows: the processing
 service's identification counters (`valid_objects`, `target_group_objects`, `unserved_target_group_objects`), this
 service's `getDroppedRequestCount()` and `getDroppedPulseCount()`, `getDroppedValidFrames()` and the
 `PipelineTimingRecorder` acquisition-to-pulse latency (average and maximum). The desktop app derives conversion,

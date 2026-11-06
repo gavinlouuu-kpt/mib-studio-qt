@@ -688,7 +688,7 @@ The acquisition pulse generator panel (`components/PulseGeneratorControls.tsx`; 
 (decisions D5 and D6 of the epic): it stays in the hardware panel (rendered only with
 `capabilities.trigger`) instead of Qt's hidden "Advanced — Hardware Setup" box.
 
-- **Port and bus:** `list_serial_ports` (ABI 45, read-only) fills a port combo labelled
+- **Port and bus:** `list_serial_ports` (ABI next (#881, set at merge), read-only) fills a port combo labelled
   `name — description, S/N …, VID:PID` with Refresh (disabled while connected); baud 4800–115200
   (default 9600), data bits 8/7, parity N/E/O, stop bits 1/2, Modbus address 1–247 (Qt's spin box allows 255,
   the backend and the camera's `live_view` refuse above 247). **Scan** probes addresses 1–16 on that port,
@@ -719,7 +719,7 @@ The acquisition pulse generator panel (`components/PulseGeneratorControls.tsx`; 
   test runs; blank, zero or out-of-range input shows a message and nothing is sent. `useServiceMode` stops a
   running periodic test when the Monitoring view is hidden.
 - **Sort-trigger counters:** `areas/hardware/SortTriggerStats.tsx` renders Qt's status-bar text (Targets, conversion,
-  served, lost, SortLat, DroppedValid) from `fetch_trigger_status` (ABI 45), polled once a second on every tab.
+  served, lost, SortLat, DroppedValid) from `fetch_trigger_status` (ABI next (#881, set at merge)), polled once a second on every tab.
 
 Not changed (decisions on the epic): MindVision Soft Trigger keeps its Service mode + arm gate (HW-047).
 A development-URL process-alive launch is not sufficient to verify the UI loads.
@@ -1117,7 +1117,7 @@ WebSocket server allows for the controlling client.
   endpoints 3 and 4); a syringe pump connects with `pump_connect_endpoint`, a peristaltic one with
   `pump_connect_model` and its calibration.
 
-### Saved pump settings, the settings dialog and boot toggles (2026-11-05, #868 PR4, bridge ABI 46)
+### Saved pump settings, the settings dialog and boot toggles (2026-11-05, #868 PR4, bridge ABI next (#890, set at merge))
 
 The connection fields left the panel for **Settings > Syringe Pump Settings…** (also the panel's "Pump
 settings…" button), as in Qt's `SyringePumpSettingsDialog`; the panel shows a one-line summary per pump.

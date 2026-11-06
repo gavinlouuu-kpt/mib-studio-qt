@@ -10,7 +10,7 @@
 **Tests:** `backend.host_settings` (`tests/backend/host_settings_test.cpp`); desktop `pumpSettingsModel.test.ts`,
 `PumpSettingsDialog.test.tsx`, `BootServicesDialog.test.tsx`, `hostSettingsStore.test.ts`
 **Related:** [[SerialPortClaims]], [[SyringePumpService]], [[SimulatedSerial]],
-[[../architecture/AppBackend]], [[../architecture/Rust-Bridge]] (ABI 46),
+[[../architecture/AppBackend]], [[../architecture/Rust-Bridge]] (ABI next (#890, set at merge)),
 [[../architecture/Desktop-Shell]], [[../frontend/SyringePumpTab]] (the Qt original)
 
 ## Why
@@ -53,7 +53,7 @@ the operator saves something valid.
   `{state, operation_id, port, found, error}`, because the existing event-based scan answers only an
   integer COM port and the dialog cannot read events.
 
-## Bridge surface (ABI 46)
+## Bridge surface (ABI next (#890, set at merge))
 
 `fetch_host_settings` -> `{valid, path, settings, load_error, boot_env, pump_scan}` (a read for every client);
 `host_settings_command {action: set_pumps | set_boot_services | scan_pump_addresses, ...}` (control: refused for

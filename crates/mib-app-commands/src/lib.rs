@@ -536,7 +536,7 @@ pub fn list_serial_ports(state: &AppState) -> Result<serde_json::Value, String> 
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().list_serial_ports()).map_err(|e| e.to_string())
 }
-/// The instrument host's saved settings (HW-003/016/023/038, ABI 46): pump connection and rate, boot service
+/// The instrument host's saved settings (HW-003/016/023/038, ABI next (#890, set at merge)): pump connection and rate, boot service
 /// toggles, the last pump address scan. A read, open to every client.
 pub fn fetch_host_settings(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;

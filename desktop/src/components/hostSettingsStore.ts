@@ -1,4 +1,4 @@
-// The instrument host's saved settings, as the panels see them (epic #868; bridge ABI 46 `fetch_host_settings` /
+// The instrument host's saved settings, as the panels see them (epic #868; bridge ABI next (#890, set at merge) `fetch_host_settings` /
 // `host_settings_command`). One read and one write path for the pump panel, the settings dialog and the boot toggles:
 // every save goes through one chain (two quick saves cannot lose one another), and every change is announced to the
 // other readers with a window event carrying the new document, so a dialog Apply updates the panel at once.
