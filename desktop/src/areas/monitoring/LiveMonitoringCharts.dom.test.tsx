@@ -341,6 +341,18 @@ describe("the live count under the scatter (MON-067)", () => {
     await act(async () => studioNow.setTuneField("targetEmodulusMax", 3));
     expect(label()).toBe("Target group preview: 2 of 4 plotted valid cells (50.0%)");
   });
+  it("never counts a cell outside the table's coverage (modulus null on the wire) when the E range applies (#831)", async () => {
+    // The backend sends a lookup outside the table as JSON null (C++ finiteOrNull, Rust NaN -> null); the
+    // count must treat it as failing the E range, as the backend's target-group gate does, even with an E
+    // minimum of 0 (#893 review N1).
+    const rows = ROWS.map((r, i) => ({ ...r, youngs_modulus: [2, null, 2, null][i] as unknown as number }));
+    await render({ snap: snapshot(rows), values: running({ targetGroupEnabled: true, targetAreaMin: 0, targetAreaMax: 1000, targetDeformabilityMin: 0, targetDeformabilityMax: 1 }), table: { status: "loaded", table: syntheticTable() } });
+    expect(label()).toBe("Target group preview: 4 of 4 plotted valid cells (100.0%)");
+    await act(async () => studioNow.setTuneField("targetEmodulusEnabled", true));
+    await act(async () => studioNow.setTuneField("targetEmodulusMin", 0));
+    await act(async () => studioNow.setTuneField("targetEmodulusMax", 10));
+    expect(label()).toBe("Target group preview: 2 of 4 plotted valid cells (50.0%)");
+  });
   it("does not read the E values with no table: the count is the box, and a red notice says so", async () => {
     const rows = ROWS.map((r) => ({ ...r, youngs_modulus: 0 }));
     await render({ snap: snapshot(rows), values: running({ targetGroupEnabled: true, targetEmodulusEnabled: true, targetEmodulusMin: 5, targetEmodulusMax: 9 }), table: { status: "none" } });

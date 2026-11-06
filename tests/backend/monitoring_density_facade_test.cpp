@@ -32,6 +32,7 @@
 #include "backend/processing/KdeCoreRecord.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/review/KdeReference.h"
 #include "backend/services/CaptureService.h"
 #include "backend/services/MonitoringDensityService.h"
 
@@ -432,6 +433,45 @@ int main()
                 MIB_EXPECT(y["ok"] == false && contains(y["reason"], "1 to 4096 bytes") && y["path"].get<std::string>().size() == 256,
                            "a long path is refused and echoed short: " + y["reason"].dump());
             }
+            // Non-ASCII names (#886 review): the file name is the last component split as UTF-8 text, on '/'
+            // and '\\' alike, and a reply never throws on bytes that are not UTF-8 (an ANSI path from Windows,
+            // a long path cut inside a character): they come back as U+FFFD. The bridge handler is noexcept, so
+            // a throw here used to end the app. (A real read from a non-ASCII folder is a rig step: HDF5's
+            // Windows file names are not exercised by this test.)
+            {
+                const std::string dirName = "\xe5\x8f\x82\xe7\x85\xa7 \xc3\xbc"; // "参照 ü"
+                const std::string winPath = "C:\\MIBTest\\" + dirName + "\\r\xc3\xbc.h5";
+                const auto w = json::parse(backend::review::kdeReferenceRefusedJson(winPath, "file not found"));
+                MIB_EXPECT(w["file_name"] == "r\xc3\xbc.h5" && w["path"] == winPath,
+                           "a Windows path is named by its last component: " + w.dump());
+                const std::string posixPath = "/data/" + dirName + "/ref.h5";
+                backend::review::KdeReferenceResult ok;
+                ok.ok = true;
+                ok.source = "live";
+                ok.coreFraction = 0.8;
+                ok.contours = live.contours;
+                const auto pu = json::parse(backend::review::kdeReferenceReplyJson(posixPath, ok));
+                MIB_EXPECT(pu["ok"] == true && pu["file_name"] == "ref.h5" && pu["path"] == posixPath,
+                           "a reply for a non-ASCII folder keeps the path and names the file: " + pu.dump());
+                const std::string ansi = "C:\\data\\caf\xe9.h5"; // "café" in code page 1252, not UTF-8
+                std::string bad;
+                bool threw = false;
+                try {
+                    bad = backend::review::kdeReferenceRefusedJson(ansi, "read failed: \xe9");
+                } catch (...) {
+                    threw = true;
+                }
+                MIB_REQUIRE(!threw, "a refusal with bytes that are not UTF-8 does not throw");
+                const auto b = json::parse(bad);
+                MIB_EXPECT(b["ok"] == false && b["file_name"] == "caf\xef\xbf\xbd.h5" &&
+                               b["reason"] == "read failed: \xef\xbf\xbd",
+                           "bad bytes are written as U+FFFD: " + b.dump());
+                std::string longCut(255, 'a');
+                longCut += "\xe5\x8f\x82" + std::string(5000, 'a'); // the 256-byte echo cuts the character
+                const auto lc = json::parse(facade.fetchKdeReferenceFromFileJson(longCut));
+                MIB_EXPECT(lc["ok"] == false && contains(lc["reason"], "1 to 4096 bytes"),
+                           "a long path cut inside a character is still refused with a reply: " + lc.dump());
+            }
         }
 
         // ---- 5. the E-modulus table ----------------------------------------------------------
@@ -573,6 +613,19 @@ int main()
                         "the run finalizes");
             const auto after = json::parse(facade.fetchKdeReferenceFromFileJson(refFile));
             MIB_EXPECT(after["ok"] == true, "readable again once idle: " + after.dump());
+
+            // ---- 4c. nor while a raw recording writes HDF5 (#722; #886 review) -------------------
+            wd.mark("reference during a raw recording");
+            MIB_REQUIRE(backendApp.startFrameRecording((td.path() / "raw_during_ref.h5").string()), "a raw recording starts");
+            MIB_REQUIRE(backendApp.isFrameRecording(), "the raw recording runs");
+            const auto raw = json::parse(facade.fetchKdeReferenceFromFileJson(refFile));
+            MIB_EXPECT(raw["ok"] == false && contains(raw["reason"], "a raw recording is writing an HDF5 file") &&
+                           raw["contours"].empty() && raw["loops"] == 0,
+                       "no HDF5 file is read while a raw recording writes one: " + raw.dump());
+            backendApp.stopFrameRecording();
+            MIB_EXPECT(!backendApp.isFrameRecording(), "the raw recording stopped");
+            const auto afterRaw = json::parse(facade.fetchKdeReferenceFromFileJson(refFile));
+            MIB_EXPECT(afterRaw["ok"] == true, "readable again once the raw recording stopped: " + afterRaw.dump());
         }
         backendApp.shutdown();
     }

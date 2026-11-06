@@ -388,6 +388,14 @@ only inside `ExperimentCoordinator::withIdleConfiguration` with no raw recording
 quick look does. The bridge command is `fetch_kde_reference_from_file` ([[../architecture/Rust-Bridge]]
 ABI next (#886, set at merge)).
 
+The reply builders (`kdeReferenceReplyJson`, `kdeReferenceRefusedJson`) never throw on text (#886
+review): `file_name` is the path's last component split as UTF-8 text on `/` and `\` (not
+`std::filesystem`, whose `string()` is the ANSI code page on MSVC), and the JSON is dumped with
+`error_handler_t::replace`, so bytes that are not UTF-8 (an ANSI path, a 256-byte echo cut inside a
+character, an HDF5 message) come back as U+FFFD. The cxx handler is `noexcept` and falls back to a fixed
+refusal if even that fails. Tests: `e2e.monitoring_density_facade` section 4 (non-ASCII and bad bytes)
+and 4c (refused while a raw recording writes HDF5).
+
 ## Charts JSON and saved overlay (`ReviewCharts.h`, #512 S4)
 
 **Source:** `src/backend/review/ReviewCharts.cpp` +
