@@ -902,7 +902,7 @@ pub mod ffi {
         /// against the contract's `experiment_start_request` bounds; a refused one fails the start with
         /// "invalid start request: <key>: <why>" and opens nothing.
         ///
-        /// `acknowledge_latest_frame_drops` (ABI 45, #858): the client has said that Latest Frame
+        /// `acknowledge_latest_frame_drops` (ABI next (#891, set at merge), #858): the client has said that Latest Frame
         /// delivery discards frames, so the recording may be incomplete (Qt's Start prompt). Without it
         /// a start while the capture runs Latest Frame is refused (outcome NotReady); enforced in the
         /// coordinator, not only in the UI.

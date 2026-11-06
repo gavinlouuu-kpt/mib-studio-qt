@@ -151,7 +151,7 @@ fn experiment_start(
     acknowledge_latest_frame_drops: Option<bool>,
 ) -> Result<cmds::CmdResult, String> {
     // ABI 39: the client's JSON text, byte for byte; only the backend parses it.
-    // ABI 45 (#858): the operator's Latest Frame acknowledgement; absent = not acknowledged.
+    // ABI next (#891, set at merge) (#858): the operator's Latest Frame acknowledgement; absent = not acknowledged.
     cmds::experiment_start(
         &state,
         output_path,

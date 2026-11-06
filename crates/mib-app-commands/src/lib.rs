@@ -372,7 +372,7 @@ pub fn fetch_experiment_readiness(state: &AppState, output_path: String) -> Resu
 /// the 16 KiB bound applies to the client's own bytes (contract `experiment_start_request`).
 /// `None` declares nothing.
 ///
-/// `acknowledge_latest_frame_drops` (ABI 45, #858): the operator accepted that Latest Frame delivery
+/// `acknowledge_latest_frame_drops` (ABI next (#891, set at merge), #858): the operator accepted that Latest Frame delivery
 /// discards frames; without it a Latest Frame start is refused by the coordinator.
 pub fn experiment_start(
     state: &AppState,

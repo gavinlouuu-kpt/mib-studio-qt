@@ -4,7 +4,7 @@ In the real-camera parity run (S7) a Tauri Start with a Latest Frame capture was
 ("Latest Frame delivery discards frames; acknowledge the policy or switch to Every Frame"): the
 backend requires the operator's acknowledgement and no bridge command could carry it.
 
-- **Bridge ABI 45:** `experiment_start` gains `acknowledge_latest_frame_drops`
+- **Bridge ABI next (#891, set at merge):** `experiment_start` gains `acknowledge_latest_frame_drops`
   (`acknowledgeLatestFrameDrops` on the Tauri command and the server's dispatch, optional, default
   false). It reaches `ExperimentCommand.acknowledgeLatestFrameDrops`; the coordinator's rule is
   unchanged. See [[architecture/Rust-Bridge]].

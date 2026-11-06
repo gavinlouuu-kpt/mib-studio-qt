@@ -126,9 +126,9 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    // v45 (#858) experiment_start's acknowledge_latest_frame_drops: the operator's Latest Frame
+    // ABI next (#891, set at merge): #858 experiment_start's acknowledge_latest_frame_drops: the operator's Latest Frame
     // acknowledgement (Qt's Start prompt), without which a Latest Frame start is refused.
-    assert_eq!(ffi::bridge_abi_version(), 45);
+    assert_eq!(ffi::bridge_abi_version(), 44);
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.
@@ -1504,8 +1504,8 @@ fn recording_load_emits_operation_lifecycle() {
     let _ = std::fs::remove_file(&rec_path);
 }
 
-// ABI 45 (#858): a capture that runs Latest Frame starts an experiment only with the operator's
-// acknowledgement. Before ABI 45 no client could send it, so a Latest Frame run could not start from
+// ABI next (#891, set at merge) (#858): a capture that runs Latest Frame starts an experiment only with the operator's
+// acknowledgement. Before this change no client could send it, so a Latest Frame run could not start from
 // Tauri at all (the real-camera parity run, S7). The refusal is NotReady with the backend's wording;
 // the acknowledged start runs and finalizes as usual.
 #[test]

@@ -794,7 +794,7 @@ export const bridge = {
   // acknowledgeDiscardRing (ABI 37): the operator accepted that a stopped Run's buffered frames are discarded by this start (the backend refuses without it).
   // startRequestJson (ABI 39, #712): the run's declared identity and planned annotation as JSON text,
   // e.g. JSON.stringify(doc) for an ExperimentStartRequestDoc (optional; omitted = nothing declared).
-  // acknowledgeLatestFrameDrops (ABI 45, #858): the operator accepted that Latest Frame delivery discards frames (Qt's
+  // acknowledgeLatestFrameDrops (ABI next (#891, set at merge), #858): the operator accepted that Latest Frame delivery discards frames (Qt's
   // Start prompt); the backend refuses a start while the capture runs Latest Frame without it. Sent only when true.
   experimentStart: (outputPath: string, acknowledgeDiscardRing = false, startRequestJson?: string, acknowledgeLatestFrameDrops = false) =>
     invokeCommand("experiment_start", {

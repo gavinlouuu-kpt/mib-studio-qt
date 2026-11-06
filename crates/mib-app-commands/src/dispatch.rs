@@ -288,7 +288,7 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
                 /// ABI 39 (#712): the startRequest document as the client's JSON text, passed through
                 /// unparsed (the backend alone decodes it and bounds those bytes). Absent or null: none.
                 #[serde(rename = "startRequestJson", default)] start_request_json: Option<String>,
-                /// ABI 45 (#858): the client accepts that Latest Frame delivery discards frames.
+                /// ABI next (#891, set at merge) (#858): the client accepts that Latest Frame delivery discards frames.
                 #[serde(rename = "acknowledgeLatestFrameDrops", default)] acknowledge_latest_frame_drops: bool,
             }
             let a: A = args(value)?;
@@ -1135,7 +1135,7 @@ mod tests {
             json!({ "outputPath": out, "startRequestJson": "  {\"sample_ref\" : null }\n" }),
             json!({ "outputPath": out, "startRequestJson": null }),
             json!({ "outputPath": out }),
-            // ABI 45 (#858): the Latest Frame acknowledgement is an optional boolean beside the others.
+            // ABI next (#891, set at merge) (#858): the Latest Frame acknowledgement is an optional boolean beside the others.
             json!({ "outputPath": out, "acknowledgeLatestFrameDrops": true }),
             json!({ "outputPath": out, "acknowledgeLatestFrameDrops": false, "acknowledgeDiscardRing": false }),
         ] {
@@ -1546,7 +1546,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

@@ -798,7 +798,7 @@ BridgeCommandResult BackendBridge::experiment_start(rust::Str output_path, bool 
         cmd.outputPath = toStd(output_path);
         cmd.readinessGeneration = readiness.generation;
         cmd.acknowledgeDiscardRing = acknowledge_discard_ring;
-        // ABI 45 (#858): the operator accepted that Latest Frame delivery discards frames (Qt's Start
+        // ABI next (#891, set at merge) (#858): the operator accepted that Latest Frame delivery discards frames (Qt's Start
         // prompt, MainWindow::onStartExperiment). Without it the coordinator refuses a Latest Frame start.
         cmd.acknowledgeLatestFrameDrops = acknowledge_latest_frame_drops;
         cmd.startRequestJson = toStd(start_request_json);   // ABI 39: "" = nothing declared
@@ -2710,13 +2710,13 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // the command result and experiment_stop's expected start generation (#741, stop
 // outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
 // run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6); v42 calibration records
-// (#716 A4a); v43 the readiness report's method_calibration (#776); v44 run_quick_look (#716 A7a); v45
+// (#716 A4a); v43 the readiness report's method_calibration (#776); v44 run_quick_look (#716 A7a); ABI next (#891, set at merge):
 // experiment_start's acknowledge_latest_frame_drops (#858). All additive over v1 except that removal (ADR
 // 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 45; }
+std::uint32_t bridge_abi_version() { return 44; }
 
 } // namespace mib_bridge
 

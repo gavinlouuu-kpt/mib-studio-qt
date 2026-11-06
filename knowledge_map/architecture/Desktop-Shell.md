@@ -97,7 +97,7 @@ question with custom buttons). **Latest Frame (#858, SHELL-054):** when the pref
 `camera.deliveryMode` gate warns (a running capture confirmed in Latest Frame), Qt's question opens
 before the file dialog: "Latest Frame prioritizes low latency and may intentionally discard frames.
 The recorded sequence may be incomplete." with Switch to Every Frame / Continue with Latest Frame /
-Cancel. Both Switch and Continue send `acknowledgeLatestFrameDrops` (ABI 45, [[Rust-Bridge]]); Switch
+Cancel. Both Switch and Continue send `acknowledgeLatestFrameDrops` (ABI next (#891, set at merge), [[Rust-Bridge]]); Switch
 also sets Every Frame for the next camera start and the start notice says this recording still runs
 Latest Frame. The coordinator's rule is wider than the gate (a capture switched after the preflight,
 an instrument with no live-camera gate), so a refusal with its "Latest Frame delivery discards frames"
