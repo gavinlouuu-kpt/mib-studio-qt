@@ -28,6 +28,12 @@ must be closed before using the new build. See [[../frontend/DesktopInstance]].
   `tauri.review.conf.json`; no camera, hardware or experiment code. See
   [[../frontend/YofoReview]].
 
+## Data directory (2026-11-06)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MIB_DATA_DIR=<path>` | unset | Data dir for identity, calibration, SQLite, profile cache (all platforms); unset = `%LOCALAPPDATA%\MIB_Studio_Qt\data` for a Windows install under Program Files or an unwritable exe dir, else `<exe dir>/data`. Rule: "Data directory" in [[../architecture/AppBackend]] |
+
 ## Simulated serial hardware (2026-10-19)
 
 | Variable | Default | Effect |

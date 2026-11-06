@@ -38,8 +38,10 @@ capture generation for an illuminated profile, using a fake camera factory.
   and `AppBackend::isFrameRecording()`; its `commandFailed` signal shows the
   warning dialog + status text, and `onCameraStateChanged` arms/disarms
   `statsTimer_` for every route (the sampling/flush scheduling in
-  `onUpdateStats` no longer depends on which button started the camera) and
-  writes the phase/failure text to the status label. The Preview page's
+  `onUpdateStats` no longer depends on which button started the camera),
+  writes the phase/failure text to the status label and forwards the state to
+  [[ConnectTab]]`::setCameraState` (its "Connected to … (capturing)" line,
+  #860). The Preview page's
   `PlaybackPanel::captureToggleRequested` (Space) is wired to
   `requestToggle()` (issue #360).
 - `onStartExperiment` / `onStopExperiment` — Start is a backend
@@ -84,7 +86,19 @@ capture generation for an illuminated profile, using a fake camera factory.
   stats tick cannot erase an error. It must not copy full `ProcessedFrame`
   buffers on the 500 ms UI timer.
 - `onTabChanged(index)` — starts/stops the realtime loop when entering or
-  leaving the experiment-related tabs (ExperimentController state).
+  leaving the experiment-related tabs (ExperimentController state). During a
+  run, Overview and Review are refused; the Connect tab is allowed and only
+  pauses the view (#899): `stopExperimentServices()` pauses playback but keeps
+  realtime processing while `runOwnsRealtime()` (the window's
+  `experimentActive_`/`stopInProgress_`, or the coordinator's
+  Starting/Active/Stopping state for a run another client started). The realtime
+  loop is the run's only consumer, so stopping it stopped the recording: the
+  MC2066 bench lost 3.3 s of a 26 s run on the Connect tab and booked
+  2,196,816 frames as `storeOverwritten` (the restart half is in
+  [[services/ProcessingService]]). `realtimeHeldForRun_` marks a loop kept for
+  the run; `releaseRealtimeHeldForRun()` stops it when the run's terminal status
+  is rendered, unless Experiment/Overview is shown again. Guard:
+  `frontend.experiment_tab_switch`.
 - `onNoCamerasFound` — shows a friendly dialog when
   `DeviceInitManager` reports empty discovery (the startup policy's
   `NoneFound` outcome; an incomplete scan reports its reason instead).
@@ -228,7 +242,13 @@ created in `setupStatusSurfaces()`:
 ## Menu bar
 
 - **File:** Open Data Folder (`Documents/MIB_Studio_Qt`), Open Logs Folder
-  (`%LOCALAPPDATA%/MIB_Studio_Qt/logs`), Exit.
+  (`AppBackend::logDir()`: `%LOCALAPPDATA%/MIB_Studio_Qt/logs` for an installed
+  Windows build, else `<data dir>/logs`), Exit.
+- **Title:** `MIB Studio Qt <version>`, the `QCoreApplication::applicationVersion()`
+  Help ▸ About shows (`MIB_STUDIO_QT_VERSION_FULL`, e.g. `1.2.0-beta.<sha>`);
+  plain `MIB Studio Qt` when the version is empty. It was the placeholder
+  "MIB Studio Qt Scaffold" until rig check F4 (2026-11-06);
+  `frontend.mainwindow_shutdown` checks it.
 - **Settings:** Processing / Monitoring / Pixel-to-Micron / Syringe Pump
   settings, **Processing Core…** ([[ProcessingCoreDialog]]), Boot Service
   Toggles (added in code), and **Profiles…** (navigates to Experiment ▸
