@@ -2,14 +2,17 @@
 import type { StageTab } from "../../workflow";
 import { useStudio } from "../../studio/StudioContext";
 import { CameraActions } from "../connect/CameraActions";
+import { STAGE_LOCK_REASON, isRunLockedTab } from "../monitoring/runStatus";
 
 export function StageTabs() {
-  const { tab, setTab, stageByTab } = useStudio();
+  const { tab, setTab, stageByTab, runLocked } = useStudio();
   return (
     <div className="tabs-header">
       <div className="tabbar" role="tablist" aria-label="Workflow stages">
         {(["connect", "overview", "experiment", "review"] as StageTab[]).map((t) => {
           const stage = stageByTab[t];
+          // #585 run-lock (epic #866 MON-013): Overview and Review are shut for the whole run, as in the Qt app.
+          const locked = runLocked && isRunLockedTab(t);
           return (
             <button
               key={t}
@@ -17,7 +20,8 @@ export function StageTabs() {
               aria-selected={tab === t}
               aria-label={`${stage.title}: ${stage.statusLabel}`}
               className={`stage-tab${tab === t ? " active" : ""}`}
-              title={stage.blocking.length ? stage.blocking.join("; ") : stage.summary}
+              title={locked ? STAGE_LOCK_REASON : stage.blocking.length ? stage.blocking.join("; ") : stage.summary}
+              disabled={locked}
               onClick={() => setTab(t)}
             >
               <span className={`stage-dot ${stage.status}`} aria-hidden="true" />

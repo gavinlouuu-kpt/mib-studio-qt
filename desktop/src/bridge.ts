@@ -810,6 +810,8 @@ export const bridge = {
       : invokeCommand("experiment_stop", { expectedStartGeneration: decimalU64(expectedStartGeneration) }),
   fetchCaptureLifecycle: () => invoke<CaptureLifecycle>("fetch_capture_lifecycle"),
   experimentAcknowledgeFault: (expectedRun: string, faultRevision: string, code: string, message: string, confirmed: boolean) => invokeCommand("experiment_acknowledge_fault", {expectedRun, faultRevision, code, message, confirmed}),
+  // No caller in the classic view by design (epic #866): the Qt app has no Cancel either (MainWindow::onStopExperiment always
+  // requests requestStop(false)); a cancelled run is only reachable through the bridge, other clients and tests.
   experimentCancel: () => invokeCommand("experiment_cancel"),
   fetchExperimentStatus: async () => decodeExperimentStatus(await invoke<unknown>("fetch_experiment_status")),
   // ABI 13: gate list + the generation a Start must present (the bridge's

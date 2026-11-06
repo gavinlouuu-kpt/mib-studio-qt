@@ -43,13 +43,13 @@ export type ConfigState = ReturnType<typeof useConfigState>;
 type ConfigSyncDeps = Pick<ShellState, "ready" | "append">
   & Pick<ConfigState, "configGeneration" | "quickGeneration" | "acceptConfig" | "acceptQuickConfig" | "setCoreStatus" | "liveDraft"
     | "configText" | "configApplied" | "quickDraft" | "quickApplied" | "procEnabled" | "pixelToMicron" | "setStats">
-  & Pick<PreviewState, "setBackgroundSet" | "setAutoBackgroundEnabled" | "setRoiFields">;
+  & Pick<PreviewState, "setBackgroundSet" | "setAutoBackgroundEnabled" | "setRoiFields"> & Pick<MonitoringState, "setBackgroundRevision">;
 
 // The live config: fetched when the backend is ready, merge-applied, and the quick processing controls.
 export function useConfigSync({
   ready, append, configGeneration, quickGeneration, acceptConfig, acceptQuickConfig, setCoreStatus, liveDraft, configText,
   configApplied, quickDraft, quickApplied, procEnabled, pixelToMicron, setStats, setBackgroundSet, setAutoBackgroundEnabled,
-  setRoiFields,
+  setRoiFields, setBackgroundRevision,
 }: ConfigSyncDeps) {
   const refreshConfig = useCallback(async (discardDraft=false) => {
     const generation=configGeneration();
@@ -60,6 +60,8 @@ export function useConfigSync({
         const parsed = JSON.parse(doc.json);
         acceptConfig(JSON.stringify(parsed, null, 2),discardDraft,generation);
         setBackgroundSet(Boolean(parsed.background_set));
+        // The side panel's thumbnail refetches when the config was re-read with a background (set again, or replaced): epic #866 MON-102.
+        if (parsed.background_set) setBackgroundRevision((n) => n + 1);
         setAutoBackgroundEnabled(Boolean(parsed.image_processing?.auto_background_enabled));
         acceptQuickConfig(JSON.stringify({enabled:Boolean(parsed.realtime_processing?.enabled),factor:String(parsed.pixel_to_micron ?? 1)}),discardDraft,quickToken);
         if (parsed.roi) {

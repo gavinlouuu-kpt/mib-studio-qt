@@ -75,6 +75,17 @@ export const ask = (async (message: string, options?: string | dialog.ConfirmDia
   return window.confirm(message);
 }) as typeof dialog.ask;
 
+// A modal message (info, warning or error) the operator must dismiss: the plugin's message in the desktop shell
+// (dialog:allow-message), window.alert in a browser. It never throws: a message that cannot be shown must not
+// break the flow that wanted to tell the operator something (the caller keeps its own inline text).
+export const message = async (text: string, options?: string | dialog.MessageDialogOptions): Promise<void> => {
+  try {
+    if (!isRemote) { await dialog.message(text, options); return; }
+    const title = typeof options === "string" ? options : options?.title;
+    window.alert(title ? `${title}\n\n${text}` : text);
+  } catch { /* the caller's inline text stays */ }
+};
+
 export const openUrl = (async (url: string | URL, openWith?: string) => {
   if (!isRemote) return opener.openUrl(url, openWith);
   window.open(String(url), "_blank", "noopener");
