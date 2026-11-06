@@ -17,6 +17,9 @@ and [`branching-and-releases.md`](branching-and-releases.md#feature-lane)). The
 Windows beta is for handing already-tested builds to the rig, not for first
 testing.
 
+For the **Tauri** app, CI builds a camera-enabled portable candidate of any commit without this
+PC: see [windows-tauri-camera-candidate.md](windows-tauri-camera-candidate.md).
+
 ## Build a branch
 
 From any checkout of this repo on P5 (the build uses the commit, not the

@@ -1061,6 +1061,31 @@ current Qt live scatter's use of the current factor is not authoritative for mix
 
 Local minimum path: VS2022 x64 developer PowerShell, Node22, stable Rust/MSVC, Python/Conan/CMake; install dependencies with `conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194`, provision required assets, configure `windows-default` with the workflow's SDK-free/backend-only flags, build backend libraries and `mib_backend_smoke_test`, run `tools/gen_bridge_link_manifest.py`, then `npm --prefix desktop ci`, frontend test/build and release Cargo desktop build with `custom-protocol`. Run the packaging script last. Never use Qt's release workflow to build this candidate.
 
+**Camera mode for rig builds (`camera_sdk`, #869).** The SDK-free build above is the default. A
+`workflow_dispatch` takes two inputs:
+- `ref`: the branch, tag or full SHA to build. Only the workflow file comes from the dispatch ref;
+  every script comes from `ref`.
+- `camera_sdk`: default false.
+
+With `camera_sdk=true`, the job:
+- installs eGrabber SDK 25.10.0.57 as `build-windows.yml` does (same URL, size check and silent
+  install), and also pins the installer's SHA-256;
+- configures `MIB_ENABLE_HARDWARE_SDKS=ON` and `MIB_ENABLE_MINDVISION=OFF`, with CoreMOR at its
+  Windows default (on) and the processing-core signer pin from the repository variable;
+- fails unless the link manifest defines `MIB_HAS_EGRABBER=1`;
+- fails if any eGrabber, GenTL or Euresys file is packaged;
+- checks that the exe holds the eGrabber backend: a string that only `MIB_HAS_EGRABBER=1` builds
+  contain is present, the SDK-free fallback string is absent, and `dumpbin /dependents` shows no
+  eGrabber import.
+
+eGrabber is header-only here and opens the GenTL producer installed on the PC when the app runs,
+as the Qt app does. The artifact is `unsigned-egrabber-windows-tauri-<built sha>`, and its
+README.txt names the commit, the run and the backend features. The camera steps run inline in
+the workflow, because the packaging script comes from the built ref.
+
+How-to: `docs/howto/windows-tauri-camera-candidate.md`. Rig GUI probe:
+`desktop/scripts/rig-tauri-gui-probe.ps1` (CDP on 127.0.0.1:9333, else UI Automation).
+
 The close guard also queries native initialization while shell boot/recovery is still
 pending; a temporarily false React `ready` flag cannot bypass protection for an
 existing run. A refused close reveals the log so the reason is visible immediately.

@@ -52,6 +52,8 @@ This folder hosts living documentation as we build functionality. Keep content c
 - Build a branch with the real eGrabber SDK on the Windows camera PC (bench-test
   camera/capture PRs before merge) — see
   [howto/win11-bench-build.md](howto/win11-bench-build.md)
+- Build a camera-enabled (eGrabber) Windows Tauri candidate of any commit in CI, for Tauri rig
+  checks — see [howto/windows-tauri-camera-candidate.md](howto/windows-tauri-camera-candidate.md)
 - Known debt — see [exec-plans/tech-debt-tracker.md](exec-plans/tech-debt-tracker.md)
 - Agent map — see [../AGENTS.md](../AGENTS.md)
 
