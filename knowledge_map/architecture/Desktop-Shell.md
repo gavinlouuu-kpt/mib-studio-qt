@@ -534,7 +534,7 @@ No develop UI uses them; the workspace Prepare card (A4b) will. Guard:
 **Live cell images (ABI 41, #716 A6a).** `monitoringCells.ts` types and checks
 the backend's live cell store ([[../services/MonitoringCellStore]]):
 `bridge.fetchMonitoringCells()` (`fetch_monitoring_cells` → the strip of recent valid
-cells, the `invalid_strip` of recent invalid cells with their `reasons` (ABI 45) and the pins, `MONITORING_CELLS_INVALID` on a reply that breaks the
+cells, the `invalid_strip` of recent invalid cells with their `reasons` (ABI next (#880, set at merge)) and the pins, `MONITORING_CELLS_INVALID` on a reply that breaks the
 contract or its caps), `bridge.monitoringCellPin(key)` (args
 `{expectedStartGeneration, captureEpoch, frameIndex, objectId}`, a pin reply with
 `outcome` from `MONITORING_CELL_PIN_OUTCOMES`, `CaptureMismatch` (6) when the key names
@@ -559,7 +559,7 @@ clear are control commands on the remote server (`VIEWER_ONLY` for a viewer).
 The workspace Live view (A6b) uses the strip and the pins; the classic Monitoring sub-tab shows
 the strips (below). Guard: `monitoringCells.test.ts`, `framePacket.test.ts` (the cell golden).
 
-**Monitoring cell strips (ABI 45, #866 MON-052 .. MON-055).** `areas/monitoring/CellStrips.tsx`, below
+**Monitoring cell strips (ABI next (#880, set at merge), #866 MON-052 .. MON-055).** `areas/monitoring/CellStrips.tsx`, below
 the charts of the Monitoring sub-tab, shows the Qt tab's two strips: the last 25 **valid** and the last
 25 **invalid** cells as 100 px thumbnails, five per row in a scrollable box
 (`cellStripsModel.ts` `THUMBNAIL_SIZE` / `GRID_COLUMNS` / `STRIP_CELLS`). Thumbnails are the backend's
@@ -586,7 +586,7 @@ It sends no command, so it is outside `ViewerGate`. Anchors: `data-tour="monitor
 `monitoring-invalid-overlay`. Guard: `cellStripsModel.test.ts`, `CellStrips.dom.test.tsx`,
 `monitoringCells.test.ts`.
 
-**Density, reference contour, E-modulus table, stats telemetry (ABI 46, #866 PR E; no UI yet).**
+**Density, reference contour, E-modulus table, stats telemetry (ABI next (#886, set at merge), #866 PR E; no UI yet).**
 `monitoringDensity.ts` holds the types, strict decoders (`MONITORING_DENSITY_INVALID`) and argument
 builders for the backend's live density (`bridge.monitoringDensitySetSettings` /
 `monitoringDensityRequestUpdate` are control commands: `VIEWER_ONLY` for a viewer;
@@ -594,7 +594,7 @@ builders for the backend's live density (`bridge.monitoringDensitySetSettings` /
 and `fetchProcessingTelemetry` are reads), plus `densityByRow` (a point matches a snapshot row by
 `(start_generation, capture_epoch, frame_index, object_id)`) and `formatMetricSample`. The later
 frontend PR consumes them; the `algo_avg_*` decoder of `fetch_processing_stats` is PR #877's.
-Guard: `monitoringDensity.test.ts`. Shapes: [[Rust-Bridge]] (ABI 46).
+Guard: `monitoringDensity.test.ts`. Shapes: [[Rust-Bridge]] (ABI next (#886, set at merge)).
 
 ## Central profile registry (ABI 25, issue #398)
 

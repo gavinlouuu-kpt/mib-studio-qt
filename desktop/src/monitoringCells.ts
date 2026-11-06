@@ -1,4 +1,4 @@
-// Live cell images for the Monitoring / Live views (bridge ABI 41, #716 A6a; ABI 45, #866: the
+// Live cell images for the Monitoring / Live views (bridge ABI 41, #716 A6a; ABI next (#880, set at merge), #866: the
 // invalid strip and the rejection reasons).
 //
 // The backend owns the copies: a bounded strip of the most recently detected valid cells, a strip

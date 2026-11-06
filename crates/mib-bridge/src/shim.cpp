@@ -229,7 +229,7 @@ static_assert(static_cast<std::uint32_t>(mcs::O::RunMismatch) == 3);
 static_assert(static_cast<std::uint32_t>(mcs::O::NotFound) == 4);
 static_assert(static_cast<std::uint32_t>(mcs::O::LimitReached) == 5);
 static_assert(static_cast<std::uint32_t>(mcs::O::CaptureMismatch) == 6);
-// ABI 45 (#866 MON-052/053): the strip is 25 cells (Qt's MAX_FRAMES_TO_SHOW) and the invalid strip
+// ABI next (#880, set at merge) (#866 MON-052/053): the strip is 25 cells (Qt's MAX_FRAMES_TO_SHOW) and the invalid strip
 // has the same bounds and its own byte cap.
 static_assert(mcs::Store::kStripMaxCells == 25);
 static_assert(mcs::Store::kStripMaxBytes == 4194304);
@@ -240,7 +240,7 @@ static_assert(mcs::Store::kPinMaxBytes == 4194304);
 static_assert(mcs::Store::kCropMaxSide == 256);
 static_assert(mcs::Store::kCropMinMargin == 8);
 static_assert(mcs::Store::kRowIndexMax == 4096);
-// ABI 46 (#866 PR E): the live Monitoring density's bounds (monitoring_density in bridge-contract.json:
+// ABI next (#886, set at merge) (#866 PR E): the live Monitoring density's bounds (monitoring_density in bridge-contract.json:
 // the settings the service clamps to, its grid, the compute budget) and the reference contour's size cap.
 namespace mds { using Svc = backend::services::MonitoringDensityService; using Set = backend::services::MonitoringDensitySettings; }
 static_assert(mds::Set::kIntervalMsMin == 500 && mds::Set::kIntervalMsMax == 60000);
@@ -2440,7 +2440,7 @@ rust::String BackendBridge::run_quick_look(rust::Str request_json) {
     }
 }
 
-// ABI 46 (#866 PR E): the live Monitoring density, the reference contour from a file, the E-modulus table.
+// ABI next (#886, set at merge) (#866 PR E): the live Monitoring density, the reference contour from a file, the E-modulus table.
 rust::String BackendBridge::monitoring_density_set_settings(bool enabled, std::int32_t interval_ms,
                                                             double bandwidth_factor, double core_fraction, double x0,
                                                             double x1, double y0, double y1) {
@@ -2716,7 +2716,7 @@ BridgeProcessingStats BackendBridge::fetch_processing_stats() {
     out.valid_fps1s = stats.validFps1s;
     out.invalid_fps1s = stats.invalidFps1s;
     out.pixel_to_micron = stats.pixelToMicronFactor;
-    // ABI 46 (#866 PR E).
+    // ABI next (#886, set at merge) (#866 PR E).
     out.algo_avg_published = stats.algoAvgPublished;
     out.algo_avg_us = stats.algoAvgUs;
     out.algo_avg_age_ms = stats.algoAvgAgeMs;
@@ -2785,14 +2785,14 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // the command result and experiment_stop's expected start generation (#741, stop
 // outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
 // run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6); v42 calibration records
-// (#716 A4a); v43 the readiness report's method_calibration (#776); v44 the run quick look (#716 A7a); v45 the live invalid
-// cell strip and rejection reasons (#866 MON-052/053); v46 the live Monitoring density, a reference contour from a
+// (#716 A4a); v43 the readiness report's method_calibration (#776); v44 the run quick look (#716 A7a); ABI next (#880, set at merge): the live invalid
+// cell strip and rejection reasons (#866 MON-052/053); ABI next (#886, set at merge): the live Monitoring density, a reference contour from a
 // file, the E-modulus table and the stats telemetry (#866 PR E). All additive over v1 except that removal (ADR
 // 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 46; }
+std::uint32_t bridge_abi_version() { return 44; }
 
 } // namespace mib_bridge
 

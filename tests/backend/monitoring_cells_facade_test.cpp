@@ -26,7 +26,7 @@
 //      reason), the strip is empty, the pin is listed with its measurements
 //      only ("capture E ended (reason)"), the listing says why, and unpin
 //      removes the ended pin;
-//   7. the invalid strip and the reasons (ABI 45, #866 MON-052/053): an invalid
+//   7. the invalid strip and the reasons (ABI next (#880, set at merge), #866 MON-052/053): an invalid
 //      row is a cell of invalid_strip (never of strip) with its crop, served as
 //      a packet like a strip cell, and its reasons (code, measured value,
 //      configured range) are the shared classifier's under the processing
@@ -310,7 +310,7 @@ int main()
                    l.dump());
         MIB_EXPECT(l["caps"]["strip_max_cells"] == 25 && l["caps"]["invalid_strip_max_cells"] == 25 &&
                        l["caps"]["invalid_strip_max_bytes"] == MonitoringCellStore::kInvalidStripMaxBytes,
-                   "ABI 45 caps: " + l["caps"].dump());
+                   "ABI next (#880, set at merge) caps: " + l["caps"].dump());
         MIB_EXPECT(l["caps"]["strip_max_cells"] == MonitoringCellStore::kStripMaxCells &&
                        l["caps"]["max_pins"] == MonitoringCellStore::kMaxPins &&
                        l["caps"]["crop_max_side"] == MonitoringCellStore::kCropMaxSide,
@@ -578,7 +578,7 @@ int main()
                        "a new frame buffer, nothing running");
             expectEnded(facade, proc, kBase + 320, before, "switched to Overview", "Overview switch");
         }
-        // ---- 7. the invalid strip and its reasons (ABI 45) --------------------------------------
+        // ---- 7. the invalid strip and its reasons (ABI next (#880, set at merge)) --------------------------------------
         wd.mark("invalid strip");
         {
             // The config in force decides the reasons: read it, never assume the defaults.

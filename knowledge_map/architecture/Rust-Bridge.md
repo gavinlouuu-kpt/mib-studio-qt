@@ -620,9 +620,9 @@ Start check). Contract section `calibration_records`, enums `calibration_record_
   `calibration_records_over_the_websocket`; `calibrationRecords.test.ts`; C++
   `backend.calibration_record`, `e2e.calibration_run`.
 
-## ABI 46: live density, reference contour, E-modulus table, stats telemetry (#866 PR E)
+## ABI next (#886, set at merge): live density, reference contour, E-modulus table, stats telemetry (#866 PR E)
 
-Additive over ABI 45: five commands and new fields on `fetch_processing_stats`, so a later frontend PR
+Additive over ABI next (#880, set at merge): five commands and new fields on `fetch_processing_stats`, so a later frontend PR
 can close the Monitoring rows that need the backend (MON-043, 058-064, 066, 068, 077, 083-086, 095,
 098, 008). Contract text: `bridge-contract.json` sections `monitoring_density`,
 `kde_reference_from_file`, `emodulus_lut`, `processing_stats`. Layering as every command: TS
@@ -671,18 +671,18 @@ can close the Monitoring rows that need the backend (MON-043, 058-064, 066, 068,
 - **Threading:** no command computes; the estimate stays on the service's idle-priority worker, nothing
   is added to the acquisition or processing path, the E-modulus table is copied under the identity
   double-read (it is loaded once at bootstrap).
-- **Touched:** `bridge-contract.json` (abi_version 46, the four sections), `scripts/gen_bridge_contract.py`
+- **Touched:** `bridge-contract.json` (abi_version: the next number at merge, the four sections), `scripts/gen_bridge_contract.py`
   (renders the bounds into `desktop/src/bridgeContract.ts` and `frame_packet_contract.rs`, extends
-  `check_bridge`), `shim.cpp` (`static_assert`s on the bounds, `bridge_abi_version` 46),
+  `check_bridge`), `shim.cpp` (`static_assert`s on the bounds, `bridge_abi_version`, next at merge),
   `BridgeProcessingStats` (new fields), `CONTROL_COMMANDS`, the ABI pins in `dispatch.rs`,
   `runQuickLook.test.ts`, `eventAdapter.test.ts`.
 - **Tests:** C++ `backend.monitoring_density_service` (row identity), `e2e.monitoring_density_facade`;
-  Rust `contract.rs` `abi_version_is_stable` (46), `monitoring_density_is_described`,
+  Rust `contract.rs` `abi_version_is_stable` (the merge-time number), `monitoring_density_is_described`,
   `monitoring_density_end_to_end`; `dispatch.rs` `monitoring_density_through_dispatch`;
   `mib-bridge-server` `monitoring_density_settings_are_control_only_but_reads_are_not`;
   `monitoringDensity.test.ts`.
 
-## ABI 45: the invalid-cell strip and rejection reasons (#866 MON-052/053)
+## ABI next (#880, set at merge): the invalid-cell strip and rejection reasons (#866 MON-052/053)
 
 Additive over ABI 44, no new command: `fetch_monitoring_cells` gains `invalid_strip` beside `strip`
 (the most recent INVALID cells of the current run context and capture, oldest -> newest, each with a
@@ -696,8 +696,8 @@ the frontend owns the short labels. `strip_max_cells` is 25 (was 24: the Qt tab'
 `last_capture_change.invalid_strip_dropped`. `fetch_monitoring_cell_packet` serves an invalid cell's
 image and mask like a strip cell's; a pin of an invalid cell carries its reasons; `monitoring_clear`
 and a capture change empty it. Contract text: `monitoring_cells.invalid_strip` / `reasons`. See
-[[../services/MonitoringCellStore]]. **Touched:** `bridge-contract.json` (abi_version 45, caps,
-`reason_codes`, prose), `shim.cpp` (`static_assert`s, `bridge_abi_version` 45), `lib.rs` (doc),
+[[../services/MonitoringCellStore]]. **Touched:** `bridge-contract.json` (abi_version: the next number at merge, caps,
+`reason_codes`, prose), `shim.cpp` (`static_assert`s, `bridge_abi_version`, next at merge), `lib.rs` (doc),
 `scripts/gen_bridge_contract.py` (`MONITORING_CELL_REASON_CODES`), `desktop/src/bridgeContract.ts`.
 **Tests:** `contract.rs` `abi_version_is_stable`, `monitoring_cells_are_described` (caps, `reason_codes`),
 `monitoring_invalid_cells_end_to_end` (blob frames rejected by the area gate: reasons with value and
@@ -765,8 +765,8 @@ click-to-pin without the client holding pixels or racing ring eviction.
   other rule). Pins belong to the capture that made them: at the moment the capture changes the
   strip is cleared and the pins keep their measurements only; a run reaching Active drops them.
 - **Caps** (`monitoring_cells`, `static_assert`ed in `shim.cpp`, generated into
-  `MONITORING_CELLS`): strip 25 cells (24 until ABI 45) / 4 MiB, pins 16 / 4 MiB, crop ≤ 256 px
-  square (margin ≥ 8), row index 4096; ABI 45 adds the invalid strip's 25 cells / 4 MiB. Every reply
+  `MONITORING_CELLS`): strip 25 cells (24 until ABI next (#880, set at merge)) / 4 MiB, pins 16 / 4 MiB, crop ≤ 256 px
+  square (margin ≥ 8), row index 4096; ABI next (#880, set at merge) adds the invalid strip's 25 cells / 4 MiB. Every reply
   is bounded by them.
 - **Gating.** `monitoring_cell_pin`, `monitoring_cell_unpin` and `monitoring_cell_clear_pins` are
   in the server's `CONTROL_COMMANDS` (a viewer gets `VIEWER_ONLY`): the pins are one shared,

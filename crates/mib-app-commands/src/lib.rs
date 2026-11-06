@@ -92,18 +92,18 @@ pub struct ProcessingStats {
     valid_fps1s: Option<f64>,
     invalid_fps1s: Option<f64>,
     pixel_to_micron: Option<f64>,
-    /// ABI 46 (#866 PR E; MON-095): the last published algorithm time per frame (1 s window, µs) and
+    /// ABI next (#886, set at merge) (#866 PR E; MON-095): the last published algorithm time per frame (1 s window, µs) and
     /// its age (ms), as Qt's Statistics panel shows them; null until one is published (and when the
     /// backend is not initialized).
     algo_avg_us: Option<f64>,
     algo_avg_age_ms: Option<f64>,
-    /// ABI 46 (MON-008): the realtime processing mode now, "inline" or "async_batch".
+    /// ABI next (#886, set at merge) (MON-008): the realtime processing mode now, "inline" or "async_batch".
     realtime_mode: Option<String>,
-    /// ABI 46 (MON-098): the capture session's own telemetry; null when the backend is not initialized.
+    /// ABI next (#886, set at merge) (MON-098): the capture session's own telemetry; null when the backend is not initialized.
     camera: Option<CameraTelemetry>,
 }
 
-/// One acquisition telemetry sample (ABI 46): `state` is a MetricValidity name ("valid", "stale",
+/// One acquisition telemetry sample (ABI next (#886, set at merge)): `state` is a MetricValidity name ("valid", "stale",
 /// "unavailable", "unsupported", "error"); `value` and `age_ms` are null unless the sample is valid or
 /// stale, so an unknown rate is never a 0.
 #[derive(Serialize, Clone, Default)]
@@ -113,7 +113,7 @@ pub struct MetricSample {
     age_ms: Option<f64>,
 }
 
-/// The capture session as Qt's Statistics panel reads it (ABI 46, MON-098): the device/SDK frame
+/// The capture session as Qt's Statistics panel reads it (ABI next (#886, set at merge), MON-098): the device/SDK frame
 /// rate (fps) and data rate (MB/s). The samples are "unavailable" while the session is not running.
 #[derive(Serialize, Clone, Default)]
 pub struct CameraTelemetry {
@@ -1828,7 +1828,7 @@ pub fn monitoring_cell_clear_pins(state: &AppState) -> Result<CmdResult, String>
     Ok(guard.pin_mut().monitoring_cell_clear_pins().into())
 }
 
-/// ABI 46 (#866 PR E; bridge-contract.json `monitoring_density`): push the live density's settings to
+/// ABI next (#886, set at merge) (#866 PR E; bridge-contract.json `monitoring_density`): push the live density's settings to
 /// the backend service. The service clamps them (interval 500..60000 ms, bandwidth factor 0.2..5,
 /// core fraction 0.05..1); the reply is `{ok, message, settings}` with what applies. x0 x1 y0 y1 are
 /// the chart's axes (the contour grid's range); all zero means the data range padded by 10%.

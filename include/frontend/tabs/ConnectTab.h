@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/discovery/DeviceDiscoveryTypes.h"
+#include "frontend/controllers/CameraController.h"
 #include "frontend/system/DiscoverySubscription.h"
 
 #include <QWidget>
@@ -45,6 +46,12 @@ public:
     /** Reflect an externally applied mode in the combo without re-applying or persisting it. */
     void syncDeliveryMode(camera::common::FrameDeliveryMode mode);
 
+    /** Camera lifecycle from CameraController (MainWindow forwards every change). Keeps the
+     * "Connected to <camera> (...)" line in step with the capture: it said "(not capturing)"
+     * while the camera ran (#860). A phase change rewrites the line only after a camera was
+     * connected; other messages stay until the next phase change. */
+    void setCameraState(const CameraActionState& state);
+
 signals:
     void connected();
     void noCamerasFound();
@@ -64,6 +71,9 @@ private slots:
 
 private:
     void onDiscoverySnapshot(const backend::discovery::DiscoverySnapshot& snapshot);
+    /** The connection line: connectionText_ plus the capture phase in brackets. */
+    QString connectionLine() const;
+    void showConnectionStatus();
 
     Ui::ConnectTab* ui;
     backend::AppBackend& backend_;
@@ -77,6 +87,9 @@ private:
     // (startup / Try again); rendering a job once keeps the selection status
     // the manager wrote from being overwritten by the plain device count.
     std::uint64_t lastRenderedJob_ = 0;
+    // "Connected to <label>" or "Mock camera configured"; empty until a camera is connected.
+    QString connectionText_;
+    CameraActionState::Phase capturePhase_ = CameraActionState::Phase::NotConfigured;
     DiscoverySubscription discoverySubscription_;
 };
 

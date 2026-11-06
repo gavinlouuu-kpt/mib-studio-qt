@@ -1,4 +1,4 @@
-// monitoring_density_facade_test (#866 PR E, bridge ABI 46)
+// monitoring_density_facade_test (#866 PR E, bridge ABI next (#886, set at merge))
 //
 // The live Monitoring density, the reference contour from a file, the E-modulus table and the stats
 // telemetry through the BackendFacade surface the bridge calls, with the real AppBackend (mock camera;

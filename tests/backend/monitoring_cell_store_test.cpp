@@ -37,7 +37,7 @@
 //  10. one owner per copy (#789): a pinned strip cell has its own copy, so the
 //      refresh that drops the strip's frees nothing a reader of the pin copied
 //      (the interleaving replayed through the "refresh-dropped" hook);
-//  11. the invalid strip (ABI 45, #866 MON-053): invalid rows of the ring are
+//  11. the invalid strip (ABI next (#880, set at merge), #866 MON-053): invalid rows of the ring are
 //      admitted to a strip of their own (never the valid one), with its own
 //      count and byte caps, eviction counters, run context and capture rules,
 //      cleared by clearStrip and by a capture change; each invalid cell carries
@@ -142,7 +142,7 @@ public:
         if (onNewest) onNewest();
         return out;
     }
-    // The invalid half (ABI 45): served only when a test asks for it, so the tests of the valid
+    // The invalid half (ABI next (#880, set at merge)): served only when a test asks for it, so the tests of the valid
     // strip keep their invalid rows out of the way.
     Rows newestInvalid(std::size_t maxRows) override
     {
@@ -289,7 +289,7 @@ void testCropPolicy()
     r = MonitoringCellStore::cropRect(kW, kH, outside, p);
     MIB_EXPECT(r.x == 36 && r.width == 128, "image centre when nothing usable");
     // A frame with no contour measures nothing: a centroid of exactly (0, 0) is not a position, the
-    // crop is centred on the image instead of sitting in its corner (an invalid cell of ABI 45).
+    // crop is centred on the image instead of sitting in its corner (an invalid cell of ABI next (#880, set at merge)).
     MonitoringCellMetrics none;
     r = MonitoringCellStore::cropRect(kW, kH, none, p);
     MIB_EXPECT(r.x == 36 && r.width == 128 && r.height == kH, "nothing measured: the image centre");

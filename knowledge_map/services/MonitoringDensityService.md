@@ -44,7 +44,7 @@ codec `include/backend/processing/MonitoringDensity.h`,
 - Input: `AppBackend` copies `ProcessingService::getMonitoringValidPoints()`
   (index, area, deformability and the row's identity only — no image
   references under the ring lock) and converts area to µm² with the current
-  pixel-to-micron factor. Since ABI 46 each point carries its whole row
+  pixel-to-micron factor. Since ABI next (#886, set at merge) each point carries its whole row
   identity, `MonitoringDensityKey{startGeneration, captureEpoch, frameIndex,
   objectId}` (the ring slot's `MonitoringRowTag` plus the frame's index and
   object id), because a frame index alone names nothing: it restarts with
@@ -77,9 +77,9 @@ computing), `stats()` (`estimates`, `skippedUnchanged`, `skippedUnderLoad`,
 Pure policy for tests: `nextIntervalMs`, `underLoad`, `compute`,
 `liveRecordJson`.
 
-## The bridge surface (ABI 46, #866 PR E)
+## The bridge surface (ABI next (#886, set at merge), #866 PR E)
 
-The service was already shared by every shell; ABI 46 gives the Rust/Tauri
+The service was already shared by every shell; ABI next (#886, set at merge) gives the Rust/Tauri
 and WebSocket shells the same reads and writes the Qt tab had
 (`bridge-contract.json` sections `monitoring_density`,
 `kde_reference_from_file`, `emodulus_lut`; full shapes in
@@ -182,7 +182,7 @@ unfiltered so it includes the test.
   so no estimate — and no stored record — exists for a run watched from
   another tab.
 - Settings persistence still lives in the shell (Qt `QSettings`
-  `Monitoring/Kde*`); the bridge now exposes the service (ABI 46), so the
+  `Monitoring/Kde*`); the bridge now exposes the service (ABI next (#886, set at merge)), so the
   React shell keeps its own copy of the settings and pushes them (the
   service holds one set per instrument, shared by every client).
 

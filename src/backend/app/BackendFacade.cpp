@@ -703,7 +703,7 @@ namespace backend::bridge
         out.validFps1s = processing.getValidFps1s();
         out.invalidFps1s = processing.getInvalidFps1s();
         out.pixelToMicronFactor = processing.getPixelToMicronFactor();
-        // ABI 46 (#866 PR E): plain atomic reads (the algorithm time, the realtime mode) and one
+        // ABI next (#886, set at merge) (#866 PR E): plain atomic reads (the algorithm time, the realtime mode) and one
         // short snapshot of the capture session's telemetry (the same read Qt's Statistics panel makes).
         const std::uint64_t updatedUs = processing.getAlgoAvgUs1sUpdatedUs();
         out.algoAvgPublished = updatedUs != 0;
@@ -1479,7 +1479,7 @@ namespace backend::bridge
                 {"youngs_modulus", finiteOrNull(m.youngsModulus)},
                 {"pixel_to_micron", finiteOrNull(m.pixelToMicron)},
             };
-            // Why an invalid cell failed validation (ABI 45): the shared classifier's codes, each with the
+            // Why an invalid cell failed validation (ABI next (#880, set at merge)): the shared classifier's codes, each with the
             // measured value and the configured range; [] for a valid cell.
             nlohmann::json reasons = nlohmann::json::array();
             for (const auto &r : c.reasons)

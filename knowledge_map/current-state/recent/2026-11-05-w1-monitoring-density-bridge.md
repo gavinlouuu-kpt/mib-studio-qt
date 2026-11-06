@@ -1,8 +1,8 @@
-## 2026-11-05 — Monitoring bridge: live density, reference contour, E-modulus table, stats telemetry (#866 PR E, bridge ABI 46)
+## 2026-11-05 — Monitoring bridge: live density, reference contour, E-modulus table, stats telemetry (#866 PR E, bridge ABI next (#886, set at merge))
 
 Backend and bridge groundwork so a later frontend PR can close the remaining Tauri Monitoring rows
 (MON-008, 043, 058-064, 066, 068, 077, 083-086, 095, 098). No frontend change beyond the TS decoders and
-`bridge.ts` functions. See [[architecture/Rust-Bridge]] (ABI 46, exact JSON shapes) and
+`bridge.ts` functions. See [[architecture/Rust-Bridge]] (ABI next (#886, set at merge), exact JSON shapes) and
 [[services/MonitoringDensityService]].
 
 **What is new (additive, nothing on the acquisition/processing path).**

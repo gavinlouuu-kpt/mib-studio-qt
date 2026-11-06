@@ -4,7 +4,7 @@
 // per row (ExperimentMonitoringTab.h THUMBNAIL_SIZE / GRID_COLUMNS / MAX_FRAMES_TO_SHOW), the invalid
 // ones with the short reason of each failed gate under the image and a tooltip with the measured
 // value and range, and optionally the processed mask drawn over the image (Show Overlay). The
-// backend owns the cells (bridge ABI 41 `monitoring_cells`, ABI 45 `invalid_strip` and `reasons`):
+// backend owns the cells (bridge ABI 41 `monitoring_cells`, ABI next (#880, set at merge) `invalid_strip` and `reasons`):
 // a crop around each object, cut by the backend from the ROI, and the same crop of the mask.
 // Nothing here touches the DOM or the bridge; the hook (useMonitoringCells.ts) and the component
 // (CellStrips.tsx) use it.

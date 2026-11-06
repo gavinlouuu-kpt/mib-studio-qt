@@ -121,7 +121,7 @@ the cache mutex. Guards: `review.run_statistics` (the LRU under threads, the TSa
   mutex; the store mutex is never held while the ring lock is taken. Store
   copies never leave the store (image pulls copy under the store mutex) and
   have one owner inside it (a pin of a strip cell copies it, #789).
-  The invalid strip (ABI 45) follows the same rules: one hold of the ring's lock
+  The invalid strip (ABI next (#880, set at merge)) follows the same rules: one hold of the ring's lock
   reads both halves (an invalid row also copies six scalars for the classifier),
   and the rejection reasons are derived outside every lock, on the caller's thread,
   from the processing config read once per refresh (its own mutex, never under
