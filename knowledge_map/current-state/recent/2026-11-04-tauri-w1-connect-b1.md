@@ -9,7 +9,7 @@ refuses them too (`select_hardware_camera` in Rust, `ConfigureMockCamera` in the
 Configure Mock the status says "Connected to <label> (not capturing)" and the stage moves to Overview.
 The startup camera selection is on by default (#852) with an opt-out, visible on every instrument; its
 outcome (camera highlighted, sub-tab open, Overview; "No cameras found." with the check-power dialog;
-several cameras; incomplete) is reported once per camera job. New bridge ABI 45: `fetch_frame_delivery_mode`
+several cameras; incomplete) is reported once per camera job. New bridge ABI next (#895, set at merge): `fetch_frame_delivery_mode`
 and `set_frame_delivery_mode` back the Connect delivery-mode select; `CaptureService::config()` and a
 lock-guarded `setConfig`. Decisions and the Qt-label-goes-stale note are in the PR. See
 [[architecture/Desktop-Shell]], [[architecture/Rust-Bridge]], [[services/CaptureService]].

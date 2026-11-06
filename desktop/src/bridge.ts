@@ -840,7 +840,7 @@ export const bridge = {
   startupDiscoverySetPreference: (preference: StartupPreference) => invoke<{accepted: boolean; message: string; preference?: StartupPreference}>("startup_discovery_set_preference", {json: JSON.stringify(preference)}),
   startupDiscoveryRun: (action: string) => invoke<{accepted: boolean; message: string}>("startup_discovery_run", {action}),
   startupDiscoveryStatus: () => invoke<StartupDiscoveryStatus>("startup_discovery_status"),
-  // Frame delivery mode (bridge ABI 45, #863): Every Frame / Latest Frame, applied at the next capture start.
+  // Frame delivery mode (bridge ABI next (#895, set at merge), #863): Every Frame / Latest Frame, applied at the next capture start.
   fetchFrameDeliveryMode: () => invoke<FrameDeliveryModeStatus>("fetch_frame_delivery_mode"),
   setFrameDeliveryMode: (mode: FrameDeliveryMode) => invoke<FrameDeliveryModeSet>("set_frame_delivery_mode", { mode }),
   pulseGeneratorCommand: (request: Record<string, unknown>) => invokeCommand("pulse_generator_command", {json: JSON.stringify(request)}),

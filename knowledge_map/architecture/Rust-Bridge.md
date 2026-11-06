@@ -374,7 +374,7 @@ Configuration/output-on serialize against experiment Start with `withIdleConfigu
 output-off remains possible while an experiment runs unless coordinated live view owns
 the generator. Status preserves that ownership so manual controls cannot steal it.
 
-Frame delivery mode (ABI 45, #863 CONNECT-019/020): `fetch_frame_delivery_mode` reads
+Frame delivery mode (ABI next (#895, set at merge), #863 CONNECT-019/020): `fetch_frame_delivery_mode` reads
 `{valid, mode, active_mode, confirmed, capturing}` (open to every client) and
 `set_frame_delivery_mode(mode)` (`everyFrame` | `latestFrame`; controller only) sets the capture service's
 configuration, answering `{ok, mode, applies_at_next_start, message}`. A running capture is never restarted:
