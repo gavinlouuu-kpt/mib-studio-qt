@@ -7,8 +7,9 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-// The classic view's source: App.tsx and the area modules it was split into (#869 wave 0).
-const appSource = Object.values(import.meta.glob(["../App.tsx", "../areas/**/*.tsx"], { query: "?raw", import: "default", eager: true }) as Record<string, string>).join("\n");
+// The classic view's source: App.tsx and the area modules it was split into (#869 wave 0), plus the controller that calls the hooks which
+// send commands without a control of their own (the selected cell's pin, PR E1).
+const appSource = Object.values(import.meta.glob(["../App.tsx", "../areas/**/*.tsx", "../studio/useStudioController.ts"], { query: "?raw", import: "default", eager: true }) as Record<string, string>).join("\n");
 
 let state: { clientId?: number; controllerId?: number | null } = {};
 let hasSession = true;
@@ -133,6 +134,7 @@ describe("the classic view gates its control commands", () => {
     "void saveCameraWindow(cameraWindow)", "onClick={onApplyRoi}", "<CameraScriptControls", "<CameraDocumentEditor",
     "onClick={onStartExperiment}", "onClick={onStopExperiment}", "<RunRateControl", "<ProcessingSetupControls", "onClick={onToggleRecord}",
     "<PreviewBufferControls", "<BackgroundCalibrationControls", "<CoreManagementPanel", "<ProfilesPanel", "<ConfigDocumentEditor",
+    "onClick={() => void onTuneApply()}", "onClick={() => void onTuneRevert()}",
     "bridge.monitoringClear()", "bridge.triggerManualPulse()", "bridge.triggerSetPulseDuration(", "bridge.triggerPeriodicStart(",
     "onClick={onSelectHdf}", "}}>Close File</button>", "reviewExport.start(", "<ReanalysisControls",
   ])("%s is inside a ViewerGate", (needle) => {
@@ -147,6 +149,10 @@ describe("the classic view gates its control commands", () => {
     ["onClick={onApplyProcessing}", "|| viewerOnly}"],
     ["apply={bridge.setInstrumentLed}", "|| viewerOnly}"],
     ['label: "Open Recording…"', "pending: viewerOnly ? VIEWER_ONLY_REASON"],
+    // PR E1: pin and unpin are control commands (the server refuses them for a viewer), run by the hook behind the selected-cell pane
+    // (called by the always-mounted controller, so the pin outlives the Monitoring view); a gate handle writes the draft the panel's gated inputs write.
+    ["const cellView = useCellView(", "canPin: !viewerOnly"],
+    ["const gate = useGateOverlay(", "viewerOnly }"],
   ])("%s is disabled for a viewer on its own", (needle, guard) => {
     const line = appSource.split("\n").find((l) => l.includes(needle));
     expect(line, needle).toBeDefined();

@@ -89,8 +89,8 @@ bool MonitoringDensitySettings::operator==(const MonitoringDensitySettings& o) c
 
 bool MonitoringDensityService::Fingerprint::operator==(const Fingerprint& o) const {
     // Only what changes the estimate: the interval and the enabled flag do not.
-    return count == o.count && first == o.first && last == o.last &&
-           pixelToMicron == o.pixelToMicron &&
+    return count == o.count && first == o.first && last == o.last && firstKey == o.firstKey &&
+           lastKey == o.lastKey && pixelToMicron == o.pixelToMicron &&
            settings.bandwidthFactor == o.settings.bandwidthFactor &&
            settings.coreFraction == o.settings.coreFraction && settings.x0 == o.settings.x0 &&
            settings.x1 == o.settings.x1 && settings.y0 == o.settings.y0 &&
@@ -183,6 +183,7 @@ MonitoringDensityService::compute(const MonitoringDensityInput& input,
     const std::int64_t cpu0 = threadCpuUs();
     MonitoringDensityResult r;
     r.frameIndices = input.frameIndices;
+    if (input.keys.size() == input.frameIndices.size()) r.keys = input.keys; // all or nothing
     r.bandwidthFactor = settings.bandwidthFactor;
     r.coreFraction = settings.coreFraction;
     r.pixelToMicron = input.pixelToMicron;
@@ -309,6 +310,10 @@ void MonitoringDensityService::tick() {
     fp.count = input.points.size();
     fp.first = input.frameIndices.empty() ? 0 : input.frameIndices.front();
     fp.last = input.frameIndices.empty() ? 0 : input.frameIndices.back();
+    if (!input.keys.empty()) {
+        fp.firstKey = input.keys.front();
+        fp.lastKey = input.keys.back();
+    }
     fp.pixelToMicron = input.pixelToMicron;
     fp.settings = settings;
     {

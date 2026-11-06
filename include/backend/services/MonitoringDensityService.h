@@ -59,10 +59,29 @@ struct MonitoringDensitySettings {
     bool operator!=(const MonitoringDensitySettings& o) const { return !(*this == o); }
 };
 
+// The identity of a monitoring row, the bridge's (bridge-contract.json monitoring_cells.identity):
+// frame indices restart with a capture and a row's object id tells two objects of one frame
+// apart, so a frame index alone names nothing once the ring holds rows of more than one capture
+// or run (#866 PR E). No two rows of one capture share a key.
+struct MonitoringDensityKey {
+    std::uint64_t startGeneration{0}; // the run active when the row's frame entered processing; 0 = none
+    std::uint64_t captureEpoch{0};    // the capture it entered with; 0 = crossed a capture change
+    std::uint64_t frameIndex{0};
+    std::int32_t objectId{-1};
+    bool operator==(const MonitoringDensityKey& o) const {
+        return startGeneration == o.startGeneration && captureEpoch == o.captureEpoch &&
+               frameIndex == o.frameIndex && objectId == o.objectId;
+    }
+    bool operator!=(const MonitoringDensityKey& o) const { return !(*this == o); }
+};
+
 // Valid monitoring cells, oldest -> newest, already in chart units.
 struct MonitoringDensityInput {
     std::vector<std::uint64_t> frameIndices;
     std::vector<monitoring::DensityPoint> points; // parallel to frameIndices
+    // The rows' full identities, parallel to frameIndices. Empty when the provider only knows
+    // frame indices (tests, the Qt tab's own use): the result then carries no keys.
+    std::vector<MonitoringDensityKey> keys;
     double pixelToMicron{0.0};
 };
 
@@ -76,6 +95,7 @@ struct MonitoringPipelineLoad {
 struct MonitoringDensityResult {
     std::uint64_t generation{0};
     std::vector<std::uint64_t> frameIndices;
+    std::vector<MonitoringDensityKey> keys; // parallel to frameIndices, or empty (the input had none)
     std::vector<double> density; // normalised [0, 1], parallel to frameIndices
     monitoring::DensityBandwidth bandwidth{};
     double bandwidthFactor{0.0};
@@ -151,6 +171,9 @@ private:
     struct Fingerprint {
         std::size_t count{0};
         std::uint64_t first{0}, last{0};
+        // The ends' identities beyond the frame index: a new capture or run restarts the frame
+        // numbering, so the same count and end indices can name different rows.
+        MonitoringDensityKey firstKey{}, lastKey{};
         double pixelToMicron{0.0};
         MonitoringDensitySettings settings{};
         bool operator==(const Fingerprint& o) const;

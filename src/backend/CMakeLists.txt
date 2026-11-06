@@ -226,6 +226,8 @@ add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/review/ExportEngine.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/SourceEModulusLut.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/RunStatistics.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/KdeReference.cpp
+    ${PROJECT_SOURCE_DIR}/include/backend/review/KdeReference.h
     ${PROJECT_SOURCE_DIR}/src/backend/review/RunStatisticsFixture.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/review/RunStatisticsFixture.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/RunStatistics.h

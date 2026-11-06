@@ -12,7 +12,9 @@
 #include "backend/app/MethodApply.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/recording/RunStartIdentity.h"
+#include "backend/review/KdeReference.h"
 #include "backend/review/RunStatistics.h"
+#include "backend/services/MonitoringDensityService.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/MonitoringCellStore.h"
 #include "backend/services/SyringePumpService.h"
@@ -227,13 +229,26 @@ static_assert(static_cast<std::uint32_t>(mcs::O::RunMismatch) == 3);
 static_assert(static_cast<std::uint32_t>(mcs::O::NotFound) == 4);
 static_assert(static_cast<std::uint32_t>(mcs::O::LimitReached) == 5);
 static_assert(static_cast<std::uint32_t>(mcs::O::CaptureMismatch) == 6);
-static_assert(mcs::Store::kStripMaxCells == 24);
+// ABI next (#880, set at merge) (#866 MON-052/053): the strip is 25 cells (Qt's MAX_FRAMES_TO_SHOW) and the invalid strip
+// has the same bounds and its own byte cap.
+static_assert(mcs::Store::kStripMaxCells == 25);
 static_assert(mcs::Store::kStripMaxBytes == 4194304);
+static_assert(mcs::Store::kInvalidStripMaxCells == 25);
+static_assert(mcs::Store::kInvalidStripMaxBytes == 4194304);
 static_assert(mcs::Store::kMaxPins == 16);
 static_assert(mcs::Store::kPinMaxBytes == 4194304);
 static_assert(mcs::Store::kCropMaxSide == 256);
 static_assert(mcs::Store::kCropMinMargin == 8);
 static_assert(mcs::Store::kRowIndexMax == 4096);
+// ABI next (#886, set at merge) (#866 PR E): the live Monitoring density's bounds (monitoring_density in bridge-contract.json:
+// the settings the service clamps to, its grid, the compute budget) and the reference contour's size cap.
+namespace mds { using Svc = backend::services::MonitoringDensityService; using Set = backend::services::MonitoringDensitySettings; }
+static_assert(mds::Set::kIntervalMsMin == 500 && mds::Set::kIntervalMsMax == 60000);
+static_assert(mds::Set::kBandwidthFactorMin == 0.2 && mds::Set::kBandwidthFactorMax == 5.0);
+static_assert(mds::Set::kCoreFractionMin == 0.05 && mds::Set::kCoreFractionMax == 1.0);
+static_assert(mds::Svc::kGridNx == 128 && mds::Svc::kGridNy == 64);
+static_assert(mds::Svc::kComputeBudgetFactor == 20);
+static_assert(backend::review::kKdeReferenceMaxVertices == 20000);
 // ABI 42 (#716 A4a): calibration records (calibration_record_statuses, calibration_apply_outcomes,
 // calibration_records in bridge-contract.json; backend/app/CalibrationRecord.h, CalibrationStore.h).
 namespace cal { using namespace backend::app; }
@@ -2425,6 +2440,67 @@ rust::String BackendBridge::run_quick_look(rust::Str request_json) {
     }
 }
 
+// ABI next (#886, set at merge) (#866 PR E): the live Monitoring density, the reference contour from a file, the E-modulus table.
+rust::String BackendBridge::monitoring_density_set_settings(bool enabled, std::int32_t interval_ms,
+                                                            double bandwidth_factor, double core_fraction, double x0,
+                                                            double x1, double y0, double y1) {
+    try {
+        return rust::String(impl_->facade.setMonitoringDensitySettingsJson(enabled, interval_ms, bandwidth_factor,
+                                                                           core_fraction, x0, x1, y0, y1));
+    } catch (...) {
+        return rust::String(R"({"ok":false,"message":"monitoring_density_set_settings failed","settings":null})");
+    }
+}
+
+BridgeCommandResult BackendBridge::monitoring_density_request_update() {
+    try {
+        return toBridgeResult(impl_->facade.requestMonitoringDensityUpdate());
+    } catch (const std::exception& e) {
+        return errorResult(std::string("monitoring_density_request_update: ") + e.what());
+    } catch (...) {
+        return errorResult("monitoring_density_request_update: unknown error");
+    }
+}
+
+rust::String BackendBridge::fetch_monitoring_density(std::uint64_t since_generation) {
+    try {
+        std::string json;
+        if (!impl_->facade.fetchMonitoringDensityJson(since_generation, json)) return rust::String(R"({"valid":false})");
+        return rust::String(json);
+    } catch (...) {
+        return rust::String(R"({"valid":false})");
+    }
+}
+
+rust::String BackendBridge::fetch_kde_reference_from_file(rust::Str path) {
+    // This cxx entry point is noexcept: nothing may leave it. The refusal builder writes bad UTF-8 as
+    // U+FFFD rather than throwing (#886 review), and if even it fails the reply is a fixed refusal.
+    const auto refused = [&](const std::string& reason) {
+        try {
+            return rust::String(backend::review::kdeReferenceRefusedJson(std::string(path), reason));
+        } catch (...) {
+            return rust::String(
+                R"({"ok":false,"path":"","file_name":"","error":"No reference contour loaded: read failed",)"
+                R"("reason":"read failed","source":null,"core_fraction":null,"core_percent":null,"loops":0,"contours":[]})");
+        }
+    };
+    try {
+        return rust::String(impl_->facade.fetchKdeReferenceFromFileJson(std::string(path.data(), path.size())));
+    } catch (const std::exception& e) {
+        return refused(std::string("read failed: ") + e.what());
+    } catch (...) {
+        return refused("read failed");
+    }
+}
+
+rust::String BackendBridge::fetch_emodulus_lut(rust::Str known_identity) {
+    try {
+        return rust::String(impl_->facade.fetchEModulusLutJson(std::string(known_identity.data(), known_identity.size())));
+    } catch (...) {
+        return rust::String(R"({"valid":false})");
+    }
+}
+
 BridgeCommandResult BackendBridge::monitoring_cell_unpin(std::uint64_t start_generation, std::uint64_t capture_epoch,
                                                          std::uint64_t frame_index, std::int32_t object_id) {
     try {
@@ -2651,6 +2727,20 @@ BridgeProcessingStats BackendBridge::fetch_processing_stats() {
     out.valid_fps1s = stats.validFps1s;
     out.invalid_fps1s = stats.invalidFps1s;
     out.pixel_to_micron = stats.pixelToMicronFactor;
+    // ABI next (#886, set at merge) (#866 PR E).
+    out.algo_avg_published = stats.algoAvgPublished;
+    out.algo_avg_us = stats.algoAvgUs;
+    out.algo_avg_age_ms = stats.algoAvgAgeMs;
+    out.realtime_mode = rust::String(stats.realtimeMode);
+    out.camera_running = stats.cameraRunning;
+    out.camera_frame_rate_state = rust::String(stats.cameraFrameRate.state);
+    out.camera_frame_rate_has_value = stats.cameraFrameRate.hasValue;
+    out.camera_frame_rate = stats.cameraFrameRate.value;
+    out.camera_frame_rate_age_ms = stats.cameraFrameRate.ageMs;
+    out.camera_data_rate_state = rust::String(stats.cameraDataRateMBps.state);
+    out.camera_data_rate_has_value = stats.cameraDataRateMBps.hasValue;
+    out.camera_data_rate_mbps = stats.cameraDataRateMBps.value;
+    out.camera_data_rate_age_ms = stats.cameraDataRateMBps.ageMs;
     return out;
 }
 
@@ -2706,7 +2796,9 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // the command result and experiment_stop's expected start generation (#741, stop
 // outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
 // run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6); v42 calibration records
-// (#716 A4a); v43 the readiness report's method_calibration (#776). All additive over v1 except that removal (ADR
+// (#716 A4a); v43 the readiness report's method_calibration (#776); v44 the run quick look (#716 A7a); ABI next (#880, set at merge): the live invalid
+// cell strip and rejection reasons (#866 MON-052/053); ABI next (#886, set at merge): the live Monitoring density, a reference contour from a
+// file, the E-modulus table and the stats telemetry (#866 PR E). All additive over v1 except that removal (ADR
 // 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }

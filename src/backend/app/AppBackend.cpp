@@ -268,9 +268,11 @@ namespace backend
                 const auto cells = processingService_->getMonitoringValidPoints();
                 in.frameIndices.reserve(cells.size());
                 in.points.reserve(cells.size());
+                in.keys.reserve(cells.size());
                 for (const auto& c : cells) {
                     in.frameIndices.push_back(c.index);
                     in.points.push_back({c.area * areaFactor, c.deformability});
+                    in.keys.push_back({c.startGeneration, c.captureEpoch, c.index, c.objectId});
                 }
                 return in;
             },

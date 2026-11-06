@@ -534,12 +534,37 @@ namespace backend::bridge
 
     // Pollable snapshot of the realtime processing pipeline (pulled on demand by
     // the shell, symmetric with fetchLatestFrame — no callback wiring).
+    // One acquisition telemetry sample as the Statistics panel shows it (#866 PR E, ABI next (#886, set at merge)): `state` is
+    // a TelemetrySample.h MetricValidity name ("valid", "stale", "unavailable", "unsupported",
+    // "error"); a value and an age exist only for valid and stale samples (an unknown rate is never a 0).
+    struct BackendMetricSample
+    {
+        std::string state{"unavailable"};
+        bool hasValue{false};
+        double value{0.0};
+        double ageMs{0.0};
+    };
+
     struct BackendProcessingStats
     {
         double algoFps1s{0.0};
         double validFps1s{0.0};
         double invalidFps1s{0.0};
         double pixelToMicronFactor{0.0};
+        // ABI next (#886, set at merge) (#866 PR E; MON-095, MON-098, MON-008). The last published algorithm time per frame
+        // (1 s window, µs) and its age; unpublished (nothing processed since the realtime metrics were
+        // reset) leaves algoAvgPublished false and the two zero.
+        bool algoAvgPublished{false};
+        double algoAvgUs{0.0};
+        double algoAvgAgeMs{0.0};
+        // Realtime processing mode now ("inline" | "async_batch"): the Start note about multi-image
+        // series says the mode changes only when it is async_batch.
+        std::string realtimeMode{"inline"};
+        // The camera capture session as Qt's Statistics panel reads it: running, and the device/SDK
+        // frame rate and data rate (MB/s) with their validity.
+        bool cameraRunning{false};
+        BackendMetricSample cameraFrameRate;
+        BackendMetricSample cameraDataRateMBps;
     };
 
     // One monitoring metric row (BE-5): the per-object measurements that feed
@@ -1141,6 +1166,22 @@ namespace backend::bridge
         bool fetchMonitoringCellImage(std::uint64_t startGeneration, std::uint64_t captureEpoch,
                                       std::uint64_t frameIndex, int objectId, bool mask, BackendFrame &out,
                                       bool *captureMismatch = nullptr, std::string *why = nullptr) const;
+        // Live density (KDE) of the Monitoring scatter (#866 PR E, bridge ABI next (#886, set at merge); bridge-contract.json
+        // monitoring_density). Settings go to MonitoringDensityService (clamped by its
+        // MonitoringDensitySettings::clamped()); the reply echoes what applies. Nothing computes here: the
+        // service's own worker does (lowest priority, load back-off, compute budget), and a request only
+        // wakes it. The fetch is a read of the last result: {valid, generation, unchanged} when nothing is
+        // newer than `sinceGeneration`, else the result with a density per row keyed by the row's identity.
+        std::string setMonitoringDensitySettingsJson(bool enabled, int intervalMs, double bandwidthFactor,
+                                                     double coreFraction, double x0, double x1, double y0, double y1);
+        BackendCommandResult requestMonitoringDensityUpdate();
+        bool fetchMonitoringDensityJson(std::uint64_t sinceGeneration, std::string &out) const;
+        // The stored core contour of an experiment file as a reference (read only; ReviewJobs::readKdeReference).
+        // Refused with a plain reason while a run is active or starting or a raw recording writes HDF5.
+        std::string fetchKdeReferenceFromFileJson(const std::string &path);
+        // The loaded E-modulus table (EModulusLut) for the gate overlay and the scatter tooltip: {valid, loaded,
+        // identity, unchanged} and, when `knownIdentity` differs from the table's, the grid.
+        std::string fetchEModulusLutJson(const std::string &knownIdentity) const;
         bool fetchTriggerStatus(BackendTriggerStatus &out) const;
         // Calibration records (#716 A4a, bridge ABI 42; bridge-contract.json calibration_records).
         // The list and get are reads: they never apply, invalidate or change anything. Apply is the

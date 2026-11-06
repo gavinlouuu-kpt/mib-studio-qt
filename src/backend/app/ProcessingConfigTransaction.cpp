@@ -5,6 +5,7 @@
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/ProcessingCoreLoader.h"
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
 #include <cstdio>
@@ -12,6 +13,7 @@
 #include <stdexcept>
 #include <limits>
 #include <cmath>
+#include <string>
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
@@ -76,6 +78,56 @@ void validate(const services::ProcessingConfig& c) {
           c.target_group_deformability_min > c.target_group_deformability_max)))
         throw std::runtime_error("invalid merged processing ranges or kernel settings");
 }
+// The tune criteria as image_processing key paths (see processingPatchIsTuneOnly).
+const Json& tuneCriteriaSchema() {
+    static const Json schema{
+        {"area_threshold_min", 0},
+        {"area_threshold_max", 0},
+        {"deformability_threshold_min", 0},
+        {"deformability_threshold_max", 0},
+        {"ring_ratio_min", 0},
+        {"ring_ratio_max", 0},
+        {"area_ratio_threshold_max", 0},
+        {"filters",
+         {{"enable_border_check", 0},
+          {"enable_area_range_check", 0},
+          {"enable_deformability_range_check", 0},
+          {"enable_area_ratio_check", 0},
+          {"enable_ring_ratio_check", 0},
+          {"require_single_inner_contour", 0}}},
+        {"target_group",
+         {{"enabled", 0},
+          {"area_min", 0},
+          {"area_max", 0},
+          {"deformability_min", 0},
+          {"deformability_max", 0},
+          {"emodulus_enabled", 0},
+          {"emodulus_min", 0},
+          {"emodulus_max", 0}}},
+    };
+    return schema;
+}
+bool tuneOnly(const Json& patch, const Json& schema, const std::string& prefix, std::string* why) {
+    if (!patch.is_object()) {
+        if (why) *why = prefix;
+        return false;
+    }
+    for (auto it = patch.begin(); it != patch.end(); ++it) {
+        const std::string path = prefix + "." + it.key();
+        if (!schema.contains(it.key())) {
+            if (why) *why = path;
+            return false;
+        }
+        const auto& expected = schema.at(it.key());
+        if (expected.is_object()) {
+            if (!tuneOnly(it.value(), expected, path, why)) return false;
+        } else if (it.value().is_object() || it.value().is_array()) {
+            if (why) *why = path; // a leaf criterion; checkPatch rejects wrong types of the rest
+            return false;
+        }
+    }
+    return true;
+}
 void save(const std::filesystem::path& path, const std::string& bytes, bool& saved) {
     static std::atomic<unsigned long long> counter{0};
     auto temp = path;
@@ -135,6 +187,38 @@ void save(const std::filesystem::path& path, const std::string& bytes, bool& sav
 #endif
 }
 } // namespace
+bool processingPatchIsTuneOnly(const Json& imageProcessingPatch, std::string* why) {
+    if (why) why->clear();
+    if (!imageProcessingPatch.is_object() || imageProcessingPatch.empty()) {
+        if (why) *why = "image_processing";
+        return false;
+    }
+    return tuneOnly(imageProcessingPatch, tuneCriteriaSchema(), "image_processing", why);
+}
+services::ProcessingConfig withTuneCriteriaFrom(services::ProcessingConfig base, const services::ProcessingConfig& source) {
+    base.area_threshold_min = source.area_threshold_min;
+    base.area_threshold_max = source.area_threshold_max;
+    base.deformability_threshold_min = source.deformability_threshold_min;
+    base.deformability_threshold_max = source.deformability_threshold_max;
+    base.ring_ratio_min = source.ring_ratio_min;
+    base.ring_ratio_max = source.ring_ratio_max;
+    base.area_ratio_threshold_max = source.area_ratio_threshold_max;
+    base.enable_border_check = source.enable_border_check;
+    base.enable_area_range_check = source.enable_area_range_check;
+    base.enable_deformability_range_check = source.enable_deformability_range_check;
+    base.enable_area_ratio_check = source.enable_area_ratio_check;
+    base.enable_ring_ratio_check = source.enable_ring_ratio_check;
+    base.require_single_inner_contour = source.require_single_inner_contour;
+    base.enable_target_group = source.enable_target_group;
+    base.target_group_area_min = source.target_group_area_min;
+    base.target_group_area_max = source.target_group_area_max;
+    base.target_group_deformability_min = source.target_group_deformability_min;
+    base.target_group_deformability_max = source.target_group_deformability_max;
+    base.enable_target_group_emodulus = source.enable_target_group_emodulus;
+    base.target_group_emodulus_min = source.target_group_emodulus_min;
+    base.target_group_emodulus_max = source.target_group_emodulus_max;
+    return base;
+}
 services::ProcessingConfig validatedProcessingConfig(const std::string& document, services::ProcessingConfig current) {
     const auto root=Json::parse(document);
     if (!root.is_object()) throw std::runtime_error("Configuration root must be an object");
@@ -175,7 +259,8 @@ ProcessingConfigTransactionResult applyProcessingConfigTransaction(AppBackend& b
                                                                    const std::string& baseline,
                                                                    const std::string& patchJson) {
     ProcessingConfigTransactionResult r;
-    const bool idle = backend.experiment().withIdleConfiguration([&] {
+    std::string refusal;
+    const bool entered = backend.experiment().withTuneConfiguration([&](bool midRun) {
         try {
             const auto doc = readConfigDocument(path);
             if (!doc.ok) throw std::runtime_error(doc.error);
@@ -190,8 +275,17 @@ ProcessingConfigTransactionResult applyProcessingConfigTransaction(AppBackend& b
             const auto patch = Json::parse(patchJson);
             if (!patch.is_object() || patch.size() != 1 || !patch.contains("image_processing"))
                 throw std::runtime_error("only image_processing patches are supported");
-            auto config = backend.processing().getProcessingConfig();
+            const auto runtimeConfig = backend.processing().getProcessingConfig();
+            auto config = runtimeConfig;
             checkPatch(patch.at("image_processing"), processing::config_json::toJson(config));
+            if (midRun) {
+                // Active run: only the tune criteria may change (see processingPatchIsTuneOnly).
+                std::string why;
+                if (!processingPatchIsTuneOnly(patch.at("image_processing"), &why))
+                    throw std::runtime_error(
+                        "only the cell acceptance and target group criteria can change during an "
+                        "experiment (" + why + " is locked until it ends)");
+            }
             auto root = Json::parse(doc.documentJson);
             if (root.contains("image_processing") && !root.at("image_processing").is_object())
                 throw std::runtime_error("existing image_processing section must be an object");
@@ -203,6 +297,15 @@ ProcessingConfigTransactionResult applyProcessingConfigTransaction(AppBackend& b
             if (!processing::config_json::fromJson(root.at("image_processing"), config, &error))
                 throw std::runtime_error(error);
             validate(config);
+            if (midRun) {
+                // A run in progress takes exactly the patch on top of what runs now, never the
+                // document's other values (it may be stale against the running configuration).
+                auto live = runtimeConfig;
+                if (!processing::config_json::fromJson(patch.at("image_processing"), live, &error))
+                    throw std::runtime_error(error);
+                config = withTuneCriteriaFrom(runtimeConfig, live);
+                validate(config);
+            }
             const auto bytes = root.dump(2) + "\n";
             if (bytes.size() > 4 * 1024 * 1024)
                 throw std::runtime_error("merged configuration exceeds 4 MiB limit");
@@ -229,13 +332,18 @@ ProcessingConfigTransactionResult applyProcessingConfigTransaction(AppBackend& b
                 processing::config_json::toJson(config) ==
                 processing::config_json::toJson(backend.processing().getProcessingConfig());
             if (!r.verified) r.error = "saved and applied, but runtime readback differs";
+            if (midRun)
+                SPDLOG_INFO("ProcessingConfigTransaction: tuned the running experiment from {} "
+                            "(patch {}), verified={}",
+                            path, patch.at("image_processing").dump(), r.verified);
         } catch (const std::exception& e) {
             r.error = e.what();
         }
-    });
-    if (!idle)
-        r.error =
-            "configuration is locked while an experiment is starting, active, stopping or failed";
+    }, &refusal);
+    if (!entered)
+        r.error = refusal.empty()
+                      ? "configuration is locked while an experiment is starting, active, stopping or failed"
+                      : "configuration is locked while an experiment is active: " + refusal;
     return r;
 }
 } // namespace backend::app

@@ -80,7 +80,10 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   [[ExperimentCoordinator]]).
 - **Processing config/ROI/background/core (v8, BE-3):**
   `fetch/apply_processing_config_json` (lossless document, merge semantics,
-  monotonic `config_version`), `set_processing_roi`,
+  monotonic `config_version`; locked while an experiment is not idle, except
+  that an Active run takes a `{"image_processing": {...}}` patch of the cell
+  acceptance and target group criteria only, #866 MON-080, no ABI change),
+  `set_processing_roi`,
   `fetch_background_image`/`set_background_image`/`clear_background_image`
   (binary Mono8), `fetch_processing_core_status` (identity + admin pin).
 - **Device discovery jobs (v14, #419, ADR 0005):** `start_device_discovery
@@ -340,6 +343,13 @@ image_processing-only patches). Outcomes saved/applied/verified/conflict are
 independent. The facade owns lifecycle serialization and durable replacement.
 Only effective processing fields update runtime provenance: selecting a saved
 file does not claim its other device/ROI settings were applied.
+
+Since #866 MON-080 (no ABI change) the transaction also runs while an experiment is
+Active when the patch names the cell acceptance and target group criteria only; the
+document gets exactly the patch and the running configuration exactly the patch on top of
+what runs now. Any other key (`multi_image` too) is refused naming it and nothing is
+written; Starting, Stopping, Failed, a run being stopped and a PL instrument stay locked
+([[ExperimentCoordinator]] "Live tuning of the criteria during a run").
 
 Shared exporter request/status JSON is carried through the cxx/Tauri bridge;
 operation identity and counters remain decimal strings. The previous CSV entry
@@ -620,6 +630,93 @@ Start check). Contract section `calibration_records`, enums `calibration_record_
   `calibration_records_over_the_websocket`; `calibrationRecords.test.ts`; C++
   `backend.calibration_record`, `e2e.calibration_run`.
 
+## ABI next (#886, set at merge): live density, reference contour, E-modulus table, stats telemetry (#866 PR E)
+
+Additive over ABI next (#880, set at merge): five commands and new fields on `fetch_processing_stats`, so a later frontend PR
+can close the Monitoring rows that need the backend (MON-043, 058-064, 066, 068, 077, 083-086, 095,
+098, 008). Contract text: `bridge-contract.json` sections `monitoring_density`,
+`kde_reference_from_file`, `emodulus_lut`, `processing_stats`. Layering as every command: TS
+`bridge.ts` -> Tauri command (`desktop/src-tauri/src/lib.rs`) or WebSocket dispatch ->
+`mib-app-commands` (`lib.rs`, `dispatch.rs`) -> cxx (`monitoring_density_set_settings`,
+`monitoring_density_request_update`, `fetch_monitoring_density`, `fetch_kde_reference_from_file`,
+`fetch_emodulus_lut`; `shim.cpp`) -> `BackendFacade` -> `MonitoringDensityService` /
+`ReviewJobs` / `ProcessingService`. See [[../services/MonitoringDensityService]].
+
+- **Control (VIEWER_ONLY on the WebSocket server, `CONTROL_COMMANDS`):**
+  `monitoring_density_set_settings {enabled, intervalMs?, bandwidthFactor?, coreFraction?, x0?, x1?, y0?,
+  y1?}` -> `{ok, message, settings: {enabled, interval_ms, bandwidth_factor, core_fraction, x0, x1, y0, y1}}`
+  (the settings as the service clamps them: interval 500..60000 default 2000, factor 0.2..5 default 1,
+  fraction 0.05..1 default 0.9, axes not all finite -> 0; `settings: null` before init), and
+  `monitoring_density_request_update` (no args) -> the usual command result. The Tauri function takes the
+  optional numbers with those defaults.
+- **Reads (every client):**
+  - `fetch_monitoring_density {sinceGeneration?}` (canonical decimal string, absent = 0) ->
+    `{valid: false}` before init; `{valid, generation, unchanged: true}` when the generation equals
+    `sinceGeneration`; else `{valid, generation, unchanged: false, settings, stats: {next_interval_ms,
+    refresh_ms, estimates, skipped_unchanged, skipped_under_load, busy, priority_lowered}, result}`.
+    `result` is `null` when the service holds no estimate, else `{points: {count, contexts:
+    [{start_generation, capture_epoch}], context: [i], frame_index: ["n"], object_id: [i], density:
+    [0..1 | null]}, bandwidth: {x, y}, bandwidth_factor, core_fraction, core_level, core_count, contours:
+    (closed loops of [x, y] vertices), pixel_to_micron, grid: {x0, x1, y0, y1, nx, ny}, compute_ms, compute_us, wall_ms,
+    computed_at_ns}`. At most 1000 points, parallel arrays, oldest -> newest. **Identity:** a frontend
+    matches a point to a `fetch_monitoring_snapshot` row by `(start_generation, capture_epoch,
+    frame_index, object_id)`; the frame index alone is ambiguous (it restarts per capture, a frame can hold
+    several objects).
+  - `fetch_kde_reference_from_file {path}` -> `{ok, path, file_name, error, reason, source, core_fraction,
+    core_percent, loops, contours}`; not ok has `error` "No reference contour loaded from <path>:
+    <reason>", `source`/`core_fraction`/`core_percent` null, `contours: []`. Read only, never opens the
+    file in Review, and refused with plain text while an experiment runs or starts (HDF5 is not
+    thread-safe, #722: the read takes the review lanes' lock and the session mutex inside the
+    coordinator's non-waiting idle transaction, as the run quick look does); also refused while a raw
+    recording writes HDF5. Path 1..4096 bytes. `file_name` is the last component split on `/` or `\`;
+    text that is not UTF-8 is sent as U+FFFD, never a throw (the handler is `noexcept`; #886 review).
+  - `fetch_emodulus_lut {knownIdentity?}` (at most 8192 bytes) -> `{valid, loaded, identity, unchanged,
+    info, lut}`: `identity` is `"<sha256>|<path>"`; `lut` is `{area_min, area_step, area_bins,
+    deform_min, deform_step, deform_bins, values}` (row-major `[deform * area_bins + area]`, kPa, `null`
+    for NaN) only when `identity != knownIdentity`; `loaded: false` carries no table.
+  - `fetch_processing_stats` gains `algo_avg_us`, `algo_avg_age_ms` (null until the realtime path publishes
+    one), `realtime_mode` (`"inline"` | `"async_batch"`) and `camera: {running, frame_rate: sample,
+    data_rate_mbps: sample}` with `sample = {state, value, age_ms}`, `state` one of `valid`, `stale`,
+    `unavailable`, `unsupported`, `error` (the `MetricValidity` names; a value only for valid or stale,
+    never a 0 for an unknown rate). The PR #877 decoder reads `algo_avg_us` and `algo_avg_age_ms`; the TS
+    decoder for the rest is `decodeProcessingTelemetry` in `desktop/src/monitoringDensity.ts`.
+- **Threading:** no command computes; the estimate stays on the service's idle-priority worker, nothing
+  is added to the acquisition or processing path, the E-modulus table is copied under the identity
+  double-read (it is loaded once at bootstrap).
+- **Touched:** `bridge-contract.json` (abi_version: the next number at merge, the four sections), `scripts/gen_bridge_contract.py`
+  (renders the bounds into `desktop/src/bridgeContract.ts` and `frame_packet_contract.rs`, extends
+  `check_bridge`), `shim.cpp` (`static_assert`s on the bounds, `bridge_abi_version`, next at merge),
+  `BridgeProcessingStats` (new fields), `CONTROL_COMMANDS`, the ABI pins in `dispatch.rs`,
+  `runQuickLook.test.ts`, `eventAdapter.test.ts`.
+- **Tests:** C++ `backend.monitoring_density_service` (row identity), `e2e.monitoring_density_facade`;
+  Rust `contract.rs` `abi_version_is_stable` (the merge-time number), `monitoring_density_is_described`,
+  `monitoring_density_end_to_end`; `dispatch.rs` `monitoring_density_through_dispatch`;
+  `mib-bridge-server` `monitoring_density_settings_are_control_only_but_reads_are_not`;
+  `monitoringDensity.test.ts`.
+
+## ABI next (#880, set at merge): the invalid-cell strip and rejection reasons (#866 MON-052/053)
+
+Additive over ABI 44, no new command: `fetch_monitoring_cells` gains `invalid_strip` beside `strip`
+(the most recent INVALID cells of the current run context and capture, oldest -> newest, each with a
+crop and mask, bounded by `invalid_strip_max_cells` 25 / `invalid_strip_max_bytes` 4 MiB, the strip's
+rules otherwise) and every cell gains `reasons: [{code, value, min, max}]` (`[]` for a valid cell).
+`code` is one of `reason_codes` (`no_contour`, `border`, `area`, `ring`, `deform`, `area_ratio`,
+`focus`, `wall`: `science::InvalidReasonCode` order), derived backend-side by the shared
+`science::classifyInvalidReasons` with the measured value and the configured range the tooltip needs;
+the frontend owns the short labels. `strip_max_cells` is 25 (was 24: the Qt tab's thumbnails).
+`stats` gains `invalid_strip_cells/bytes/admitted/evicted`, `caps` the invalid strip's two caps,
+`last_capture_change.invalid_strip_dropped`. `fetch_monitoring_cell_packet` serves an invalid cell's
+image and mask like a strip cell's; a pin of an invalid cell carries its reasons; `monitoring_clear`
+and a capture change empty it. Contract text: `monitoring_cells.invalid_strip` / `reasons`. See
+[[../services/MonitoringCellStore]]. **Touched:** `bridge-contract.json` (abi_version: the next number at merge, caps,
+`reason_codes`, prose), `shim.cpp` (`static_assert`s, `bridge_abi_version`, next at merge), `lib.rs` (doc),
+`scripts/gen_bridge_contract.py` (`MONITORING_CELL_REASON_CODES`), `desktop/src/bridgeContract.ts`.
+**Tests:** `contract.rs` `abi_version_is_stable`, `monitoring_cells_are_described` (caps, `reason_codes`),
+`monitoring_invalid_cells_end_to_end` (blob frames rejected by the area gate: reasons with value and
+range, pixels, a pin, clear, capture change); `dispatch.rs` `monitoring_cells_through_dispatch`;
+C++ `backend.monitoring_cell_store`, `e2e.monitoring_cells_facade`, `processing.monitoring_cell_concurrency`;
+`monitoringCells.test.ts`.
+
 ## ABI 41: per-row cell images for live Monitoring (#716 A6a)
 
 Additive over ABI 40. The backend now owns bounded copies of detected cells
@@ -680,8 +777,9 @@ click-to-pin without the client holding pixels or racing ring eviction.
   other rule). Pins belong to the capture that made them: at the moment the capture changes the
   strip is cleared and the pins keep their measurements only; a run reaching Active drops them.
 - **Caps** (`monitoring_cells`, `static_assert`ed in `shim.cpp`, generated into
-  `MONITORING_CELLS`): strip 24 cells / 4 MiB, pins 16 / 4 MiB, crop ≤ 256 px square (margin ≥ 8),
-  row index 4096. Every reply is bounded by them.
+  `MONITORING_CELLS`): strip 25 cells (24 until ABI next (#880, set at merge)) / 4 MiB, pins 16 / 4 MiB, crop ≤ 256 px
+  square (margin ≥ 8), row index 4096; ABI next (#880, set at merge) adds the invalid strip's 25 cells / 4 MiB. Every reply
+  is bounded by them.
 - **Gating.** `monitoring_cell_pin`, `monitoring_cell_unpin` and `monitoring_cell_clear_pins` are
   in the server's `CONTROL_COMMANDS` (a viewer gets `VIEWER_ONLY`): the pins are one shared,
   bounded set per instrument, so a viewer must not evict the operator's. The listing and image

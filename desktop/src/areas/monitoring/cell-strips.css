@@ -1,0 +1,37 @@
+/* Live cell strips of the Monitoring sub-tab (#866 MON-052 .. MON-055, areas/monitoring/CellStrips.tsx).
+   Qt geometry: 100 px thumbnails, five per row, a scroll area at least 200 px high, red 9 px reasons. Part of the App.css cascade. */
+.cell-strips { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; flex: 0 0 auto; }
+.cell-strips-notice { margin: 0; }
+.cell-strips-grid { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
+.cell-strip { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cell-strip-head { display: flex; align-items: center; gap: 8px; }
+.cell-strip-head h5 { margin: 0; font-size: 12px; }
+.cell-strip-count { color: var(--muted); }
+.cell-strip-overlay { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+/* 5 x 100 px + 4 gaps + the scroll bar. */
+.cell-strip-scroll {
+  box-sizing: border-box;
+  width: 546px;
+  max-width: 100%;
+  min-height: 200px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 4px;
+}
+.cell-strip-empty { margin: 4px; }
+.cell-grid { display: grid; gap: 4px; justify-content: start; }
+.cell-thumb { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 100px; }
+.cell-thumb-frame {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid gray;
+  background: #f2f2f2;
+  overflow: hidden;
+}
+.cell-thumb-frame canvas { display: block; image-rendering: auto; }
+.cell-thumb-none { color: var(--muted); font-size: 10px; text-align: center; }
+.cell-thumb-reasons { font-size: 9px; color: #cc0000; text-align: center; overflow-wrap: anywhere; }

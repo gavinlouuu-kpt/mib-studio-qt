@@ -376,6 +376,26 @@ waited for with `ReviewJobsTestAccess::waitIdle` (the release's own
 condition). The facade's side by `backend.facade_review_jobs`
 (`BackendFacadeTestAccess::reviewJobs` reaches its lanes).
 
+## Reference contour from a file (`KdeReference.h`, bridge ABI next (#886, set at merge), #866 PR E)
+
+`readKdeReference(path)` (`include/backend/review/KdeReference.h`, same library) reads the stored KDE
+core record of an experiment file with a short-lived `Hdf5Service` reader of its own, never in the
+session: the full-run analysis record first, the live (provisional) one as the fallback, Qt's reason
+words, at most 20000 vertices. HDF5 is not thread-safe (#722), so the call is serialized as every other
+read of an arbitrary file: `ReviewSession::readKdeReference` holds the session mutex and
+`ReviewJobs::readKdeReference` the lanes' lock (refused while a review job runs); the facade calls it
+only inside `ExperimentCoordinator::withIdleConfiguration` with no raw recording writing, as the run
+quick look does. The bridge command is `fetch_kde_reference_from_file` ([[../architecture/Rust-Bridge]]
+ABI next (#886, set at merge)).
+
+The reply builders (`kdeReferenceReplyJson`, `kdeReferenceRefusedJson`) never throw on text (#886
+review): `file_name` is the path's last component split as UTF-8 text on `/` and `\` (not
+`std::filesystem`, whose `string()` is the ANSI code page on MSVC), and the JSON is dumped with
+`error_handler_t::replace`, so bytes that are not UTF-8 (an ANSI path, a 256-byte echo cut inside a
+character, an HDF5 message) come back as U+FFFD. The cxx handler is `noexcept` and falls back to a fixed
+refusal if even that fails. Tests: `e2e.monitoring_density_facade` section 4 (non-ASCII and bad bytes)
+and 4c (refused while a raw recording writes HDF5).
+
 ## Charts JSON and saved overlay (`ReviewCharts.h`, #512 S4)
 
 **Source:** `src/backend/review/ReviewCharts.cpp` +

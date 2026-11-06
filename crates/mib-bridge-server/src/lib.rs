@@ -195,6 +195,10 @@ const CONTROL_COMMANDS: &[&str] = &[
     // fill it (or clear the operator's) under the controller. Reading the strip, the pins and
     // their images stays open to every client.
     "monitoring_cell_pin", "monitoring_cell_unpin", "monitoring_cell_clear_pins",
+    // Live density settings and its update request (#866 PR E, ABI next (#886, set at merge)): the service is one per instrument,
+    // so a viewer must not switch it on or off or retune it under the controller. The density result,
+    // the reference contour from a file and the E-modulus table are reads open to every client.
+    "monitoring_density_set_settings", "monitoring_density_request_update",
     // Calibration apply (#716 A4a, ABI 42): it sets the instrument's pixel-to-micron factor, so
     // only the controlling client may send it. Listing and reading records stay open to viewers.
     "calibration_apply",
@@ -698,6 +702,20 @@ mod stage_control_tests {
         }
         for cmd in ["fetch_monitoring_cells", "fetch_monitoring_cell_packet", "fetch_monitoring_snapshot"] {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
+    }
+
+    // Live Monitoring density (#866 PR E, ABI next (#886, set at merge)): settings and the update request change the one shared
+    // service, so they need control; the result, the reference contour and the E-modulus table are reads.
+    #[test]
+    fn monitoring_density_settings_are_control_only_but_reads_are_not() {
+        for cmd in ["monitoring_density_set_settings", "monitoring_density_request_update"] {
+            assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} must be a CONTROL command");
+            assert!(mib_app_commands::dispatch::COMMANDS.contains(&cmd), "the server dispatches {cmd}");
+        }
+        for cmd in ["fetch_monitoring_density", "fetch_kde_reference_from_file", "fetch_emodulus_lut"] {
+            assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+            assert!(mib_app_commands::dispatch::COMMANDS.contains(&cmd), "the server dispatches {cmd}");
         }
     }
 
