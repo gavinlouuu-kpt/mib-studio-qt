@@ -40,7 +40,8 @@ vault-agent-run github -- gh run list --workflow desktop-windows-candidate.yml -
 The zip holds `mib-studio-desktop.exe` and its DLL closure. The closure is the Conan DLLs, the
 CoreMOR `XMT_DLL_SER.dll` and the app-local MSVC runtime. The zip also holds `resources/` (defaults,
 isoelastic LUT), a `README.txt` that names the commit, the run and the backend features, and
-`SHA256SUMS.txt`. Extract the whole zip into one folder.
+`SHA256SUMS.txt`. There is also `os-dlls-removed.txt` when the camera check had to drop OS DLLs.
+Extract the whole zip into one folder.
 
 ## What the rig PC needs
 
@@ -75,8 +76,14 @@ not signed, so SmartScreen may ask once.
    `MIB_HAS_EGRABBER=1`, so the Rust bridge compiles against the eGrabber backend.
 3. The usual frontend, bridge and desktop tests, then the DLL closure, then a 10 s smoke run of the
    staged exe with `PATH` reduced to System32 and `MIB_CAMERA_MODE=mock`. The runner has no camera.
-4. No eGrabber, GenTL or Euresys file is packaged.
-5. The exe contains `AppBackend: configuring hardware EGrabber camera`. That code exists only in an
+4. No eGrabber, GenTL or Euresys file is packaged: no `.cti`, and no DLL that the eGrabber install
+   also has.
+5. No Windows OS DLL is shipped (#851). This is #870's rule. A built ref without #870's packaging fix
+   stages the runner's copies (kernel32, d3d11, dxgi, mf*, …), and a rig PC on another Windows build
+   would load them from the app folder. Camera mode deletes every staged DLL that System32 also has,
+   except the app-local MSVC runtime, and lists them in `os-dlls-removed.txt`. The smoke run then
+   starts the cleaned package.
+6. The exe contains `AppBackend: configuring hardware EGrabber camera`. That code exists only in an
    `MIB_HAS_EGRABBER=1` build. The exe does not contain the SDK-free fallback
    `EGrabber SDK is unavailable in this build`. `dumpbin /dependents` shows no eGrabber import.
 

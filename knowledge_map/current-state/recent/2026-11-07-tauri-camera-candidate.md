@@ -8,7 +8,9 @@ SDK 25.10.0.57 as `build-windows.yml` does, and also pins its SHA-256. It builds
 `unsigned-egrabber-windows-tauri-<built sha>`.
 
 The package ships no eGrabber DLL or GenTL producer. The exe uses the eGrabber install on the PC,
-as the Qt app does. The workflow proves the backend is linked: the link manifest defines
+as the Qt app does. The package ships no Windows OS DLL either. Camera mode applies #870's #851
+rule even when the built ref lacks #870: develop's packaging staged about 30 of the runner's OS
+DLLs (kernel32, d3d11, mf*, …), and camera mode deletes them before the smoke run. The workflow proves the backend is linked: the link manifest defines
 `MIB_HAS_EGRABBER=1`, the exe contains backend strings that only such a build has, and
 `dumpbin /dependents` runs. The SDK-free default and the push trigger are unchanged. The first
 commit is #870's Conan fix (`102fbec7`), cherry-picked.

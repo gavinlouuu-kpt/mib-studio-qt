@@ -224,7 +224,7 @@ jobs:
       - name: Package unsigned portable candidate with DLL closure
         run: ./desktop/scripts/package-windows-candidate.ps1
       # camera_sdk only, inline so it works for any built ref (the packaging script comes from it).
-      - name: Check the camera candidate ships no eGrabber runtime, and label it
+      - name: Check the camera candidate ships no eGrabber runtime or OS DLL, and label it
         if: env.CAMERA_SDK == 'true'
         run: |
           $dest = 'build/tauri-windows-candidate'
@@ -236,6 +236,18 @@ jobs:
           $sdk += @(Get-Content "$dest/native-runtime-files.txt" | Where-Object { $_ -match 'Euresys' })
           if ($sdk.Count) { throw "eGrabber runtime files must not be packaged: $($sdk -join ', ')" }
           Write-Host "No GenTL producer and none of the $($euresys.Count) eGrabber install DLL names in the package"
+          # #870's rule (#851): never ship a Windows OS DLL. Built refs without #870's packaging fix stage the
+          # runner's copies (kernel32, d3d11, dxgi, mf*, ...), which a rig PC on another Windows build would
+          # load from the app folder. Drop every staged DLL that System32 also has, except the app-local MSVC
+          # runtime, and list them in os-dlls-removed.txt. The smoke below then runs the cleaned package.
+          $system32 = Join-Path $env:SystemRoot 'System32'
+          $osDlls = @(Get-ChildItem $dest -File -Filter *.dll | Where-Object {
+            $_.Name -notmatch '^(msvcp140.*|vcruntime140.*|concrt140|vccorlib140|vcamp140|vcomp140|mfc140.*)\.dll$' -and (Test-Path -LiteralPath (Join-Path $system32 $_.Name)) })
+          if ($osDlls.Count) {
+            Write-Host "Removed $($osDlls.Count) Windows OS DLLs staged by the built ref's packaging (#851): $($osDlls.Name -join ' ')"
+            $osDlls.Name | Set-Content "$dest/os-dlls-removed.txt"
+            $osDlls | Remove-Item
+          } else { Write-Host 'No Windows OS DLL staged' }
           $features = (Get-Content build/mib-bridge-link-manifest.json -Raw | ConvertFrom-Json).defines | Where-Object { $_ -match '^MIB_HAS_' }
           @"
           UNSIGNED eGrabber-enabled Windows x64 Tauri candidate for rig tests. Not a Qt replacement release.
@@ -245,6 +257,7 @@ jobs:
           The eGrabber runtime and GenTL producer are NOT in this package. The PC needs the Euresys
           eGrabber 25.10.0.57 install that MIB Studio (Qt) uses (C:\Program Files\Euresys\eGrabber,
           with its Coaxlink driver and GenTL producer). Without it the app runs but finds no eGrabber camera.
+          Windows OS DLLs are not shipped (#851); os-dlls-removed.txt, if present, lists those this build dropped.
           No Qt updater feed, release tag, installer registry state, signing or publication.
           Run mib-studio-desktop.exe. Keep the runtime DLLs and resources beside it.
           "@ -split "`n" | ForEach-Object { $_.Trim() } | Set-Content "$dest/README.txt"

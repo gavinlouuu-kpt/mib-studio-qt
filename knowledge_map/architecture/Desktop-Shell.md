@@ -1074,6 +1074,9 @@ With `camera_sdk=true`, the job:
   Windows default (on) and the processing-core signer pin from the repository variable;
 - fails unless the link manifest defines `MIB_HAS_EGRABBER=1`;
 - fails if any eGrabber, GenTL or Euresys file is packaged;
+- applies #870's no-OS-DLL rule (#851) whatever the built ref's packaging does: it deletes every
+  staged DLL that System32 also has, except the app-local MSVC runtime, and lists them in
+  `os-dlls-removed.txt`, before the smoke run;
 - checks that the exe holds the eGrabber backend: a string that only `MIB_HAS_EGRABBER=1` builds
   contain is present, the SDK-free fallback string is absent, and `dumpbin /dependents` shows no
   eGrabber import.
