@@ -258,6 +258,24 @@ public:
         count(o, n);
     }
 
+    // The same for frames whose indices are known: n frames from firstIdx on. They are booked as
+    // lost and also advance the admitted range, so the next admitted frame does not read the hole
+    // they leave as a sequence gap (the loss was counted twice: storeOverwritten and a gap, #857).
+    // Before the first admitted frame there is no range to extend and the range starts at the
+    // first frame actually admitted, as with admitLost. Producer-thread only, like admit().
+    void admitLostRange(uint64_t firstIdx, uint64_t n, FrameOutcome o)
+    {
+        admitLost(n, o);
+        if (n == 0 || !hasIndexRange_.load(std::memory_order_relaxed)) return;
+        const uint64_t last = lastIndex_.load(std::memory_order_relaxed);
+        if (firstIdx > last + 1) { // frames before the lost ones were never admitted: a real hole
+            sequenceGaps.fetch_add(1, std::memory_order_relaxed);
+            sequenceGapFrames.fetch_add(firstIdx - last - 1, std::memory_order_relaxed);
+        }
+        const uint64_t end = firstIdx + n - 1;
+        if (end > last) lastIndex_.store(end, std::memory_order_release);
+    }
+
     void count(FrameOutcome o, uint64_t n = 1)
     {
         switch (o) {
