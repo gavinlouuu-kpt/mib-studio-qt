@@ -5,8 +5,9 @@ import { useStudio } from "../../studio/StudioContext";
 import { stopCameraBlockReason } from "./connectFlow";
 
 export function CameraActions() {
-  const { onStartCamera, startCameraReason, onStopCamera, running, expState, cameraCommand, cameraPhase } = useStudio();
-  const stopReason = stopCameraBlockReason({ running, expState, commandInFlight: cameraCommand !== null });
+  const { onStartCamera, startCameraReason, onStopCamera, running, expState, expStatus, cameraCommand, cameraPhase } = useStudio();
+  const flushing = !!(expStatus?.valid && expStatus.flushing);
+  const stopReason = stopCameraBlockReason({ running, expState, flushing, commandInFlight: cameraCommand !== null });
   return (
     <div className="camera-actions"><ViewerGate>
       <button onClick={onStartCamera} disabled={!!startCameraReason} title={startCameraReason}>

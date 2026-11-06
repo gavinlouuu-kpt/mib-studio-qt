@@ -437,6 +437,18 @@ int main()
         }
         if (facade.runStartupDiscoveryJson("start").find("\"accepted\":false") == std::string::npos) return 73;
         {
+            // #863 CONNECT-019: the delivery mode does not change under an Active run (the capture runs, so only the
+            // experiment guard refuses it); the mode stays what it was.
+            const auto before = nlohmann::json::parse(facade.fetchFrameDeliveryModeJson()).at("mode");
+            const auto during = nlohmann::json::parse(facade.setFrameDeliveryModeJson(before == "latestFrame" ? "everyFrame" : "latestFrame"));
+            if (during.at("ok").get<bool>() || nlohmann::json::parse(facade.fetchFrameDeliveryModeJson()).at("mode") != before)
+            {
+                std::cerr << "the delivery mode must not change while the experiment is active: " << during.dump() << "\n";
+                facade.shutdown();
+                return 112;
+            }
+        }
+        {
             // The idle guard refuses review load / close during the run; the experiment's
             // writer handle is never closed or replaced by them (#512 S5).
             bridge::RecordingLoadCommand duringRun;

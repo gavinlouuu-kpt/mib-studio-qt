@@ -415,7 +415,9 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
   buttons, with the failure message of this session.
 - **Refusals** (CONNECT-036): a refused or failed Start or Stop is a modal warning titled "Camera" and the
   Connect status line, not only the log. The backend refuses Stop while an experiment is Starting, Active or
-  Stopping (data being saved, CONNECT-038) and reports a device teardown that was not confirmed
+  Stopping, and while the status is `flushing` (data being saved, CONNECT-038; also a Failed run still saving after a
+  fatal save error, as Qt's `flushInProgress_`; `cameraStopRefusal`, mirrored by `stopCameraBlockReason`) and reports
+  a device teardown that was not confirmed
   (`ShutdownFailed` of this session) as a failed command with the camera's message (CONNECT-040).
 - **Raw recording** (CONNECT-039, decision): Qt refuses Stop while a raw recording runs. The Stop Camera button
   finishes the recording first (the file is closed, nothing is lost) and then stops; if the recording cannot be

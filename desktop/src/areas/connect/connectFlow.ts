@@ -309,13 +309,15 @@ export function startCameraBlockReason(i: {
 }
 
 /** Why Stop Camera cannot be sent now: the camera does not stop underneath an experiment, nor while its data is being
- *  saved (Qt's operation guard, `CameraController::doRequestStop`). The backend refuses the same cases. */
-export function stopCameraBlockReason(i: { running: boolean; expState: number; commandInFlight: boolean }): string | undefined {
+ *  saved (Qt's operation guard, `CameraController::doRequestStop`, and `flushInProgress_` = the status's `flushing`,
+ *  which also covers a Failed run still saving after a fatal save error). The backend refuses the same cases
+ *  (`cameraStopRefusal`). */
+export function stopCameraBlockReason(i: { running: boolean; expState: number; flushing?: boolean; commandInFlight: boolean }): string | undefined {
   if (!i.running) return "Camera is not running";
   if (i.commandInFlight) return "A camera command is already in progress.";
   if (i.expState === EXPERIMENT_STATES.Active) return "Cannot stop camera while experiment is active. Please stop the experiment first.";
-  if (i.expState === EXPERIMENT_STATES.Stopping) return "Cannot stop camera while experiment data is being saved. Wait for the save to finish.";
   if (i.expState === EXPERIMENT_STATES.Starting) return "Cannot stop camera while an experiment is starting.";
+  if (i.expState === EXPERIMENT_STATES.Stopping || i.flushing) return "Cannot stop camera while experiment data is being saved. Wait for the save to finish.";
   return undefined;
 }
 
