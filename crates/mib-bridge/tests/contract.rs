@@ -126,15 +126,15 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    // v45 (#868 HW-046/HW-049) list_serial_ports; fetch_trigger_status carries the sort-trigger funnel;
+    // ABI next (#881, set at merge): #868 HW-046/HW-049 list_serial_ports; fetch_trigger_status carries the sort-trigger funnel;
     // fetch pulse_generator_status reports its limits and the serial framing.
-    assert_eq!(ffi::bridge_abi_version(), 45);
+    assert_eq!(ffi::bridge_abi_version(), 44);
 }
 
-// ABI 45 (#868 wave 1 hardware PR2): the serial port list, the sort-trigger funnel in the trigger status and the
+// ABI next (#881, set at merge) (#868 wave 1 hardware PR2): the serial port list, the sort-trigger funnel in the trigger status and the
 // pulse generator's limits and framing, through the cxx bridge; the contract describes them.
 #[test]
-fn hardware_trigger_and_ports_abi_45() {
+fn hardware_trigger_and_ports_abi() {
     let data_dir = std::env::temp_dir().join(format!("mib_bridge_hw45_data_{}", std::process::id()));
     let mut bridge = ffi::new_backend_bridge();
     assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));

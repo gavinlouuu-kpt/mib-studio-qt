@@ -163,7 +163,7 @@ matrix of `backend.serial_startup_race` ([[SimulatedSerial]]).
 ## Desktop bridge surface (2026-11-04, #868)
 
 `BackendFacade::pulseGeneratorCommandJson` validates every request before the driver and serializes
-configuration against experiment Start: `connect`, `disconnect`, `frequency`, `duty`, `enable`, and since ABI 45
+configuration against experiment Start: `connect`, `disconnect`, `frequency`, `duty`, `enable`, and since ABI next (#881, set at merge)
 `set` (frequency, then duty) and `start` (frequency, duty, then the output) as ONE command, as Qt's Set and
 Start buttons do. Output-off (`enable false`) bypasses the idle lock. `fetchPulseGeneratorStatusJson` reports the
 module's limits (`channel_count`, `min_frequency_hz`, `max_frequency_hz`) and the connection's framing, so the

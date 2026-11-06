@@ -181,7 +181,7 @@ TypeScript via the generated `desktop/src/bridgeContract.ts`
 (`scripts/gen_bridge_contract.py --check` is a desktop-CI drift gate).
 
 The command/event set is a versioned schema: `bridge_abi_version()` returns the
-current version (`45` since #868 hardware PR2; each bump has its own `## ABI N` section below)
+current version (`44` since #716 A7a; #868 hardware PR2 takes the next number when it merges, see `## ABI next (#881, set at merge)`; each bump has its own `## ABI N` section below)
 (the early history:v2 added the review commands — `load_recording`, `playback_seek_index`,
 `fetch_frame_by_index`; v3 added the processing commands — `apply_processing`,
 `fetch_processing_stats`; v4 added operation state, `cancel_operation`,
@@ -520,7 +520,7 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
-## ABI 45: serial ports, the sort-trigger funnel, pulse generator limits (#868 wave 1 hardware PR2)
+## ABI next (#881, set at merge): serial ports, the sort-trigger funnel, pulse generator limits (#868 wave 1 hardware PR2)
 
 Additive over ABI 44, for the pulse generator panel and the status bar of the desktop app (HW-046, HW-049,
 HW-054, HW-055). Contract: `hardware_trigger_and_ports`.
@@ -539,8 +539,8 @@ HW-054, HW-055). Contract: `hardware_trigger_and_ports`.
   constants and gains the actions `set` and `start` (`channel`, `frequency_hz`, `duty_percent`): frequency, then
   duty, then (start) the output, as one command under `withIdleConfiguration`, so a refused value or a failed
   write stops the sequence and an experiment cannot start between the writes.
-- **ABI touch points:** `bridge-contract.json` `abi_version` 45 and `hardware_trigger_and_ports`; `shim.cpp`
-  `bridge_abi_version()`; `contract.rs` `abi_version_is_stable` and `hardware_trigger_and_ports_abi_45`;
+- **ABI touch points:** `bridge-contract.json` `abi_version` (44 until the merge-time bump) and `hardware_trigger_and_ports`; `shim.cpp`
+  `bridge_abi_version()`; `contract.rs` `abi_version_is_stable` and `hardware_trigger_and_ports_abi`;
   `dispatch.rs` `hardware_reads_through_dispatch`; the generated `bridgeContract.ts`; the
   `eventAdapter.test.ts` pin. C++ test: `backend.facade_boundary` (limits, port list, funnel, and Set / Start /
   Stop against the simulated bench generator).

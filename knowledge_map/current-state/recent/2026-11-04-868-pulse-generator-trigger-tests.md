@@ -16,7 +16,7 @@ periodic interval 10–60000 ms, locked while running; refused input shows a mes
 running periodic test stops when the Monitoring view is hidden, and a refused Service-mode request is shown instead
 of swallowed. Qt's sort-trigger counters (targets, conversion, served, lost, latency) are in the status bar.
 
-Backend (ABI 45, additive): `list_serial_ports` (read-only enumeration), the sort-trigger funnel in
+Backend (ABI next (#881, set at merge), additive): `list_serial_ports` (read-only enumeration), the sort-trigger funnel in
 `fetch_trigger_status`, the module's limits and framing in `pulse_generator_status`, and the `set` / `start`
 actions of `pulse_generator_command`. See [[architecture/Desktop-Shell]], [[architecture/Rust-Bridge]],
 [[services/PulseGeneratorService]] and [[services/TriggerService]].
