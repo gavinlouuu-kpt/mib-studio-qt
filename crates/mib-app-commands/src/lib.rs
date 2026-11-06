@@ -531,6 +531,11 @@ pub fn pulse_generator_status(state: &AppState) -> Result<serde_json::Value, Str
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().pulse_generator_status()).map_err(|e| e.to_string())
 }
+/// Read-only serial port list (HW-049): enumeration only, no port is opened.
+pub fn list_serial_ports(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().list_serial_ports()).map_err(|e| e.to_string())
+}
 
 pub fn autofocus_connect_endpoint(state: &AppState, backend: String, endpoint: String,
     com_port: i32, baud_rate: i32, device_address: i32) -> Result<CmdResult, String> {
@@ -1679,6 +1684,14 @@ pub struct TriggerStatus {
     last_track_id: i32,
     periodic_active: bool,
     periodic_interval_ms: i32,
+    valid_objects: u64,
+    target_group_objects: u64,
+    unserved_target_group_objects: u64,
+    dropped_requests: u64,
+    dropped_pulses: u64,
+    dropped_valid_frames: u64,
+    avg_target_latency_us: f64,
+    max_target_latency_us: u64,
 }
 
 /// Enable/disable monitoring accumulation (visibility-gated by the UI).
@@ -1956,6 +1969,14 @@ pub fn fetch_trigger_status(state: &AppState) -> Result<TriggerStatus, String> {
         last_track_id: s.last_track_id,
         periodic_active: s.periodic_active,
         periodic_interval_ms: s.periodic_interval_ms,
+        valid_objects: s.valid_objects,
+        target_group_objects: s.target_group_objects,
+        unserved_target_group_objects: s.unserved_target_group_objects,
+        dropped_requests: s.dropped_requests,
+        dropped_pulses: s.dropped_pulses,
+        dropped_valid_frames: s.dropped_valid_frames,
+        avg_target_latency_us: s.avg_target_latency_us,
+        max_target_latency_us: s.max_target_latency_us,
     })
 }
 

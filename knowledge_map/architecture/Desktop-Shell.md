@@ -144,11 +144,13 @@ px→µm. Profile (UX-2 #306), operator identity, and storage free-space are
 `desktop/src/commissioning.ts` — `canActuate/canStartPeriodic/canStopPeriodic`
 gate hardware-actuating trigger tests. Every session starts in `operator` mode
 (`DEFAULT_MODE`); a menubar toggle enters `service` mode behind a confirm, with
-a persistent banner. The Monitoring trigger controls (Sort Trigger, Set Pulse,
+a persistent banner. The Monitoring trigger controls (Sort Trigger, pulse duration,
 Periodic Test) render only in service mode behind an **Arm** checkbox, gated by
 those checks; arming is one-shot and clears on mode exit or an active
 experiment. A running periodic test stays stoppable in operator mode as a safety
-fallback. Details:
+fallback, and stops by itself when the Monitoring view is hidden (Qt's hideEvent;
+2026-11-04). A refused `set_service_mode` on an instrument is logged and keeps the
+app in Operator mode (it was swallowed). Details:
 `knowledge_map/task/2026-07-21-ux9-commissioning-mode.md`.
 
 Native **file pickers** use `tauri-plugin-dialog` (registered in `run()`,
@@ -669,13 +671,57 @@ read-only asynchronous nanopositioner discovery. Selecting a discovered endpoint
 fills the draft; connection still requires an explicit command. Incomplete/ambiguous
 results are never auto-adopted. The acquisition pulse generator has system-port and
 Modbus-address selection, exact-address scoped discovery, channel frequency/duty and
-output enable/disable controls. Writes consume the shared commissioning arm; mounting,
+output enable/disable controls (superseded on 2026-11-04 by the Qt-parity panel below: no arm for the generator). Mounting,
 polling and discovery do not write. Disconnect does not stop a generator's physical
 pulse output, and the UI explains that distinction. Hardware acceptance remains a
 separate deferred bench run.
 
 Native workflow verification uses Tauri's supported tauri-driver/WebKitWebDriver
 protocol with embedded production assets (`custom-protocol` Cargo feature).
+
+### Pulse generator and trigger tests as in Qt (2026-11-04, #868 wave 1 Hardware PR2)
+
+The acquisition pulse generator panel (`components/PulseGeneratorControls.tsx`; pure rules in
+`pulseGeneratorModel.ts`, persistence in `pulseGeneratorStore.ts`) follows Qt's `ConfigTabs.cpp`
+(decisions D5 and D6 of the epic): it stays in the hardware panel (rendered only with
+`capabilities.trigger`) instead of Qt's hidden "Advanced — Hardware Setup" box.
+
+- **Port and bus:** `list_serial_ports` (ABI next (#881, set at merge), read-only) fills a port combo labelled
+  `name — description, S/N …, VID:PID` with Refresh (disabled while connected); baud 4800–115200
+  (default 9600), data bits 8/7, parity N/E/O, stop bits 1/2, Modbus address 1–247 (Qt's spin box allows 255,
+  the backend and the camera's `live_view` refuse above 247). **Scan** probes addresses 1–16 on that port,
+  read-only (discovery kind PulseGenerator, 250 ms per address), lists pulse generators, other Modbus devices
+  (left untouched) and corrupt replies, and fills the first generator's address; **Cancel scan** cancels the job.
+- **Set / Start / Stop (D5):** no Service mode and no arm. Start is one `pulse_generator_command` (`start`:
+  frequency, duty, output on, under the idle lock); Set is `set` (frequency and duty); Stop gates the output off
+  (`enable false`, bypasses the idle lock) and is queued behind a command in flight, never lost: it is sent as
+  soon as the generator answers that command (not after the settings save or status read that follow), and a
+  Stop pressed during a Stop goes right after it, never after a later Start (review of #881). While an
+  experiment is active Connect, Disconnect, Set and Start are locked (the generator is the acquisition clock);
+  the coordinated live view's ownership refuses every write as before. Frequency 400–40000 Hz and duty 0–100 %
+  (0.01 steps) are refused with a message; the limits come from `pulse_generator_status` (a test pins the
+  fallback to `PulseGeneratorService.h`).
+- **Status label:** Qt's wording ("Verified addr N — ChX: f Hz, d% duty, output ON/off", "Disconnected — <error>",
+  "Scanning…"); while connected the form shows the open connection (a reload keeps the backend connected).
+- **Persistence:** port with its USB identity, serial framing, address, channel, frequency and duty are saved in the
+  instrument's shell preferences (`get_preferences`/`set_preferences`, key `pulseGenerator`: the app config dir
+  or the server's data dir, shared by every client), with a localStorage copy as the fallback; saved after a
+  successful Connect, Set or Start; restored without connecting; a renamed port is found by its saved serial
+  number and VID:PID when exactly one port matches.
+- **XGC + R5D preset:** one click writes Qt's rig preset (512×96 window, rising-edge external trigger,
+  semi-automatic strobe, polarity 0) and a `live_view` block (the selected port, address, channel, framing,
+  1000 Hz, 2 %) into the MindVision camera document (`cameraDocument.tsx` `run("save", text)`). Like Qt it refuses
+  while Live View runs, without a port or with broken JSON; unlike Qt the camera file must already be loaded
+  (Configuration ▸ Camera script) and the **Apply** to the camera stays a separate explicit step.
+- **Trigger tests (`areas/hardware/TriggerTestControls.tsx`, `triggerTestModel.ts`):** Service mode + arm stay (D4,
+  UX-9). Pulse duration 1–1,000,000 µs is applied 300 ms after typing stops and again before Sort Trigger or
+  Periodic Test fire (there is no separate Set Pulse button); periodic interval 10–60000 ms is locked while the
+  test runs; blank, zero or out-of-range input shows a message and nothing is sent. `useServiceMode` stops a
+  running periodic test when the Monitoring view is hidden.
+- **Sort-trigger counters:** `areas/hardware/SortTriggerStats.tsx` renders Qt's status-bar text (Targets, conversion,
+  served, lost, SortLat, DroppedValid) from `fetch_trigger_status` (ABI next (#881, set at merge)), polled once a second on every tab.
+
+Not changed (decisions on the epic): MindVision Soft Trigger keeps its Service mode + arm gate (HW-047).
 A development-URL process-alive launch is not sufficient to verify the UI loads.
 The desktop-shell environment section includes the native WebDriver package.
 

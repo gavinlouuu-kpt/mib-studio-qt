@@ -1435,6 +1435,9 @@ BridgeCommandResult BackendBridge::pulse_generator_command(rust::Str json) {
 rust::String BackendBridge::pulse_generator_status() {
     return rust::String(impl_->facade.fetchPulseGeneratorStatusJson());
 }
+rust::String BackendBridge::list_serial_ports() {
+    return rust::String(impl_->facade.listSerialPortsJson());
+}
 rust::Vec<uint8_t> BackendBridge::render_review_overlay(rust::Str json) {
     try {return bytesToVec(impl_->facade.renderReviewOverlayJson(toStd(json)));}catch(const std::exception&) {}
     return {};
@@ -2539,6 +2542,14 @@ BridgeTriggerStatus BackendBridge::fetch_trigger_status() {
     out.last_track_id = status.lastTrackId;
     out.periodic_active = status.periodicActive;
     out.periodic_interval_ms = status.periodicIntervalMs;
+    out.valid_objects = status.validObjects;
+    out.target_group_objects = status.targetGroupObjects;
+    out.unserved_target_group_objects = status.unservedTargetGroupObjects;
+    out.dropped_requests = status.droppedRequests;
+    out.dropped_pulses = status.droppedPulses;
+    out.dropped_valid_frames = status.droppedValidFrames;
+    out.avg_target_latency_us = status.avgTargetLatencyUs;
+    out.max_target_latency_us = status.maxTargetLatencyUs;
     return out;
 }
 

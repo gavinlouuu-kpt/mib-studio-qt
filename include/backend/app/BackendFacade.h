@@ -1029,6 +1029,16 @@ namespace backend::bridge
         int lastTrackId{-1};
         bool periodicActive{false};
         int periodicIntervalMs{0};
+        // Sort-trigger funnel as the Qt status bar shows it (HW-046, #868): valid
+        // objects -> target group -> served pulses, and the acquisition->pulse latency.
+        std::uint64_t validObjects{0};
+        std::uint64_t targetGroupObjects{0};
+        std::uint64_t unservedTargetGroupObjects{0};
+        std::uint64_t droppedRequests{0};
+        std::uint64_t droppedPulses{0};
+        std::uint64_t droppedValidFrames{0};
+        double avgTargetLatencyUs{0.0};
+        std::uint64_t maxTargetLatencyUs{0};
     };
 
     class BackendFacade
@@ -1258,6 +1268,9 @@ namespace backend::bridge
         std::string fetchStartupDiscoveryStatusJson() const;
         BackendCommandResult pulseGeneratorCommandJson(const std::string &json);
         std::string fetchPulseGeneratorStatusJson() const;
+        // Read-only serial port enumeration for the port pickers (no port is opened):
+        // {"ports":[{system_name,system_location,description,manufacturer,serial_number,vendor_id,product_id}]}.
+        std::string listSerialPortsJson() const;
 
         std::vector<uint8_t> renderReviewOverlayJson(const std::string& json) const;
         bool fetchReviewReanalysisPreviewJson(const std::string& json,BackendFrame& out) const;
