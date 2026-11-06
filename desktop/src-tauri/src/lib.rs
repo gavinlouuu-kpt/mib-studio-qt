@@ -11,6 +11,7 @@
 
 use mib_app_commands as cmds;
 use cmds::AppState;
+use cmds::bridge_lock;
 use tauri::ipc::Response;
 use tauri::{Manager, State};
 
@@ -20,7 +21,7 @@ mod registry_transport;
 pub mod updater;
 mod app_update;
 
-#[tauri::command]
+#[tauri::command(async)]
 fn init(
     app: tauri::AppHandle,
     state: State<AppState>,
@@ -42,107 +43,112 @@ fn init(
     cmds::init(&state, &dir, &resources.to_string_lossy())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn abi_version() -> u32 {
     cmds::abi_version()
 }
 
-#[tauri::command]
-fn is_initialized(state: State<AppState>) -> Result<bool, String> {
-    cmds::is_initialized(&state)
+#[tauri::command(async)]
+fn is_initialized(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("is_initialized", || cmds::is_initialized(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn configure_mock(state: State<AppState>, frame_dir: String, frame_interval_ms: i32, loop_files: bool) -> Result<cmds::CmdResult, String> {
     cmds::configure_mock(&state, frame_dir, frame_interval_ms, loop_files)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn start_capture(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::start_capture(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_capture(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::stop_capture(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn seek_latest(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::seek_latest(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn poll_events() -> Result<(), String> {
     cmds::poll_events()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn poll_events_exact(state: State<AppState>) -> Result<cmds::event_transport::EventEnvelope, String> {
-    cmds::poll_events_exact(&state)
+    // While a long command holds the backend, report no new events rather than an error: the
+    // events stay queued in the bridge and arrive on the first poll after it finishes (#845).
+    match bridge_lock::status_scope(|| cmds::poll_events_exact(&state)) {
+        Err(e) if bridge_lock::is_busy(&e) => Ok(cmds::event_transport::encode(Vec::new())),
+        other => other,
+    }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn start_recording(state: State<AppState>, file_path: String) -> Result<cmds::CmdResult, String> {
     cmds::start_recording(&state, file_path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_recording(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::stop_recording(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn close_review(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::close_review(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn load_recording(state: State<AppState>, file_path: String) -> Result<cmds::CmdResult, String> {
     cmds::load_recording(&state, file_path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn seek_index(state: State<AppState>, frame_index: String) -> Result<cmds::CmdResult, String> {
     cmds::seek_index(&state, frame_index)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_frame() -> Result<Response, String> {
     cmds::fetch_frame().map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_frame_by_index() -> Result<Response, String> {
     cmds::fetch_frame_by_index().map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn frame_bytes() -> Result<Response, String> {
     cmds::frame_bytes().map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_frame_packet(state: State<AppState>) -> Result<Response, String> {
-    cmds::fetch_frame_packet(&state).map(Response::new)
+    bridge_lock::status_scope(|| cmds::fetch_frame_packet(&state).map(Response::new))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_indexed_frame_packet(state: State<AppState>, frame_index: String) -> Result<Response, String> {
     cmds::fetch_indexed_frame_packet(&state, frame_index).map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn apply_processing(state: State<AppState>, realtime_enabled: bool, pixel_to_micron: f64) -> Result<cmds::CmdResult, String> {
     cmds::apply_processing(&state, realtime_enabled, pixel_to_micron)
 }
 
-#[tauri::command]
-fn fetch_experiment_readiness(state: State<AppState>, output_path: String) -> Result<cmds::ExperimentReadiness, String> {
-    cmds::fetch_experiment_readiness(&state, output_path)
+#[tauri::command(async)]
+fn fetch_experiment_readiness(state: State<AppState>, output_path: String) -> Result<serde_json::Value, String> {
+    state.status_cache.read(format!("fetch_experiment_readiness:{output_path}"), || cmds::fetch_experiment_readiness(&state, output_path.clone()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn experiment_start(
     state: State<AppState>,
     output_path: String,
@@ -153,118 +159,118 @@ fn experiment_start(
     cmds::experiment_start(&state, output_path, acknowledge_discard_ring.unwrap_or(false), start_request_json)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_capture_lifecycle(state: State<AppState>) -> Result<serde_json::Value, String> {
-    cmds::fetch_capture_lifecycle(&state)
+    state.status_cache.read("fetch_capture_lifecycle", || cmds::fetch_capture_lifecycle(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn experiment_acknowledge_fault(state: State<AppState>, expected_run: String, fault_revision: String, code: String, message: String, confirmed: bool) -> Result<cmds::CmdResult, String> {
     cmds::experiment_acknowledge_fault(&state, expected_run, fault_revision, code, message, confirmed)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn experiment_stop(state: State<AppState>, expected_start_generation: Option<String>) -> Result<cmds::CmdResult, String> {
     // ABI 40 (#741): stop only this run (canonical decimal start generation); None: any active run.
     cmds::experiment_stop(&state, expected_start_generation)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn experiment_cancel(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::experiment_cancel(&state)
 }
 
-#[tauri::command]
-fn fetch_experiment_status(state: State<AppState>) -> Result<cmds::ExperimentStatus, String> {
-    cmds::fetch_experiment_status(&state)
+#[tauri::command(async)]
+fn fetch_experiment_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("fetch_experiment_status", || cmds::fetch_experiment_status(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_processed_preview_enabled(state: State<AppState>, enabled: bool) -> Result<(), String> {
     cmds::set_processed_preview_enabled(&state, enabled)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_processed_preview(state: State<AppState>) -> Result<Response, String> {
-    cmds::fetch_processed_preview(&state).map(Response::new)
+    bridge_lock::status_scope(|| cmds::fetch_processed_preview(&state).map(Response::new))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn background_calibration_command(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
     cmds::background_calibration_command(&state, json)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn background_calibration_status(state: State<AppState>) -> Result<serde_json::Value, String> {
-    cmds::background_calibration_status(&state)
+    state.status_cache.read("background_calibration_status", || cmds::background_calibration_status(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn startup_discovery_set_preference(state: State<AppState>, json: String) -> Result<serde_json::Value, String> {
     cmds::startup_discovery_set_preference(&state, json)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn startup_discovery_run(state: State<AppState>, action: String) -> Result<serde_json::Value, String> {
     cmds::startup_discovery_run(&state, action)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn startup_discovery_status(state: State<AppState>) -> Result<serde_json::Value, String> {
     cmds::startup_discovery_status(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pulse_generator_command(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
     cmds::pulse_generator_command(&state, json)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pulse_generator_status(state: State<AppState>) -> Result<serde_json::Value, String> {
-    cmds::pulse_generator_status(&state)
+    state.status_cache.read("pulse_generator_status", || cmds::pulse_generator_status(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn autofocus_connect_endpoint(state: State<AppState>, backend: String, endpoint: String, com_port: i32, baud_rate: i32, device_address: i32) -> Result<cmds::CmdResult, String> {
     cmds::autofocus_connect_endpoint(&state, backend, endpoint, com_port, baud_rate, device_address)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn autofocus_connect(state: State<AppState>, com_port: i32, baud_rate: i32, device_address: i32) -> Result<cmds::CmdResult, String> {
     cmds::autofocus_connect(&state, com_port, baud_rate, device_address)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn autofocus_disconnect(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::autofocus_disconnect(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn autofocus_set_enabled(state: State<AppState>, enabled: bool) -> Result<cmds::CmdResult, String> {
     cmds::autofocus_set_enabled(&state, enabled)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn autofocus_jog(state: State<AppState>, up: bool) -> Result<cmds::CmdResult, String> {
     cmds::autofocus_jog(&state, up)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn autofocus_set_config(state: State<AppState>, config: cmds::AutofocusConfig) -> Result<cmds::CmdResult, String> {
     cmds::autofocus_set_config(&state, config)
 }
 
-#[tauri::command]
-fn fetch_autofocus_status(state: State<AppState>) -> Result<cmds::AutofocusStatus, String> {
-    cmds::fetch_autofocus_status(&state)
+#[tauri::command(async)]
+fn fetch_autofocus_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("fetch_autofocus_status", || cmds::fetch_autofocus_status(&state))
 }
 
-#[tauri::command]
-fn fetch_autofocus_config(state: State<AppState>) -> Result<cmds::AutofocusConfig, String> {
-    cmds::fetch_autofocus_config(&state)
+#[tauri::command(async)]
+fn fetch_autofocus_config(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("fetch_autofocus_config", || cmds::fetch_autofocus_config(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_connect_endpoint(state: State<AppState>, pump: u32, port_name: String, baud_rate: i32, modbus_address: i32) -> Result<cmds::CmdResult, String> {
     cmds::pump_connect_endpoint(&state, pump, port_name, baud_rate, modbus_address)
 }
@@ -275,385 +281,385 @@ fn pump_connect_model(state: State<AppState>, pump: u32, model: u32, port_name: 
     cmds::pump_connect_model(&state, pump, model, port_name, baud_rate, modbus_address, microliters_per_rev)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_connect(state: State<AppState>, pump: u32, com_port: i32, baud_rate: i32, modbus_address: i32) -> Result<cmds::CmdResult, String> {
     cmds::pump_connect(&state, pump, com_port, baud_rate, modbus_address)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_disconnect(state: State<AppState>, pump: u32) -> Result<cmds::CmdResult, String> {
     cmds::pump_disconnect(&state, pump)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_set_flow_rate(state: State<AppState>, pump: u32, rate: f64, unit: i32) -> Result<cmds::CmdResult, String> {
     cmds::pump_set_flow_rate(&state, pump, rate, unit)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_set_direction(state: State<AppState>, pump: u32, direction: u32) -> Result<cmds::CmdResult, String> {
     cmds::pump_set_direction(&state, pump, direction)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_start(state: State<AppState>, pump: u32) -> Result<cmds::CmdResult, String> {
     cmds::pump_start(&state, pump)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_stop(state: State<AppState>, pump: u32) -> Result<cmds::CmdResult, String> {
     cmds::pump_stop(&state, pump)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_purge(state: State<AppState>, pump: u32, direction: u32) -> Result<cmds::CmdResult, String> {
     cmds::pump_purge(&state, pump, direction)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_stop_purge(state: State<AppState>, pump: u32) -> Result<cmds::CmdResult, String> {
     cmds::pump_stop_purge(&state, pump)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_set_syringe_volume(state: State<AppState>, pump: u32, volume: i32, unit: i32) -> Result<cmds::CmdResult, String> {
     cmds::pump_set_syringe_volume(&state, pump, volume, unit)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_poll_status(state: State<AppState>, pump: u32) -> Result<cmds::CmdResult, String> {
     cmds::pump_poll_status(&state, pump)
 }
 
-#[tauri::command]
-fn fetch_pump_status(state: State<AppState>, pump: u32) -> Result<cmds::PumpStatus, String> {
-    cmds::fetch_pump_status(&state, pump)
+#[tauri::command(async)]
+fn fetch_pump_status(state: State<AppState>, pump: u32) -> Result<serde_json::Value, String> {
+    state.status_cache.read(format!("fetch_pump_status:{pump}"), || cmds::fetch_pump_status(&state, pump))
 }
 
 // Z stage (#464, ADR 0013 Amendment 1): safety is enforced in the backend (no
 // motion before the operator sets zero, travel envelope, Stop always accepted,
 // experiment lock). The stage is never homed.
-#[tauri::command]
+#[tauri::command(async)]
 fn stage_connect(state: State<AppState>, port_name: String, usb_serial: String, modbus_address: i32) -> Result<cmds::CmdResult, String> {
     cmds::stage_connect(&state, port_name, usb_serial, modbus_address)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stage_disconnect(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::stage_disconnect(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stage_move_to(state: State<AppState>, target_um: f64) -> Result<cmds::CmdResult, String> {
     cmds::stage_move_to(&state, target_um)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stage_move_by(state: State<AppState>, delta_um: f64) -> Result<cmds::CmdResult, String> {
     cmds::stage_move_by(&state, delta_um)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stage_set_zero(state: State<AppState>, mid_travel: bool) -> Result<cmds::CmdResult, String> {
     cmds::stage_set_zero(&state, mid_travel)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stage_stop(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::stage_stop(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stage_apply_profile(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::stage_apply_profile(&state)
 }
 
-#[tauri::command]
-fn fetch_stage_status(state: State<AppState>) -> Result<cmds::StageStatus, String> {
-    cmds::fetch_stage_status(&state)
+#[tauri::command(async)]
+fn fetch_stage_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("fetch_stage_status", || cmds::fetch_stage_status(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pump_scan_addresses(state: State<AppState>, com_port: i32, baud_rate: i32, start_address: i32, end_address: i32, timeout_ms: i32) -> Result<cmds::CmdResult, String> {
     cmds::pump_scan_addresses(&state, com_port, baud_rate, start_address, end_address, timeout_ms)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_review_metadata(state: State<AppState>) -> Result<cmds::ReviewMetadata, String> {
     cmds::fetch_review_metadata(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_review_metrics_page(state: State<AppState>, valid: bool, offset: u64, count: u64) -> Result<cmds::ReviewMetricsPage, String> {
     cmds::fetch_review_metrics_page(&state, valid, offset, count)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_review_image() -> Result<Response, String> {
     cmds::fetch_review_image().map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn review_image_bytes() -> Result<Response, String> {
     cmds::review_image_bytes().map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_review_frame_packet(state: State<AppState>, dataset: u32, index: String) -> Result<Response, String> {
     cmds::fetch_review_frame_packet(&state, dataset, index).map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn render_review_overlay(state: State<AppState>, json: String) -> Result<Response, String> {
     cmds::render_review_overlay(&state, json).map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_review_reanalysis_preview(state: State<AppState>, json: String) -> Result<Response, String> {
     cmds::fetch_review_reanalysis_preview(&state, json).map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_monitoring_chart_reference(state: State<AppState>) -> Result<String, String> {
     cmds::fetch_monitoring_chart_reference(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_review_charts_json(state: State<AppState>) -> Result<String, String> {
     cmds::fetch_review_charts_json(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn review_reanalysis_json(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
     cmds::review_reanalysis_json(&state, json)
 }
 
-#[tauri::command]
-fn review_reanalysis_status_json(state: State<AppState>) -> Result<String, String> {
-    cmds::review_reanalysis_status_json(&state)
+#[tauri::command(async)]
+fn review_reanalysis_status_json(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("review_reanalysis_status_json", || cmds::review_reanalysis_status_json(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn review_export_json(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
     cmds::review_export_json(&state, json)
 }
 
-#[tauri::command]
-fn review_export_status_json(state: State<AppState>) -> Result<String, String> {
-    cmds::review_export_status_json(&state)
+#[tauri::command(async)]
+fn review_export_status_json(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("review_export_status_json", || cmds::review_export_status_json(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn review_export_csv(state: State<AppState>, output_path: String) -> Result<cmds::CmdResult, String> {
     cmds::review_export_csv(&state, output_path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_processing_config_json(state: State<AppState>) -> Result<cmds::ConfigDocument, String> {
     cmds::fetch_processing_config_json(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn apply_processing_config_json(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
     cmds::apply_processing_config_json(&state, json)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_processing_roi(state: State<AppState>, x: i32, y: i32, w: i32, h: i32) -> Result<cmds::CmdResult, String> {
     cmds::set_processing_roi(&state, x, y, w, h)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_background() -> Result<Response, String> {
     cmds::fetch_background().map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn background_bytes() -> Result<Response, String> {
     cmds::background_bytes().map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_background_packet(state: State<AppState>) -> Result<Response, String> {
     cmds::fetch_background_packet(&state).map(Response::new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_background_from_current_frame(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::set_background_from_current_frame(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn clear_background_image(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::clear_background_image(&state)
 }
 
-#[tauri::command]
-fn fetch_processing_core_status(state: State<AppState>) -> Result<cmds::ProcessingCoreStatus, String> {
-    cmds::fetch_processing_core_status(&state)
+#[tauri::command(async)]
+fn fetch_processing_core_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("fetch_processing_core_status", || cmds::fetch_processing_core_status(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn start_device_discovery(state: State<AppState>, request: cmds::DiscoveryRequest) -> Result<cmds::DiscoveryStart, String> {
     cmds::start_device_discovery(&state, request)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn start_camera_discovery(state: State<AppState>) -> Result<cmds::DiscoveryStart, String> {
     cmds::start_camera_discovery(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_device_discovery(state: State<AppState>, job_id: String) -> Result<cmds::DiscoverySnapshot, String> {
     cmds::fetch_device_discovery(&state, job_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_device_discovery(state: State<AppState>, job_id: String) -> Result<bool, String> {
     cmds::cancel_device_discovery(&state, job_id)
 }
 
-#[tauri::command]
-fn fetch_camera_selection(state: State<AppState>) -> Result<cmds::CameraSelection, String> {
-    cmds::fetch_camera_selection(&state)
+#[tauri::command(async)]
+fn fetch_camera_selection(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("fetch_camera_selection", || cmds::fetch_camera_selection(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn select_hardware_camera(state: State<AppState>, interface_index: i32, device_index: i32, label: String) -> Result<cmds::CmdResult, String> {
     cmds::select_hardware_camera(&state, interface_index, device_index, label)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn select_mindvision_camera(state: State<AppState>, camera_index: i32, label: String, config_path: String) -> Result<cmds::CmdResult, String> {
     cmds::select_mindvision_camera(&state, camera_index, label, config_path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<cmds::CmdResult, String> {
     cmds::apply_camera_script(&state, script_path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_camera_overview(state: State<AppState>, overview: bool) -> Result<cmds::CmdResult, String> {
     cmds::set_camera_overview(&state, overview)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_camera_roi(state: State<AppState>, x: i32, y: i32, w: i32, h: i32) -> Result<cmds::CmdResult, String> {
     cmds::save_camera_roi(&state, x, y, w, h)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_instrument_mode(state: State<AppState>, mode: String, x: i32, y: i32) -> Result<cmds::CmdResult, String> {
     cmds::set_instrument_mode(&state, &mode, x, y)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_service_mode(state: State<AppState>, on: bool) -> Result<cmds::CmdResult, String> {
     cmds::set_service_mode(&state, on)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_instrument_led(state: State<AppState>, delay_us: f64, width_us: f64) -> Result<cmds::CmdResult, String> {
     cmds::set_instrument_led(&state, delay_us, width_us)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_run_preview(state: State<AppState>) -> Result<Response, String> {
-    cmds::fetch_run_preview(&state).map(Response::new)
+    bridge_lock::status_scope(|| cmds::fetch_run_preview(&state).map(Response::new))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_platform_info(state: State<AppState>) -> Result<serde_json::Value, String> {
-    cmds::fetch_platform_info(&state)
+    state.status_cache.read("fetch_platform_info", || cmds::fetch_platform_info(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_run_accounting(state: State<AppState>, source: String) -> Result<serde_json::Value, String> {
-    cmds::fetch_run_accounting(&state, &source)
+    state.status_cache.read(format!("fetch_run_accounting:{source}"), || cmds::fetch_run_accounting(&state, &source))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_instrument_status(state: State<AppState>) -> Result<serde_json::Value, String> {
-    cmds::fetch_instrument_status(&state)
+    state.status_cache.read("fetch_instrument_status", || cmds::fetch_instrument_status(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_camera_geometry(state: State<AppState>) -> Result<serde_json::Value, String> {
-    cmds::fetch_camera_geometry(&state)
+    state.status_cache.read("fetch_camera_geometry", || cmds::fetch_camera_geometry(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn soft_trigger_camera(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::soft_trigger_camera(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn reset_hardware_camera(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::reset_hardware_camera(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn monitoring_set_active(state: State<AppState>, active: bool) -> Result<cmds::CmdResult, String> {
     cmds::monitoring_set_active(&state, active)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn monitoring_clear(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::monitoring_clear(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_monitoring_snapshot(state: State<AppState>, max_rows: u64) -> Result<cmds::MonitoringSnapshot, String> {
-    cmds::fetch_monitoring_snapshot(&state, max_rows)
+    bridge_lock::status_scope(|| cmds::fetch_monitoring_snapshot(&state, max_rows))
 }
 
 // ABI 41 (#716 A6a): live cell images. Identities are canonical decimal strings; the pixels travel
 // as frame packets (pull kinds 5 and 6), never in JSON.
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_monitoring_cells(state: State<AppState>) -> Result<serde_json::Value, String> {
-    cmds::fetch_monitoring_cells(&state)
+    bridge_lock::status_scope(|| cmds::fetch_monitoring_cells(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn monitoring_cell_pin(state: State<AppState>, expected_start_generation: String, capture_epoch: String, frame_index: String, object_id: i32) -> Result<serde_json::Value, String> {
     cmds::monitoring_cell_pin(&state, expected_start_generation, capture_epoch, frame_index, object_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn monitoring_cell_unpin(state: State<AppState>, start_generation: String, capture_epoch: String, frame_index: String, object_id: i32) -> Result<cmds::CmdResult, String> {
     cmds::monitoring_cell_unpin(&state, start_generation, capture_epoch, frame_index, object_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn monitoring_cell_clear_pins(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::monitoring_cell_clear_pins(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_monitoring_cell_packet(state: State<AppState>, start_generation: String, capture_epoch: String, frame_index: String, object_id: i32, layer: String) -> Result<Response, String> {
     cmds::fetch_monitoring_cell_packet(&state, start_generation, capture_epoch, frame_index, object_id, layer).map(Response::new)
 }
 
 // ABI 42 (#716 A4a): calibration records. The list and get are reads; apply is the one explicit
 // compare-and-set of the pixel-to-micron factor.
-#[tauri::command]
+#[tauri::command(async)]
 fn calibration_records_list(state: State<AppState>) -> Result<serde_json::Value, String> {
     cmds::calibration_records_list(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn calibration_record_get(state: State<AppState>, record_id: String) -> Result<serde_json::Value, String> {
     cmds::calibration_record_get(&state, record_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn calibration_apply(state: State<AppState>, record_id: String, expected_current_factor: f64) -> Result<serde_json::Value, String> {
     cmds::calibration_apply(&state, record_id, expected_current_factor)
 }
 
 // ABI 44 (#716 A7a): the run quick look, a read (it never writes or actuates anything).
-#[tauri::command]
+#[tauri::command(async)]
 fn run_quick_look(
     state: State<AppState>,
     paths: Vec<String>,
@@ -662,62 +668,62 @@ fn run_quick_look(
     cmds::run_quick_look(&state, paths, reference)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn trigger_set_pulse_duration(state: State<AppState>, pulse_us: i32) -> Result<cmds::CmdResult, String> {
     cmds::trigger_set_pulse_duration(&state, pulse_us)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn trigger_manual_pulse(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::trigger_manual_pulse(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn trigger_periodic_start(state: State<AppState>, interval_ms: i32) -> Result<cmds::CmdResult, String> {
     cmds::trigger_periodic_start(&state, interval_ms)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn trigger_periodic_stop(state: State<AppState>) -> Result<cmds::CmdResult, String> {
     cmds::trigger_periodic_stop(&state)
 }
 
-#[tauri::command]
-fn fetch_trigger_status(state: State<AppState>) -> Result<cmds::TriggerStatus, String> {
-    cmds::fetch_trigger_status(&state)
+#[tauri::command(async)]
+fn fetch_trigger_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("fetch_trigger_status", || cmds::fetch_trigger_status(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_operation(state: State<AppState>, operation_id: String) -> Result<cmds::CmdResult, String> {
     cmds::cancel_operation(&state, operation_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn queue_overflow_total(state: State<AppState>) -> Result<String, String> {
     cmds::queue_overflow_total(&state)
 }
 
-#[tauri::command]
-fn fetch_processing_stats(state: State<AppState>) -> Result<cmds::ProcessingStats, String> {
-    cmds::fetch_processing_stats(&state)
+#[tauri::command(async)]
+fn fetch_processing_stats(state: State<AppState>) -> Result<serde_json::Value, String> {
+    state.status_cache.read("fetch_processing_stats", || cmds::fetch_processing_stats(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_config_document(state: State<AppState>, path: String) -> Result<cmds::config_document::ConfigDocument, String> {
     cmds::config_document::fetch_config_document(&state, path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn apply_config_document(state: State<AppState>, path: String, baseline: String, patch: String) -> Result<cmds::config_document::ConfigTransactionResult, String> {
     cmds::config_document::apply_config_document(&state, path, baseline, patch)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn profile_command(state: State<AppState>, base: String, request: String) -> Result<serde_json::Value, String> {
     cmds::config_document::profile_command(&state, base, request)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn restore_startup_configuration(state: State<AppState>, profile_base: String) -> Result<serde_json::Value, String> {
     cmds::config_document::restore_startup_configuration(&state, profile_base)
 }
@@ -743,9 +749,9 @@ async fn processing_core_command(app: tauri::AppHandle, request: String) -> Resu
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fetch_preview_buffer(state: State<AppState>) -> Result<serde_json::Value, String> {
-    cmds::preview_buffer::fetch_preview_buffer(&state)
+    state.status_cache.read("fetch_preview_buffer", || cmds::preview_buffer::fetch_preview_buffer(&state))
 }
 
 #[tauri::command]
@@ -758,7 +764,7 @@ async fn save_preview_buffer(app: tauri::AppHandle, request: String) -> Result<s
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn camera_document(action: String, path: String, kind: String, baseline: String, text: String) -> Result<cmds::camera_document::CameraDocument, String> {
     cmds::camera_document::camera_document(action, path, kind, baseline, text)
 }
@@ -947,6 +953,22 @@ pub fn run() {
             trigger_periodic_stop,
             fetch_trigger_status,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // tauri's App::run ends with std::process::exit, so the managed AppState is never
+            // dropped and BackendBridge's destructor never runs. Shut the backend down here,
+            // as the Qt app does on exit: pumps, pulse generator, Z stage, then
+            // "AppBackend: shutdown complete" in the log (#850).
+            if let tauri::RunEvent::Exit = event {
+                shutdown_on_exit(&app.state::<AppState>());
+            }
+        });
+}
+
+fn shutdown_on_exit(state: &AppState) {
+    match cmds::shutdown(state, cmds::EXIT_SHUTDOWN_WAIT) {
+        Ok(_) => {}
+        Err(e) => eprintln!("mib-studio-desktop: backend shutdown on exit skipped: {e}"),
+    }
 }

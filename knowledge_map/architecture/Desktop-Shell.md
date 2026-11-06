@@ -32,7 +32,8 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   bridged yet render disabled with a tooltip naming the blocking issue
   (BE-2…BE-9, #272–#279) — backend/hardware state is never simulated.
 - `crates/mib-app-commands/` — the transport-neutral command layer (YOFO
-  Studio S5): `AppState` (`Mutex<UniquePtr<BackendBridge>>`), the DTOs, every
+  Studio S5): `AppState` (`BridgeLock<UniquePtr<BackendBridge>>` plus a
+  `StatusCache`, see "Long commands and status reads" below), the DTOs, every
   backend command as a plain function over `&AppState`, the event JSON and
   frame-packet encoders, and `dispatch::dispatch(state, host, name, args)` for
   non-Tauri transports (camelCase argument keys, exactly what `invoke` sends;
@@ -333,6 +334,39 @@ Thin wrappers over the bridge (all take the managed `AppState`; bodies in
 
 - **Live capture:** existing lifecycle commands remain serialized through
   `AppState.bridge`. `fetch_frame_packet` returns one owned binary response.
+
+### Long commands and status reads (#845)
+
+The C++ bridge is not safe to call concurrently, so one lock still serialises every
+command (`crates/mib-app-commands/src/bridge_lock.rs`). Before #845 a stop with no
+frames (camera on its parked external trigger) held it for about six minutes and every
+other invoke, including the 500 ms status pollers, queued behind it.
+
+- Every Tauri command that reaches the bridge is `#[tauri::command(async)]`, so it runs on
+  Tauri's blocking pool rather than the IPC thread.
+- Long commands (`init`, `configure_mock`, `start_capture`, `stop_capture`,
+  `load_recording`, `experiment_start/stop/cancel`, `select_hardware_camera`,
+  `select_mindvision_camera`, `apply_camera_script`, `reset_hardware_camera`,
+  `set_camera_overview`, `save_camera_roi`, `set_instrument_mode`) take the lock with
+  `lock_for(name)`, which records the holder and the time it took the lock.
+- Status reads (`is_initialized`, `fetch_experiment_status`, `fetch_preview_buffer`,
+  `fetch_instrument_status`, the pump/stage/autofocus/trigger/pulse-generator status,
+  `fetch_processing_stats`, `fetch_camera_selection`/`geometry`, export/reanalysis/
+  calibration status and the others in `lib.rs`) go through `state.status_cache.read(key, ..)`:
+  they wait at most `STATUS_WAIT` (250 ms), then answer with the last good reply for that key.
+  With nothing cached they fail with `bridge busy: <command> has held the backend for N s`.
+- `poll_events_exact` returns an empty envelope while the bridge is busy; the events stay
+  queued in the bridge. Frame/preview/monitoring packet reads fail fast with the busy error.
+- Control commands and the WebSocket server keep the blocking lock: they must not run
+  against a half-finished stop. A button pressed during a long stop still waits for it,
+  but the window and its status keep updating.
+- Close (`desktop/src/closeGuard.ts`, `stopCaptureBounded`) logs "Stopping camera…",
+  waits `CLOSE_STOP_WAIT_MS` (10 s), then asks **Close now** or **Keep waiting** (the
+  default), again every 10 s. Close now closes the window; the backend shutdown on exit
+  waits for the stop (#850).
+- Tests: `bridge_lock::tests` (a mock that sleeps under `lock_for` does not stall a status
+  read), `bridge_lock_backend_tests` (the same through a real `AppState`),
+  `closeGuard.test.tsx` (bounded wait, keep waiting, close now).
 - **Recording/review:** `fetch_indexed_frame_packet(frame_index)` and
   `fetch_review_frame_packet(dataset,index)` accept canonical decimal-string
   indices. `fetch_background_packet` uses the same codec.
@@ -419,6 +453,14 @@ Two gates, both without a real display:
   loop under `src-tauri/target/**/cxxbridge` that crashes Vite's watcher with
   `ELOOP` seconds after startup. `vite.config.ts` sets
   `server.watch.ignored: ["**/src-tauri/**"]`.
+- **The backend shuts down on `RunEvent::Exit`, not in a destructor (#850).** tauri's
+  `App::run` ends with `std::process::exit`, so the managed `AppState` is never dropped and
+  `BackendBridge`'s destructor never ran: the log stopped at `CaptureService stopped`, with no
+  pump, pulse-generator or Z-stage shutdown. `run()` now builds the app and calls
+  `cmds::shutdown(state, EXIT_SHUTDOWN_WAIT)` on `RunEvent::Exit`, which logs
+  `AppBackend: shutdown complete` as Qt does. It waits at most 30 s for a command that holds
+  the bridge (a forced close during a stuck stop), then logs the busy error to stderr and exits.
+  Tests: `shutdown_tests` in `mib-app-commands`.
 - An **empty `data_dir`** passed to the `init` command resolves to Tauri's
   `app_data_dir` — `AppBackend::initialize("")` rejects an empty path (found
   by driving the UI under Xvfb: init always failed before this).
@@ -1055,9 +1097,11 @@ per-row calibration provenance captured by every inline and batch processing pat
 current Qt live scatter's use of the current factor is not authoritative for mixed epochs.
 ## Windows nonpublishing candidate lane
 
-`.github/workflows/desktop-windows-candidate.yml` builds a Windows x64 SDK-free Tauri candidate on `dev/react-tauri` pushes or manual dispatch. This is separate from the existing Qt Windows release workflow and never creates tags, releases, update feeds or signed installers. It uses the repository VS2022/MSVC194 Conan profile, VS CMake backend-only build and existing bridge link-manifest generator, then release-mode Rust tests/build.
+`.github/workflows/desktop-windows-candidate.yml` builds a Windows x64 SDK-free Tauri candidate on `dev/react-tauri` pushes or manual dispatch. This is separate from the existing Qt Windows release workflow and never creates tags, releases, update feeds or signed installers. It uses the repository VS2022/MSVC194 Conan profile with the team Conan remote first (read-only; ConanCenter has no binary for the opencv FFmpeg dependency and its source build fails on the runner), VS CMake backend-only build and existing bridge link-manifest generator, then release-mode Rust tests/build.
 
-`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
+`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail; Windows OS DLLs are excluded and a staged one fails packaging, see below), app-local VC runtime, defaults, isoelastic LUT resources. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
+
+**No OS DLLs in the package (#851).** `file(GET_RUNTIME_DEPENDENCIES)` reports paths like `C:\WINDOWS\system32/kernel32.dll` (any case, mixed separators); the old `POST_EXCLUDE` regex matched only `/System32/`, so 31 OS DLLs were staged. `desktop/scripts/windows-system-dlls.cmake` now holds the case-insensitive, either-separator regexes (System32, SysWOW64, WinSxS, `api-ms-win-*`, `ext-ms-*`), a second filter that drops anything under `%SystemRoot%` or with a core OS DLL name, and `mib_check_staged_runtime`, which fails packaging if any staged DLL is an OS DLL (by name, or present in `%SystemRoot%\System32` and not the app-local MSVC runtime). CTest `scripts.windows_runtime_excludes_os_dlls` (`tests/release/test_windows_runtime_filter.py`) runs the functions on any host through `windows-system-dlls-selftest.cmake`. Packaging itself only runs on Windows: the candidate workflow or a win11-agent run.
 
 Local minimum path: VS2022 x64 developer PowerShell, Node22, stable Rust/MSVC, Python/Conan/CMake; install dependencies with `conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194`, provision required assets, configure `windows-default` with the workflow's SDK-free/backend-only flags, build backend libraries and `mib_backend_smoke_test`, run `tools/gen_bridge_link_manifest.py`, then `npm --prefix desktop ci`, frontend test/build and release Cargo desktop build with `custom-protocol`. Run the packaging script last. Never use Qt's release workflow to build this candidate.
 

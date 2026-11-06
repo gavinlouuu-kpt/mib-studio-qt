@@ -1642,6 +1642,16 @@ if(Python3_Interpreter_FOUND)
         TIMEOUT 30
     )
 
+    # #851: the Tauri Windows packaging never stages OS DLLs (any case, either separator).
+    add_test(
+        NAME scripts.windows_runtime_excludes_os_dlls
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_windows_runtime_filter.py
+    )
+    set_tests_properties(scripts.windows_runtime_excludes_os_dlls PROPERTIES
+        LABELS "scripts;contract"
+        TIMEOUT 30
+    )
+
     # ADR 0007 / rollout T1.2: the built absdiff-laplacian core reproduces the
     # Contract-2 real-frame gold through engine ABI v2 (ctypes, no host code).
     # Not in sanitizer builds: an uninstrumented python cannot dlopen a

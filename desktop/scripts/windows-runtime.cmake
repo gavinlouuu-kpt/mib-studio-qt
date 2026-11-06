@@ -1,5 +1,6 @@
 # Nonpublishing portable candidate closure. Run from a VS x64 developer shell.
 cmake_minimum_required(VERSION 3.21)
+include("${CMAKE_CURRENT_LIST_DIR}/windows-system-dlls.cmake")
 foreach(arg EXE MANIFEST DEST)
   if(NOT DEFINED ${arg})
     message(FATAL_ERROR "Missing -D${arg}")
@@ -36,7 +37,16 @@ file(GET_RUNTIME_DEPENDENCIES
   # System32 DLLs import; it is absent on some Windows images and never shipped.
   PRE_EXCLUDE_REGEXES "[Aa][Pp][Ii]-[Mm][Ss]-" "[Ee][Xx][Tt]-[Mm][Ss]-"
     "^[Hh][Vv][Ss][Ii][Ff][Ii][Ll][Ee][Tt][Rr][Uu][Ss][Tt]\\.[Dd][Ll][Ll]$"
-  POST_EXCLUDE_REGEXES ".*[Ww][Ii][Nn][Dd][Oo][Ww][Ss]/[Ss][Yy][Ss][Tt][Ee][Mm]32/.*")
+  # Resolved paths look like "C:\WINDOWS\system32/kernel32.dll": any case, either separator
+  # (#851). See windows-system-dlls.cmake.
+  POST_EXCLUDE_REGEXES ${MIB_WINDOWS_SYSTEM_DLL_REGEXES})
+# Second line of defence: whatever the regexes missed, drop anything under %SystemRoot% or
+# with an OS DLL name, and say so in the log.
+mib_filter_windows_system_dlls("${resolved}" "$ENV{SystemRoot}" resolved dropped_system_dlls)
+if(dropped_system_dlls)
+  list(JOIN dropped_system_dlls "\n  " dropped_text)
+  message(STATUS "Not packaged (Windows OS DLLs):\n  ${dropped_text}")
+endif()
 if(unresolved OR conflicts_FILENAMES)
   message(FATAL_ERROR "Incomplete DLL closure: unresolved=${unresolved}; conflicts=${conflicts_FILENAMES}")
 endif()
@@ -54,4 +64,6 @@ foreach(crt_dir IN LISTS crt_dirs)
   file(GLOB crt_dlls "${crt_dir}/*.dll")
   file(COPY ${crt_dlls} DESTINATION "${DEST}")
 endforeach()
+# Fails packaging if any Windows OS DLL was staged (#851).
+mib_check_staged_runtime("${DEST}" "$ENV{SystemRoot}")
 file(WRITE "${DEST}/native-runtime-files.txt" "${resolved}\n")

@@ -4,11 +4,10 @@
 //! functions as Tauri commands, and `mib-bridge-server` exposes the same functions over a
 //! WebSocket through [`dispatch::dispatch`]. One implementation, two transports.
 
-use std::sync::Mutex;
-
 use mib_bridge::ffi::{self, BridgeEventKind};
 use serde::{Deserialize, Serialize};
 
+pub mod bridge_lock;
 pub mod camera_document;
 pub mod config_document;
 pub mod dispatch;
@@ -18,14 +17,20 @@ pub mod preview_buffer;
 
 
 /// The one backend bridge a process owns. Every transport (the Tauri webview, the YOFO Studio
-/// WebSocket server) serialises its calls through this mutex.
+/// WebSocket server) serialises its calls through this lock. Long commands take it with
+/// [`bridge_lock::BridgeLock::lock_for`]; status reads go through `status_cache` and wait at
+/// most [`bridge_lock::STATUS_WAIT`] (#845).
 pub struct AppState {
-    pub bridge: Mutex<cxx::UniquePtr<ffi::BackendBridge>>,
+    pub bridge: bridge_lock::BridgeLock<cxx::UniquePtr<ffi::BackendBridge>>,
+    pub status_cache: bridge_lock::StatusCache,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        AppState { bridge: Mutex::new(ffi::new_backend_bridge()) }
+        AppState {
+            bridge: bridge_lock::BridgeLock::new(ffi::new_backend_bridge()),
+            status_cache: bridge_lock::StatusCache::default(),
+        }
     }
 }
 
@@ -123,8 +128,26 @@ pub fn is_initialized(state: &AppState) -> Result<bool, String> {
 /// Initialise the backend. The host resolves an empty `data_dir` (AppBackend rejects an empty
 /// path; found by the Xvfb E2E run: the UI passed "" and init always failed).
 pub fn init(state: &AppState, data_dir: &str, resource_dir: &str) -> Result<bool, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("init").map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().initialize_with_resources(data_dir, resource_dir))
+}
+
+/// How long the exit shutdown waits for a long command (a stuck stop) to release the bridge.
+pub const EXIT_SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Shut the backend down: capture, recording, pumps, pulse generator, Z stage, then
+/// `AppBackend: shutdown complete` in the log, as the Qt app does on exit (#850). The desktop
+/// app calls it on `RunEvent::Exit`, because tauri's `App::run` exits the process without
+/// dropping managed state. Waits at most `wait` for a command that holds the bridge (a forced
+/// close during a stuck stop) and then gives up with the busy error rather than hang the exit.
+/// Returns false when the backend was never initialised or is already shut down.
+pub fn shutdown(state: &AppState, wait: std::time::Duration) -> Result<bool, String> {
+    let mut guard = state.bridge.lock_within(wait)?;
+    if !guard.is_initialized() {
+        return Ok(false);
+    }
+    guard.pin_mut().shutdown();
+    Ok(true)
 }
 
 pub fn configure_mock(
@@ -133,7 +156,7 @@ pub fn configure_mock(
     frame_interval_ms: i32,
     loop_files: bool,
 ) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("configure_mock").map_err(|e| e.to_string())?;
     Ok(guard
         .pin_mut()
         .configure_mock_camera(&frame_dir, frame_interval_ms, loop_files)
@@ -141,12 +164,12 @@ pub fn configure_mock(
 }
 
 pub fn start_capture(state: &AppState) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("start_capture").map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().start_capture().into())
 }
 
 pub fn stop_capture(state: &AppState) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("stop_capture").map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().stop_capture().into())
 }
 
@@ -181,7 +204,7 @@ pub fn close_review(state: &AppState) -> Result<CmdResult, String> {
 }
 
 pub fn load_recording(state: &AppState, file_path: String) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("load_recording").map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().load_recording(&file_path).into())
 }
 
@@ -378,7 +401,7 @@ pub fn experiment_start(
     start_request_json: Option<String>,
 ) -> Result<CmdResult, String> {
     let request = start_request_json.unwrap_or_default();
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("experiment_start").map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().experiment_start(&output_path, acknowledge_discard_ring, &request).into())
 }
 
@@ -410,13 +433,13 @@ pub fn experiment_stop(state: &AppState, expected_start_generation: Option<Strin
             "Invalid expectedStartGeneration: a canonical decimal start generation is required".to_string()
         })?),
     };
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("experiment_stop").map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().experiment_stop(expected.is_some(), expected.unwrap_or(0)).into())
 }
 
 /// Like stop, but the terminal status is marked cancelled.
 pub fn experiment_cancel(state: &AppState) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("experiment_cancel").map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().experiment_cancel().into())
 }
 
@@ -1420,7 +1443,7 @@ pub fn select_hardware_camera(
     device_index: i32,
     label: String,
 ) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("select_hardware_camera").map_err(|e| e.to_string())?;
     Ok(guard
         .pin_mut()
         .select_hardware_camera(interface_index, device_index, &label)
@@ -1434,7 +1457,7 @@ pub fn select_mindvision_camera(
     label: String,
     config_path: String,
 ) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("select_mindvision_camera").map_err(|e| e.to_string())?;
     let selected = guard.pin_mut().fetch_camera_selection();
     let experiment = guard.pin_mut().fetch_experiment_status();
     if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
@@ -1449,7 +1472,7 @@ pub fn select_mindvision_camera(
 
 /// Apply a JS camera script to the selected hardware camera.
 pub fn apply_camera_script(state: &AppState, script_path: String) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("apply_camera_script").map_err(|e| e.to_string())?;
     let selected = guard.pin_mut().fetch_camera_selection();
     let experiment = guard.pin_mut().fetch_experiment_status();
     if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
@@ -1462,13 +1485,13 @@ pub fn apply_camera_script(state: &AppState, script_path: String) -> Result<CmdR
 /// Explicit MindVision software exposure trigger; never an automatic startup action.
 /// Camera & Alignment (ABI 20): full-sensor overview on/off; a running capture restarts.
 pub fn set_camera_overview(state: &AppState, overview: bool) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("set_camera_overview").map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().set_camera_overview(overview).into())
 }
 
 /// Save the experiment window (ROI 1, sensor coordinates) placed on the overview.
 pub fn save_camera_roi(state: &AppState, x: i32, y: i32, w: i32, h: i32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("save_camera_roi").map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().save_camera_roi(x, y, w, h).into())
 }
 
@@ -1552,7 +1575,7 @@ pub fn sync_wall_clock(state: &AppState, unix_ms: i64) -> Result<CmdResult, Stri
 }
 
 pub fn set_instrument_mode(state: &AppState, mode: &str, x: i32, y: i32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("set_instrument_mode").map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().set_instrument_mode(mode, x, y).into())
 }
 
@@ -1614,7 +1637,7 @@ pub fn soft_trigger_camera(state: &AppState) -> Result<CmdResult, String> {
 
 /// Issue a GenICam DeviceReset to the selected hardware camera.
 pub fn reset_hardware_camera(state: &AppState) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.bridge.lock_for("reset_hardware_camera").map_err(|e| e.to_string())?;
     let selected = guard.pin_mut().fetch_camera_selection();
     let experiment = guard.pin_mut().fetch_experiment_status();
     if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
@@ -2156,5 +2179,102 @@ mod method_calibration_tests {
         let with_e = ffi::BridgeMethodCalibration { has_nominal_e_kpa: true, nominal_e_kpa: 1.5, ..beads };
         assert_eq!(serde_json::to_value(MethodCalibration::from(with_e)).unwrap()["calibration_reference"]["nominal_e_kpa"],
                    serde_json::json!(1.5));
+    }
+}
+
+#[cfg(test)]
+mod bridge_lock_backend_tests {
+    use super::*;
+    use serial_test::serial;
+    use std::sync::{mpsc, Arc};
+    use std::time::{Duration, Instant};
+
+    // #845 through the real bridge: a slow command (a mock that holds the lock and sleeps, as
+    // stop_capture did for minutes with no frames) does not stall a concurrent status read.
+    #[test]
+    #[serial]
+    fn status_read_answers_while_a_slow_command_holds_the_backend() {
+        let data = std::env::temp_dir().join(format!("mib_bridge_lock_{}", std::process::id()));
+        let state = Arc::new(AppState::new());
+        assert!(init(&state, &data.to_string_lossy(), "").unwrap());
+
+        let primed = state.status_cache.read("fetch_experiment_status", || fetch_experiment_status(&state)).unwrap();
+        assert_eq!(primed["valid"], serde_json::json!(true));
+
+        let (held, wait_held) = mpsc::channel();
+        let slow = {
+            let state = Arc::clone(&state);
+            std::thread::spawn(move || {
+                let _guard = state.bridge.lock_for("stop_capture").unwrap();
+                held.send(()).unwrap();
+                std::thread::sleep(Duration::from_millis(2000));
+            })
+        };
+        wait_held.recv().unwrap();
+
+        let started = Instant::now();
+        let reply = state.status_cache.read("fetch_experiment_status", || fetch_experiment_status(&state)).unwrap();
+        assert!(started.elapsed() < Duration::from_millis(1000), "status waited {:?}", started.elapsed());
+        assert_eq!(reply, primed, "answered from the last good reply");
+        let busy = bridge_lock::status_scope(|| is_initialized(&state)).unwrap_err();
+        assert!(bridge_lock::is_busy(&busy) && busy.contains("stop_capture"), "{busy}");
+
+        slow.join().unwrap();
+        assert!(bridge_lock::status_scope(|| is_initialized(&state)).unwrap());
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use serial_test::serial;
+    use std::sync::{mpsc, Arc};
+    use std::time::{Duration, Instant};
+
+    // #850: the exit path shuts the backend down through the bridge, once.
+    #[test]
+    #[serial]
+    fn exit_shutdown_runs_the_backend_shutdown_once() {
+        let data = std::env::temp_dir().join(format!("mib_exit_shutdown_{}", std::process::id()));
+        let state = AppState::new();
+        assert_eq!(shutdown(&state, Duration::from_secs(1)), Ok(false), "nothing to shut down before init");
+        assert!(init(&state, &data.to_string_lossy(), "").unwrap());
+        assert!(is_initialized(&state).unwrap());
+
+        assert_eq!(shutdown(&state, EXIT_SHUTDOWN_WAIT), Ok(true));
+        assert!(!is_initialized(&state).unwrap(), "the backend is shut down");
+        assert_eq!(shutdown(&state, EXIT_SHUTDOWN_WAIT), Ok(false), "a second exit event is a no-op");
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // A forced close during a stuck stop: the exit shutdown gives up after its wait instead of
+    // holding the process open for the whole stop.
+    #[test]
+    #[serial]
+    fn exit_shutdown_is_bounded_when_a_command_holds_the_bridge() {
+        let data = std::env::temp_dir().join(format!("mib_exit_bounded_{}", std::process::id()));
+        let state = Arc::new(AppState::new());
+        assert!(init(&state, &data.to_string_lossy(), "").unwrap());
+        let (held, wait_held) = mpsc::channel();
+        let (release, wait_release) = mpsc::channel::<()>();
+        let slow = {
+            let state = Arc::clone(&state);
+            std::thread::spawn(move || {
+                let _guard = state.bridge.lock_for("stop_capture").unwrap();
+                held.send(()).unwrap();
+                let _ = wait_release.recv();
+            })
+        };
+        wait_held.recv().unwrap();
+        let started = Instant::now();
+        let error = shutdown(&state, Duration::from_millis(300)).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(bridge_lock::is_busy(&error) && error.contains("stop_capture"), "{error}");
+        release.send(()).unwrap();
+        slow.join().unwrap();
+        assert_eq!(shutdown(&state, EXIT_SHUTDOWN_WAIT), Ok(true));
+        let _ = std::fs::remove_dir_all(&data);
     }
 }
