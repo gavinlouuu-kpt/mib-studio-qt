@@ -458,6 +458,7 @@
   "checked_config_document": {
     "read": "path -> ok/path/revision/document_json/error",
     "apply": "path + required SHA256 baseline + image_processing-only JSON patch",
+    "during_experiment": "Idle: any image_processing key. Active (#866 MON-080, additive, no ABI change): only a patch of the cell acceptance and target group criteria (area/deformability/ring-ratio/area-ratio thresholds, the filters enable_* switches except laplacian, require_single_inner_contour, every target_group key); the document gets exactly the patch and the running configuration exactly the patch on top of what runs, never the document's other values; apply_processing_config_json takes the same patch as {image_processing:{...}} (config_version optional) and refuses every other key, multi_image included, with 'Processing settings are locked during an experiment: <key> cannot change until it ends'. Starting, Stopping, Failed, a run asked to stop, and a PL instrument stay locked.",
     "limits": {
       "document_bytes": 4194304,
       "patch_bytes": 65536

@@ -2,7 +2,7 @@
 // last run's outcome, the Monitoring snapshot polling and the SATA SSD record store status.
 // Moved from App.tsx without change (#869 wave 0); studio/useStudioController.ts calls these
 // hooks in App.tsx's original effect order.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { bridge, type ExperimentStatus, type MonitoringSnapshot, type RunAccounting } from "../../bridge";
 import { EXPERIMENT_STATES } from "../../bridgeContract";
 import { startExperiment } from "../../experimentStart";
@@ -11,6 +11,7 @@ import type { SsdStatus } from "../../ssdView";
 import { isRemote } from "../../transport";
 import { confirm, save } from "../../transport/dialogs";
 import { H5_FILTER } from "../../studio/constants";
+import { initialTuneState, tuneReducer, type TuneFieldId } from "./tuneDraft";
 import type { CoresModel } from "../config/useConfig";
 import type { ConnectState } from "../connect/useConnect";
 import type { HardwareState } from "../hardware/useHardware";
@@ -48,7 +49,14 @@ export function useMonitoringState() {
   const elapsedWallSeconds = expStatus?.valid && BigInt(expStatus.start_time_ns) > 0n
     ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
   const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
+  // The tune panel's draft (#866 MON-069..081; tuneDraft.ts). `tuneDraft` and `setTuneField` are what the
+  // scatter's gate overlay (MON-064..068) reads and writes, so a gate dragged on the chart is the same
+  // draft as the panel's fields and goes through the same Apply.
+  const [tune, dispatchTune] = useReducer(tuneReducer, undefined, initialTuneState);
+  const tuneDraft = tune.draft;
+  const setTuneField = useCallback((field: TuneFieldId, value: unknown) => dispatchTune({ type: "edit", field, value }), []);
   return {
+    tune, dispatchTune, tuneDraft, setTuneField,
     expTab, setExpTab, expStatus, setExpStatus, monSnapshot, setMonSnapshot,
     experimentPending, experimentRequestBusy, setExperimentRequestBusy, readinessMessage, setReadinessMessage,
     startNotice, setStartNotice, expState, runAccounting, setRunAccounting, runOutcome, finishedRun, loggedRun,

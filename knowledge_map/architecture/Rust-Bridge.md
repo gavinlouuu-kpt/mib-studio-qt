@@ -80,7 +80,10 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   [[ExperimentCoordinator]]).
 - **Processing config/ROI/background/core (v8, BE-3):**
   `fetch/apply_processing_config_json` (lossless document, merge semantics,
-  monotonic `config_version`), `set_processing_roi`,
+  monotonic `config_version`; locked while an experiment is not idle, except
+  that an Active run takes a `{"image_processing": {...}}` patch of the cell
+  acceptance and target group criteria only, #866 MON-080, no ABI change),
+  `set_processing_roi`,
   `fetch_background_image`/`set_background_image`/`clear_background_image`
   (binary Mono8), `fetch_processing_core_status` (identity + admin pin).
 - **Device discovery jobs (v14, #419, ADR 0005):** `start_device_discovery
@@ -340,6 +343,13 @@ image_processing-only patches). Outcomes saved/applied/verified/conflict are
 independent. The facade owns lifecycle serialization and durable replacement.
 Only effective processing fields update runtime provenance: selecting a saved
 file does not claim its other device/ROI settings were applied.
+
+Since #866 MON-080 (no ABI change) the transaction also runs while an experiment is
+Active when the patch names the cell acceptance and target group criteria only; the
+document gets exactly the patch and the running configuration exactly the patch on top of
+what runs now. Any other key (`multi_image` too) is refused naming it and nothing is
+written; Starting, Stopping, Failed, a run being stopped and a PL instrument stay locked
+([[ExperimentCoordinator]] "Live tuning of the criteria during a run").
 
 Shared exporter request/status JSON is carried through the cxx/Tauri bridge;
 operation identity and counters remain decimal strings. The previous CSV entry

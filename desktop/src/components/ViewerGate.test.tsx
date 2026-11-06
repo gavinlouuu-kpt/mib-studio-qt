@@ -133,6 +133,7 @@ describe("the classic view gates its control commands", () => {
     "void saveCameraWindow(cameraWindow)", "onClick={onApplyRoi}", "<CameraScriptControls", "<CameraDocumentEditor",
     "onClick={onStartExperiment}", "onClick={onStopExperiment}", "<RunRateControl", "<ProcessingSetupControls", "onClick={onToggleRecord}",
     "<PreviewBufferControls", "<BackgroundCalibrationControls", "<CoreManagementPanel", "<ProfilesPanel", "<ConfigDocumentEditor",
+    "onClick={() => void onTuneApply()}", "onClick={() => void onTuneRevert()}",
     "bridge.monitoringClear()", "bridge.triggerManualPulse()", "bridge.triggerSetPulseDuration(", "bridge.triggerPeriodicStart(",
     "onClick={onSelectHdf}", "}}>Close File</button>", "reviewExport.start(", "<ReanalysisControls",
   ])("%s is inside a ViewerGate", (needle) => {

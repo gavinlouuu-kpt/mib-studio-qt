@@ -967,6 +967,39 @@ three places:
 
 None of them blocks a run. Desktop builds are unchanged.
 
+## Monitoring tune panel (#866 MON-069..081)
+
+The Monitoring sub-tab shows the Qt tune panel beside the charts (`areas/monitoring/TunePanel.tsx`,
+`tune.css`, 220-280 px; it replaced the "Processing settings" stub that jumped to Preview > App config).
+Parts: `tuneDraft.ts` (pure: the 23 fields with Qt's ranges, steps, decimals and units, the draft, the
+changed set, `validateTuneConfig`, the conflict rules of `ProcessingConfigDraft::noteExternalBaseline`,
+the footer texts, the patch of changed keys only, the experiment scope), `useTune.ts` (the hook that keeps
+the baseline in step and applies / reverts) and `TunePanel.tsx` (the view; every control inside a
+`<ViewerGate>`, `data-tour="monitoring-tune-*"` anchors). The draft state is in `useMonitoringState()`
+(`tune`, `dispatchTune`, `tuneDraft`, `setTuneField`) so the scatter's gate overlay (MON-064..068) reads and
+writes the same draft.
+
+- **Baseline.** The running configuration (`fetch_processing_config_json`, exposed fields only), read when
+  Monitoring is shown and every 2 s while it is (visibility-gated like the monitoring poll, no frame work).
+  Clean draft: refreshed silently; dirty and an exposed field differs: Conflict (draft kept, Apply blocked)
+  until Revert; Revert adopts the latest. Not read yet: the panel is read-only and says so.
+- **Apply** sends the changed keys only. Qt writes them to "the active config file"; Tauri has none (a
+  profile, a central method or an opened document may each have set the running configuration), so: with a
+  checked configuration document open in App config, not being edited, and agreeing with the running
+  configuration over every key it carries, Apply goes through `apply_config_document` (revision check, writes
+  the patch, applies it, reads it back; the editor gets the re-read file through `adopt`); otherwise it goes
+  to the running configuration only (`bridge.applyProcessingTune`, a non-source-mutating
+  `apply_processing_config_json`) and the footer says "Not saved to a file: <why>". Both are confirmed by
+  reading the running configuration back; "Saved, not applied" is the file taking it and the runtime not.
+- **During a run** the criteria and the target group apply live ([[ExperimentCoordinator]] "Live tuning of
+  the criteria during a run"); multi-image stays locked (its controls are disabled with the reason, and a
+  multi-image change made before the run waits for its end); Starting, Stopping, Failed and a PL instrument
+  hold Apply back and say why. Editing and Revert always work.
+- **Not available.** Whether an E-modulus table is loaded is not exposed over the bridge, so the panel keeps
+  Qt's tooltip and a fixed hint ("Skipped when no E-modulus table is loaded") instead of Qt's state.
+- Tests: `tuneDraft.test.ts` (model), `TunePanel.dom.test.tsx` (panel and hook, mocked bridge),
+  `components/ViewerGate.test.tsx`; backend `backend.experiment_tune_apply`.
+
 ## How a run ended (#549)
 
 `desktop/src/runOutcome.ts` (pure) turns the finished run's experiment status
