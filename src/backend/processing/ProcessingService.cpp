@@ -3243,8 +3243,31 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
     }
 }
 
+// Where a (re)started realtime loop picks the ring up (#899). The first pass books every write
+// index between the loop's pointer and the ring's oldest frame as lost to the run
+// (noteRealtimeLost, StoreOverwritten), so the pointer must not reach back past what the run owns.
+// - A run an earlier loop was already reading resumes after its last admitted frame. The frames
+//   the camera wrote while no loop ran are the run's: those still in the ring are processed, those
+//   evicted are booked once, as the real gap.
+// - Otherwise there is nothing to resume. The loop starts at the ring's oldest frame, as before,
+//   and books nothing: frames older than the ring were never owed to a run.
+// Both loops used to start from 0, so a restart in a run booked every frame since the capture
+// started: 2,196,816 frames after a 3.3 s stop on the bench, for a run of about 130,000.
+uint64_t ProcessingService::realtimeResumePointer() const {
+    const auto& store = rtStore_;
+    if (!store || store->totalWritten() == 0) return 0;
+    const uint64_t earliest = store->earliestAvailableIndex();
+    const uint64_t latest = store->latestAvailableIndex();
+    if (experimentActive_.load(std::memory_order_acquire) && experimentAccounting_.hasAdmitted()) {
+        const uint64_t lastAdmitted = experimentAccounting_.lastAdmittedIndex();
+        // Beyond the newest frame only when the store was renumbered (resize): nothing to resume.
+        if (lastAdmitted <= latest) return lastAdmitted;
+    }
+    return earliest > 0 ? earliest - 1 : 0;
+}
+
 void ProcessingService::realtimeBatchLoop() {
-    rtLastProcessed_.store(0);
+    rtLastProcessed_.store(realtimeResumePointer());
 
     std::atomic<uint64_t> callbackValid{0};
     std::atomic<uint64_t> callbackInvalid{0};
@@ -3578,7 +3601,7 @@ void ProcessingService::realtimeInlineLoop() {
         apply();
         return true;
     };
-    rtLastProcessed_.store(0);
+    rtLastProcessed_.store(realtimeResumePointer());
     using clock = std::chrono::steady_clock;
     // Per-frame latency instrumentation sink (no-op unless enabled; see
     // knowledge_map/diagnostics/PipelineTimingRecorder.md).

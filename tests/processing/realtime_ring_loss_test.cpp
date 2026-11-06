@@ -24,6 +24,14 @@
 //    drop-to-latest, with an ROI of at least half the frame, the whole frame and no ROI. Drop-to-
 //    latest with an ROI already measured on ROI-sized copies; with no ROI it measures the whole
 //    frame, the crop is the whole frame and the budget is what bounds it.
+// 6. A realtime loop restarted in a run (#899) books only the frames the run lost while no loop
+//    ran: the ones evicted before the new loop got to them. MainWindow stopped realtime processing
+//    when the user left the Experiment tab mid-run and started it again on return; both loops
+//    began at write index 0, so the first pass booked every frame the camera had written before
+//    the ring's oldest one: storeOverwritten=2,196,816 for a 26 s run on the bench. The same start
+//    from 0 booked the ring's history when realtime starts after the run does (the coordinator's
+//    order for a Start without a running consumer). Checked for both loops, with the stop's frames
+//    inside the ring and past it.
 //
 // Deterministic: a gate in the test kernel (inline) or a hook in the async loop holds the loop on a
 // chosen frame while the test pushes enough frames to evict part of the loop's snapshot.
@@ -457,6 +465,110 @@ void calibrationIgnoresStoreLoss()
     rig.svc.cancelBackgroundCalibration();
 }
 
+// ---- 6. a realtime restart in a run books the run's real gap only (#899) --------------------
+// The camera runs before the run: 40 frames, each read before the next is pushed, so the 16-slot
+// ring has wrapped well past write index 0 (the bench ring was millions of frames in).
+void wrapRingBeforeRun(Rig& rig, bool async)
+{
+    auto progress = [&]() -> uint64_t {
+        return async ? rig.svc.getBatchPipelineStats().framesAccepted : rig.kernel->emptyCalls.load();
+    };
+    for (int i = 0; i < 40; ++i) {
+        const uint64_t before = progress();
+        rig.push(100 + i);
+        MIB_REQUIRE(waitFor([&] { return progress() > before; }, std::chrono::seconds(5)),
+                    "pre-run frame read before the next one is pushed");
+    }
+    MIB_REQUIRE(rig.store->earliestAvailableIndex() > 16, "the ring wrapped before the run");
+}
+
+// Every admitted frame of the run has its outcome (the async workers book them after the loop).
+bool runSettled(const Rig& rig, uint64_t admitted)
+{
+    const auto a = rig.accounting();
+    return a.admitted >= admitted && a.frameTermsSum() == a.admitted;
+}
+
+// Realtime processing stops mid-run (the user left the Experiment tab) while the camera writes
+// `whileStopped` frames, then starts again (the user came back). The 16-slot ring keeps the last 16
+// of them; the others were evicted before any loop could read them and are the run's real loss.
+void restartMidRun(Mode mode, int whileStopped)
+{
+    const bool async = mode == Mode::AsyncBatch;
+    constexpr size_t kCapacity = 16;
+    constexpr int kW = 96, kH = 96;
+    Rig rig(kCapacity, kW, kH, mode, Roi{0, 0, kW, kH}, /*dropFrames=*/false);
+    if (async) warmUpBatch(rig); else warmUpInline(rig);
+    wrapRingBeforeRun(rig, async);
+
+    rig.svc.setExperimentAccountingContext(/*generation=*/11, /*policyAllowsDrops=*/false);
+    rig.svc.startExperiment();
+    const uint64_t first = rig.next();
+    for (int i = 0; i < 5; ++i) rig.push(i + 1); // F0..F4, read by the first loop
+    MIB_REQUIRE(waitFor([&] { return runSettled(rig, 5); }, std::chrono::seconds(10)),
+                "F0..F4 read and settled before the stop");
+
+    rig.svc.stopRealtime();
+    MIB_REQUIRE(!rig.svc.isRealtimeRunning(), "realtime stopped mid-run");
+    for (int i = 0; i < whileStopped; ++i) rig.push(10 + i); // F5.. while no loop runs
+    rig.svc.startRealtime(rig.store);
+    MIB_REQUIRE(rig.svc.isRealtimeRunning(), "realtime restarted in the run");
+
+    const uint64_t total = 5 + static_cast<uint64_t>(whileStopped);
+    const uint64_t lost = whileStopped > static_cast<int>(kCapacity)
+                              ? static_cast<uint64_t>(whileStopped) - kCapacity
+                              : 0;
+    // Not a REQUIRE: the regressed loop overshoots at once, and the numbers below say by how much.
+    waitFor([&] { return runSettled(rig, total); }, std::chrono::seconds(10));
+    rig.svc.endExperiment();
+    const auto a = rig.accounting();
+    const std::string label = std::string(async ? "restart mid-run, async" : "restart mid-run, inline") +
+                              ", " + std::to_string(whileStopped) + " frames while stopped";
+    printAccounting(label.c_str(), a);
+    MIB_EXPECT(a.admitted == total, label + ": every frame of the run admitted once, none from before it");
+    MIB_EXPECT(a.storeOverwritten == lost,
+               label + ": storeOverwritten is the frames evicted while stopped (" + std::to_string(lost) +
+                   "), not every frame since write index 0");
+    MIB_EXPECT(a.sequenceGaps == 0 && a.sequenceGapFrames == 0, label + ": no hole in the admitted sequence");
+    MIB_EXPECT(a.firstFrameIndex == first && a.lastFrameIndex == first + total - 1,
+               label + ": the run spans F0 to its last frame");
+    MIB_EXPECT(a.reconciled, label + ": frame terms reconcile");
+    MIB_EXPECT((a.completion == rec::RunCompletionState::IncompleteLoss) == (lost > 0),
+               label + ": incompleteLoss only for a real loss");
+}
+
+// Realtime starts after the run started: the coordinator's order when no consumer runs yet
+// (ExperimentCoordinator: startExperiment, then startRealtime). The new loop reads the ring from its
+// oldest frame as before; the frames older than the ring were never the run's and are not booked.
+void startAfterRun(Mode mode)
+{
+    const bool async = mode == Mode::AsyncBatch;
+    constexpr size_t kCapacity = 16;
+    constexpr int kW = 96, kH = 96;
+    Rig rig(kCapacity, kW, kH, mode, Roi{0, 0, kW, kH}, /*dropFrames=*/false);
+    if (async) warmUpBatch(rig); else warmUpInline(rig);
+    wrapRingBeforeRun(rig, async);
+    rig.svc.stopRealtime();
+
+    rig.svc.setExperimentAccountingContext(/*generation=*/12, /*policyAllowsDrops=*/false);
+    rig.svc.startExperiment();
+    rig.svc.startRealtime(rig.store);
+    // The new loop works through the ring first; the frames pushed after it evict only frames it read.
+    MIB_REQUIRE(waitFor([&] { return runSettled(rig, kCapacity); }, std::chrono::seconds(10)),
+                "the ring read by the new loop");
+    for (int i = 0; i < 3; ++i) rig.push(i + 1);
+    waitFor([&] { return runSettled(rig, kCapacity + 3); }, std::chrono::seconds(10));
+    rig.svc.endExperiment();
+    const auto a = rig.accounting();
+    const char* label = async ? "realtime started after the run, async" : "realtime started after the run, inline";
+    printAccounting(label, a);
+    MIB_EXPECT(a.storeOverwritten == 0, std::string(label) + ": nothing booked for frames older than the ring");
+    MIB_EXPECT(a.admitted <= kCapacity + 3, std::string(label) + ": at most the ring and the new frames admitted");
+    MIB_EXPECT(a.sequenceGaps == 0, std::string(label) + ": no hole in the admitted sequence");
+    MIB_EXPECT(a.reconciled, std::string(label) + ": frame terms reconcile");
+    MIB_EXPECT(a.completion != rec::RunCompletionState::IncompleteLoss, std::string(label) + ": not incompleteLoss");
+}
+
 // ---- 5. the monitoring rings stay within their byte budget -----------------------------------
 struct RetentionCase {
     const char* label;
@@ -598,6 +710,18 @@ int main()
     outOfRangeMidPass(Mode::AsyncBatch);
     wd.mark("calibration");
     calibrationIgnoresStoreLoss();
+    wd.mark("restart mid-run, inline, gap inside the ring");
+    restartMidRun(Mode::Inline, 10);
+    wd.mark("restart mid-run, inline, gap past the ring");
+    restartMidRun(Mode::Inline, 30);
+    wd.mark("restart mid-run, async, gap inside the ring");
+    restartMidRun(Mode::AsyncBatch, 10);
+    wd.mark("restart mid-run, async, gap past the ring");
+    restartMidRun(Mode::AsyncBatch, 30);
+    wd.mark("realtime started after the run, inline");
+    startAfterRun(Mode::Inline);
+    wd.mark("realtime started after the run, async");
+    startAfterRun(Mode::AsyncBatch);
 
     // The bench geometry: 1216x208. A row of the whole frame is 506 KB (gray + mask); the 1000-row
     // count cap alone is 0.5 GB per ring.

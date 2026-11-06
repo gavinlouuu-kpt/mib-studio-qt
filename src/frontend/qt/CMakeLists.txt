@@ -216,6 +216,13 @@ if(BUILD_TESTING)
         LABELS "frontend;camera;safety"
         TIMEOUT 120
     )
+    # Issue #899: leaving the Experiment tab mid-run keeps the run's realtime processing running.
+    mib_test_runner_add(mib_frontend_tests experiment_tab_switch_test ${PROJECT_SOURCE_DIR}/tests/frontend/experiment_tab_switch_test.cpp)
+    add_test(NAME frontend.experiment_tab_switch COMMAND $<TARGET_FILE:mib_frontend_tests> experiment_tab_switch_test)
+    set_tests_properties(frontend.experiment_tab_switch PROPERTIES
+        LABELS "frontend;lifecycle;recording;safety"
+        TIMEOUT 180
+    )
 
     # Issues #358/#359: full-widget layout harness (viewport matrix, sidebar
     # single-owner geometry, window restoration). Offscreen; the available

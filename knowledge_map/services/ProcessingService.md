@@ -756,9 +756,23 @@ current/max queue depth, batch size, worker count, and running state. See
   async-batch `for` loops stepped over such a frame with `continue`: a run
   that fell behind the ring reported thousands of `sequenceGaps` and almost
   no `storeOverwritten` (bench: storeOverwritten 3, sequenceGaps 2571 for
-  ~7,900 lost frames). Guard: `processing.realtime_ring_loss` (inline and
+  ~7,900 lost frames). **A (re)started loop resumes, it does not rewind
+  (#899):** both loops seed `rtLastProcessed_` from `realtimeResumePointer()`:
+  the run's last admitted index while a run that an earlier loop read is
+  active (the frames written while no loop ran are processed if still in the
+  ring, and only the evicted ones are booked, once, as `storeOverwritten`),
+  otherwise the frame before the ring's oldest (the loop reads the ring from
+  its oldest frame, as before, and books nothing). They used to store 0, so the
+  first pass booked every index below the ring's oldest frame: a realtime
+  restart mid-run (MainWindow stopped it when the Experiment tab was left,
+  see [[frontend/MainWindow]]) reported storeOverwritten=2,196,816 for a 26 s
+  run on the bench, and the coordinator's Start order (`startExperiment`, then
+  `startRealtime` when no loop runs) booked the ring's history into a new run.
+  A restart before the ring wrapped re-read the run's frames from index 0 and
+  admitted them twice. Guard: `processing.realtime_ring_loss` (inline and
   async-batch loops: eviction inside a pass and before it, `OutOfRange`,
-  calibration attempts). While a run
+  calibration attempts, a restart mid-run with the gap inside and past the
+  ring, realtime started after the run). While a run
   loses frames, the inline loop logs a warning once per second (frames lost,
   processed fps, ms per frame, frames behind the camera, Monitoring open or
   closed). `appendExperimentFrame` is a

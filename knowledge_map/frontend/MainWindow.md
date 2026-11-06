@@ -86,7 +86,19 @@ capture generation for an illuminated profile, using a fake camera factory.
   stats tick cannot erase an error. It must not copy full `ProcessedFrame`
   buffers on the 500 ms UI timer.
 - `onTabChanged(index)` — starts/stops the realtime loop when entering or
-  leaving the experiment-related tabs (ExperimentController state).
+  leaving the experiment-related tabs (ExperimentController state). During a
+  run, Overview and Review are refused; the Connect tab is allowed and only
+  pauses the view (#899): `stopExperimentServices()` pauses playback but keeps
+  realtime processing while `runOwnsRealtime()` (the window's
+  `experimentActive_`/`stopInProgress_`, or the coordinator's
+  Starting/Active/Stopping state for a run another client started). The realtime
+  loop is the run's only consumer, so stopping it stopped the recording: the
+  MC2066 bench lost 3.3 s of a 26 s run on the Connect tab and booked
+  2,196,816 frames as `storeOverwritten` (the restart half is in
+  [[services/ProcessingService]]). `realtimeHeldForRun_` marks a loop kept for
+  the run; `releaseRealtimeHeldForRun()` stops it when the run's terminal status
+  is rendered, unless Experiment/Overview is shown again. Guard:
+  `frontend.experiment_tab_switch`.
 - `onNoCamerasFound` — shows a friendly dialog when
   `DeviceInitManager` reports empty discovery (the startup policy's
   `NoneFound` outcome; an incomplete scan reports its reason instead).
