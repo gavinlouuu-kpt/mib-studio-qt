@@ -12,19 +12,29 @@
 //  4. a failed start yields Failed with the backend's structured message,
 //     identically for every route;
 //  5. a camera that dies on its own is projected as Failed by the poll;
-//  6. stop returns to Idle; toggle behaves as start/stop.
+//  6. stop returns to Idle; toggle behaves as start/stop;
+//  7. the Connect tab's "Connected to ..." line follows the camera: "(capturing)"
+//     while it runs, not the stale "(not capturing)" (#860). Checked through a
+//     real MainWindow, on the tab it owns, fed only by the window's own wiring
+//     (MainWindow::onCameraStateChanged, and the first state handed over when
+//     the window is built): removing either forwarding fails this test.
 
 #include "backend/app/AppBackend.h"
 #include "backend/services/CaptureService.h"
+#include "backend/discovery/DeviceDiscoveryService.h"
 #include "frontend/controllers/CameraController.h"
+#include "frontend/core/MainWindow.h"
+#include "frontend/tabs/ConnectTab.h"
 
 #include "support/assert.h"
 #include "support/fake_lifecycle_camera.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
+#include <QApplication>
 #include <QCoreApplication>
-#include <QGuiApplication>
+#include <QLabel>
+#include <QSettings>
 #include <QTimer>
 
 #include <chrono>
@@ -72,10 +82,16 @@ int main(int argc, char** argv)
     qputenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL",
             QByteArrayLiteral("file:///nonexistent/mib-lut-manifest.json"));
     qputenv("MIB_STUDIO_PROCESSING_CORE_BASE_URL", QByteArrayLiteral("http://invalid-registry.example"));
-    QGuiApplication app(argc, argv);
-    mib::test::Watchdog wd(40);
+    qputenv("MIB_DISABLED_SERVICES", QByteArrayLiteral("auto_update,autofocus,trigger,syringe_pump,pulse_generator"));
+    QApplication app(argc, argv); // widgets: a real MainWindow and its Connect tab (#860)
+    mib::test::Watchdog wd(60);
 
     mib::test::TempDir dataRoot("camera_action_state");
+    QCoreApplication::setOrganizationName("mib_camera_action_state_test");
+    QCoreApplication::setApplicationName("mib_camera_action_state_test");
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                       QString::fromStdString(dataRoot.path().string()));
     std::filesystem::create_directories(dataRoot.path() / "mock_frames");
     qputenv("MIB_MOCK_CAMERA_DIR", QByteArray::fromStdString((dataRoot.path() / "mock_frames").string()));
 
@@ -107,6 +123,31 @@ int main(int argc, char** argv)
     QObject::connect(&ctl, &CameraController::stateChanged, [&](const CameraActionState&) { ++stateChanges; });
     QObject::connect(&ctl, &CameraController::commandFailed, [&](const QString& m) { failures << m; });
 
+    // A real MainWindow, and the Connect tab it owns (#860). The tab is fed only by the window's own
+    // wiring from its own controller, which projects the same backend capture state as `ctl`
+    // (the commands below go through `ctl`, so a refused one never opens the window's message box).
+    // The window and its tab run their own device listings, which land at any time: a listing that
+    // lands after a camera was connected adds the device count after the connection line, so the
+    // line is checked by its prefix.
+    auto window = std::make_unique<MainWindow>(backend);
+    window->cameraController()->setPollIntervalMs(20);
+    auto connectTabOf = [](MainWindow& w) {
+        auto* tab = w.findChild<frontend::ConnectTab*>();
+        MIB_REQUIRE(tab, "the window owns a Connect tab");
+        return tab;
+    };
+    auto statusOf = [](frontend::ConnectTab* tab) {
+        auto* label = tab->findChild<QLabel*>("statusLabel");
+        MIB_REQUIRE(label, "Connect tab status label exists");
+        return label;
+    };
+    frontend::ConnectTab* connectTab = connectTabOf(*window);
+    QLabel* connectStatus = statusOf(connectTab);
+    pumpUntil([] { return false; }, std::chrono::milliseconds(100)); // let the startup events run
+    connectTab->applyCameraSelection(0, 0, QStringLiteral("Fake camera"));
+    MIB_EXPECT(connectStatus->text().startsWith(QStringLiteral("Connected to Fake camera (not capturing)")),
+               "connected and idle: " + connectStatus->text().toStdString());
+
     // ---- 1. Initial state: configured (mock) + idle -> start enabled ------
     wd.mark("initial");
     MIB_EXPECT(ctl.state().phase == Phase::Idle, std::string("initial phase ") + phaseName(ctl.state().phase));
@@ -130,6 +171,20 @@ int main(int argc, char** argv)
     MIB_EXPECT(!ctl.state().startEnabled && ctl.state().stopEnabled, "running: start disabled, stop enabled");
     MIB_EXPECT(!ctl.startAction()->isEnabled() && ctl.stopAction()->isEnabled(), "actions mirror running");
     MIB_EXPECT(backend.capture().lifecycleSnapshot().cameraReady, "backend camera ready");
+    MIB_EXPECT(pumpUntil([&] { return connectStatus->text().startsWith(QStringLiteral("Connected to Fake camera (capturing)")); },
+                         std::chrono::seconds(5)),
+               "Connect tab follows the start (#860): " + connectStatus->text().toStdString());
+    {
+        // A listing that lands after the selection (the rig's startup order) keeps the line.
+        backend::discovery::DiscoverySnapshot late;
+        late.jobId = 991;
+        late.state = backend::discovery::JobState::Completed;
+        late.complete = true;
+        connectTab->showDiscoveryResults(late);
+        MIB_EXPECT(connectStatus->text().startsWith(QStringLiteral("Connected to Fake camera (capturing) - Found 0")),
+                   "a late discovery listing keeps the connection line (#860): " +
+                       connectStatus->text().toStdString());
+    }
 
     // ---- 3. Experiment active: every stop route blocked identically -------
     wd.mark("blocked stop");
@@ -196,6 +251,9 @@ int main(int argc, char** argv)
     MIB_REQUIRE(pumpUntil([&] { return ctl.state().phase == Phase::Failed; }, std::chrono::seconds(5)),
                 std::string("device loss projected, got ") + phaseName(ctl.state().phase));
     MIB_EXPECT(ctl.state().failureMessage.contains("ended"), "stream-ended message: " + ctl.state().failureMessage.toStdString());
+    MIB_EXPECT(pumpUntil([&] { return connectStatus->text().startsWith(QStringLiteral("Connected to Fake camera (capture failed)")); },
+                         std::chrono::seconds(5)),
+               "Connect tab shows the failure (#860): " + connectStatus->text().toStdString());
     MIB_EXPECT(ctl.state().startEnabled, "restart offered after device loss");
     MIB_EXPECT(!backend.capture().isRunning(), "backend not running after device loss");
 
@@ -207,7 +265,33 @@ int main(int argc, char** argv)
     MIB_REQUIRE(pumpUntil([&] { return ctl.state().phase == Phase::Running; }, std::chrono::seconds(5)), "running");
     MIB_EXPECT(ctl.requestToggle().accepted(), "toggle stops when running");
     MIB_EXPECT(ctl.state().phase == Phase::Idle, "Idle after toggle stop");
+    MIB_EXPECT(pumpUntil([&] { return connectStatus->text().startsWith(QStringLiteral("Connected to Fake camera (not capturing)")); },
+                         std::chrono::seconds(5)),
+               "Connect tab follows the stop (#860): " + connectStatus->text().toStdString());
+    // A republish without a phase change (enable flags, tooltip) keeps other messages.
+    connectStatus->setText(QStringLiteral("Delivery mode set to Every Frame."));
+    auto same = ctl.state();
+    same.startEnabled = !same.startEnabled;
+    connectTab->setCameraState(same);
+    MIB_EXPECT(connectStatus->text() == QStringLiteral("Delivery mode set to Every Frame."),
+               "same-phase update leaves other messages alone");
     MIB_EXPECT(stateChanges > 0, "state change signals fired");
+
+    // ---- 8. A window built while the camera already runs --------------------
+    // Its first state reaches the Connect tab as the tab is created (MainWindow.cpp), not through a
+    // change event: nothing is pumped between the construction and the read below.
+    wd.mark("window built while running");
+    window.reset();
+    MIB_EXPECT(ctl.requestStart().accepted(), "start for the late window");
+    MIB_REQUIRE(pumpUntil([&] { return ctl.state().phase == Phase::Running; }, std::chrono::seconds(5)), "running again");
+    {
+        auto lateWindow = std::make_unique<MainWindow>(backend);
+        frontend::ConnectTab* lateTab = connectTabOf(*lateWindow);
+        lateTab->applyCameraSelection(0, 0, QStringLiteral("Fake camera"));
+        MIB_EXPECT(statusOf(lateTab)->text() == QStringLiteral("Connected to Fake camera (capturing)"),
+                   "a window built while the camera runs shows it capturing: " + statusOf(lateTab)->text().toStdString());
+    }
+    MIB_EXPECT(ctl.requestStop().accepted(), "stop after the late window");
 
     std::fprintf(stderr, "camera_action_state: %d state changes, %d refused commands\n",
                  stateChanges, failures.size());
