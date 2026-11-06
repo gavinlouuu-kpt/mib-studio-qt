@@ -537,7 +537,7 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
-## ABI 45: the eGrabber camera window (#863, #846)
+## ABI next (#892, set at merge): the eGrabber camera window (#863, #846)
 
 Additive over ABI 44. An eGrabber camera has an Overview like the Qt app's: the full-sensor
 Overview script, then the Experiment script followed by the applied profile's `camera.window`

@@ -4035,7 +4035,7 @@ std::string BackendFacade::fetchCameraGeometryJson() const {
         {"min_width", g.minWidth},
         {"min_height", g.minHeight},
         {"session", session},
-        // ABI 45 (#846), additive. Always present; the eGrabber members say what the window is and what
+        // ABI next (#892, set at merge) (#846), additive. Always present; the eGrabber members say what the window is and what
         // the last Experiment script apply did, the MindVision ones what its profile says.
         {"window_source", g.windowSource},
         {"script_role", g.scriptRole},

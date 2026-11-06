@@ -710,7 +710,7 @@ export interface InstrumentStatus {
 /** A camera window in sensor coordinates. */
 export interface WindowRect {x: number; y: number; width: number; height: number}
 
-/** The last Experiment script apply (ABI 45): what the script left in the camera, what the profile
+/** The last Experiment script apply (ABI next (#892, set at merge)): what the script left in the camera, what the profile
  *  asked for, what the camera has now, and why the profile's window was refused or rejected. */
 export interface CameraWindowApply {
   sequence: number;
@@ -740,8 +740,8 @@ export interface CameraGeometry {
   offset_y_increment: number;
   min_width: number;
   min_height: number;
-  /** eGrabber (ABI 45, #863): where `roi` comes from. The applied profile's camera.window wins, else
-   *  the Experiment script's Width/Height/OffsetX/OffsetY, else there is none. Absent before ABI 45. */
+  /** eGrabber (ABI next (#892, set at merge), #863): where `roi` comes from. The applied profile's camera.window wins, else
+   *  the Experiment script's Width/Height/OffsetX/OffsetY, else there is none. Absent before ABI next (#892, set at merge). */
   window_source?: "profile" | "script" | "none";
   /** eGrabber: the last camera script applied was the Overview one, the Experiment one, or none. */
   script_role?: "overview" | "experiment" | "";
@@ -768,7 +768,7 @@ export interface CameraGeometry {
   };
 }
 
-/** `save_camera_window` (ABI 45, #863): the eGrabber window as the backend snapped and saved it. */
+/** `save_camera_window` (ABI next (#892, set at merge), #863): the eGrabber window as the backend snapped and saved it. */
 export interface SaveCameraWindowReply {
   ok: boolean;
   error: string;
@@ -784,7 +784,7 @@ export interface SaveCameraWindowReply {
 /** One capacity gate (`fetch_recording_capacity`); `status` is a READINESS_GATE_STATUSES value. */
 export interface CapacityGate {id: string; status: number; status_name: string; reason: string; remediation: string; detail: string}
 
-/** `fetch_recording_capacity` (ABI 45, #863): the next run's window, rate, save stream, buffer, destination rate and gates. */
+/** `fetch_recording_capacity` (ABI next (#892, set at merge), #863): the next run's window, rate, save stream, buffer, destination rate and gates. */
 export interface RecordingCapacity {
   busy: boolean;
   known: boolean;
@@ -995,7 +995,7 @@ export const bridge = {
   setCameraOverview: (overview: boolean) => sourceMutation("set_camera_overview", {overview}),
   saveCameraRoi: (x: number, y: number, w: number, h: number) => invokeCommand("save_camera_roi", {x, y, w, h}),
   fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
-  // eGrabber camera window (ABI 45, #863). The backend snaps the window, rewrites the Experiment script's
+  // eGrabber camera window (ABI next (#892, set at merge), #863). The backend snaps the window, rewrites the Experiment script's
   // Width/Height/OffsetX/OffsetY and updates the applied profile; nothing is sent to the camera.
   saveCameraWindow: (scriptPath: string, x: number, y: number, w: number, h: number) =>
     invoke<SaveCameraWindowReply>("save_camera_window", {scriptPath, x, y, w, h}),
@@ -1088,7 +1088,7 @@ export const bridge = {
     sourceMutation("select_mindvision_camera", { cameraIndex, label, configPath }),
   applyCameraScript: (scriptPath: string) =>
     sourceMutation("apply_camera_script", { scriptPath }),
-  // ABI 45 (#863): `overview` true = the Overview script as is (full sensor); false = the Experiment
+  // ABI next (#892, set at merge) (#863): `overview` true = the Overview script as is (full sensor); false = the Experiment
   // script, followed by the applied profile's camera.window. apply_camera_script means Experiment.
   applyCameraScriptWithRole: (scriptPath: string, overview: boolean) =>
     sourceMutation("apply_camera_script_with_role", { scriptPath, overview }),

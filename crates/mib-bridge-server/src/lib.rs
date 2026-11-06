@@ -678,7 +678,7 @@ mod stage_control_tests {
         }
     }
 
-    // The eGrabber camera window (#863, ABI 45): applying a script with a role and saving the window edit the camera
+    // The eGrabber camera window (#863, ABI next (#892, set at merge)): applying a script with a role and saving the window edit the camera
     // and the files of the controlling client's profile, so they need control; the capacity is a read for every client.
     #[test]
     fn egrabber_window_edits_are_control_only_but_the_capacity_is_not() {

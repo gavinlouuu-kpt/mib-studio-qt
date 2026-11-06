@@ -1503,7 +1503,7 @@ pub fn apply_camera_script(state: &AppState, script_path: String) -> Result<CmdR
     Ok(guard.pin_mut().apply_camera_script(&script_path).into())
 }
 
-/// Apply a JS camera script with an explicit role (ABI 45, #863): `overview` = the Overview script as is
+/// Apply a JS camera script with an explicit role (ABI next (#892, set at merge), #863): `overview` = the Overview script as is
 /// (full sensor), otherwise the Experiment script followed by the profile's camera window. Same guards as
 /// `apply_camera_script`: a stopped camera and an idle experiment.
 pub fn apply_camera_script_with_role(state: &AppState, script_path: String, overview: bool) -> Result<CmdResult, String> {
@@ -1517,7 +1517,7 @@ pub fn apply_camera_script_with_role(state: &AppState, script_path: String, over
     Ok(guard.pin_mut().apply_camera_script_with_role(&script_path, overview).into())
 }
 
-/// Save the eGrabber camera window placed on the Overview (ABI 45, #863): the backend snaps it, rewrites
+/// Save the eGrabber camera window placed on the Overview (ABI next (#892, set at merge), #863): the backend snaps it, rewrites
 /// the Experiment script's Width/Height/OffsetX/OffsetY lines and updates the applied profile's
 /// `camera.window`. The reply is the backend's JSON; `ok: false` carries the reason.
 pub fn save_camera_window(state: &AppState, script_path: String, x: i32, y: i32, width: i32, height: i32) -> Result<serde_json::Value, String> {
@@ -1525,7 +1525,7 @@ pub fn save_camera_window(state: &AppState, script_path: String, x: i32, y: i32,
     serde_json::from_str(&guard.pin_mut().save_camera_window(&script_path, x, y, width, height)).map_err(|e| e.to_string())
 }
 
-/// The recording capacity of the next run (ABI 45, #863): JSON. `planned` is the window being placed
+/// The recording capacity of the next run (ABI next (#892, set at merge), #863): JSON. `planned` is the window being placed
 /// on the Overview, as `(x, y, width, height)`.
 pub fn fetch_recording_capacity(state: &AppState, planned: Option<(i32, i32, i32, i32)>) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;

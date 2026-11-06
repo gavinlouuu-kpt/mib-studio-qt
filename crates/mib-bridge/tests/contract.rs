@@ -512,14 +512,14 @@ fn camera_alignment_commands_without_overview_camera() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
-// ABI 45 (#863): the contract describes the eGrabber window functions.
+// ABI next (#892, set at merge) (#863): the contract describes the eGrabber window functions.
 #[test]
 fn egrabber_window_functions_are_described() {
     let contract: serde_json::Value =
         serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
     let c = &contract["camera_alignment"];
     for (key, needle) in [
-        ("apply_camera_script_with_role", "ABI 45"),
+        ("apply_camera_script_with_role", "ABI next (#892, set at merge)"),
         ("apply_camera_script_with_role", "Overview script applied as is"),
         ("save_camera_window", "snaps it as Qt does"),
         ("save_camera_window", "revision the profile store remembers"),
@@ -533,7 +533,7 @@ fn egrabber_window_functions_are_described() {
     }
 }
 
-// ABI 45 (#863): the camera script roles. Without a hardware camera both roles are refused cleanly
+// ABI next (#892, set at merge) (#863): the camera script roles. Without a hardware camera both roles are refused cleanly
 // (the Overview role through the new function, the Experiment role through both), and the geometry
 // carries its additive members.
 #[test]
@@ -563,7 +563,7 @@ fn camera_script_roles_without_a_hardware_camera() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
-// ABI 45 (#863): saving the eGrabber window through the bridge. The window is snapped, the Experiment
+// ABI next (#892, set at merge) (#863): saving the eGrabber window through the bridge. The window is snapped, the Experiment
 // script rewritten, the applied profile's config.json follows and the startup restore applies the edited
 // window after a restart.
 #[test]
@@ -625,7 +625,7 @@ fn save_camera_window_end_to_end() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-// ABI 45 (#863, CONNECT-053): the recording capacity through the bridge, with the mock camera. Before
+// ABI next (#892, set at merge) (#863, CONNECT-053): the recording capacity through the bridge, with the mock camera. Before
 // init and before a window is known it says so; with the Overview's planned window it carries the four
 // gates and the numbers the Qt panel shows.
 #[test]

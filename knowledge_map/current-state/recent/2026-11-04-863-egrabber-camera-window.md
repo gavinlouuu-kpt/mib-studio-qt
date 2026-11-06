@@ -8,7 +8,7 @@ the applied profile's `egrabberConfig.js` before any script ran), snaps the way 
 the Experiment script and the applied profile, whose remembered revision follows so a restart restores
 the edited window (also when only the profile's script changed). The Overview shows the backend's
 Recording capacity, and a geometry the backend cannot give is a line in the Overview instead of a silent
-null. Bridge ABI 45: `apply_camera_script_with_role`, `save_camera_window`, `fetch_recording_capacity`,
+null. Bridge ABI next (#892, set at merge): `apply_camera_script_with_role`, `save_camera_window`, `fetch_recording_capacity`,
 additive geometry members. Bug #846 (the early return on `supported=false`) is closed by an eGrabber
 geometry. The Overview's own script editor (`overviewConfig.js`) is not part of this change. See
 [[architecture/Rust-Bridge]], [[architecture/AppBackend]] and [[architecture/Desktop-Shell]].

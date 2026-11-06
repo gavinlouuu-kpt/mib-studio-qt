@@ -1121,7 +1121,7 @@ mod tests {
         }
     }
 
-    // The eGrabber camera window commands (ABI 45, #863): strict arguments before the backend is asked, the
+    // The eGrabber camera window commands (ABI next (#892, set at merge), #863): strict arguments before the backend is asked, the
     // Overview role through the same guards as the Experiment one, and the capacity as a read.
     #[test]
     #[serial]
@@ -1632,7 +1632,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

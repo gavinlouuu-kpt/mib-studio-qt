@@ -102,7 +102,7 @@ adapter's `onSession` callback). Test: `backend.aravis_camera_overview`. If Arav
 request records an unavailable effective source and a null factory so capture
 reports the configuration error; it does not silently substitute MockCamera.
 
-**eGrabber camera window (#863, ABI 45).** A selected eGrabber hardware camera is `supported` in
+**eGrabber camera window (#863, ABI next (#892, set at merge)).** A selected eGrabber hardware camera is `supported` in
 `cameraGeometry()`: the window is the applied profile's `camera.window`, else the Experiment script's
 own (`chooseEgrabberWindow`; the script last applied or saved a window into, else the applied local
 profile's own `egrabberConfig.js`, `appliedProfileScriptPath`), the steps are Qt's (offset X 16 / Y 4, width 16, height 4, min 64x16) and
