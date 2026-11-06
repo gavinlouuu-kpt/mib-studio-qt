@@ -23,6 +23,14 @@
 - Offer a dedicated MindVision tab so the user can select a MindVision device
   without mixing it into the EGrabber tree.
 - Surface health indicators (model name, firmware, interface/device labels).
+- Keep the status line in step with the camera (#860): after a camera is
+  connected it reads "Connected to <camera> (capturing)" while the camera
+  runs, "(starting capture…)", "(stopping capture…)", "(capture failed)" or
+  "(not capturing)". [[MainWindow]] forwards every `CameraController`
+  state to `setCameraState`; only a phase change rewrites the line. A
+  discovery listing that lands after the selection keeps the connection line
+  and adds the device count after it. It used to say "(not capturing)" while
+  the camera ran.
 - Hand the chosen selection to `AppBackend::setHardwareCameraSelection`
   `AppBackend::setMindVisionCameraSelection`, or
   `AppBackend::configureMockCamera`.

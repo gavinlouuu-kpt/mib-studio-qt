@@ -44,7 +44,11 @@ restarts) dispatches through it and derives its enabled/text state from one
 - Test: `tests/frontend/camera_action_state_test.cpp`
   (`frontend.camera_action_state`) — identical outcome for every route,
   duplicate burst → one backend start, blocked stop during experiment on all
-  routes, failed start message, device loss projected as Failed.
+  routes, failed start message, device loss projected as Failed. The same
+  test builds a real [[MainWindow]] and reads its [[ConnectTab]] status line
+  through the window's own wiring ("(capturing)" while the camera runs, also
+  for a window built while it already runs; #860), so removing the
+  forwarding in `MainWindow` fails it.
 
 ## ExperimentController
 
