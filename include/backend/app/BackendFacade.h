@@ -1256,6 +1256,13 @@ namespace backend::bridge
         std::string setStartupDiscoveryPreferenceJson(const std::string& json);
         std::string runStartupDiscoveryJson(const std::string &action);
         std::string fetchStartupDiscoveryStatusJson() const;
+        // Frame delivery mode (#863 CONNECT-019/020, ABI next (#895, set at merge)). Fetch: {valid, mode, active_mode, confirmed,
+        // capturing} with mode "everyFrame"|"latestFrame"; set: {ok, mode, applies_at_next_start, message}.
+        // The capture service applies a new mode at the next capture start (a running capture is never
+        // restarted); the mode is refused while an experiment runs. The applied-config provenance follows
+        // (camera.frame_delivery_mode) so a run's method records it; saved profiles are never rewritten.
+        std::string fetchFrameDeliveryModeJson() const;
+        std::string setFrameDeliveryModeJson(const std::string &mode);
         BackendCommandResult pulseGeneratorCommandJson(const std::string &json);
         std::string fetchPulseGeneratorStatusJson() const;
 

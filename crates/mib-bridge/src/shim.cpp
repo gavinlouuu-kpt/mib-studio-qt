@@ -1427,6 +1427,9 @@ rust::String BackendBridge::startup_discovery_set_preference(rust::Str json) {
 
 rust::String BackendBridge::startup_discovery_run(rust::Str action) { return rust::String(impl_->facade.runStartupDiscoveryJson(toStd(action))); }
 rust::String BackendBridge::startup_discovery_status() { return rust::String(impl_->facade.fetchStartupDiscoveryStatusJson()); }
+// ABI next (#895, set at merge) (#863 CONNECT-019/020): the capture delivery mode (Every Frame / Latest Frame).
+rust::String BackendBridge::fetch_frame_delivery_mode() { return rust::String(impl_->facade.fetchFrameDeliveryModeJson()); }
+rust::String BackendBridge::set_frame_delivery_mode(rust::Str mode) { return rust::String(impl_->facade.setFrameDeliveryModeJson(toStd(mode))); }
 
 BridgeCommandResult BackendBridge::pulse_generator_command(rust::Str json) {
     try { return toBridgeResult(impl_->facade.pulseGeneratorCommandJson(toStd(json))); }

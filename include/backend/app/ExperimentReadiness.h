@@ -286,6 +286,15 @@ inline const char* toString(ExperimentRunState s)
     return "unknown";
 }
 
+// True while the run holds the camera by its state alone: it is being started, runs, or stops (saves its data).
+// Use the ExperimentStatus overload below for the guards: it also holds a run that is still saving its data
+// after a fatal save error (Failed while flushing).
+inline bool experimentHoldsCamera(ExperimentRunState s)
+{
+    return s == ExperimentRunState::Starting || s == ExperimentRunState::Active ||
+           s == ExperimentRunState::Stopping;
+}
+
 // Typed outcome of requestStop().
 enum class ExperimentStopOutcome {
     Accepted = 0,
@@ -338,6 +347,26 @@ struct ExperimentStatus {
     std::string faultMessage;
     std::string message;              // last human-readable transition note
 };
+
+// True while the run holds the camera: it is being started, runs, or is saving its data, including a Failed run
+// whose finalization still flushes and closes the file (finalizeLocked sets Failed before it flushes). The camera
+// source, the delivery mode and the camera's Stop are refused then (Qt: the experiment guard and flushInProgress_ =
+// status.flushing, MainWindow.cpp:1655). A Failed run that has finished saving waits for its fault to be
+// acknowledged but holds nothing.
+inline bool experimentHoldsCamera(const ExperimentStatus& s)
+{
+    return experimentHoldsCamera(s.state) || s.flushing;
+}
+
+// Why the camera source (Connect, Configure Mock) cannot change now, or empty (#863 CONNECT-009/013, Qt
+// ConnectTab::onConfigureMock): never under a running capture, nor while a run holds the camera (also when the
+// capture already stopped under it, for example after a camera fault).
+inline std::string cameraSourceChangeRefusal(bool captureRunning, const ExperimentStatus& s)
+{
+    if (captureRunning) return "Cannot change camera connection while camera is running. Please stop the camera first.";
+    if (experimentHoldsCamera(s)) return "Cannot change camera connection while an experiment is active.";
+    return {};
+}
 
 // Serialize the frozen run snapshot for HDF5 provenance (stable key order).
 std::string runSnapshotToJson(const RunConfigurationSnapshot& snapshot);

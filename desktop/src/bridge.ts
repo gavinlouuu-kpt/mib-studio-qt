@@ -243,6 +243,10 @@ export interface CameraDiscovery {
   job_id: string;
   cameras: DiscoveredCamera[];
   framegrabbers: DiscoveredFramegrabber[];
+  /** The job's DISCOVERY_JOB_STATES value (Cancelled and Failed are told apart from an empty result). #863 CONNECT-007 */
+  state: number;
+  /** The coverage gaps the scan reported (provider, DISCOVERY_ERROR_KINDS kind); empty for a clean scan. */
+  errors: DiscoveryError[];
 }
 
 /** Central profile registry (bridge schema v25, #398). Integers are contract
@@ -836,6 +840,9 @@ export const bridge = {
   startupDiscoverySetPreference: (preference: StartupPreference) => invoke<{accepted: boolean; message: string; preference?: StartupPreference}>("startup_discovery_set_preference", {json: JSON.stringify(preference)}),
   startupDiscoveryRun: (action: string) => invoke<{accepted: boolean; message: string}>("startup_discovery_run", {action}),
   startupDiscoveryStatus: () => invoke<StartupDiscoveryStatus>("startup_discovery_status"),
+  // Frame delivery mode (bridge ABI next (#895, set at merge), #863): Every Frame / Latest Frame, applied at the next capture start.
+  fetchFrameDeliveryMode: () => invoke<FrameDeliveryModeStatus>("fetch_frame_delivery_mode"),
+  setFrameDeliveryMode: (mode: FrameDeliveryMode) => invoke<FrameDeliveryModeSet>("set_frame_delivery_mode", { mode }),
   pulseGeneratorCommand: (request: Record<string, unknown>) => invokeCommand("pulse_generator_command", {json: JSON.stringify(request)}),
   pulseGeneratorStatus: () => invoke<PulseGeneratorStatus>("pulse_generator_status"),
   autofocusConnectEndpoint: (backend: string, endpoint: string, comPort: number, baudRate: number, deviceAddress: number) =>
@@ -1080,8 +1087,13 @@ export function mono8ToImageData(
 
 export interface PulseGeneratorStatus {valid: boolean; connected: boolean; owned: boolean; error: string; port: string; baud: number; address: number; channels: Array<{frequency_hz: number; duty_percent: number; output_enabled: boolean}>}
 
+export type FrameDeliveryMode = "everyFrame" | "latestFrame";
+/** `mode` is the configuration the next capture start uses; `active_mode` what the camera confirmed while one runs. */
+export interface FrameDeliveryModeStatus {valid: boolean; mode: FrameDeliveryMode; active_mode: FrameDeliveryMode; confirmed: boolean; capturing: boolean}
+export interface FrameDeliveryModeSet {ok: boolean; message: string; mode?: FrameDeliveryMode; applies_at_next_start?: boolean}
+
 export interface StartupDiscoveryStatus {preference?: StartupPreference; valid: boolean; camera_running: boolean; nanopositioner_running: boolean; camera_configured: boolean; nanopositioner_connected: boolean; camera: StartupJob; nanopositioner: StartupJob}
-interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}
+export interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}
 
 export interface BackgroundCalibrationStatus {valid: boolean; state: string; operation_generation: string; frozen_config_version: string; attempted: number; accepted: number; rejected_non_empty: number; rejected_processing_failed: number; published_background_generation: string; published_sha256: string; message: string}
 

@@ -16,6 +16,8 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace mib::test {
 
@@ -62,6 +64,14 @@ public:
         std::atomic<bool> unbound{false};
         // Rising edge count while bound (valid pulses).
         std::atomic<int> pulses{0};
+        // Every configuration handed to applyConfig(), in order (a session applies one before start()).
+        mutable std::mutex appliedMutex;
+        std::vector<camera::common::CameraConfig> applied;
+        std::vector<camera::common::CameraConfig> appliedConfigs() const
+        {
+            std::lock_guard<std::mutex> lk(appliedMutex);
+            return applied;
+        }
     };
 
     FakeLifecycleCamera(Script script, Observations* obs) : script_(script), obs_(obs) {}
@@ -72,7 +82,14 @@ public:
         if (obs_) obs_->destroyed.store(true, std::memory_order_release);
     }
 
-    void applyConfig(const camera::common::CameraConfig& config) override { config_ = config; }
+    void applyConfig(const camera::common::CameraConfig& config) override
+    {
+        config_ = config;
+        if (obs_) {
+            std::lock_guard<std::mutex> lk(obs_->appliedMutex);
+            obs_->applied.push_back(config);
+        }
+    }
 
     bool start() override
     {

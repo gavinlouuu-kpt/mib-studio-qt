@@ -237,6 +237,11 @@ mib_backend_test_link(discovery_facade_test PRIVATE Threads::Threads)
 add_test(NAME backend.discovery_facade COMMAND $<TARGET_FILE:mib_backend_tests> discovery_facade_test)
 set_tests_properties(backend.discovery_facade PROPERTIES LABELS "backend;discovery;bridge" TIMEOUT 90)
 
+mib_add_backend_test_executable(connect_camera_guards_test backend/connect_camera_guards_test.cpp)
+mib_backend_test_link(connect_camera_guards_test PRIVATE Threads::Threads)
+add_test(NAME backend.connect_camera_guards COMMAND $<TARGET_FILE:mib_backend_tests> connect_camera_guards_test)
+set_tests_properties(backend.connect_camera_guards PROPERTIES LABELS "backend;camera;bridge" TIMEOUT 90)
+
 mib_add_backend_test_executable(zc300_protocol_test backend/zc300_protocol_test.cpp)
 mib_backend_test_link(zc300_protocol_test PRIVATE stage_zc300_protocol)
 add_test(NAME backend.zc300_protocol COMMAND $<TARGET_FILE:mib_backend_tests> zc300_protocol_test)
