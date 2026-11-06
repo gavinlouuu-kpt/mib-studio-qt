@@ -2,7 +2,7 @@
 import type { StageTab } from "../../workflow";
 import { useStudio } from "../../studio/StudioContext";
 import { CameraActions } from "../connect/CameraActions";
-import { STAGE_LOCK_REASON } from "../monitoring/runStatus";
+import { STAGE_LOCK_REASON, isRunLockedTab } from "../monitoring/runStatus";
 
 export function StageTabs() {
   const { tab, setTab, stageByTab, runLocked } = useStudio();
@@ -12,7 +12,7 @@ export function StageTabs() {
         {(["connect", "overview", "experiment", "review"] as StageTab[]).map((t) => {
           const stage = stageByTab[t];
           // #585 run-lock (epic #866 MON-013): Overview and Review are shut for the whole run, as in the Qt app.
-          const locked = runLocked && (t === "overview" || t === "review");
+          const locked = runLocked && isRunLockedTab(t);
           return (
             <button
               key={t}

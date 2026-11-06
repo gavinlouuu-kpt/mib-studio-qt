@@ -3,7 +3,7 @@
 // record store status. Moved from App.tsx (#869 wave 0); studio/useStudioController.ts calls these
 // hooks in App.tsx's original effect order. The Qt-parity behaviour (epic #866, PR D) is in the pure
 // modules beside this file: startReadiness, runStatus, runFinish, statsReadouts, pollHealth, clearBuffer.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { bridge, type ExperimentStatus, type MonitoringSnapshot, type RunAccounting, type TriggerStatus } from "../../bridge";
 import { EXPERIMENT_STATES } from "../../bridgeContract";
 import { startExperiment, type StartReadiness } from "../../experimentStart";
@@ -19,7 +19,7 @@ import type { ReviewState } from "../review/useReview";
 import type { ShellState } from "../shell/useShell";
 import { POLL_HEALTHY, pollHealthAfter, pollNotice, type PollHealth } from "./pollHealth";
 import { accountingDialog } from "./runFinish";
-import { cameraStopBlock, deriveRunPresentation, recordBlock, runProgressText } from "./runStatus";
+import { cameraStopBlock, deriveRunPresentation, recordBlock, runLockedTabChange, runProgressText } from "./runStatus";
 import {
   LATEST_FRAME_PROMPT, latestFrameButtons, latestFrameChoice, readinessDecisionKey, sameReadiness, seriesForcesInline, summarizeReadiness,
 } from "./startReadiness";
@@ -41,6 +41,19 @@ export const EXPERIMENT_STATE_NAMES: Record<number, string> = {
 
 /** How long the run outcome waits for the run's accounting read before it shows from the status alone (#877 bench B6). */
 export const ACCOUNTING_WAIT_MS = 5000;
+
+/** MON-013 (#585 run-lock): wraps the shell's stage setter so every route to a stage the run has shut (stage
+ *  tabs, the context bar, the workflow's next step, a notice's link) keeps the current stage while the run is
+ *  locked (#877 review: the context bar's Calibration segment opened Overview mid-run). The controller sets
+ *  `runLockRef.current` from the render-time `runLocked`; it is read when a navigation happens. No effect. */
+export function useRunLockedNavigation<T extends string>(rawSetTab: Dispatch<SetStateAction<T>>) {
+  const runLockRef = useRef(false);
+  const setTab = useCallback<Dispatch<SetStateAction<T>>>(
+    (next) => rawSetTab((cur) => runLockedTabChange(cur, typeof next === "function" ? next(cur) : next, runLockRef.current)),
+    [rawSetTab],
+  );
+  return { setTab, runLockRef };
+}
 
 export function useMonitoringState() {
   const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files" | "recordings">("preview");

@@ -17,7 +17,7 @@ vi.mock("../../bridge", () => ({ bridge }));
 vi.mock("../../transport/dialogs", () => dialogs);
 vi.mock("../../transport", () => ({ isRemote: false }));
 
-import { useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useStartReadiness, type MonitoringState } from "./useMonitoring";
+import { useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useRunLockedNavigation, useStartReadiness, type MonitoringState } from "./useMonitoring";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let host: HTMLDivElement, root: Root;
@@ -171,7 +171,7 @@ describe("Start Experiment (MON-003, 008, 009, 010)", () => {
   it("tells the operator about a multi-image series after the file is chosen, only on a host-processing instrument", async () => {
     bridge.fetchExperimentReadiness.mockResolvedValue(ready);
     bridge.experimentStart.mockResolvedValue({ ok: true, message: "", start_outcome: O.Started });
-    bridge.fetchProcessingConfigJson.mockResolvedValue({ valid: true, json: JSON.stringify({ multi_image: { enabled: true, count: 3 } }) });
+    bridge.fetchProcessingConfigJson.mockResolvedValue({ valid: true, json: JSON.stringify({ image_processing: { multi_image: { enabled: true, count: 3 } }, realtime_processing: { enabled: true, mode: "async_batch" } }) });
     let probe = await mount({ expTab: "preview" });
     await act(async () => { await probe.lifecycle.onStartExperiment(); });
     expect(dialogs.message).toHaveBeenCalledWith(expect.stringContaining("Multi-image series capture requires inline realtime processing."), { title: "Start Experiment", kind: "info" });
@@ -414,5 +414,29 @@ describe("Clear Buffer's hook point (MON-029)", () => {
     off();
     probe.state.notifyMonitoringCleared();
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the run lock on navigation (MON-013, #877 review)", () => {
+  type Tab = "connect" | "overview" | "experiment" | "review";
+  let nav: { tab: Tab; setTab: (t: Tab | ((cur: Tab) => Tab)) => void; lock: (on: boolean) => void };
+  function Nav() {
+    const [tab, rawSetTab] = useState<Tab>("experiment");
+    const { setTab, runLockRef } = useRunLockedNavigation(rawSetTab);
+    nav = { tab, setTab, lock: (on) => { runLockRef.current = on; } };
+    return null;
+  }
+  it("keeps the stage while a run is locked, for a value and for an updater, and lets go afterwards", async () => {
+    await act(async () => root.render(<Nav />));
+    nav.lock(true);
+    await act(async () => nav.setTab("overview"));
+    expect(nav.tab).toBe("experiment");
+    await act(async () => nav.setTab(() => "review"));
+    expect(nav.tab).toBe("experiment");
+    await act(async () => nav.setTab("connect"));
+    expect(nav.tab).toBe("connect");
+    nav.lock(false);
+    await act(async () => nav.setTab("overview"));
+    expect(nav.tab).toBe("overview");
   });
 });

@@ -186,14 +186,21 @@ export const INLINE_SERIES_NOTICE =
   "This experiment will run in inline mode so series images remain reviewable.\n" +
   "Your previous realtime mode will be restored when the experiment stops.";
 
-/** True when the processing configuration (fetch_processing_config_json text) asks for a multi-image series,
- *  which the backend runs in inline realtime mode (ExperimentCoordinator::start switches it and restores it
- *  at the end). Qt also checks that the mode is AsyncBatch; the bridge does not carry the mode, so a series
- *  that already runs inline still gets the note. */
+/** True when a multi-image series will switch the run from async-batch to inline realtime processing
+ *  (ExperimentCoordinator::start switches it and restores it at the end): Qt's condition
+ *  (MainWindow.cpp:1477-1482), read from the fetch_processing_config_json document, which carries the series as
+ *  `image_processing.multi_image {enabled, count}` and the mode as `realtime_processing.mode`
+ *  ("async_batch" | "inline", BackendFacade::fetchProcessingConfigJson). A series that already runs inline
+ *  gets no note, as in Qt (#877 review). */
 export function seriesForcesInline(configJson: string): boolean {
   try {
-    const multi = (JSON.parse(configJson) as { multi_image?: { enabled?: unknown; count?: unknown } }).multi_image;
-    return multi?.enabled === true && typeof multi.count === "number" && multi.count > 1;
+    const doc = JSON.parse(configJson) as {
+      image_processing?: { multi_image?: { enabled?: unknown; count?: unknown } };
+      realtime_processing?: { mode?: unknown };
+    } | null;
+    const multi = doc?.image_processing?.multi_image;
+    return multi?.enabled === true && typeof multi.count === "number" && multi.count > 1 &&
+      doc?.realtime_processing?.mode === "async_batch";
   } catch {
     return false;
   }
