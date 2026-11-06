@@ -156,7 +156,8 @@ void ConnectTab::applyCameraSelection(int interfaceIndex, int deviceIndex, const
 {
     (void)interfaceIndex;
     (void)deviceIndex;
-    ui->statusLabel->setText(tr("Connected to %1 (not capturing)").arg(label));
+    connectionText_ = tr("Connected to %1").arg(label);
+    showConnectionStatus();
     ui->tabWidget->setCurrentIndex(0);
     for (int i = 0; i < ui->cameraList->count(); ++i)
     {
@@ -173,7 +174,8 @@ void ConnectTab::applyCameraSelection(int interfaceIndex, int deviceIndex, const
 void ConnectTab::applyMindVisionSelection(int cameraIndex, const QString& label)
 {
     (void)cameraIndex;
-    ui->statusLabel->setText(tr("Connected to %1 (not capturing)").arg(label));
+    connectionText_ = tr("Connected to %1").arg(label);
+    showConnectionStatus();
     ui->tabWidget->setCurrentIndex(1);
     for (int i = 0; i < ui->mindVisionList->count(); ++i)
     {
@@ -244,6 +246,10 @@ void ConnectTab::showDiscoveryResults(const backend::discovery::DiscoverySnapsho
             break;
         }
     }
+    // A camera is connected: a listing that lands later (on the rig, the tab's own refresh after
+    // the startup selection) must not replace "Connected to ... (capturing)" with a device count
+    // (#860); the count is added after it.
+    if (!connectionText_.isEmpty()) status = tr("%1 - %2").arg(connectionLine(), status);
     ui->statusLabel->setText(status);
     SPDLOG_INFO("ConnectTab: discovery job {} listed {} framegrabber(s), {} eGrabber camera(s), {} MindVision camera(s) (complete={})",
                 snapshot.jobId, ui->framegrabberList->count(), ui->cameraList->count(),
@@ -300,7 +306,8 @@ void ConnectTab::onConnect() {
                     label.toStdString(), idx.ifIndex, idx.devIndex);
         backend_.setHardwareCameraSelection(idx.ifIndex, idx.devIndex, label.toStdString());
     }
-    ui->statusLabel->setText(tr("Connected to %1 (not capturing)").arg(label));
+    connectionText_ = tr("Connected to %1").arg(label);
+    showConnectionStatus();
     emit connected();
 }
 
@@ -346,6 +353,33 @@ void ConnectTab::syncDeliveryMode(camera::common::FrameDeliveryMode mode) {
         mode == camera::common::FrameDeliveryMode::LatestFrame ? 1 : 0);
 }
 
+void ConnectTab::setCameraState(const CameraActionState& state) {
+    // Only a phase change rewrites the line: the controller republishes on enable/tooltip
+    // changes too, and those must not wipe a delivery-mode or discovery message.
+    if (state.phase == capturePhase_) return;
+    capturePhase_ = state.phase;
+    if (!connectionText_.isEmpty()) showConnectionStatus();
+}
+
+void ConnectTab::showConnectionStatus() {
+    ui->statusLabel->setText(connectionLine());
+}
+
+QString ConnectTab::connectionLine() const {
+    using Phase = CameraActionState::Phase;
+    QString capture;
+    switch (capturePhase_) {
+    case Phase::Starting: capture = tr("starting capture…"); break;
+    case Phase::Running: capture = tr("capturing"); break;
+    case Phase::Stopping: capture = tr("stopping capture…"); break;
+    case Phase::Failed: capture = tr("capture failed"); break;
+    case Phase::Idle:
+    case Phase::NotConfigured:
+    default: capture = tr("not capturing"); break;
+    }
+    return tr("%1 (%2)").arg(connectionText_, capture);
+}
+
 void ConnectTab::onConfigureMock() {
     // Guard: Cannot change camera connection while camera is running
     if (backend_.capture().isRunning()) {
@@ -373,7 +407,8 @@ void ConnectTab::onConfigureMock() {
     options.loopFiles = true;
 
     backend_.configureMockCamera(options);
-    ui->statusLabel->setText(tr("Mock camera configured (not capturing)"));
+    connectionText_ = tr("Mock camera configured");
+    showConnectionStatus();
     SPDLOG_INFO("ConnectTab: mock camera configured ({}, ~{} fps)",
                 options.folder.string(),
                 options.frameInterval.count() > 0 ? 1'000'000.0 / options.frameInterval.count() : 0.0);

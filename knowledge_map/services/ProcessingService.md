@@ -359,13 +359,55 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
 ## Accumulation modes
 
 - **Monitoring rings** — `monitoringValidFrames_` / `monitoringInvalidFrames_`,
-  fixed 1000-frame capacity. **Gated** by `setMonitoringActive(bool)` (default
+  fixed 1000-row capacity **and a byte budget** (below). **Gated** by
+  `setMonitoringActive(bool)` (default
   off). When inactive, `appendRealtimeMonitoringFrame` returns immediately with
   no allocations. Wired to [[../frontend/ExperimentMonitoringTab]] show/hide —
   the rings only fill while that tab is visible (the Tauri shell gates the
-  same way via the bridge `monitoring_set_active` command, BE-5 #275). Stored
-  frames share cv::Mat refcounts with the processing loop (no per-frame
-  clone); consumers are read-only. Appended totals
+  same way via the bridge `monitoring_set_active` command, BE-5 #275). A row
+  keeps **its own copy of the ROI crop** (`monitoringCrop`: gray image and
+  mask, cloned once per frame and shared by that frame's rows), also when the
+  crop is the whole frame (no ROI, or an ROI as big as the frame). The
+  every-frame inline path used to keep views into the full-frame gray image and
+  mask, so each row pinned about 0.5 MB at 1216x208, about 1 GB with the tab
+  open at 5000 fps. That memory churned instead of being reused, the loop fell
+  to 4,100-4,700 fps (0.21-0.24 ms per frame against a 0.2 ms budget) and runs
+  lost frames (#857; bench 2026-11-04: 0.11-0.13 ms per frame and 5000 fps
+  after the change, page faults ~10k/s instead of 100k-225k/s). Which paths
+  already kept a compact crop before: the async-batch path always cloned, and
+  drop-to-latest with an ROI measures on ROI-sized copies; drop-to-latest with
+  no ROI (and the every-frame path) measured on the full frame and kept views
+  of it, which for no ROI *is* the whole frame. Sharing the whole-frame crop
+  was tried and rejected: the ring then retains the loop's own per-frame
+  buffers and every frame page-faults two fresh ones (267 faults per frame
+  against 16, 1.5x the frame time against 1.12x at 1216x208,
+  `performance.monitoring_row_latency`), while the copy is one contiguous
+  memcpy of about 10 µs.
+  **Byte budget (review of PR #876):** a count cap alone still let a whole-frame
+  or large ROI pin 0.5 GB per ring, so each ring also holds at most
+  `kMonitoringImageBytesPerRing` (32 MiB) of row images. Past it the *oldest*
+  rows release their images (`FrameRingBuffer::releaseImagesBeyondBudget`,
+  amortised O(1) per append) and **keep their measurements**, so the scatter
+  and the density estimate still see all 1000; the newest row always keeps its
+  images, so one frame larger than the budget is still shown. The row tag
+  records it (`MonitoringRowTag::imagesReleased`), and
+  [[MonitoringCellStore]] then says "no image: the monitoring buffer keeps
+  images for its newest rows only (memory budget)" instead of "this instrument
+  reports measurements without images". 32 MiB per ring is 66 whole 1216x208
+  rows, against what the tab shows from the newest rows: 25 thumbnails per grid
+  ([[../frontend/ExperimentMonitoringTab]] `MAX_FRAMES_TO_SHOW`), at most 24
+  strip cells ([[MonitoringCellStore]] `kStripMaxCells`, whose crops are
+  4 MiB), and a click on a scatter point, which shows its image while the row
+  still holds one. The tab's own rolling copy of the rings shares the images
+  and would keep them after the ring released them, so it is trimmed to the same
+  figure per buffer (`ProcessingService::releaseImagesBeyondBudget`); the whole
+  Monitoring path therefore pins at most about 128 MiB (two rings, two tab
+  buffers). `memoryStats().monitoringRings` reports `capacityBytes` = 2 x the
+  budget and counts replaced rows and released images in `evictedByBudget`.
+  Guards: `processing.realtime_ring_loss` (retention for the every-frame and
+  drop-to-latest paths with a whole-frame, no and a large ROI) and
+  `performance.monitoring_row_latency` (the per-frame cost).
+  Consumers are read-only. Appended totals
   (`getMonitoringValidAppended`/`getMonitoringInvalidAppended`, reset by
   `clearMonitoringFrames` under the rings' lock) make ring evictions
   observable (appended − held) for the bridge snapshot.
@@ -698,7 +740,44 @@ current/max queue depth, batch size, worker count, and running state. See
   failure *or* mask failure — the frame is skipped, counted in
   `getProcessingFailureCount()`, and reported as `PipelineSkipReason::KernelError`),
   `Processed` (a valid object) or `RejectedByScientificFilter`. Ring-behind
-  skips are admitted as `StoreOverwritten`. `appendExperimentFrame` is a
+  skips are admitted as `StoreOverwritten` (`admitLostRange`: they also advance
+  the admitted range, so the next admitted frame does not read the same hole as a
+  `sequenceGap` on top), and so is a frame of the current
+  pass that was evicted before the loop read it (`noteRealtimeUnreadable`:
+  admitted, so the sequence stays contiguous, then `StoreOverwritten`, or
+  `StoreMalformed` for an unusable slot). `NotYetCommitted` (the head of the
+  ring, still being written) and `OutOfRange` (a store with no frames: a
+  `FrameStore::resize` to fewer slots clears the ring and renumbers from 0)
+  end the pass and are retried after the pointer resync at the top of the loop;
+  they are not lost frames. Frames the store could not give never count as
+  background-calibration attempts (`bgCalObserve` ignores the `Store*`
+  outcomes), so a bounded calibration is not used up by a loop that fell
+  behind. `setRealtimeFrameHookForTests` is the seam that holds the async-batch
+  loop on a chosen frame (the inline loop is held through the test kernel's
+  gate). Until #857 the every-frame and
+  async-batch `for` loops stepped over such a frame with `continue`: a run
+  that fell behind the ring reported thousands of `sequenceGaps` and almost
+  no `storeOverwritten` (bench: storeOverwritten 3, sequenceGaps 2571 for
+  ~7,900 lost frames). **A (re)started loop resumes, it does not rewind
+  (#899):** both loops seed `rtLastProcessed_` from `realtimeResumePointer()`:
+  the run's last admitted index while a run that an earlier loop read is
+  active (the frames written while no loop ran are processed if still in the
+  ring, and only the evicted ones are booked, once, as `storeOverwritten`),
+  otherwise the frame before the ring's oldest (the loop reads the ring from
+  its oldest frame, as before, and books nothing). They used to store 0, so the
+  first pass booked every index below the ring's oldest frame: a realtime
+  restart mid-run (MainWindow stopped it when the Experiment tab was left,
+  see [[frontend/MainWindow]]) reported storeOverwritten=2,196,816 for a 26 s
+  run on the bench, and the coordinator's Start order (`startExperiment`, then
+  `startRealtime` when no loop runs) booked the ring's history into a new run.
+  A restart before the ring wrapped re-read the run's frames from index 0 and
+  admitted them twice. Guard: `processing.realtime_ring_loss` (inline and
+  async-batch loops: eviction inside a pass and before it, `OutOfRange`,
+  calibration attempts, a restart mid-run with the gap inside and past the
+  ring, realtime started after the run). While a run
+  loses frames, the inline loop logs a warning once per second (frames lost,
+  processed fps, ms per frame, frames behind the camera, Monitoring open or
+  closed). `appendExperimentFrame` is a
   persistence admission; frames evicted by the bounded experiment buffer are
   `persistenceCancelledByPolicy`; the flush writer adds `persistenceCommitted`.
   `experimentAccountingSnapshot()` derives the pending / failed persistence

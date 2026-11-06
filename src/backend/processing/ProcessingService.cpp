@@ -806,10 +806,14 @@ ProcessingService::MemoryStats ProcessingService::memoryStats() const {
         o.currentCount = monitoringValidFrames_.size() + monitoringInvalidFrames_.size();
         o.peakCount = o.currentCount; // rings only grow to capacity
         o.capacityCount = monitoringValidFrames_.capacity() + monitoringInvalidFrames_.capacity();
-        o.capacityBytes = 0; // bounded by count; bytes follow the frame geometry
-        o.evictedByBudget = monitoringValidFrames_.replaced() + monitoringInvalidFrames_.replaced();
+        // Count-bound (1000 rows each) and byte-bound (#857): past the image budget the oldest rows
+        // give up their images and keep their measurements; the newest row always keeps its own.
+        o.capacityBytes = monitoringValidFrames_.imageBudgetBytes() + monitoringInvalidFrames_.imageBudgetBytes();
+        o.evictedByBudget = monitoringValidFrames_.replaced() + monitoringInvalidFrames_.replaced() +
+                            monitoringValidFrames_.imagesReleased() + monitoringInvalidFrames_.imagesReleased();
         o.note = monitoringActive_.load(std::memory_order_relaxed)
-                     ? "presentation rings (valid+invalid) for the Monitoring tab; oldest entries replaced"
+                     ? "presentation rings (valid+invalid) for the Monitoring tab; oldest entries replaced, "
+                       "oldest images released past the byte budget"
                      : "presentation rings inactive (no consumer): nothing retained";
         m.monitoringRings = o;
     }
@@ -936,6 +940,22 @@ void ProcessingService::runMonitoringAppendHook(uint64_t frameIndex) {
     {
         std::scoped_lock lk(monitoringAppendHookMutex_);
         hook = monitoringAppendHook_;
+    }
+    if (hook) hook(frameIndex);
+}
+
+void ProcessingService::setRealtimeFrameHookForTests(std::function<void(uint64_t frameIndex)> hook) {
+    std::scoped_lock lk(rtFrameHookMutex_);
+    rtFrameHookArmed_.store(static_cast<bool>(hook), std::memory_order_relaxed);
+    rtFrameHook_ = std::move(hook);
+}
+
+void ProcessingService::runRealtimeFrameHook(uint64_t frameIndex) {
+    if (!rtFrameHookArmed_.load(std::memory_order_relaxed)) return;
+    std::function<void(uint64_t)> hook;
+    {
+        std::scoped_lock lk(rtFrameHookMutex_);
+        hook = rtFrameHook_;
     }
     if (hook) hook(frameIndex);
 }
@@ -1392,10 +1412,23 @@ void ProcessingService::noteRealtimeAdmitted(uint64_t idx) {
     if (experimentActive_.load(std::memory_order_relaxed)) experimentAccounting_.admit(idx);
 }
 
-void ProcessingService::noteRealtimeLost(uint64_t count) {
+void ProcessingService::noteRealtimeLost(uint64_t firstIdx, uint64_t count) {
     if (count > 0 && experimentActive_.load(std::memory_order_relaxed)) {
-        experimentAccounting_.admitLost(count, backend::recording::FrameOutcome::StoreOverwritten);
+        experimentAccounting_.admitLostRange(firstIdx, count, backend::recording::FrameOutcome::StoreOverwritten);
     }
+}
+
+void ProcessingService::noteRealtimeUnreadable(uint64_t idx, backend::playback::FrameReadOutcome readOutcome) {
+    // Same rule as the frame recorder (AppBackend::frameRecordingLoop): the index is admitted, so the
+    // sequence stays contiguous, and ends as a store loss. Evicted frames are undeclared loss
+    // (storeOverwritten); a slot that held no usable image is a declared ingress error (storeMalformed).
+    // Not for NotYetCommitted and OutOfRange: the loops leave those to be retried after the resync.
+    backend::diagnostics::PipelineTimingRecorder::instance().countSkipped(
+        backend::diagnostics::PipelineSkipReason::RingBehind);
+    noteRealtimeAdmitted(idx);
+    noteRealtimeOutcome(idx, readOutcome == backend::playback::FrameReadOutcome::Overwritten
+                                 ? backend::recording::FrameOutcome::StoreOverwritten
+                                 : backend::recording::FrameOutcome::StoreMalformed);
 }
 
 void ProcessingService::noteRealtimeOutcome(uint64_t idx, backend::recording::FrameOutcome outcome,
@@ -1659,6 +1692,13 @@ void ProcessingService::bgCalFinishLocked(BackgroundCalibrationState state, cons
 void ProcessingService::bgCalObserve(backend::recording::FrameOutcome outcome,
                                      const backend::playback::Frame* frame) {
     using backend::recording::FrameOutcome;
+    // A frame the store could not give (evicted, mid-write, unusable) says nothing about the
+    // channel: it is neither an empty sample nor a contaminated one, and must not use up the
+    // attempt budget (the loops book such frames through noteRealtimeOutcome since #857).
+    if (outcome == FrameOutcome::StoreOverwritten || outcome == FrameOutcome::StoreNotCommitted ||
+        outcome == FrameOutcome::StoreMalformed) {
+        return;
+    }
     std::unique_lock lk(bgCalMutex_);
     if (bgCalStatus_.state != BackgroundCalibrationState::Running) return;
     if (std::chrono::steady_clock::now() >= bgCalDeadline_) {
@@ -2956,6 +2996,45 @@ void ProcessingService::resetIdentificationCounters() {
     }
 }
 
+ProcessingService::MonitoringCrop ProcessingService::monitoringCrop(const cv::Mat& gray, const cv::Mat& mask,
+                                                                  const cv::Rect& roi) {
+    // A view into the full-frame gray and mask keeps the whole frame alive for as long as the
+    // ring row (and the Monitoring tab's copy of it) lives: about 0.5 MB per row at 1216x208, so
+    // about 1 GB with the tab open at 5000 fps. That memory then churned through the allocator
+    // instead of being reused, and the realtime loop fell behind the frame ring and lost frames
+    // (#857). Own copies of the crop, as the async batch path always took.
+    //
+    // Also when the crop is the whole frame (no ROI, or an ROI as big as the frame), where a share
+    // would save two 0.25 MB copies per frame: the share makes the ring retain the loop's own
+    // per-frame buffers, so every frame allocates two fresh ones (267 minor page faults per frame
+    // against 16, 1.5x the frame time against 1.12x, measured by monitoring_row_latency_test at
+    // 1216x208), while the copy is one contiguous memcpy (about 10 us) and the loop's buffers are
+    // recycled hot. What the ring keeps is bounded by kMonitoringImageBytesPerRing either way.
+    return {gray(roi).clone(), mask(roi).clone()};
+}
+
+size_t ProcessingService::releaseImagesBeyondBudget(std::vector<ProcessedFrame>& oldestFirst, uint64_t maxBytes) {
+    // Newest first: the newest row's images are always kept, then rows while they fit.
+    uint64_t kept = 0;
+    size_t released = 0;
+    bool over = false; // once a row does not fit, every older row goes too
+    for (size_t i = oldestFirst.size(); i-- > 0;) {
+        ProcessedFrame& row = oldestFirst[i];
+        const uint64_t bytes = processedFrameBytes(row);
+        if (bytes == 0) continue;
+        if (!over && (i + 1 == oldestFirst.size() || kept + bytes <= maxBytes)) {
+            kept += bytes;
+            continue;
+        }
+        over = true;
+        row.originalImage = cv::Mat();
+        row.processedImage = cv::Mat();
+        row.seriesImages.clear();
+        ++released;
+    }
+    return released;
+}
+
 void ProcessingService::appendRealtimeMonitoringFrame(uint64_t index, uint64_t timestampNs,
                                                       const FilterResult& validation,
                                                       const cv::Mat& originalImage,
@@ -3184,8 +3263,31 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
     }
 }
 
+// Where a (re)started realtime loop picks the ring up (#899). The first pass books every write
+// index between the loop's pointer and the ring's oldest frame as lost to the run
+// (noteRealtimeLost, StoreOverwritten), so the pointer must not reach back past what the run owns.
+// - A run an earlier loop was already reading resumes after its last admitted frame. The frames
+//   the camera wrote while no loop ran are the run's: those still in the ring are processed, those
+//   evicted are booked once, as the real gap.
+// - Otherwise there is nothing to resume. The loop starts at the ring's oldest frame, as before,
+//   and books nothing: frames older than the ring were never owed to a run.
+// Both loops used to start from 0, so a restart in a run booked every frame since the capture
+// started: 2,196,816 frames after a 3.3 s stop on the bench, for a run of about 130,000.
+uint64_t ProcessingService::realtimeResumePointer() const {
+    const auto& store = rtStore_;
+    if (!store || store->totalWritten() == 0) return 0;
+    const uint64_t earliest = store->earliestAvailableIndex();
+    const uint64_t latest = store->latestAvailableIndex();
+    if (experimentActive_.load(std::memory_order_acquire) && experimentAccounting_.hasAdmitted()) {
+        const uint64_t lastAdmitted = experimentAccounting_.lastAdmittedIndex();
+        // Beyond the newest frame only when the store was renumbered (resize): nothing to resume.
+        if (lastAdmitted <= latest) return lastAdmitted;
+    }
+    return earliest > 0 ? earliest - 1 : 0;
+}
+
 void ProcessingService::realtimeBatchLoop() {
-    rtLastProcessed_.store(0);
+    rtLastProcessed_.store(realtimeResumePointer());
 
     std::atomic<uint64_t> callbackValid{0};
     std::atomic<uint64_t> callbackInvalid{0};
@@ -3326,7 +3428,7 @@ void ProcessingService::realtimeBatchLoop() {
             skippedSinceSummary += skipped;
             backend::diagnostics::PipelineTimingRecorder::instance().countSkipped(
                 backend::diagnostics::PipelineSkipReason::RingBehind, skipped);
-            noteRealtimeLost(skipped); // experiment accounting: StoreOverwritten
+            noteRealtimeLost(last + 1, skipped); // experiment accounting: StoreOverwritten
             last = earliest - 1;
             rtLastProcessed_.store(last, std::memory_order_relaxed);
             SPDLOG_DEBUG(
@@ -3368,10 +3470,24 @@ void ProcessingService::realtimeBatchLoop() {
                 }
 
                 backend::playback::Frame frame;
-                if (!rtStore_->getByWriteIndex(idx, frame)) {
-                    continue; // not counted — retried from the same `last`
+                const auto readOutcome = rtStore_->readByWriteIndex(idx, frame);
+                if (readOutcome == backend::playback::FrameReadOutcome::NotYetCommitted ||
+                    readOutcome == backend::playback::FrameReadOutcome::OutOfRange) {
+                    // The head of the ring, still being written, or a store with no frames (a resize
+                    // renumbers from 0, or the ring is mid-reallocation): not a lost frame. The top of
+                    // the loop resyncs the pointer (`last > latest`) and retries from the same `last`.
+                    break;
                 }
                 countDroppedToLatest();
+                if (readOutcome != backend::playback::FrameReadOutcome::Available) {
+                    // Evicted while this pass worked through older frames: booked, not skipped
+                    // silently into a sequence gap (#857).
+                    noteRealtimeUnreadable(idx, readOutcome);
+                    ++skippedSinceSummary;
+                    rtLastProcessed_.store(idx, std::memory_order_relaxed);
+                    continue;
+                }
+                runRealtimeFrameHook(idx); // test seam; one relaxed load
                 // The frame enters processing here: its capture is the published epoch read with
                 // the ROI (both under rtMutex_; an ROI change moves the epoch under it), carried
                 // with the frame to the worker, which keeps it only for that ROI.
@@ -3505,7 +3621,7 @@ void ProcessingService::realtimeInlineLoop() {
         apply();
         return true;
     };
-    rtLastProcessed_.store(0);
+    rtLastProcessed_.store(realtimeResumePointer());
     using clock = std::chrono::steady_clock;
     // Per-frame latency instrumentation sink (no-op unless enabled; see
     // knowledge_map/diagnostics/PipelineTimingRecorder.md).
@@ -3513,6 +3629,9 @@ void ProcessingService::realtimeInlineLoop() {
     auto lastSummaryTs = clock::now();
     uint64_t framesSinceSummary = 0;
     uint64_t framesSkippedSinceSummary = 0;
+    // Frames of a run booked as lost in this window (#857). Kept apart from the skip count, which
+    // also holds the frames live view drops on purpose to show the newest one.
+    uint64_t runFramesLostSinceSummary = 0;
     double msSinceSummary = 0.0;
     double algoMsSinceSummary = 0.0;
     uint64_t validSinceSummary = 0;
@@ -3539,6 +3658,7 @@ void ProcessingService::realtimeInlineLoop() {
         lastSummaryTs = now;
         framesSinceSummary = 0;
         framesSkippedSinceSummary = 0;
+        runFramesLostSinceSummary = 0;
         msSinceSummary = 0.0;
         algoMsSinceSummary = 0.0;
         validSinceSummary = 0;
@@ -3630,7 +3750,8 @@ void ProcessingService::realtimeInlineLoop() {
             framesSkippedSinceSummary += skipped;
             rtTimingRecorder.countSkipped(backend::diagnostics::PipelineSkipReason::RingBehind,
                                           skipped);
-            noteRealtimeLost(skipped);
+            noteRealtimeLost(last + 1, skipped);
+            if (experimentActive_.load(std::memory_order_relaxed)) runFramesLostSinceSummary += skipped;
             last = earliest - 1;
             // Publish the advance immediately: if the frame fetch below fails
             // (slot mid-write / evicted) the loop retries with `last` already
@@ -4414,12 +4535,13 @@ void ProcessingService::realtimeInlineLoop() {
                 accumulateIdentificationCounters(
                     validations, config, pixelToMicronFactor_.load(std::memory_order_relaxed));
 
-                // Always accumulate frames for monitoring (with size limit)
-                cv::Mat roiOriginal = gray(cvRoi);
-                cv::Mat roiMask = mask(cvRoi);
-                for (const auto& objectValidation : validations) {
-                    appendRealtimeMonitoringFrame(idx, f.timestamp, objectValidation, roiOriginal,
-                                                  roiMask, monitoringEntry);
+                // Accumulate frames for monitoring (with size limit) while someone looks.
+                if (monitoringActive_.load(std::memory_order_relaxed)) {
+                    const MonitoringCrop crop = monitoringCrop(gray, mask, cvRoi);
+                    for (const auto& objectValidation : validations) {
+                        appendRealtimeMonitoringFrame(idx, f.timestamp, objectValidation, crop.original,
+                                                      crop.mask, monitoringEntry);
+                    }
                 }
 
                 // Throttled DEBUG: accumulation sizes and process memory
@@ -4576,6 +4698,7 @@ void ProcessingService::realtimeInlineLoop() {
                 lastSummaryTs = now;
                 framesSinceSummary = 0;
                 framesSkippedSinceSummary = 0;
+                runFramesLostSinceSummary = 0;
                 msSinceSummary = 0.0;
                 algoMsSinceSummary = 0.0;
                 validSinceSummary = 0;
@@ -4590,10 +4713,24 @@ void ProcessingService::realtimeInlineLoop() {
                     continue;
                 }
                 backend::playback::Frame f{};
-                if (!rtStore_->getByWriteIndex(idx, f)) {
-                    continue;
+                const auto readOutcome = rtStore_->readByWriteIndex(idx, f);
+                if (readOutcome == backend::playback::FrameReadOutcome::NotYetCommitted ||
+                    readOutcome == backend::playback::FrameReadOutcome::OutOfRange) {
+                    // The head of the ring, still being written, or a store with no frames (a resize
+                    // renumbers from 0, or the ring is mid-reallocation): not a lost frame. The top of
+                    // the loop resyncs the pointer (`last > latest`) and retries from the same `last`.
+                    break;
                 }
-                if (f.width == 0 || f.height == 0 || f.data.empty()) {
+                if (readOutcome != backend::playback::FrameReadOutcome::Available || f.width == 0 ||
+                    f.height == 0 || f.data.empty()) {
+                    // Evicted while this pass worked through older frames (or unreadable): a lost
+                    // frame, booked as one. `continue` used to step over it silently, so a run that
+                    // fell behind the ring showed thousands of sequence gaps and almost no
+                    // storeOverwritten (#857).
+                    noteRealtimeUnreadable(idx, readOutcome);
+                    ++framesSkippedSinceSummary;
+                    if (experimentActive_.load(std::memory_order_relaxed)) ++runFramesLostSinceSummary;
+                    rtLastProcessed_.store(idx);
                     continue;
                 }
                 // The frame enters processing: its monitoring run and capture (#716 A6a review 3).
@@ -4880,12 +5017,13 @@ void ProcessingService::realtimeInlineLoop() {
                 accumulateIdentificationCounters(
                     validations, config, pixelToMicronFactor_.load(std::memory_order_relaxed));
 
-                // Always accumulate frames for monitoring (with size limit)
-                cv::Mat roiOriginal = gray(cvRoi);
-                cv::Mat roiMask = mask(cvRoi);
-                for (const auto& objectValidation : validations) {
-                    appendRealtimeMonitoringFrame(idx, f.timestamp, objectValidation, roiOriginal,
-                                                  roiMask, monitoringEntry);
+                // Accumulate frames for monitoring (with size limit) while someone looks.
+                if (monitoringActive_.load(std::memory_order_relaxed)) {
+                    const MonitoringCrop crop = monitoringCrop(gray, mask, cvRoi);
+                    for (const auto& objectValidation : validations) {
+                        appendRealtimeMonitoringFrame(idx, f.timestamp, objectValidation, crop.original,
+                                                      crop.mask, monitoringEntry);
+                    }
                 }
 
                 // Throttled TRACE: accumulation sizes and process memory
@@ -5104,6 +5242,17 @@ void ProcessingService::realtimeInlineLoop() {
                                  "window_ms={:.0f} avg_ms={:.3f} algo_avg_ms={:.3f} ~fps={:.1f}",
                                  framesSinceSummary, framesSkippedSinceSummary, windowMs, avgMs,
                                  algoAvgMs, fps);
+                    if (runFramesLostSinceSummary > 0) {
+                        // A run that loses frames says when and how far behind (#857): before, the log
+                        // was silent until the run ended incompleteLoss.
+                        const uint64_t newest = rtStore_->latestAvailableIndex();
+                        SPDLOG_WARN("Realtime processing fell behind the frame ring during the run: {} "
+                                    "frame(s) lost in {:.0f} ms ({} processed at {:.0f} fps, {:.3f} ms per "
+                                    "frame, {} frame(s) behind the camera, Monitoring {})",
+                                    runFramesLostSinceSummary, windowMs, framesSinceSummary, fps, avgMs,
+                                    newest > idx ? newest - idx : 0,
+                                    monitoringActive_.load(std::memory_order_relaxed) ? "open" : "closed");
+                    }
 
                     // Extended summary: buffers, ROI, background, and process memory
                     size_t vSz = 0, iSz = 0, monValidSz = 0, monInvalidSz = 0;
@@ -5130,6 +5279,7 @@ void ProcessingService::realtimeInlineLoop() {
                     lastSummaryTs = now;
                     framesSinceSummary = 0;
                     framesSkippedSinceSummary = 0;
+                    runFramesLostSinceSummary = 0;
                     msSinceSummary = 0.0;
                     algoMsSinceSummary = 0.0;
                     validSinceSummary = 0;
