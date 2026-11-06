@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 if (Get-Process mib-studio-desktop -ErrorAction SilentlyContinue) { throw 'mib-studio-desktop is already running: close it first (WebView2 would ignore the debug port)' }
 $tcp = New-Object Net.Sockets.TcpClient; $busy = $true
 try { $tcp.Connect('127.0.0.1', $Port) } catch { $busy = $false } finally { $tcp.Close() }
-if ($busy) { throw "something already listens on 127.0.0.1:$Port: close it, or pass -Port <a free port>" }
+if ($busy) { throw "something already listens on 127.0.0.1:${Port}: close it, or pass -Port <a free port>" }
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
 $env:MIB_CAMERA_MODE = 'mock'; $env:MIB_DISABLED_SERVICES = 'auto_update'
 $app = Start-Process $Exe -WorkingDirectory (Split-Path $Exe) -PassThru
