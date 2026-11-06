@@ -331,6 +331,29 @@ describe('device list, backend filter and connect (HW-024, HW-025, HW-026)', () 
     expect(button('Refresh').disabled).toBe(true);
     expect(host.textContent).toContain('Hardware changes are locked while an experiment is active.');
   });
+  // D10: a saved device is offered without a scan, so Connect would be clickable with Refresh locked. The button is the lock
+  // (React drops clicks on a disabled button; the command's own guard behind it is defence in depth).
+  it('locks Connect during an experiment, also for the saved device offered without a scan (D10)', async () => {
+    stored.set(startupPreferenceKey, JSON.stringify({backend: 'oeabt', endpoint: usb.persistent_id, com_port: -1, baud: 115200, address: 1}));
+    await render({experimentActive: true});
+    const connect = button('Connect autofocus');
+    expect(field('Serial device').value).toBe(usb.persistent_id);
+    expect(connect.disabled).toBe(true);
+    await click(connect);
+    expect(bridge.autofocusConnectEndpoint).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('Hardware changes are locked while an experiment is active.');
+  });
+  it('locks Disconnect during an experiment (D10) while Disable stays available', async () => {
+    await render(); await click(button('Refresh'));
+    await click(button('Connect autofocus')); await tick(600);
+    await render({experimentActive: true});
+    const disconnect = button('Disconnect autofocus');
+    expect(disconnect.disabled).toBe(true);
+    expect(button('Disable autofocus').disabled).toBe(false);
+    await click(disconnect);
+    expect(bridge.autofocusDisconnect).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('Hardware changes are locked while an experiment is active.');
+  });
   it('does not rescan while a scan runs and reports a failed one', async () => {
     const slow = deferred<DiscoverySnapshot>();
     vi.mocked(bridge.fetchDeviceDiscovery).mockImplementationOnce(() => slow.promise);
