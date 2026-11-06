@@ -358,7 +358,10 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
   The startup selection is on by default; the Hardware controls start it where they exist (they install the
   nanopositioner preference first), `useStartupSelection` on other instruments (after its first status reading, so
   a scan that ends at once is reported, not taken for a job from before a webview reload), whose Connect stage
-  shows the opt-out checkbox. Nanopositioner step wording stays with the hardware area (#868).
+  shows the opt-out checkbox. Nanopositioner step wording stays with the hardware area (#868). The Hardware
+  controls' checkbox default (`StartupDiscoveryControls`, on unless the operator stored `false`) is the one line
+  HW-037 (#890) also writes; #895 carries it verbatim so that the two PRs merge cleanly in either order, and
+  `startupPreference.ts` (`readAutoSelect`/`resolveAutoSelect`) reads the same key for the Connect stage.
 - **Delivery mode.** A select on the Connect stage ("Every Frame (preserves sequence)" / "Latest Frame (lowest
   latency, may drop)"), read with the preflight poll (so a profile apply shows within one poll) and set with
   `set_frame_delivery_mode` (see [[Rust-Bridge]]). Decision: it is not written back to the saved profile (Qt
