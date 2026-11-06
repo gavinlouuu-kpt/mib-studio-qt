@@ -223,6 +223,13 @@ if(BUILD_TESTING)
         LABELS "frontend;lifecycle;recording;safety"
         TIMEOUT 180
     )
+    # Issue #905: the Overview camera auto-start waits for camera discovery probes in flight.
+    mib_test_runner_add(mib_frontend_tests camera_autostart_discovery_test ${PROJECT_SOURCE_DIR}/tests/frontend/camera_autostart_discovery_test.cpp)
+    add_test(NAME frontend.camera_autostart_discovery COMMAND $<TARGET_FILE:mib_frontend_tests> camera_autostart_discovery_test)
+    set_tests_properties(frontend.camera_autostart_discovery PROPERTIES
+        LABELS "frontend;camera;discovery;lifecycle;safety"
+        TIMEOUT 120
+    )
 
     # Issues #358/#359: full-widget layout harness (viewport matrix, sidebar
     # single-owner geometry, window restoration). Offscreen; the available

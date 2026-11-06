@@ -99,6 +99,21 @@ capture generation for an illuminated profile, using a fake camera factory.
   the run; `releaseRealtimeHeldForRun()` stops it when the run's terminal status
   is rendered, unless Experiment/Overview is shown again. Guard:
   `frontend.experiment_tab_switch`.
+- `onTabChanged` camera step (#905) — the Overview auto-start and the camera
+  script for Overview/Experiment live in `applyTabCamera(index)`. Both open the
+  camera device, which a camera discovery probe holds for its length (see
+  [[../services/DeviceDiscoveryService]] Gotchas), so an open
+  in that window fails with "operation not allowed". On the MIB rig's first
+  launch the startup job selected the camera and navigated to Overview while
+  the Connect tab's launch refresh still probed the device; the auto-start and
+  the script both failed and the operator had to press Start Live View. Now,
+  while `DeviceDiscoveryService::hasActiveJob({Camera, Framegrabber})` is true,
+  `deferTabCameraForDiscovery` logs "camera discovery in flight; the Overview
+  camera step waits for it" and a 100 ms timer runs the step once no such job
+  is left (bounded at 15 s, then it runs anyway with a warning). Changing tab,
+  closing the window, or a run starting meanwhile drops the waiting step.
+  Guard: `frontend.camera_autostart_discovery` (a real `MainWindow` on a mock
+  camera that refuses to open while a fake `camera-sdk` probe holds it).
 - `onNoCamerasFound` — shows a friendly dialog when
   `DeviceInitManager` reports empty discovery (the startup policy's
   `NoneFound` outcome; an incomplete scan reports its reason instead).

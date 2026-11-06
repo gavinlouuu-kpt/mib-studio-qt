@@ -90,6 +90,12 @@ public:
     // Jobs whose worker has not yet published a terminal state.
     std::size_t activeWorkerCount() const;
 
+    // True while a job naming any of `kinds` has not published its terminal
+    // state (queued, in its initial or retry delay, or probing). Never probes
+    // or waits. A camera probe holds the device for its length, so an open in
+    // that window fails; the Overview camera auto-start waits on this (#905).
+    bool hasActiveJob(const std::vector<DeviceKind>& kinds) const;
+
 private:
     struct Job;
     struct ObserverEntry;

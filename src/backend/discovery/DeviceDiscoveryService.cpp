@@ -580,6 +580,18 @@ std::size_t DeviceDiscoveryService::activeWorkerCount() const
     return n;
 }
 
+bool DeviceDiscoveryService::hasActiveJob(const std::vector<DeviceKind>& kinds) const
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    for (const auto& [id, job] : jobs_) {
+        if (job->done) continue;
+        for (const auto kind : job->request.kinds) {
+            if (std::find(kinds.begin(), kinds.end(), kind) != kinds.end()) return true;
+        }
+    }
+    return false;
+}
+
 void DeviceDiscoveryService::reapFinished()
 {
     // Only threads whose run() returned are joined (the join is immediate);

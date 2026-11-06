@@ -48,6 +48,7 @@
 #include "backend/camera/common/ICamera.h"
 #include "backend/services/CaptureService.h"
 #include "backend/services/CrashReporter.h"
+#include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/recording/RecordingAccounting.h"
@@ -157,6 +158,22 @@ bool isServiceDisabledAtBoot(const QString &serviceToken)
     const QSet<QString> disabled = parseDisabledServicesCsv(QString::fromUtf8(qgetenv("MIB_DISABLED_SERVICES")));
     const QString token = normalizeServiceToken(serviceToken);
     return disabled.contains("all") || disabled.contains(token);
+}
+
+// #905: how long a tab's camera step waits for camera discovery probes, and how often it checks.
+// A probe holds the device for about 0.5-2.5 s on the MIB rig; past the bound the step runs anyway.
+constexpr auto kTabCameraDiscoveryWait = std::chrono::seconds(15);
+constexpr int kTabCameraDeferPollMs = 100;
+
+bool cameraDiscoveryInFlight(backend::AppBackend &backend)
+{
+    using backend::discovery::DeviceKind;
+    return backend.deviceDiscovery().hasActiveJob({DeviceKind::Camera, DeviceKind::Framegrabber});
+}
+
+const char *tabCameraStepName(int index)
+{
+    return index == 1 ? "Overview" : "Experiment";
 }
 } // namespace
 
@@ -2038,6 +2055,9 @@ void MainWindow::onNoCamerasFound()
 
 void MainWindow::onTabChanged(int index)
 {
+    // #905: a camera step still waiting for discovery belongs to the tab that was left.
+    cancelDeferredTabCamera();
+
     // Guard: Once experiment started, overview is disabled until end of experiment
     if (index == 1 && experimentActive_) {
         QMessageBox::warning(this, tr("Overview Tab"),
@@ -2095,6 +2115,66 @@ void MainWindow::onTabChanged(int index)
         // Switching away from Overview/Experiment: stop services
         stopExperimentServices();
     }
+
+    // #905: the camera step opens the device, which a camera discovery probe holds for its length.
+    if (deferTabCameraForDiscovery(index)) return;
+    applyTabCamera(index);
+}
+
+bool MainWindow::deferTabCameraForDiscovery(int index)
+{
+    if (index != 1 && index != 2) return false;
+    if (!cameraDiscoveryInFlight(backend_)) return false;
+    if (!tabCameraDeferTimer_) {
+        tabCameraDeferTimer_ = new QTimer(this);
+        tabCameraDeferTimer_->setInterval(kTabCameraDeferPollMs);
+        connect(tabCameraDeferTimer_, &QTimer::timeout, this, &MainWindow::onTabCameraDeferTick);
+    }
+    deferredCameraTab_ = index;
+    deferredCameraDeadline_ = std::chrono::steady_clock::now() + kTabCameraDiscoveryWait;
+    tabCameraDeferTimer_->start();
+    SPDLOG_INFO("MainWindow: camera discovery in flight; the {} camera step waits for it (up to {} s)",
+                tabCameraStepName(index),
+                std::chrono::duration_cast<std::chrono::seconds>(kTabCameraDiscoveryWait).count());
+    return true;
+}
+
+void MainWindow::onTabCameraDeferTick()
+{
+    const int index = deferredCameraTab_;
+    if (index < 0 || !ui->tabs || ui->tabs->currentIndex() != index) {
+        cancelDeferredTabCamera();
+        return;
+    }
+    const bool busy = cameraDiscoveryInFlight(backend_);
+    if (busy && std::chrono::steady_clock::now() < deferredCameraDeadline_) return;
+    cancelDeferredTabCamera();
+    if (runOwnsRealtime()) {
+        // A run started while the step waited (another client can start one): it owns the camera,
+        // and the script step would stop capture.
+        SPDLOG_INFO("MainWindow: a run started while the {} camera step waited; step dropped",
+                    tabCameraStepName(index));
+        return;
+    }
+    if (busy) {
+        SPDLOG_WARN("MainWindow: camera discovery still running after {} s; running the {} camera step anyway",
+                    std::chrono::duration_cast<std::chrono::seconds>(kTabCameraDiscoveryWait).count(),
+                    tabCameraStepName(index));
+    } else {
+        SPDLOG_INFO("MainWindow: camera discovery finished; running the {} camera step", tabCameraStepName(index));
+    }
+    applyTabCamera(index);
+}
+
+void MainWindow::cancelDeferredTabCamera()
+{
+    if (tabCameraDeferTimer_) tabCameraDeferTimer_->stop();
+    deferredCameraTab_ = -1;
+}
+
+void MainWindow::applyTabCamera(int index)
+{
+    const int OVERVIEW_TAB_INDEX = 1;
 
     // Illuminated capture requires an explicit Play action. A connection
     // navigates here automatically, so navigation must never energize the rig.
@@ -2239,6 +2319,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         }
     }
 
+    cancelDeferredTabCamera(); // #905: a camera step waiting for discovery never starts the camera after close
     if (initManager_) initManager_->stop();
 
     // An active run or a finalization in flight completes before the window
