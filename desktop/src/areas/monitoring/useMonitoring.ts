@@ -264,6 +264,9 @@ export function useExperimentLifecycle({
           // end state for 7-18 ms between Starting and Running (#877 bench B5).
           setStartInFlight(true);
           const res = await bridge.experimentStart(path, acknowledgeDiscardRing, undefined, acknowledgeLatestFrameDrops);
+          // A refused reply ends "Starting" now: a refusal dialog or the late Latest Frame question may follow, and the badge
+          // must not say Starting behind a dialog that says the start was refused (#891 review). A retry sets it again.
+          if (!res.ok) setStartInFlight(false);
           return { ok: res.ok, message: res.message, outcome: res.start_outcome };
         },
         inform: ({ kind, title, text }) => message(text, { title, kind }),

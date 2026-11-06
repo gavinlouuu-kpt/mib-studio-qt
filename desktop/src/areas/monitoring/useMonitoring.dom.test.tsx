@@ -190,6 +190,19 @@ describe("Start Experiment (MON-003, 008, 009, 010)", () => {
     expect(probe.state.readinessMessage).toBe("/d/run.h5: Experiment start failed: disk full");
     expect(probe.log).toContain("experiment start failed: Experiment start failed: disk full");
   });
+  it("is no longer Starting while the refusal dialog of a refused reply is open (#891 review)", async () => {
+    bridge.fetchExperimentReadiness.mockResolvedValue(ready);
+    bridge.experimentStart.mockResolvedValue({ ok: false, message: "disk full", start_outcome: O.StorageFailed });
+    let close!: () => void;
+    dialogs.message.mockImplementation(() => new Promise<void>((resolve) => { close = resolve; }));
+    const probe = await mount({ expTab: "preview" });
+    let started!: Promise<void>;
+    await act(async () => { started = probe.lifecycle.onStartExperiment(); });
+    await vi.waitFor(() => expect(dialogs.message).toHaveBeenCalledWith(expect.stringContaining("disk full"), { title: "Error", kind: "error" }));
+    expect(probe.state.startInFlight).toBe(false); // the dialog is still open
+    await act(async () => { close(); await started; });
+    expect(probe.state.startInFlight).toBe(false);
+  });
   // #858 (SHELL-054): Latest Frame recording was impossible in Tauri (parity run S7): nothing could send the acknowledgement.
   it("asks Qt's Latest Frame question before the file dialog and starts with the acknowledgement", async () => {
     const latest = { id: "camera.deliveryMode", status: S.Warn, reason: "Latest Frame intentionally discards frames; the recording may be incomplete", remediation: "" };

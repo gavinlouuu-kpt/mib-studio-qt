@@ -108,7 +108,7 @@ Continue and Cancel. A question that cannot be shown rejects and is logged ("exp
 list of blocking and Warn gates; the Start flow's own preflight read refreshes it, and a refusal's
 inline alert lasts until that standing readiness decides differently (`readinessDecisionKey`: gate ids
 and statuses, not reason texts with live figures) or the operator dismisses it. Starting lasts until
-the status after the Start reply is set, and the run outcome waits up to 5 s for the run's accounting
+the status after the Start reply is set (a refused reply ends it at once, before its dialog), and the run outcome waits up to 5 s for the run's accounting
 read (no saved-row count shown as "admitted" in between). The run phase (`experimentModel`'s `runPresentation`, `runLocked`)
 locks the Overview and Review stage tabs, Review's Select HDF File and Open Recording, Stop Camera and
 Raw Record; the lock on the two stages is enforced at the stage setter (`useRunLockedNavigation` wraps

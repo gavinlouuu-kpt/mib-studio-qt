@@ -32,7 +32,9 @@ in `areas/monitoring/useMonitoring.ts`:
   differently (gate ids and statuses; reason texts with live memory figures do not count). A Dismiss
   button puts away a refusal the standing readiness cannot see (the chosen file, the backend's reply).
 - **B5:** the run state flashed the previous run's end state for 7-18 ms between Starting and Running;
-  Starting now lasts until the status after the reply is set.
+  Starting now lasts until the status after the reply is set. A refused reply ends Starting at once, so
+  the badge does not say Starting behind the refusal dialog or the late Latest Frame question (#891
+  review, 2026-11-06).
 - **B6:** the outcome sentence showed the persisted count as "admitted" for ~20 ms; it is not shown
   until the run's accounting read is back (or failed), at most 5 s. A read cut short by a remount
   (StrictMode) is read again.
