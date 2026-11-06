@@ -227,7 +227,7 @@ static_assert(static_cast<std::uint32_t>(mcs::O::RunMismatch) == 3);
 static_assert(static_cast<std::uint32_t>(mcs::O::NotFound) == 4);
 static_assert(static_cast<std::uint32_t>(mcs::O::LimitReached) == 5);
 static_assert(static_cast<std::uint32_t>(mcs::O::CaptureMismatch) == 6);
-// ABI 45 (#866 MON-052/053): the strip is 25 cells (Qt's MAX_FRAMES_TO_SHOW) and the invalid strip
+// ABI next (#880, set at merge) (#866 MON-052/053): the strip is 25 cells (Qt's MAX_FRAMES_TO_SHOW) and the invalid strip
 // has the same bounds and its own byte cap.
 static_assert(mcs::Store::kStripMaxCells == 25);
 static_assert(mcs::Store::kStripMaxBytes == 4194304);
@@ -2715,7 +2715,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 45; }
+std::uint32_t bridge_abi_version() { return 44; }
 
 } // namespace mib_bridge
 

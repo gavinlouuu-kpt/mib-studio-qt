@@ -1300,7 +1300,7 @@ mod tests {
                 "rows carry capture_epoch as a string");
 
         let listing = reply("fetch_monitoring_cells", Value::Null);
-        // ABI 45: the invalid strip is listed beside the strip (here the blobs are all valid), and
+        // ABI next (#880, set at merge): the invalid strip is listed beside the strip (here the blobs are all valid), and
         // every cell carries its reasons ([] for a valid one).
         assert!(listing["invalid_strip"].as_array().is_some_and(|a| a.is_empty()), "{listing}");
         assert_eq!(listing["caps"]["invalid_strip_max_cells"], json!(25));
@@ -1534,7 +1534,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

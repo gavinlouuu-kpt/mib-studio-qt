@@ -469,7 +469,7 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   published capture epoch). Visitors
   may only copy scalars and cv::Mat headers (refcount shares of frozen
   images); the bridge snapshot uses it for POD rows instead of copying the
-  whole ring (`visitMonitoringNewestPerRing(maxValid, maxInvalid, visit)`, ABI 45, gives
+  whole ring (`visitMonitoringNewestPerRing(maxValid, maxInvalid, visit)`, ABI next (#880, set at merge), gives
   each ring a budget of its own under one lock hold: the valid and the invalid strip's one read),
   and [[MonitoringCellStore]]'s source uses it to find rows and
   share their images, cropping outside the lock and giving the shares back

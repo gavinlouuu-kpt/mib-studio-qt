@@ -819,7 +819,7 @@ diagnostics::MemoryOwnerStats MonitoringCellStore::memoryStats() const
     o.capacityCount = policy_.stripMaxCells + policy_.invalidStripMaxCells + policy_.maxPins;
     o.evictedByBudget = counters_.stripEvicted + counters_.invalidStripEvicted;
     o.note = "owned crops of the live valid and invalid detected-cell strips and the pinned cells (bridge ABI 41, "
-             "invalid strip ABI 45); a pinned strip cell has a copy of its own in each (#789)";
+             "invalid strip ABI next (#880, set at merge)); a pinned strip cell has a copy of its own in each (#789)";
     return o;
 }
 

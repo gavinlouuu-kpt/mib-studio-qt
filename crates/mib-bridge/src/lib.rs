@@ -1328,7 +1328,7 @@ pub mod ffi {
         /// ABI 41 (#716 A6a): the live cell strip and pins as JSON (bridge-contract.json
         /// `monitoring_cells`): brings the strip up to date with the monitoring ring first (at
         /// most the strip caps of new crops, off the hot path), then lists the strip, the invalid
-        /// strip (ABI 45: each invalid cell with its rejection `reasons`) and the pins, metadata
+        /// strip (ABI next (#880, set at merge): each invalid cell with its rejection `reasons`) and the pins, metadata
         /// only. `{"valid": false}` before init.
         fn fetch_monitoring_cells(self: Pin<&mut BackendBridge>) -> String;
         /// Pin the row `(expected_start_generation, capture_epoch, frame_index, object_id)`: an

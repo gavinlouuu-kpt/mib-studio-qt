@@ -2,7 +2,7 @@
 
 > Backend-owned, bounded per-row cell images for the live Monitoring / Live views (bridge ABI 41,
 > #716 A6a): a strip of the most recently detected valid cells, a strip of the most recent invalid
-> ones with the reasons they failed validation (ABI 45, #866) and the operator's pins, each an
+> ones with the reasons they failed validation (ABI next (#880, set at merge), #866) and the operator's pins, each an
 > owned crop (and mask) that outlives the monitoring ring. Every shell reads the same copies; pixels
 > travel as frame packets, never in JSON.
 
@@ -40,7 +40,7 @@
   bytes are 3.1 MiB, inside the cap), every eviction counts in `stripEvicted` /
   `invalidStripEvicted`. A batch that raced a capture change, a `beginRun` or a `clearStrip` is
   discarded. The strip never holds an invalid row and the invalid strip never a valid one.
-- **Invalid strip and reasons (ABI 45, #866 MON-053).** The ring's invalid half (every detection that
+- **Invalid strip and reasons (ABI next (#880, set at merge), #866 MON-053).** The ring's invalid half (every detection that
   failed validation, a frame with no contour among them) feeds a second deque with the strip's rules.
   Each invalid cell carries `reasons`: `{code, value, min, max}` per failed gate, derived by
   `monitoringCellReasons` over the shared `science::classifyInvalidReasons` (the classifier the live
@@ -126,7 +126,7 @@
 `unpin` → `ReadResult{ok, captureMismatch, message}`, `clearPins`,
 `advanceCapture(reason[, cameraSessionFloor])` → the new epoch, `currentCapture()`, `noteRows`,
 `listing()` → `Listing{scopeGeneration, ringGeneration, ringCaptureEpoch (the current capture),
-revision, strip, invalidStrip (ABI 45), pins (ended ones without an image), lastCaptureChange, stats,
+revision, strip, invalidStrip (ABI next (#880, set at merge)), pins (ended ones without an image), lastCaptureChange, stats,
 policy}`, free `monitoringCellReasons` / `monitoringReasonName`,
 `image(key, mask, out, info)` → `ReadResult` (a private copy of the owned crop, or the refusal with
 its reason), `stats`, `memoryStats` (owner `monitoring.cellStore`), static `cropRect`, and the test
@@ -185,7 +185,7 @@ they serve). `MonitoringCellSource` is the seam (`currentCaptureEpoch`, `publish
   and p99 200–218 ns with a client polling (round 2: 104–106 / 187–207); realtime throughput ratio
   0.94–1.04 over six runs on a loaded host (load average 14–20), median ~0.99.
   `processing.monitoring_cell_concurrency` (TSan lane) races the real realtime loop against two strip
-  clients, a snapshot reader, a pinner, a run switcher and (ABI 45) a config switcher that toggles an
+  clients, a snapshot reader, a pinner, a run switcher and (ABI next (#880, set at merge)) a config switcher that toggles an
   area gate no blob passes, so the invalid half fills and the reasons are derived while the config is
   replaced.
 
@@ -213,7 +213,7 @@ they serve). `MonitoringCellSource` is the seam (`currentCaptureEpoch`, `publish
   arriving** ends the capture; frames of a closed camera session never adopt the next capture),
   `processing.monitoring_cell_concurrency`, `performance.monitoring_cell_hot_path`; Rust
   `contract.rs` `monitoring_cells_end_to_end` (an ROI change refuses the old images, ends the pin),
-  ABI 45: `backend.monitoring_cell_store` (invalid admission and separation, each code's value and
+  ABI next (#880, set at merge): `backend.monitoring_cell_store` (invalid admission and separation, each code's value and
   range, caps and byte cap of its own, run context, capture change, clear, pins carrying reasons,
   the classifier parity grid), `e2e.monitoring_cells_facade` section 7, `contract.rs`
   `monitoring_invalid_cells_end_to_end`,

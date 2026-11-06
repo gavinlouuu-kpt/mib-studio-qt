@@ -620,7 +620,7 @@ Start check). Contract section `calibration_records`, enums `calibration_record_
   `calibration_records_over_the_websocket`; `calibrationRecords.test.ts`; C++
   `backend.calibration_record`, `e2e.calibration_run`.
 
-## ABI 45: the invalid-cell strip and rejection reasons (#866 MON-052/053)
+## ABI next (#880, set at merge): the invalid-cell strip and rejection reasons (#866 MON-052/053)
 
 Additive over ABI 44, no new command: `fetch_monitoring_cells` gains `invalid_strip` beside `strip`
 (the most recent INVALID cells of the current run context and capture, oldest -> newest, each with a
@@ -634,8 +634,8 @@ the frontend owns the short labels. `strip_max_cells` is 25 (was 24: the Qt tab'
 `last_capture_change.invalid_strip_dropped`. `fetch_monitoring_cell_packet` serves an invalid cell's
 image and mask like a strip cell's; a pin of an invalid cell carries its reasons; `monitoring_clear`
 and a capture change empty it. Contract text: `monitoring_cells.invalid_strip` / `reasons`. See
-[[../services/MonitoringCellStore]]. **Touched:** `bridge-contract.json` (abi_version 45, caps,
-`reason_codes`, prose), `shim.cpp` (`static_assert`s, `bridge_abi_version` 45), `lib.rs` (doc),
+[[../services/MonitoringCellStore]]. **Touched:** `bridge-contract.json` (abi_version: the next number at merge, caps,
+`reason_codes`, prose), `shim.cpp` (`static_assert`s, `bridge_abi_version`, next at merge), `lib.rs` (doc),
 `scripts/gen_bridge_contract.py` (`MONITORING_CELL_REASON_CODES`), `desktop/src/bridgeContract.ts`.
 **Tests:** `contract.rs` `abi_version_is_stable`, `monitoring_cells_are_described` (caps, `reason_codes`),
 `monitoring_invalid_cells_end_to_end` (blob frames rejected by the area gate: reasons with value and
@@ -703,8 +703,8 @@ click-to-pin without the client holding pixels or racing ring eviction.
   other rule). Pins belong to the capture that made them: at the moment the capture changes the
   strip is cleared and the pins keep their measurements only; a run reaching Active drops them.
 - **Caps** (`monitoring_cells`, `static_assert`ed in `shim.cpp`, generated into
-  `MONITORING_CELLS`): strip 25 cells (24 until ABI 45) / 4 MiB, pins 16 / 4 MiB, crop ≤ 256 px
-  square (margin ≥ 8), row index 4096; ABI 45 adds the invalid strip's 25 cells / 4 MiB. Every reply
+  `MONITORING_CELLS`): strip 25 cells (24 until ABI next (#880, set at merge)) / 4 MiB, pins 16 / 4 MiB, crop ≤ 256 px
+  square (margin ≥ 8), row index 4096; ABI next (#880, set at merge) adds the invalid strip's 25 cells / 4 MiB. Every reply
   is bounded by them.
 - **Gating.** `monitoring_cell_pin`, `monitoring_cell_unpin` and `monitoring_cell_clear_pins` are
   in the server's `CONTROL_COMMANDS` (a viewer gets `VIEWER_ONLY`): the pins are one shared,

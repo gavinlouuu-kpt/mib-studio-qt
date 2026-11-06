@@ -11,7 +11,7 @@
 //     current context: rows of the active run while one runs, rows detected
 //     outside a run otherwise (a row of another run is dropped at the next
 //     refresh), and only of the current capture (see below).
-//   - the invalid strip (bridge ABI 45): the same for the most recently
+//   - the invalid strip (bridge ABI next (#880, set at merge)): the same for the most recently
 //     detected INVALID cells (the monitoring ring's invalid half), with its
 //     own count and byte caps, and per cell the reasons the detection failed
 //     validation (science::classifyInvalidReasons, the classifier the live
@@ -261,7 +261,7 @@ public:
     // (image + mask) are 3.1 MiB, inside the byte cap.
     static constexpr std::size_t kStripMaxCells = 25;
     static constexpr std::uint64_t kStripMaxBytes = 4ull * 1024 * 1024;
-    // The invalid strip (ABI 45): the same bounds, its own byte cap.
+    // The invalid strip (ABI next (#880, set at merge)): the same bounds, its own byte cap.
     static constexpr std::size_t kInvalidStripMaxCells = 25;
     static constexpr std::uint64_t kInvalidStripMaxBytes = 4ull * 1024 * 1024;
     static constexpr std::size_t kMaxPins = 16;

@@ -1441,7 +1441,7 @@ namespace backend::bridge
                 {"youngs_modulus", finiteOrNull(m.youngsModulus)},
                 {"pixel_to_micron", finiteOrNull(m.pixelToMicron)},
             };
-            // Why an invalid cell failed validation (ABI 45): the shared classifier's codes, each with the
+            // Why an invalid cell failed validation (ABI next (#880, set at merge)): the shared classifier's codes, each with the
             // measured value and the configured range; [] for a valid cell.
             nlohmann::json reasons = nlohmann::json::array();
             for (const auto &r : c.reasons)
