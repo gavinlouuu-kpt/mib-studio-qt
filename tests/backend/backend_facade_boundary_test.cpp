@@ -128,8 +128,22 @@ int main()
         std::mutex eventsMutex;
         std::atomic<int> lockedPhases{0};
         std::atomic<bool> mutationAccepted{false};
+        // #863 CONNECT-013/019: while the run Starts or Stops (data being saved) the camera source and the delivery
+        // mode cannot change (Qt: the experiment guard and flushInProgress_).
+        std::atomic<int> cameraRefusals{0};
+        std::atomic<bool> cameraGuardBroken{false};
         facade.setEventSink([&](const bridge::BackendEvent &event) {
             if (const auto* status = std::get_if<bridge::ExperimentStatusEvent>(&event)) {
+                if (status->status.state == backend::app::ExperimentRunState::Starting ||
+                    status->status.state == backend::app::ExperimentRunState::Stopping) {
+                    bridge::CameraCommand mockDuring;
+                    mockDuring.action = bridge::CameraCommandAction::ConfigureMockCamera;
+                    mockDuring.mockFrameDirectory = mockDir.string();
+                    const auto mockResult = facade.dispatch(mockDuring);
+                    const auto deliveryResult = nlohmann::json::parse(facade.setFrameDeliveryModeJson("latestFrame"));
+                    if (mockResult.ok || deliveryResult.at("ok").get<bool>()) cameraGuardBroken.store(true);
+                    else cameraRefusals.fetch_add(1);
+                }
                 if (status->status.state == backend::app::ExperimentRunState::Starting ||
                     status->status.state == backend::app::ExperimentRunState::Stopping) {
                     const std::uint8_t pixel = 17;
@@ -414,6 +428,18 @@ int main()
         }
         if (facade.runStartupDiscoveryJson("start").find("\"accepted\":false") == std::string::npos) return 73;
         {
+            // #863 CONNECT-019: the delivery mode does not change under an Active run (the capture runs, so only the
+            // experiment guard refuses it); the mode stays what it was.
+            const auto before = nlohmann::json::parse(facade.fetchFrameDeliveryModeJson()).at("mode");
+            const auto during = nlohmann::json::parse(facade.setFrameDeliveryModeJson(before == "latestFrame" ? "everyFrame" : "latestFrame"));
+            if (during.at("ok").get<bool>() || nlohmann::json::parse(facade.fetchFrameDeliveryModeJson()).at("mode") != before)
+            {
+                std::cerr << "the delivery mode must not change while the experiment is active: " << during.dump() << "\n";
+                facade.shutdown();
+                return 112;
+            }
+        }
+        {
             // The idle guard refuses review load / close during the run; the experiment's
             // writer handle is never closed or replaced by them (#512 S5).
             bridge::RecordingLoadCommand duringRun;
@@ -513,6 +539,13 @@ int main()
             std::cerr << "Stop after finalization should be NotActive\n";
             facade.shutdown();
             return 27;
+        }
+        if (cameraGuardBroken.load() || cameraRefusals.load() != 2)
+        {
+            std::cerr << "the camera source and the delivery mode must be refused while the run Starts and Stops: refusals="
+                      << cameraRefusals.load() << "\n";
+            facade.shutdown();
+            return 110;
         }
         std::vector<backend::app::ExperimentRunState> seen;
         {

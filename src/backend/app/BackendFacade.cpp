@@ -709,11 +709,10 @@ namespace backend::bridge
         {
             // Qt parity (ConnectTab::onConfigureMock, #863 CONNECT-013): the camera source is not swapped
             // under a live capture or while an experiment holds the camera.
-            if (backend_.capture().isRunning() || app::experimentHoldsCamera(backend_.experiment().state()))
+            if (const std::string message =
+                    app::cameraSourceChangeRefusal(backend_.capture().isRunning(), backend_.experiment().status());
+                !message.empty())
             {
-                const std::string message = backend_.capture().isRunning()
-                    ? "Cannot change camera connection while camera is running. Please stop the camera first."
-                    : "Cannot change camera connection while an experiment is active.";
                 emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
                 return {false, BackendCommandType::Camera, message};
             }
@@ -4273,7 +4272,7 @@ std::string BackendFacade::setFrameDeliveryModeJson(const std::string& mode) {
     };
     if (!initialized_) return refused("Backend is not initialized");
     if (mode != "everyFrame" && mode != "latestFrame") return refused("Unknown frame delivery mode");
-    if (app::experimentHoldsCamera(backend_.experiment().state()))
+    if (app::experimentHoldsCamera(backend_.experiment().status()))
         return refused("Cannot change the delivery mode while an experiment is active.");
     auto& capture = backend_.capture();
     capture.setDeliveryMode(::camera::common::frameDeliveryModeFromString(mode));
