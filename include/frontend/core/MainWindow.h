@@ -95,6 +95,7 @@ public:
 
 private:
     friend struct MainWindowFaultTestAccess;
+    friend struct MainWindowTabSwitchTestAccess; // #899
     void updateExperimentButtonStates();
     // Issue #369: explain blocking readiness gates (with remediation) and
     // return false; true when the snapshot is ready.
@@ -113,6 +114,13 @@ private:
     void updateDeliveryModeBadge();
     void startExperimentServices();
     void stopExperimentServices();
+    // #899: a run that is starting, active or saving reads its frames through realtime processing,
+    // so leaving the Experiment tab must not stop it. True while the window or the coordinator
+    // says such a run exists.
+    bool runOwnsRealtime() const;
+    // Stops the realtime processing kept for a run once the run is over, if the Experiment and
+    // Overview tabs are still not shown.
+    void releaseRealtimeHeldForRun();
     void setupCornerWidgets();
     void setupSidebar();
     void restoreWindowGeometry();
@@ -142,6 +150,9 @@ private:
     uint64_t experimentStartTimeNs_{0};
     bool experimentActive_{false};
     bool experimentServicesActive_{false};
+    // #899: the tab was left during a run, so only the view paused; realtime processing still
+    // runs for the run and is stopped by releaseRealtimeHeldForRun() when the run is over.
+    bool realtimeHeldForRun_{false};
     bool flushInProgress_{false}; // mirrors ExperimentStatus::flushing
     QAction* startExperimentAct_ = nullptr;
     QAction* stopExperimentAct_ = nullptr;

@@ -143,6 +143,7 @@ struct MonitoringCellCandidate {
     MonitoringCellMetrics metrics;
     cv::Mat image; // read-only share; empty when the row has no image (PL rows); see releaseShares
     cv::Mat mask;  // read-only share of the processed mask; may be empty
+    bool imageReleased{false}; // the ring gave this row's images up to its byte budget (#857)
 };
 
 // Where the store reads rows from: the monitoring ring (ProcessingService) in

@@ -254,6 +254,21 @@ ring-ratio thresholds where this tab uses the live processing config.
 
 ## Gotchas
 
+- **Teardown under an accessibility client (#859).** A UI Automation client
+  (screen reader, IME, a test driver) makes Qt keep one accessible interface
+  per metrics-table cell it visited, each holding a `QPersistentModelIndex`.
+  Released one by one by the dying `QTableView`, they cost more than the
+  square of the cell count (Qt 6, measured: 6,275 cells 3.9 s, 12,525 cells
+  28.6 s, 25,025 cells 284 s). On the bench a 3,000-cell file kept the main
+  thread at 100% after `AppBackend: shutdown complete` and the process never
+  exited. The destructor therefore first resets both metrics models
+  (`setSource(nullptr)`) and detaches them from the views, while models,
+  views and frame vectors are alive; a reset invalidates every persistent
+  index in one pass. Guard: `frontend.hdf_review_a11y_teardown`.
+- The "HDF5 file ... has 2 open objects before close" warning on every
+  export is the export's own reader counting the Review tab's handle on the
+  same file (`H5Fget_obj_count(..., H5F_OBJ_ALL)` without `H5F_OBJ_LOCAL`);
+  it is not a leak and not related to #859.
 - Multi-image series (4D dataset) need `readSeriesImagesByIndex` — not the
   flat `readImageByIndex`.
 - During `Export All`, the series prompt applies one range selection across

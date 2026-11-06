@@ -7,7 +7,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import appSource from "../App.tsx?raw";
+// The classic view's source: App.tsx and the area modules it was split into (#869 wave 0).
+const appSource = Object.values(import.meta.glob(["../App.tsx", "../areas/**/*.tsx"], { query: "?raw", import: "default", eager: true }) as Record<string, string>).join("\n");
 
 let state: { clientId?: number; controllerId?: number | null } = {};
 let hasSession = true;

@@ -46,6 +46,9 @@ This folder hosts living documentation as we build functionality. Keep content c
   [howto/dot-grid-mask-generation.md](howto/dot-grid-mask-generation.md)
 - Branching model & release pipeline (develop → main) — see
   [howto/branching-and-releases.md](howto/branching-and-releases.md)
+- Desktop (Tauri) classic view: area owners, seams and rules — see
+  [howto/desktop-area-ownership.md](howto/desktop-area-ownership.md); the parity program —
+  [exec-plans/active/2026-11-05-tauri-parity-program.md](exec-plans/active/2026-11-05-tauri-parity-program.md)
 - Build a branch with the real eGrabber SDK on the Windows camera PC (bench-test
   camera/capture PRs before merge) — see
   [howto/win11-bench-build.md](howto/win11-bench-build.md)

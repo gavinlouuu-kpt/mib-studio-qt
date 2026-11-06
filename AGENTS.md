@@ -25,7 +25,7 @@ Details: [`Overview`](knowledge_map/architecture/Overview.md), [`Threading-Model
 
 | Task | Start here |
 |------|------------|
-| A backend service / a frontend tab | `knowledge_map/services/<Name>Service.md` / `knowledge_map/frontend/` |
+| A backend service / a frontend tab | `knowledge_map/services/<Name>Service.md` / `knowledge_map/frontend/`; desktop (Tauri) area owners: [`desktop-area-ownership`](docs/howto/desktop-area-ownership.md) |
 | Build, run modes, dependencies, assets | [`knowledge_map/build-and-run/Build.md`](knowledge_map/build-and-run/Build.md) |
 | Code and logging conventions | [`knowledge_map/conventions/Code-Conventions.md`](knowledge_map/conventions/Code-Conventions.md) |
 | How-tos, ADRs, execution plans, known debt | [`docs/README.md`](docs/README.md), [`docs/decisions/README.md`](docs/decisions/README.md), [`docs/exec-plans/README.md`](docs/exec-plans/README.md), [`tech-debt-tracker`](docs/exec-plans/tech-debt-tracker.md) |
@@ -110,7 +110,7 @@ text file I/O (`open`, `read_text`, `write_text`).
 - Headers mirror source layout under `include/`.
 - Review existing `Tools` ([`src/backend/app/Tools.cpp`](src/backend/app/Tools.cpp)) before writing new utilities.
 - Prefer ready-made EGrabber SDK patterns over hand-rolled camera code.
-- Runtime data (logs, sqlite, HDF5, mock frames) lives under `data/`.
+- Runtime state lives in `AppBackend::dataDir()`, never the exe dir ([rule](knowledge_map/architecture/AppBackend.md#data-directory-rig-check-f1-2026-11-06)).
 - Test performance metrics go to MLflow at `mlflow.yofo.bio` via
   `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` env vars (never hardcode).
 - **Bench-test camera, capture and eGrabber PRs before merging.** A PR touching `src/backend/camera*`,

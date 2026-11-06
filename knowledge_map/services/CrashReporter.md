@@ -38,7 +38,9 @@
 - On crash: writes `{timestamp}-pid{N}-{reason}.dmp` (Windows) and a
   `.json` sidecar containing the current
   [[../diagnostics/CrashStateMirror]] snapshot under
-  `%LOCALAPPDATA%/MIB_Studio_Qt/crashes/`.
+  `%LOCALAPPDATA%/MIB_Studio_Qt/crashes/` (Windows; `<data dir>/crashes`
+  elsewhere). `main.cpp` passes `Layout::crashDir` from the data-dir rule
+  (`backend/app/DataDirectory.h`, [[../architecture/AppBackend]]).
 - On startup (when `uploadPendingOnStart` is true):
   1. **Legacy recovery:** every earlier "assumed delivered" state —
      `.dmp.uploaded` (pre-#345), `.dmp.queued` and `.dmp.queued2` (the

@@ -21,11 +21,18 @@ capture source file/line info.
 
 ## Log file location
 
-`AppBackend::initialize` picks a user-writable location:
+`AppBackend::initialize` writes to `backend::app::datadir::logDirFor(dataDir)`
+(`include/backend/app/DataDirectory.h`, the data-dir rule of
+[[../architecture/AppBackend]]); `AppBackend::logDir()` reports it and
+File ▸ Open Logs Folder opens it:
 
 - Default: `<dataDir>/logs/app.log`.
-- On Windows, if `dataDir` is under `Program Files`, fall back to
-  `%LOCALAPPDATA%/MIB_Studio_Qt/logs/app.log`.
+- On Windows, when `dataDir` is the user-local
+  `%LOCALAPPDATA%/MIB_Studio_Qt/data` (every Program Files install) or is still
+  under `Program Files`: `%LOCALAPPDATA%/MIB_Studio_Qt/logs/app.log`.
+- The first lines name the data dir and why (`AppBackend: data dir ... (user-local:
+  installed under Program Files ...)`) and every state entry migrated from the
+  old `<exe dir>/data`.
 
 ## Conventions
 
