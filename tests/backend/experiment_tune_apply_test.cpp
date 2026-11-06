@@ -93,18 +93,21 @@ int main() {
         using State = app::ExperimentRunState;
         std::string why;
         for (const auto state : {State::Idle, State::Starting, State::Stopping, State::Failed}) {
-            MIB_EXPECT(!app::ExperimentCoordinator::midRunTuneAllowed(state, true, false, true, &why),
+            MIB_EXPECT(!app::ExperimentCoordinator::midRunTuneAllowed(state, true, false, true, false, &why),
                        "only an Active run is tuned mid-run");
         }
-        MIB_EXPECT(!app::ExperimentCoordinator::midRunTuneAllowed(State::Active, false, false, true, &why),
+        MIB_EXPECT(!app::ExperimentCoordinator::midRunTuneAllowed(State::Active, false, false, true, false, &why),
                    "an Active state without a run is refused");
-        MIB_EXPECT(!app::ExperimentCoordinator::midRunTuneAllowed(State::Active, true, true, true, &why) &&
+        MIB_EXPECT(!app::ExperimentCoordinator::midRunTuneAllowed(State::Active, true, true, true, false, &why) &&
                        why.find("stopped") != std::string::npos,
                    "an Active run that is being stopped is refused, saying so");
-        MIB_EXPECT(!app::ExperimentCoordinator::midRunTuneAllowed(State::Active, true, false, false, &why) &&
+        MIB_EXPECT(!app::ExperimentCoordinator::midRunTuneAllowed(State::Active, true, false, false, false, &why) &&
                        why.find("PL") != std::string::npos,
                    "a PL instrument is refused, saying so");
-        MIB_EXPECT(app::ExperimentCoordinator::midRunTuneAllowed(State::Active, true, false, true, &why) &&
+        MIB_EXPECT(!app::ExperimentCoordinator::midRunTuneAllowed(State::Active, true, false, true, true, &why) &&
+                       why.find("calibration") != std::string::npos,
+                   "a calibration method's run is refused, saying so (#879 review)");
+        MIB_EXPECT(app::ExperimentCoordinator::midRunTuneAllowed(State::Active, true, false, true, false, &why) &&
                        why.empty(),
                    "an Active host-processed run that is not stopping is tuned");
     }
