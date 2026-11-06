@@ -20,6 +20,13 @@ namespace backend::app {
 
 void recordStartupProfile(AppBackend& backend, const std::string& base, const std::string& name,
                           const std::string& revision);
+// #863: a camera-window edit rewrote the applied profile's config.json, which changes its
+// revision. When the pointer still names exactly this profile (folder, name, old revision), it
+// follows to the new revision, so the next start restores the edited profile instead of refusing a
+// "changed" one. Anything else in the pointer (another profile, a central method) is left alone.
+// Returns whether the pointer was rewritten.
+bool updateStartupProfileRevision(AppBackend& backend, const std::string& base, const std::string& name,
+                                  const std::string& oldRevision, const std::string& newRevision);
 void recordStartupCentralMethod(AppBackend& backend, const std::string& revisionId,
                                 const std::string& configSha256);
 

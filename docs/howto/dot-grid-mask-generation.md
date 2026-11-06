@@ -134,8 +134,9 @@ python3 dotgrid_cli.py mockdir wafer-sort-rt data/mock_frames/dotgrid \
 MIB_CAMERA_MODE=mock MIB_MOCK_CAMERA_DIR=data/mock_frames/dotgrid ./mib_studio_qt
 ```
 
-Open the **Overview** tab and press **Wafer Grid** (or set
-`dot_grid.enabled: true` in `config.json`). Localization runs only while the
+Open the **Overview** tab and press **Wafer Grid** (or, in the Qt app, set
+`dot_grid.enabled: true` in `config.json`; the Tauri desktop app has the button
+only). Localization runs only while the
 Overview is on screen; the Experiment tab never decodes. The overlay shows the
 design name and chip next to the pose.
 `truth.json` next to the frames records the rendered poses and design.

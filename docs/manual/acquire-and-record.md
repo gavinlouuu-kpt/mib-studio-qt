@@ -88,7 +88,8 @@ identify the chip design, the chip (die), and the absolute wafer position.
 It is an alignment aid on **Overview**, separate from cell processing.
 
 1. Start Live View and keep **Overview** visible.
-2. Click **Wafer Grid: Off** beside the ROI controls. The button changes to
+2. Click **Wafer Grid: Off** beside the ROI controls (in the toolbar after the
+   camera-window or ROI fields in the MIB Studio desktop app). The button changes to
    **Wafer Grid: On**. Click it again to turn localization off.
 3. Bring a region containing several rows and columns of fiducial dots into
    clear focus. Localization samples the latest frame periodically (by
@@ -122,7 +123,8 @@ If it does not lock:
   accepted; try another fiducial area. If it persists, ask the instrument
   maintainer to check the design registry.
 - **Dot-grid localization is not available: …** — the toggle was rejected;
-  use the reason in the dialog when reporting the problem.
+  use the reason in the dialog (in the desktop app: the red line under the
+  Overview toolbar) when reporting the problem.
 
 An unsuccessful decode shows the reason and dot count in red text, without
 valid dot/centre markers. Localization pauses when Overview is hidden,
@@ -130,6 +132,13 @@ including when you switch to **Experiment**. It does not decode alongside
 experiments, even if **Wafer Grid: On** remains selected; returning to
 Overview resumes localization. Overview is unavailable while an experiment
 is active; stop the experiment before returning to alignment.
+
+The Tauri desktop app (MIB Studio) has the same **Wafer Grid** button, the same
+overlay on the live image and the same messages. It decodes against the
+design registry built into the app, so a locally installed registry or the
+`dot_grid` section of a profile's `config.json` has no effect there: switch
+localization on with the button. The button is not shown on a PZ7035 (its Align
+view does not come from the host's frame buffer).
 
 ## Illuminated Live View — MindVision camera and LED strobe
 

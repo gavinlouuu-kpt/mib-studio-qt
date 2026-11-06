@@ -67,6 +67,7 @@ public:
     BridgeCommandResult configure_mock_camera(rust::Str frame_dir,
                                               std::int32_t frame_interval_ms,
                                               bool loop_files);
+    BridgeCommandResult configure_mock_camera_fps(rust::Str frame_dir, double frames_per_second, bool loop_files);
     BridgeCommandResult start_capture();
     BridgeCommandResult stop_capture();
     BridgeCommandResult start_frame_recording(rust::Str file_path);
@@ -136,6 +137,8 @@ public:
     rust::String startup_discovery_set_preference(rust::Str json);
     rust::String startup_discovery_run(rust::Str action);
     rust::String startup_discovery_status();
+    rust::String fetch_frame_delivery_mode();
+    rust::String set_frame_delivery_mode(rust::Str mode);
     BridgeCommandResult pulse_generator_command(rust::Str json);
     rust::String pulse_generator_status();
 
@@ -197,11 +200,20 @@ public:
                                                  rust::Str label,
                                                  rust::Str config_path);
     BridgeCommandResult apply_camera_script(rust::Str script_path);
+    BridgeCommandResult apply_camera_script_with_role(rust::Str script_path, bool overview);
+    rust::String save_camera_window(rust::Str script_path, std::int32_t x, std::int32_t y, std::int32_t width,
+                                    std::int32_t height);
+    rust::String fetch_recording_capacity(bool planned, std::int32_t x, std::int32_t y, std::int32_t width,
+                                          std::int32_t height);
     BridgeCommandResult reset_hardware_camera();
     BridgeCommandResult soft_trigger_camera();
     BridgeCommandResult set_camera_overview(bool overview);
     BridgeCommandResult save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width, std::int32_t height);
     rust::String fetch_camera_geometry();
+    // ABI next (#878, set at merge) (CONNECT-054): Wafer Grid on the Overview (bridge-contract.json dot_grid).
+    BridgeCommandResult set_dot_grid_enabled(bool enabled);
+    BridgeCommandResult set_dot_grid_paused(bool paused);
+    rust::String fetch_dot_grid_pose(std::uint64_t since_sequence);
     rust::String fetch_platform_info();
     rust::String fetch_run_accounting(rust::Str source);
     BridgeCommandResult set_instrument_mode(rust::Str mode, std::int32_t x, std::int32_t y);

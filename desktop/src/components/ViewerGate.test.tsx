@@ -130,8 +130,8 @@ describe("the classic view gates its control commands", () => {
   it.each([
     "onClick={onStartCamera}", "onClick={onStopCamera}", "<CaptureRecovery", "<ExperimentRecovery", "<ExportStatus", "<ReanalysisStatus",
     "<HardwareControls", "<StageControls", "onClick={refreshCameraState}", "onClick={onConnectPicked}", "onClick={() => setShowMockConfig(true)}",
-    "void saveCameraWindow(cameraWindow)", "onClick={onApplyRoi}", "<CameraScriptControls", "<CameraDocumentEditor",
-    "onClick={onStartExperiment}", "onClick={onStopExperiment}", "<RunRateControl", "<ProcessingSetupControls", "onClick={onToggleRecord}",
+    "void saveCameraWindow(cameraWindow)", "onClick={onApplyRoi}", "<CameraScriptControls", "<CameraDocumentEditor", "<OverviewScriptEditor",
+    "onClick={() => void onToggleWaferGrid()}", "onClick={onStartExperiment}", "onClick={onStopExperiment}", "<RunRateControl", "<ProcessingSetupControls", "onClick={onToggleRecord}",
     "<PreviewBufferControls", "<BackgroundCalibrationControls", "<CoreManagementPanel", "<ProfilesPanel", "<ConfigDocumentEditor",
     "bridge.monitoringClear()", "bridge.triggerManualPulse()", "bridge.triggerSetPulseDuration(", "bridge.triggerPeriodicStart(",
     "onClick={onSelectHdf}", "}}>Close File</button>", "reviewExport.start(", "<ReanalysisControls",

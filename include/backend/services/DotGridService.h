@@ -83,6 +83,12 @@ public:
 
     using PoseCallback = std::function<void(const Pose&)>;
 
+    // The design registry compiled into this build (resources/defaults/dot_grid/registry.json,
+    // the file the Qt shell reads from its resource system). For shells without Qt resources
+    // (Tauri, the bridge server). Parsed once and shared; null with `errorOut` set when the
+    // embedded document is rejected.
+    static std::shared_ptr<const dotgrid::Registry> bundledRegistry(std::string* errorOut = nullptr);
+
     DotGridService();
     ~DotGridService();
 
@@ -115,7 +121,8 @@ public:
     void stop();
     bool isRunning() const { return running_.load(std::memory_order_acquire); }
 
-    // Latest decode outcome (valid or not); false if nothing decoded yet.
+    // Latest decode outcome (valid or not); false if nothing decoded yet or since the service was
+    // last switched on (setConfig with enabled false -> true forgets the earlier pose).
     bool getLatestPose(Pose& out) const;
     // Bumped on every publish: a UI tick compares it before copying a Pose.
     uint64_t poseSequence() const { return poseSequence_.load(std::memory_order_acquire); }

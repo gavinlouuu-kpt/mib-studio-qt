@@ -258,6 +258,8 @@ static_assert(cal::kCalibrationDefaultMaxAgeHours == 24.0);
 static_assert(cal::kCalibrationRateWindowSeconds == 1.0);
 static_assert(cal::kCalibrationRateMinWindows == 3);
 static_assert(cal::kCalibrationStoreMaxVersions == 2048);
+// ABI next (#878, set at merge) (CONNECT-054): Wafer Grid pose document (bridge-contract.json dot_grid).
+static_assert(backend::bridge::BackendFacade::kDotGridMaxDots == 1024);
 // ABI 44 (#716 A7a): the run quick look (bridge-contract.json run_quick_look; backend/review/RunStatistics.h).
 static_assert(backend::review::kRunQuickLookMaxPaths == 32);
 static_assert(backend::review::kRunQuickLookPathMaxBytes == 4096);
@@ -633,6 +635,23 @@ BridgeCommandResult BackendBridge::configure_mock_camera(rust::Str frame_dir,
         return errorResult(std::string("configure_mock_camera: ") + e.what());
     } catch (...) {
         return errorResult("configure_mock_camera: unknown error");
+    }
+}
+
+// ABI next (#896, set at merge) (#863 CONNECT-016): the mock camera's rate in fps (1 to 10000), whole-microsecond interval.
+BridgeCommandResult BackendBridge::configure_mock_camera_fps(rust::Str frame_dir, double frames_per_second,
+                                                             bool loop_files) {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::ConfigureMockCamera;
+        cmd.mockFrameDirectory = toStd(frame_dir);
+        cmd.mockFramesPerSecond = frames_per_second;
+        cmd.mockLoopFiles = loop_files;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) {
+        return errorResult(std::string("configure_mock_camera_fps: ") + e.what());
+    } catch (...) {
+        return errorResult("configure_mock_camera_fps: unknown error");
     }
 }
 
@@ -1427,6 +1446,9 @@ rust::String BackendBridge::startup_discovery_set_preference(rust::Str json) {
 
 rust::String BackendBridge::startup_discovery_run(rust::Str action) { return rust::String(impl_->facade.runStartupDiscoveryJson(toStd(action))); }
 rust::String BackendBridge::startup_discovery_status() { return rust::String(impl_->facade.fetchStartupDiscoveryStatusJson()); }
+// ABI next (#895, set at merge) (#863 CONNECT-019/020): the capture delivery mode (Every Frame / Latest Frame).
+rust::String BackendBridge::fetch_frame_delivery_mode() { return rust::String(impl_->facade.fetchFrameDeliveryModeJson()); }
+rust::String BackendBridge::set_frame_delivery_mode(rust::Str mode) { return rust::String(impl_->facade.setFrameDeliveryModeJson(toStd(mode))); }
 
 BridgeCommandResult BackendBridge::pulse_generator_command(rust::Str json) {
     try { return toBridgeResult(impl_->facade.pulseGeneratorCommandJson(toStd(json))); }
@@ -2100,6 +2122,38 @@ BridgeCommandResult BackendBridge::apply_camera_script(rust::Str script_path) {
     }
 }
 
+BridgeCommandResult BackendBridge::apply_camera_script_with_role(rust::Str script_path, bool overview) {
+    try {
+        backend::bridge::CameraCommand cmd;
+        cmd.action = backend::bridge::CameraCommandAction::ApplyCameraScript;
+        cmd.cameraScriptPath = toStd(script_path);
+        cmd.cameraScriptOverview = overview;
+        return toBridgeResult(impl_->facade.dispatch(cmd));
+    } catch (const std::exception& e) {
+        return errorResult(std::string("apply_camera_script_with_role: ") + e.what());
+    } catch (...) {
+        return errorResult("apply_camera_script_with_role: unknown error");
+    }
+}
+
+rust::String BackendBridge::save_camera_window(rust::Str script_path, std::int32_t x, std::int32_t y,
+                                               std::int32_t width, std::int32_t height) {
+    try {
+        return rust::String(impl_->facade.saveCameraWindowJson(toStd(script_path), x, y, width, height));
+    } catch (...) {
+        return rust::String("{\"ok\":false,\"error\":\"save_camera_window: unknown error\"}");
+    }
+}
+
+rust::String BackendBridge::fetch_recording_capacity(bool planned, std::int32_t x, std::int32_t y, std::int32_t width,
+                                                     std::int32_t height) {
+    try {
+        return rust::String(impl_->facade.fetchRecordingCapacityJson(planned, x, y, width, height));
+    } catch (...) {
+        return rust::String("{\"busy\":false,\"known\":false,\"planned\":false,\"status\":\"unknown\",\"gates\":[]}");
+    }
+}
+
 BridgeCommandResult BackendBridge::soft_trigger_camera() {
     try {
         backend::bridge::CameraCommand cmd;
@@ -2288,6 +2342,31 @@ rust::String BackendBridge::fetch_camera_geometry() {
         return rust::String(impl_->facade.fetchCameraGeometryJson());
     } catch (...) {
         return rust::String("{\"supported\":false}");
+    }
+}
+
+// ABI next (#878, set at merge) (CONNECT-054): Wafer Grid. enabled -> loads the bundled design registry when none is
+// configured (the failure text is the command message); paused -> the Overview's on-screen gate.
+BridgeCommandResult BackendBridge::set_dot_grid_enabled(bool enabled) {
+    try {
+        return toBridgeResult(impl_->facade.setDotGridEnabled(enabled));
+    } catch (const std::exception& e) { return errorResult(std::string("set_dot_grid_enabled: ") + e.what()); }
+    catch (...) { return errorResult("set_dot_grid_enabled: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::set_dot_grid_paused(bool paused) {
+    try {
+        return toBridgeResult(impl_->facade.setDotGridPaused(paused));
+    } catch (const std::exception& e) { return errorResult(std::string("set_dot_grid_paused: ") + e.what()); }
+    catch (...) { return errorResult("set_dot_grid_paused: unknown error"); }
+}
+
+rust::String BackendBridge::fetch_dot_grid_pose(std::uint64_t since_sequence) {
+    try {
+        return rust::String(impl_->facade.fetchDotGridPoseJson(since_sequence));
+    } catch (...) {
+        return rust::String("{\"available\":false,\"enabled\":false,\"paused\":true,\"designs\":0,"
+                            "\"sequence\":0,\"has_pose\":false,\"unchanged\":false}");
     }
 }
 
@@ -2706,7 +2785,10 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // the command result and experiment_stop's expected start generation (#741, stop
 // outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
 // run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6); v42 calibration records
-// (#716 A4a); v43 the readiness report's method_calibration (#776). All additive over v1 except that removal (ADR
+// (#716 A4a); v43 the readiness report's method_calibration (#776); v44 run_quick_look (#716 A7a); ABI next (#892, set at merge): the eGrabber
+// camera window (apply_camera_script_with_role, save_camera_window, fetch_recording_capacity and the geometry's
+// window_source/script_role/window_apply, #863); ABI next (#878, set at merge): Wafer Grid (CONNECT-054: set_dot_grid_enabled,
+// set_dot_grid_paused, fetch_dot_grid_pose). All additive over v1 except that removal (ADR
 // 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }

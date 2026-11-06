@@ -5,3 +5,39 @@
   font-size: 0.9em;
   color: var(--muted, #555);
 }
+
+/* Recording capacity panel under the Overview canvas (#863, CONNECT-053). Status is text first; colour only repeats it. */
+.capacity-panel {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  font-size: 13px;
+}
+.capacity-panel ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.capacity-status.blocked, .capacity-gate.blocked { color: var(--err); }
+.capacity-status.warning, .capacity-gate.warn { color: var(--warn); }
+.capacity-status.ok, .capacity-gate.ok { color: var(--ok); }
+.capacity-status.unknown { color: var(--muted); }
+
+/* What entering a stage did to the camera (#846): the script that failed, the window the camera ended up with. */
+.stage-notice {
+  margin: 6px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--border);
+  font-size: 13px;
+}
+.stage-notice.warn { border-left-color: var(--warn); color: var(--warn); }
+.stage-notice.error { border-left-color: var(--err); color: var(--err); }
+
+/* The Overview's own camera script, overviewConfig.js (#863, CONNECT-056..061). */
+.overview-script { margin-top: 10px; }
+.overview-script .overview-script-path { max-width: 40em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; align-self: center; }
+.overview-script-unsaved { color: #d17a00; align-self: center; }
+.overview-script-message { min-height: 1.4em; margin: 4px 0; }
+.overview-script-message.error { color: var(--err); }

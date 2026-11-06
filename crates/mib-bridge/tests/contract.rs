@@ -126,6 +126,13 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
+    // ABI next (#895, set at merge) (#863) fetch_frame_delivery_mode / set_frame_delivery_mode: the Connect stage's delivery mode
+    // (Every Frame / Latest Frame), applied at the next capture start. ABI next (#896, set at merge) (#863): configure_mock_camera_fps: the
+    // mock camera by frame rate (1 to 10000 fps, whole-microsecond interval). ABI next (#892, set at merge) (#863) the eGrabber camera
+    // window: apply_camera_script_with_role, save_camera_window, fetch_recording_capacity and the geometry's window_source /
+    // script_role / window_apply.
+    // ABI next (#878, set at merge) (CONNECT-054) Wafer Grid on the Overview: set_dot_grid_enabled, set_dot_grid_paused,
+    // fetch_dot_grid_pose (DotGridService decoding the live frame against the bundled design registry).
     assert_eq!(ffi::bridge_abi_version(), 44);
 }
 
@@ -505,6 +512,347 @@ fn camera_alignment_commands_without_overview_camera() {
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&data);
+}
+
+// #863 A2: a selected MindVision camera's geometry carries the profile's ISP mirroring and the measured capture rate
+// (additive members, no ABI change). This build has no MindVision SDK, so the staged camera is the mock fallback and no
+// profile is readable: the members are present with their neutral values and the geometry says why there is no ROI.
+#[test]
+#[serial]
+fn mindvision_geometry_carries_mirroring_and_capture_rate() {
+    let data = std::env::temp_dir().join(format!("mib_bridge_mvgeom_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    let selected = bridge.pin_mut().select_mindvision_camera(0, "MindVision test camera", "");
+    assert!(selected.ok, "{}", selected.message);
+    let g: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_camera_geometry()).unwrap();
+    assert_eq!(g["supported"], serde_json::json!(true), "{g}");
+    assert_eq!(g["camera"], serde_json::json!("mindvision"), "{g}");
+    assert_eq!(g["flip_horizontal"], serde_json::json!(false), "{g}");
+    assert_eq!(g["flip_vertical"], serde_json::json!(false), "{g}");
+    assert_eq!(g["capture_fps"], serde_json::json!(0), "{g}");
+    assert!(g["profile_error"].as_str().is_some_and(|e| e.contains("Cannot read MindVision experiment profile")), "{g}");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+// ABI next (#892, set at merge) (#863): the contract describes the eGrabber window functions.
+#[test]
+fn egrabber_window_functions_are_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["camera_alignment"];
+    for (key, needle) in [
+        ("apply_camera_script_with_role", "ABI next (#892, set at merge)"),
+        ("apply_camera_script_with_role", "Overview script applied as is"),
+        ("save_camera_window", "snaps it as Qt does"),
+        ("save_camera_window", "revision the profile store remembers"),
+        ("save_camera_window", "nothing is ever added"),
+        ("fetch_recording_capacity", "never waits behind a Start"),
+        ("fetch_recording_capacity", "camera.window, then camera.rate, storage.buffer, storage.throughput"),
+        ("fetch_camera_geometry", "window_source"),
+        ("fetch_camera_geometry", "window_apply"),
+        ("fetch_camera_geometry", "flip_horizontal"),
+        ("fetch_camera_geometry", "capture_fps"),
+    ] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "camera_alignment.{key} mentions {needle}");
+    }
+}
+
+// ABI next (#892, set at merge) (#863): the camera script roles. Without a hardware camera both roles are refused cleanly
+// (the Overview role through the new function, the Experiment role through both), and the geometry
+// carries its additive members.
+#[test]
+#[serial]
+fn camera_script_roles_without_a_hardware_camera() {
+    let dir = make_frame_dir();
+    let data = std::env::temp_dir().join(format!("mib_bridge_roles_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    assert!(bridge.pin_mut().configure_mock_camera(&dir.to_string_lossy(), 5, true).ok);
+    for overview in [true, false] {
+        let r = bridge.pin_mut().apply_camera_script_with_role("/nonexistent/overview.js", overview);
+        assert!(!r.ok && r.message.contains("No hardware camera selected"), "overview={overview}: {}", r.message);
+    }
+    let r = bridge.pin_mut().apply_camera_script("/nonexistent/experiment.js");
+    assert!(!r.ok && r.message.contains("No hardware camera selected"), "{}", r.message);
+    let g: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_camera_geometry()).unwrap();
+    assert_eq!(g["supported"], serde_json::json!(false), "{g}");
+    assert_eq!(g["window_source"], serde_json::json!("none"), "{g}");
+    assert_eq!(g["script_role"], serde_json::json!(""), "{g}");
+    assert_eq!(g["experiment_script_path"], serde_json::json!(""), "{g}");
+    assert!(g["window_apply"].is_null(), "{g}");
+    assert_eq!(g["illuminated_live"], serde_json::json!(false), "{g}");
+    assert_eq!(g["profile_error"], serde_json::json!(""), "{g}");
+    // #863 A2, additive: the MindVision profile's mirroring and the measured capture rate are always present.
+    assert_eq!(g["flip_horizontal"], serde_json::json!(false), "{g}");
+    assert_eq!(g["flip_vertical"], serde_json::json!(false), "{g}");
+    assert_eq!(g["capture_fps"], serde_json::json!(0), "{g}");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+// ABI next (#892, set at merge) (#863): saving the eGrabber window through the bridge. The window is snapped, the Experiment
+// script rewritten, the applied profile's config.json follows and the startup restore applies the edited
+// window after a restart.
+#[test]
+#[serial]
+fn save_camera_window_end_to_end() {
+    let root = std::env::temp_dir().join(format!("mib_bridge_save_window_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let data = root.join("data");
+    let base = root.join("profiles");
+    std::fs::create_dir_all(&data).unwrap();
+    let base_text = base.to_string_lossy().to_string();
+    let script = "var g = grabbers[0];\ng.RemotePort.set(\"OffsetY\", 616);\ng.RemotePort.set(\"OffsetX\", 368);\n\
+                  g.RemotePort.set(\"Width\", 1216);\ng.RemotePort.set(\"Height\", 208);\n";
+    let config = r#"{"pixel_to_micron_factor":0.42,"camera":{"frame_delivery_mode":"everyFrame","window":{"width":1216,"height":208,"offset_x":368,"offset_y":616,"camera_model":"MC2066"}}}"#;
+
+    let mut bridge = ffi::new_backend_bridge();
+    let early: serde_json::Value = serde_json::from_str(&bridge.pin_mut().save_camera_window("", 0, 0, 512, 96)).unwrap();
+    assert_eq!(early["ok"], serde_json::json!(false), "{early}");
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    let command = |bridge: &mut cxx::UniquePtr<ffi::BackendBridge>, request: serde_json::Value| -> serde_json::Value {
+        serde_json::from_str(&bridge.pin_mut().profile_command(&base_text, &request.to_string())).unwrap()
+    };
+    let created = command(&mut bridge, serde_json::json!({"operation": "create", "name": "lab", "document_json": config, "script": script}));
+    assert_eq!(created["ok"], true, "{created}");
+    let applied = command(&mut bridge, serde_json::json!({"operation": "apply", "name": "lab", "baseline": created["profile"]["revision"]}));
+    assert_eq!(applied["ok"], true, "{applied}");
+
+    let script_path = base.join("lab").join("egrabberConfig.js");
+    let saved: serde_json::Value = serde_json::from_str(&bridge.pin_mut().save_camera_window(
+        &script_path.to_string_lossy(), 371, 203, 1000, 130)).unwrap();
+    assert_eq!(saved["ok"], true, "{saved}");
+    assert_eq!(saved["window"], serde_json::json!({"x": 368, "y": 200, "width": 992, "height": 128}), "{saved}");
+    assert_eq!(saved["requested"], serde_json::json!({"x": 371, "y": 203, "width": 1000, "height": 130}), "{saved}");
+    assert_eq!(saved["snapped"], true, "{saved}");
+    assert_eq!(saved["script"]["changed"], true, "{saved}");
+    assert_eq!(saved["profile"]["config_updated"], true, "{saved}");
+    assert_eq!(saved["profile"]["memory_updated"], true, "{saved}");
+    let text = std::fs::read_to_string(&script_path).unwrap();
+    assert!(text.contains("g.RemotePort.set(\"Width\", 992);") && text.contains("g.RemotePort.set(\"OffsetY\", 200);"), "{text}");
+    let written: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(base.join("lab").join("config.json")).unwrap()).unwrap();
+    assert_eq!(written["camera"]["window"]["width"], 992, "{written}");
+    assert_eq!(written["camera"]["window"]["camera_model"], "MC2066", "{written}");
+    assert_eq!(written["pixel_to_micron_factor"], 0.42, "{written}");
+
+    // Refusals are JSON with the reason, nothing is written.
+    let missing: serde_json::Value = serde_json::from_str(&bridge.pin_mut().save_camera_window(
+        &root.join("gone.js").to_string_lossy(), 0, 0, 512, 96)).unwrap();
+    assert_eq!(missing["ok"], false, "{missing}");
+    assert!(missing["error"].as_str().unwrap().contains("not found"), "{missing}");
+
+    // A restart restores the edited window instead of refusing a changed profile.
+    bridge.pin_mut().shutdown();
+    let mut restarted = ffi::new_backend_bridge();
+    assert!(restarted.pin_mut().initialize(&data.to_string_lossy()));
+    let restored: serde_json::Value = serde_json::from_str(&restarted.pin_mut().restore_startup_configuration("")).unwrap();
+    assert_eq!(restored["ok"], true, "{restored}");
+    assert_eq!(restored["restored"], true, "{restored}");
+    restarted.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// ABI next (#892, set at merge) (#863, CONNECT-053): the recording capacity through the bridge, with the mock camera. Before
+// init and before a window is known it says so; with the Overview's planned window it carries the four
+// gates and the numbers the Qt panel shows.
+#[test]
+#[serial]
+fn recording_capacity_through_the_bridge() {
+    let dir = make_frame_dir();
+    let data = std::env::temp_dir().join(format!("mib_bridge_capacity_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let early: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_recording_capacity(false, 0, 0, 0, 0)).unwrap();
+    assert_eq!((early["busy"].clone(), early["known"].clone(), early["status"].clone()),
+               (serde_json::json!(false), serde_json::json!(false), serde_json::json!("unknown")), "{early}");
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    assert!(bridge.pin_mut().configure_mock_camera(&dir.to_string_lossy(), 5, true).ok);
+
+    // No frame geometry yet and no planned window: not known.
+    let unknown: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_recording_capacity(false, 0, 0, 0, 0)).unwrap();
+    assert_eq!(unknown["known"], false, "{unknown}");
+    assert_eq!(unknown["planned"], false, "{unknown}");
+    // An invalid planned window (no size) is no plan.
+    let invalid: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_recording_capacity(true, 0, 0, 0, 0)).unwrap();
+    assert_eq!(invalid["known"], false, "{invalid}");
+
+    // The Overview's planned window: sized for 1216x208 with the gates in Qt's order.
+    let planned: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_recording_capacity(true, 368, 616, 1216, 208)).unwrap();
+    assert_eq!(planned["busy"], false, "{planned}");
+    assert_eq!(planned["known"], true, "{planned}");
+    assert_eq!(planned["planned"], true, "{planned}");
+    assert_eq!(planned["window"], serde_json::json!({"width": 1216, "height": 208}), "{planned}");
+    let ids: Vec<&str> = planned["gates"].as_array().unwrap().iter().map(|g| g["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["camera.window", "camera.rate", "storage.buffer", "storage.throughput"], "{planned}");
+    for g in planned["gates"].as_array().unwrap() {
+        for key in ["status", "status_name", "reason", "remediation", "detail"] {
+            assert!(g.get(key).is_some(), "gate {g} has {key}");
+        }
+    }
+    assert!(["ok", "warning", "blocked"].contains(&planned["status"].as_str().unwrap()), "{planned}");
+    assert!(planned["bytes_per_frame"].as_u64().unwrap() > 0, "{planned}");
+    assert!(planned["buffer"]["frames"].as_u64().unwrap() > 0, "{planned}");
+    assert!(planned["buffer"]["summary"].as_str().unwrap().contains("frames"), "{planned}");
+    assert!(planned["save_stream"].is_object() && planned["destination"].is_object(), "{planned}");
+    assert_eq!(planned["images_per_frame"], 2, "{planned}");
+    // The planned window decides the frame size: a different window gives a different frame.
+    let other: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_recording_capacity(true, 0, 0, 512, 96)).unwrap();
+    assert_eq!(other["window"], serde_json::json!({"width": 512, "height": 96}), "{other}");
+    assert!(other["bytes_per_frame"].as_u64().unwrap() < planned["bytes_per_frame"].as_u64().unwrap(), "{other}");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+// ABI next (#878, set at merge) (CONNECT-054): the contract describes Wafer Grid and its bound (pinned in shim.cpp).
+#[test]
+fn dot_grid_is_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["dot_grid"];
+    assert_eq!(c["max_dots"], serde_json::json!(1024), "dot_grid.max_dots (pinned in shim.cpp)");
+    for (key, needle) in [("set_dot_grid_enabled", "Dot-grid localization is not available"),
+                          ("set_dot_grid_enabled", "Qt shell only"),
+                          ("set_dot_grid_paused", "starts the service paused"),
+                          ("fetch_dot_grid_pose", "since_sequence"),
+                          ("fetch_dot_grid_pose", "no position and no dots")] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "dot_grid.{key} mentions {needle}");
+    }
+}
+
+// ABI next (#878, set at merge) (CONNECT-054): Wafer Grid through cxx. Before init the commands refuse and the pose says
+// unavailable; after init the service is paused and off; enabling loads the bundled design
+// registry (the file compiled into mib_backend); with the mock camera showing a rendered view of
+// that design (tests/fixtures/dot_grid_wafer_sort_rt_40000_52000.png: wafer position 40000 /
+// 52000 um, 5 deg, 0.293 um/px, mirrored) a resumed service publishes the pose, an unchanged poll
+// returns the state block only, and a camera without a grid gives an invalid pose with a reason.
+#[test]
+#[serial]
+fn dot_grid_commands_decode_the_mock_camera_view() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dot_grid_wafer_sort_rt_40000_52000.png");
+    assert!(fixture.exists(), "fixture missing: {}", fixture.display());
+    let dir = std::env::temp_dir().join(format!("mib_bridge_dot_grid_{}", std::process::id()));
+    let blank = std::env::temp_dir().join(format!("mib_bridge_dot_grid_blank_{}", std::process::id()));
+    let data = std::env::temp_dir().join(format!("mib_bridge_dot_grid_data_{}", std::process::id()));
+    for d in [&dir, &blank, &data] {
+        let _ = std::fs::remove_dir_all(d);
+        std::fs::create_dir_all(d).unwrap();
+    }
+    for i in 0..3 {
+        std::fs::copy(&fixture, dir.join(format!("frame_{i:04}.png"))).unwrap();
+    }
+    let pose = |bridge: &mut cxx::UniquePtr<ffi::BackendBridge>, since: u64| -> serde_json::Value {
+        serde_json::from_str(&bridge.pin_mut().fetch_dot_grid_pose(since)).unwrap()
+    };
+
+    let mut bridge = ffi::new_backend_bridge();
+    let early = pose(&mut bridge, 0);
+    assert_eq!(early["available"], false, "{early}");
+    assert_eq!(early["has_pose"], false, "{early}");
+    let refused = bridge.pin_mut().set_dot_grid_enabled(true);
+    assert!(!refused.ok && !refused.message.is_empty(), "refused before init: {}", refused.message);
+    assert!(!bridge.pin_mut().set_dot_grid_paused(false).ok);
+
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    let idle = pose(&mut bridge, 0);
+    assert_eq!(idle["available"], true, "{idle}");
+    assert_eq!(idle["enabled"], false, "{idle}");
+    assert_eq!(idle["paused"], true, "the bridge starts paused: {idle}");
+    assert_eq!(idle["designs"], 0, "{idle}");
+    assert_eq!(idle["sequence"], 0, "{idle}");
+
+    assert!(bridge.pin_mut().configure_mock_camera(&dir.to_string_lossy(), 20, true).ok);
+    assert!(bridge.pin_mut().start_capture().ok);
+    let on = bridge.pin_mut().set_dot_grid_enabled(true);
+    assert!(on.ok, "enable: {}", on.message);
+    let enabled = pose(&mut bridge, 0);
+    assert_eq!((enabled["enabled"].clone(), enabled["paused"].clone()), (true.into(), true.into()), "{enabled}");
+    assert_eq!(enabled["designs"], 1, "the bundled registry has the Wafer_soRT design: {enabled}");
+    assert_eq!(enabled["has_pose"], false, "nothing decodes while paused: {enabled}");
+    assert_eq!(enabled["sequence"], 0, "{enabled}");
+
+    // Resume: the newest frame is decoded.
+    assert!(bridge.pin_mut().set_dot_grid_paused(false).ok);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut first = pose(&mut bridge, 0);
+    while first["has_pose"] != true && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+        first = pose(&mut bridge, 0);
+    }
+    assert_eq!(first["has_pose"], true, "a pose after resuming: {first}");
+    assert_eq!(first["paused"], false, "{first}");
+    assert_eq!(first["valid"], true, "{first}");
+    let near = |key: &str, want: f64, tol: f64| {
+        let got = first[key].as_f64().unwrap_or(f64::NAN);
+        assert!((got - want).abs() < tol, "{key} = {got}, want {want}: {first}");
+    };
+    near("centre_x_um", 40000.0, 1.0);
+    near("centre_y_um", 52000.0, 1.0);
+    near("theta_deg", 5.0, 0.5);
+    near("um_per_px", 0.293, 0.005);
+    assert_eq!(first["mirrored"], true, "{first}");
+    assert_eq!(first["design_id"], "wafer-sort-rt", "{first}");
+    assert!(first["design_name"].as_str().is_some_and(|n| !n.is_empty()), "{first}");
+    assert!(first["chip"].as_str().is_some_and(|c| !c.is_empty()), "the view is inside a chip: {first}");
+    assert_eq!((first["image_width"].clone(), first["image_height"].clone()), (800.into(), 600.into()), "{first}");
+    let dots = first["dots_px"].as_array().expect("dots_px");
+    assert!(!dots.is_empty() && dots.len() <= 1024, "{}", dots.len());
+    assert_eq!(first["dots_px_total"].as_u64().unwrap() as usize, dots.len(), "{first}");
+    assert!(dots.iter().all(|d| d.as_array().is_some_and(|xy| xy.len() == 2
+        && xy[0].as_f64().is_some_and(|x| (0.0..=800.0).contains(&x))
+        && xy[1].as_f64().is_some_and(|y| (0.0..=600.0).contains(&y)))), "dots are pixel pairs inside the image");
+    assert!(first["votes"].as_u64().unwrap() >= 3 && first["decode_ms"].as_f64().unwrap() > 0.0, "{first}");
+    assert_eq!(first["reason"], "", "{first}");
+
+    // An unchanged poll: only the state block. A stale sequence: the full document.
+    let seq = first["sequence"].as_u64().unwrap();
+    let same = pose(&mut bridge, seq);
+    if same["sequence"].as_u64() == Some(seq) {
+        assert_eq!(same["unchanged"], true, "{same}");
+        assert!(same.get("dots_px").is_none() && same.get("centre_x_um").is_none(), "{same}");
+        assert_eq!(same["enabled"], true, "{same}");
+    }
+    let stale = pose(&mut bridge, seq + 1_000_000);
+    assert_eq!(stale["unchanged"], false, "{stale}");
+    assert!(stale.get("valid").is_some(), "{stale}");
+
+    // Pause holds the pose; disabling hides it; the registry stays loaded.
+    assert!(bridge.pin_mut().set_dot_grid_paused(true).ok);
+    assert!(bridge.pin_mut().set_dot_grid_enabled(false).ok);
+    let off = pose(&mut bridge, 0);
+    assert_eq!((off["enabled"].clone(), off["paused"].clone(), off["has_pose"].clone()),
+               (false.into(), true.into(), false.into()), "{off}");
+    assert_eq!(off["designs"], 1, "{off}");
+
+    // A camera without a grid: an invalid pose with the failure reason and no position or dots.
+    assert!(bridge.pin_mut().stop_capture().ok);
+    let blank_frame = std::fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/mock_frames/frame_00000.tiff")).unwrap();
+    for i in 0..3 {
+        std::fs::write(blank.join(format!("frame_{i:04}.tiff")), &blank_frame).unwrap();
+    }
+    assert!(bridge.pin_mut().configure_mock_camera(&blank.to_string_lossy(), 20, true).ok);
+    assert!(bridge.pin_mut().start_capture().ok);
+    assert!(bridge.pin_mut().set_dot_grid_enabled(true).ok);
+    assert!(bridge.pin_mut().set_dot_grid_paused(false).ok);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    // The first decode after the switch may still read the wafer camera's last frame (the frame store keeps
+    // it until the new session commits one; CI hit that): wait for a pose of the blank frames.
+    let mut bad = pose(&mut bridge, 0);
+    while !(bad["has_pose"] == true && bad["valid"] == false) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+        bad = pose(&mut bridge, 0);
+    }
+    assert_eq!(bad["has_pose"], true, "{bad}");
+    assert_eq!(bad["valid"], false, "{bad}");
+    assert!(bad["reason"].as_str().is_some_and(|r| !r.is_empty()), "the failure carries its reason: {bad}");
+    assert!(bad.get("dots_px").is_none() && bad.get("centre_x_um").is_none(), "{bad}");
+
+    bridge.pin_mut().shutdown();
+    for d in [&dir, &blank, &data] {
+        let _ = std::fs::remove_dir_all(d);
+    }
 }
 
 // #501: the desktop build reports MIB surfaces and no PZ7035; instrument

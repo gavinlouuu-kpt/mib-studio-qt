@@ -7,6 +7,8 @@
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/app/ProfileStore.h"
+#include "backend/app/CameraWindowSave.h"
+#include "backend/processing/ExperimentBufferSizing.h"
 #include "backend/app/StartupConfiguration.h"
 #include "backend/app/ProfileCatalog.h"
 #include "backend/app/ProcessingCoreManagement.h"
@@ -45,6 +47,7 @@
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/services/StageService.h"
 #include "backend/services/MonitoringCellStore.h"
+#include "backend/services/DotGridService.h"
 
 #include <algorithm>
 #include "backend/pz/PzPlatformMonitor.h"
@@ -286,6 +289,10 @@ namespace backend::bridge
         }
 
         initialized_ = true;
+
+        // Wafer Grid decodes only while the Overview is on screen (CONNECT-054): the UI unpauses
+        // it there; until then, and in a UI that never shows the Overview, it costs nothing.
+        backend_.dotGrid().setPaused(true);
 
         // Shared experiment coordinator (issue #372): forward its status
         // stream as ExperimentStatusEvent, tie the running experiment to a
@@ -707,9 +714,26 @@ namespace backend::bridge
         {
         case CameraCommandAction::ConfigureMockCamera:
         {
+            // Qt parity (ConnectTab::onConfigureMock, #863 CONNECT-013): the camera source is not swapped
+            // under a live capture or while an experiment holds the camera.
+            if (const std::string message =
+                    app::cameraSourceChangeRefusal(backend_.capture().isRunning(), backend_.experiment().status());
+                !message.empty())
+            {
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
             ::camera::mock::MockCameraOptions options;
             options.folder = std::filesystem::path(command.mockFrameDirectory);
-            options.frameInterval = std::chrono::milliseconds(std::max(1, command.mockFrameIntervalMs));
+            if (command.mockFramesPerSecond > 0)
+            {
+                const double fps = std::clamp(command.mockFramesPerSecond, 1.0, 10000.0);
+                options.frameInterval = std::chrono::microseconds(static_cast<long long>(std::llround(1'000'000.0 / fps)));
+            }
+            else
+            {
+                options.frameInterval = std::chrono::milliseconds(std::max(1, command.mockFrameIntervalMs));
+            }
             options.loopFiles = command.mockLoopFiles;
             backend_.configureMockCamera(options);
             emitEvent(makeCameraStatus(CameraState::Configured, "mock"));
@@ -755,14 +779,17 @@ namespace backend::bridge
         case CameraCommandAction::ApplyCameraScript:
         {
             std::string error;
-            if (!backend_.applyCameraScriptFromFile(command.cameraScriptPath, &error))
+            const auto role = command.cameraScriptOverview ? AppBackend::CameraScriptRole::Overview
+                                                           : AppBackend::CameraScriptRole::Experiment;
+            if (!backend_.applyCameraScriptFromFile(command.cameraScriptPath, &error, role))
             {
                 const std::string message = error.empty() ? "Camera script apply failed" : error;
                 emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
                 return {false, BackendCommandType::Camera, message};
             }
             emitEvent(makeCameraStatus(CameraState::Configured));
-            return {true, BackendCommandType::Camera, "Camera script applied"};
+            return {true, BackendCommandType::Camera,
+                    command.cameraScriptOverview ? "Overview camera script applied (full sensor)" : "Camera script applied"};
         }
         case CameraCommandAction::SoftTriggerCamera:
         {
@@ -846,19 +873,35 @@ namespace backend::bridge
             emitEvent(makeCameraStatus(CameraState::Running));
             return {true, BackendCommandType::Camera, "Capture started"};
         case CameraCommandAction::StopCapture:
-            // Qt-parity precondition: the camera cannot stop underneath an
-            // active experiment — stop the experiment first (BE-4).
-            if (backend_.experiment().state() == app::ExperimentRunState::Active)
+        {
+            // Qt-parity precondition: the camera cannot stop underneath an experiment — stop the
+            // experiment first (BE-4) — nor while its data is still being saved (Qt flushInProgress_,
+            // #863 CONNECT-038): Stopping is the final flush, Starting has not got its camera yet.
+            // A Failed run still flushing after a fatal save error is saving too (cameraStopRefusal).
+            if (const std::string message = app::cameraStopRefusal(backend_.experiment().status()); !message.empty())
             {
-                const std::string message =
-                    "Cannot stop camera while experiment is active. Please stop the experiment first.";
                 emitEvent(BackendErrorEvent{BackendErrorSource::Camera,
                                             BackendCommandType::Camera, message});
                 return {false, BackendCommandType::Camera, message};
             }
+            const bool wasRunning = backend_.capture().isRunning();
             backend_.capture().stop();
             emitEvent(makeCameraStatus(CameraState::Stopped));
+            // #863 CONNECT-040: a teardown the device did not confirm (rig generator / LED / acquisition
+            // stop) is a failed command carrying the camera's message, as Qt's CameraController reports it.
+            const auto stopped = backend_.capture().lifecycleSnapshot();
+            if (wasRunning && stopped.lastFailure == services::CaptureFailureKind::ShutdownFailed &&
+                stopped.lastFailureGeneration == stopped.generation)
+            {
+                const std::string message = stopped.lastFailureMessage.empty()
+                                                ? "Camera shutdown was not confirmed"
+                                                : stopped.lastFailureMessage;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera,
+                                            BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
             return {true, BackendCommandType::Camera, "Capture stopped"};
+        }
         }
 
         emitEvent(BackendErrorEvent{BackendErrorSource::Camera,
@@ -3936,6 +3979,41 @@ std::string BackendFacade::fetchRunAccountingJson(const std::string& source) con
     return none("unknown accounting source (review | last_run)");
 }
 
+namespace {
+nlohmann::json cameraWindowJson(const ::camera::common::CameraWindow& w) {
+    return {{"x", w.offsetX}, {"y", w.offsetY}, {"width", w.width}, {"height", w.height}};
+}
+
+// The last Experiment script apply (AppBackend::CameraGeometry::windowApply): what the script left in
+// the camera, what the profile asked for, what the camera now has, and why the profile's window was
+// refused or rejected. null when no Experiment script has been applied.
+nlohmann::json windowApplyJson(const AppBackend::CameraGeometry& g) {
+    if (!g.windowApplyKnown) return nullptr;
+    const auto& a = g.windowApply;
+    return {
+        {"sequence", a.sequence},
+        {"requested", a.requested},
+        {"applied", a.applied},
+        {"script_window", a.scriptWindowKnown ? cameraWindowJson(a.scriptWindow) : nlohmann::json(nullptr)},
+        {"profile_window", a.requested ? cameraWindowJson(a.profile.window) : nlohmann::json(nullptr)},
+        {"result_window", a.resultKnown ? cameraWindowJson(a.result) : nlohmann::json(nullptr)},
+        {"camera", app::describeCamera(a.connectedVendor, a.connectedModel)},
+        {"refusal", a.refusal},
+        {"error", a.error},
+        {"text", a.requested ? (a.applied && a.scriptWindowKnown && a.scriptWindow != a.profile.window
+                                    ? "the profile's camera window " + app::describeWindow(a.profile.window) +
+                                          " is applied instead of the script's " + app::describeWindow(a.scriptWindow)
+                                    : (a.applied ? "the profile's camera window " + app::describeWindow(a.profile.window) +
+                                                       " is applied"
+                                                 : "the profile's camera window " + app::describeWindow(a.profile.window) +
+                                                       " was not applied: " + (a.refusal.empty() ? a.error : a.refusal)))
+                              : (a.scriptWindowKnown ? "the script's camera window " + app::describeWindow(a.scriptWindow) +
+                                                           " is applied"
+                                                     : std::string("the script is applied"))},
+    };
+}
+} // namespace
+
 std::string BackendFacade::fetchCameraGeometryJson() const {
     if (!initialized_) return nlohmann::json{{"supported", false}}.dump();
     const auto g = backend_.cameraGeometry();
@@ -3955,7 +4033,174 @@ std::string BackendFacade::fetchCameraGeometryJson() const {
         {"min_width", g.minWidth},
         {"min_height", g.minHeight},
         {"session", session},
+        // ABI next (#892, set at merge) (#846), additive. Always present; the eGrabber members say what the window is and what
+        // the last Experiment script apply did, the MindVision ones what its profile says.
+        {"window_source", g.windowSource},
+        {"script_role", g.scriptRole},
+        {"experiment_script_path", g.experimentScriptPath},
+        {"window_apply", windowApplyJson(g)},
+        {"illuminated_live", g.illuminatedLive},
+        {"profile_error", g.profileError},
+        // #863 A2, additive: the MindVision profile's mirroring and the measured capture rate.
+        {"flip_horizontal", g.flipHorizontal},
+        {"flip_vertical", g.flipVertical},
+        {"capture_fps", g.captureFps},
     }.dump();
+}
+
+std::string BackendFacade::saveCameraWindowJson(const std::string& scriptPath, int x, int y, int width, int height) {
+    if (!initialized_) return nlohmann::json{{"ok", false}, {"error", "backend is not initialized"}}.dump();
+    ::camera::common::CameraWindow requested;
+    requested.offsetX = x;
+    requested.offsetY = y;
+    requested.width = width;
+    requested.height = height;
+    try {
+        return app::toJson(app::saveEgrabberWindow(backend_, scriptPath, requested));
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"ok", false}, {"error", std::string("Camera window not saved: ") + e.what()}}.dump();
+    }
+}
+
+namespace {
+nlohmann::json gateJson(const app::ReadinessGate& g) {
+    return {{"id", g.id}, {"status", static_cast<std::uint32_t>(g.status)}, {"status_name", app::toString(g.status)},
+            {"reason", g.reason}, {"remediation", g.remediation}, {"detail", g.detail}};
+}
+// Qt's RecordingCapacityPanel severity: Fail and Unavailable block, Warn warns.
+int gateSeverity(app::GateStatus s) {
+    return (s == app::GateStatus::Fail || s == app::GateStatus::Unavailable) ? 2 : s == app::GateStatus::Warn ? 1 : 0;
+}
+} // namespace
+
+std::string BackendFacade::fetchRecordingCapacityJson(bool planned, int x, int y, int width, int height) const {
+    nlohmann::json out{{"busy", false}, {"known", false}, {"planned", false}, {"status", "unknown"},
+                       {"gates", nlohmann::json::array()}};
+    if (!initialized_) return out.dump();
+    std::optional<::camera::common::CameraWindow> window;
+    if (planned) {
+        ::camera::common::CameraWindow w;
+        w.offsetX = x;
+        w.offsetY = y;
+        w.width = width;
+        w.height = height;
+        if (w.valid()) window = w;
+    }
+    const auto view = backend_.experiment().recordingCapacity({}, window);
+    out["busy"] = view.busy;
+    out["known"] = view.known;
+    out["planned"] = view.planned;
+    if (view.busy) return out.dump();
+    int worst = 0;
+    std::vector<const app::ReadinessGate*> gates;
+    if (!view.window.id.empty()) gates.push_back(&view.window);
+    if (view.known) {
+        gates.push_back(&view.capacity.rate);
+        gates.push_back(&view.capacity.buffer);
+        gates.push_back(&view.capacity.throughput);
+    }
+    for (const auto* g : gates) {
+        worst = std::max(worst, gateSeverity(g->status));
+        out["gates"].push_back(gateJson(*g));
+    }
+    if (!view.known) return out.dump();
+    out["status"] = worst >= 2 ? "blocked" : worst == 1 ? "warning" : "ok";
+    const auto& in = view.inputs;
+    const auto& plan = in.plan;
+    out["window"] = {{"width", in.windowWidth}, {"height", in.windowHeight}};
+    out["images_per_frame"] = in.imagesPerFrame;
+    out["bytes_per_frame"] = plan.bytesPerFrame;
+    out["bytes_per_frame_text"] = processing::formatBufferBytes(plan.bytesPerFrame);
+    out["requested_fps"] = in.requestedFps;
+    out["requested_fps_source"] = in.requestedFpsSource;
+    out["max_fps"] = in.maxFps;
+    out["invalid_sampling_rate"] = in.invalidSamplingRate;
+    out["save_stream"] = {{"every_frame_bytes_per_second", view.capacity.everyFrameBytesPerSecond},
+                          {"every_frame_text", app::formatRate(view.capacity.everyFrameBytesPerSecond)},
+                          {"floor_fps", view.capacity.floorFps},
+                          {"floor_bytes_per_second", view.capacity.floorBytesPerSecond},
+                          {"floor_text", app::formatRate(view.capacity.floorBytesPerSecond)}};
+    out["buffer"] = {{"frames", plan.maxFrames},
+                     {"bytes", plan.maxBytes},
+                     {"bytes_text", processing::formatBufferBytes(plan.maxBytes)},
+                     {"seconds", plan.seconds},
+                     {"source", processing::toString(plan.source)},
+                     {"summary", plan.summary()},
+                     {"clamped_by_ram", plan.clampedByRam}};
+    out["destination"] = {{"bytes_per_second", in.diskBytesPerSecond},
+                          {"text", in.diskBytesPerSecond > 0 ? app::formatRate(in.diskBytesPerSecond) : std::string()},
+                          {"note", in.diskRateNote}};
+    return out.dump();
+}
+
+BackendCommandResult BackendFacade::setDotGridEnabled(bool enabled) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    std::string error;
+    if (!backend_.setDotGridEnabled(enabled, &error)) {
+        return {false, BackendCommandType::Camera, error.empty() ? "dot-grid configuration rejected" : error};
+    }
+    return {true, BackendCommandType::Camera, enabled ? "dot-grid localization on" : "dot-grid localization off"};
+}
+
+BackendCommandResult BackendFacade::setDotGridPaused(bool paused) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    backend_.dotGrid().setPaused(paused);
+    return {true, BackendCommandType::Camera, paused ? "dot-grid decoding paused" : "dot-grid decoding resumed"};
+}
+
+std::string BackendFacade::fetchDotGridPoseJson(std::uint64_t sinceSequence) const {
+    using nlohmann::json;
+    if (!initialized_) {
+        return json{{"available", false}, {"enabled", false}, {"paused", true}, {"designs", 0},
+                    {"sequence", 0}, {"has_pose", false}, {"unchanged", false}}.dump();
+    }
+    auto& service = backend_.dotGrid();
+    const auto registry = service.activeRegistry();
+    json out{
+        {"available", service.isRunning()},
+        {"enabled", service.isEnabled()},
+        {"paused", service.isPaused()},
+        {"designs", registry ? registry->size() : 0},
+        {"unchanged", false},
+    };
+    // The sequence is read before the pose: a publish between the two reads is picked up by the
+    // next poll (the pose is then newer than its sequence), never lost.
+    const std::uint64_t sequence = service.poseSequence();
+    out["sequence"] = sequence;
+    services::DotGridService::Pose pose;
+    const bool hasPose = service.isEnabled() && service.getLatestPose(pose);
+    out["has_pose"] = hasPose;
+    if (!hasPose) return out.dump();
+    if (sinceSequence != 0 && sinceSequence == sequence) {
+        out["unchanged"] = true;
+        return out.dump();
+    }
+    out["valid"] = pose.valid;
+    out["frame_index"] = pose.frameIndex;
+    out["image_width"] = pose.imageWidth;
+    out["image_height"] = pose.imageHeight;
+    out["dots"] = pose.dots;
+    out["votes"] = pose.votes;
+    out["decode_ms"] = pose.decodeMs;
+    out["reason"] = pose.reason;
+    if (pose.valid) {
+        out["centre_x_um"] = pose.centreXUm;
+        out["centre_y_um"] = pose.centreYUm;
+        out["theta_deg"] = pose.thetaDeg;
+        out["um_per_px"] = pose.umPerPx;
+        out["mirrored"] = pose.mirrored;
+        out["chip"] = pose.chip;
+        out["design_id"] = pose.designId;
+        out["design_name"] = pose.designName;
+        out["agreement"] = pose.agreement;
+        out["residual_px"] = pose.residualPx;
+        json dots = json::array();
+        const std::size_t n = std::min(pose.dotsPx.size(), kDotGridMaxDots);
+        for (std::size_t i = 0; i < n; ++i) dots.push_back(json::array({pose.dotsPx[i].x, pose.dotsPx[i].y}));
+        out["dots_px"] = std::move(dots);
+        out["dots_px_total"] = pose.dotsPx.size();
+    }
+    return out.dump();
 }
 
 std::string BackendFacade::fetchPreviewBufferJson() const {
@@ -4243,6 +4488,53 @@ std::string BackendFacade::runStartupDiscoveryJson(const std::string& action) {
     else return json{{"accepted", false}, {"message", "Unknown startup action"}}.dump();
     return json{{"accepted", accepted}, {"message", accepted ? "Auto-selection scheduled; completion is reported separately" : "Selection is already configured or action was refused"}}.dump();
 }
+std::string BackendFacade::fetchFrameDeliveryModeJson() const {
+    using nlohmann::json;
+    if (!initialized_) return json{{"valid", false}}.dump();
+    auto& capture = backend_.capture();
+    const auto configured = capture.config().deliveryMode;
+    return json{{"valid", true},
+                {"mode", ::camera::common::toString(configured)},
+                {"active_mode", ::camera::common::toString(capture.activeDeliveryMode())},
+                {"confirmed", capture.stats().deliveryModeConfirmed.load(std::memory_order_acquire)},
+                {"capturing", capture.isRunning()}}
+        .dump();
+}
+
+std::string BackendFacade::setFrameDeliveryModeJson(const std::string& mode) {
+    using nlohmann::json;
+    const auto refused = [](const std::string& message) {
+        return json{{"ok", false}, {"message", message}}.dump();
+    };
+    if (!initialized_) return refused("Backend is not initialized");
+    if (mode != "everyFrame" && mode != "latestFrame") return refused("Unknown frame delivery mode");
+    if (app::experimentHoldsCamera(backend_.experiment().status()))
+        return refused("Cannot change the delivery mode while an experiment is active.");
+    auto& capture = backend_.capture();
+    capture.setDeliveryMode(::camera::common::frameDeliveryModeFromString(mode));
+    // The applied-config provenance follows the runtime (a run's method records what ran). Only an
+    // existing applied document is touched; the saved profile itself is never rewritten (its revision
+    // pins the startup restore).
+    const auto applied = backend_.getLastConfigJson();
+    if (!applied.empty()) {
+        const auto parsed = json::parse(applied, nullptr, /*allow_exceptions=*/false);
+        if (parsed.is_object()) {
+            auto next = parsed;
+            if (!next.contains("camera") || !next.at("camera").is_object()) next["camera"] = json::object();
+            next["camera"]["frame_delivery_mode"] = mode;
+            backend_.setLastConfigJson(next.dump());
+        }
+    }
+    const bool running = capture.isRunning();
+    const std::string label = mode == "latestFrame" ? "Latest Frame" : "Every Frame";
+    return json{{"ok", true},
+                {"mode", mode},
+                {"applies_at_next_start", running},
+                {"message", running ? "Delivery mode set to " + label + " \xE2\x80\x94 applies at the next capture start."
+                                    : "Delivery mode set to " + label + "."}}
+        .dump();
+}
+
 std::string BackendFacade::fetchStartupDiscoveryStatusJson() const {
     using nlohmann::json;
     if (!initialized_) return json{{"valid", false}}.dump();

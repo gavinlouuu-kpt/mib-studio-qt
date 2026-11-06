@@ -237,6 +237,11 @@ mib_backend_test_link(discovery_facade_test PRIVATE Threads::Threads)
 add_test(NAME backend.discovery_facade COMMAND $<TARGET_FILE:mib_backend_tests> discovery_facade_test)
 set_tests_properties(backend.discovery_facade PROPERTIES LABELS "backend;discovery;bridge" TIMEOUT 90)
 
+mib_add_backend_test_executable(connect_camera_guards_test backend/connect_camera_guards_test.cpp)
+mib_backend_test_link(connect_camera_guards_test PRIVATE Threads::Threads)
+add_test(NAME backend.connect_camera_guards COMMAND $<TARGET_FILE:mib_backend_tests> connect_camera_guards_test)
+set_tests_properties(backend.connect_camera_guards PROPERTIES LABELS "backend;camera;bridge" TIMEOUT 90)
+
 mib_add_backend_test_executable(zc300_protocol_test backend/zc300_protocol_test.cpp)
 mib_backend_test_link(zc300_protocol_test PRIVATE stage_zc300_protocol)
 add_test(NAME backend.zc300_protocol COMMAND $<TARGET_FILE:mib_backend_tests> zc300_protocol_test)
@@ -499,6 +504,9 @@ set_tests_properties(backend.recording_capacity_gate PROPERTIES LABELS "backend;
 mib_add_backend_test_executable(camera_window_profile_test backend/camera_window_profile_test.cpp)
 add_test(NAME backend.camera_window_profile COMMAND $<TARGET_FILE:mib_backend_tests> camera_window_profile_test)
 set_tests_properties(backend.camera_window_profile PROPERTIES LABELS "backend;camera;profiles" TIMEOUT 30)
+mib_add_backend_test_executable(camera_window_save_test backend/camera_window_save_test.cpp)
+add_test(NAME backend.camera_window_save COMMAND $<TARGET_FILE:mib_backend_tests> camera_window_save_test)
+set_tests_properties(backend.camera_window_save PROPERTIES LABELS "backend;camera;profiles;roundtrip" TIMEOUT 60)
 mib_add_backend_test_executable(destination_write_rate_test backend/destination_write_rate_test.cpp)
 add_test(NAME backend.destination_write_rate COMMAND $<TARGET_FILE:mib_backend_tests> destination_write_rate_test)
 set_tests_properties(backend.destination_write_rate PROPERTIES LABELS "backend;recording;safety" TIMEOUT 60)
@@ -773,6 +781,14 @@ mib_add_backend_test_executable(dot_grid_service_test backend/dot_grid_service_t
 mib_backend_test_link(dot_grid_service_test PRIVATE Threads::Threads)
 add_test(NAME backend.dot_grid_service COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_service_test)
 set_tests_properties(backend.dot_grid_service PROPERTIES LABELS "backend;processing;stress" TIMEOUT 120)
+
+# Wafer Grid through the BackendFacade (CONNECT-054, bridge ABI next (#878, set at merge)): the compiled-in registry is the
+# shipped file; enable / pause / pose JSON on the real AppBackend with frames pushed into its store.
+mib_add_backend_test_executable(dot_grid_facade_test backend/dot_grid_facade_test.cpp)
+mib_backend_test_link(dot_grid_facade_test PRIVATE Threads::Threads)
+add_test(NAME backend.dot_grid_facade COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_facade_test
+         ${PROJECT_SOURCE_DIR}/resources/defaults/dot_grid/registry.json)
+set_tests_properties(backend.dot_grid_facade PROPERTIES LABELS "backend;bridge;e2e" TIMEOUT 180)
 
 mib_add_backend_test_executable(processing_identification_metrics_test processing/processing_identification_metrics_test.cpp)
 add_test(NAME processing.identification_metrics COMMAND $<TARGET_FILE:mib_backend_tests> processing_identification_metrics_test)

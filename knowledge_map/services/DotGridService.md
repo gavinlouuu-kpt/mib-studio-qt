@@ -35,11 +35,26 @@ overlay), ADR 0008, ADR 0009 (design registry),
   16-bit containers normalised), run `dotgrid::Decoder::decode`, and publish
   a `Pose` (valid or not, always with `reason`, `frameIndex`, `timestampNs`,
   image size, detected dots for the overlay).
+- Switching the service on (`setConfig` with `enabled` false to true) forgets the pose of the
+  earlier session: `getLatestPose()` is false until the first decode, so a toggle never shows a
+  position from another frame or camera.
 - `getLatestPose()` snapshot under `poseMutex_`; `setPoseCallback()` invoked
   on the service thread after the snapshot is updated. `decodeImage()` runs
   the decoder synchronously on any image (UI / tests).
 - Metrics: `decodeAttempts()`, `decodeSuccesses()`, `lastDecodeMs()`;
   `isEnabled()` is an atomic mirror of `Config::enabled` for the UI tick.
+- `setFrameStore()` follows the camera's frame buffer: `AppBackend::installFrameStore`
+  (a MindVision/Aravis Overview switch builds a new store whose frame indices
+  restart) hands it to the service, and bumps `configGeneration_` so the new
+  store's newest frame is decoded even when its index equals the last one
+  decoded from the old store.
+- `DotGridService::bundledRegistry()` returns the design registry compiled
+  into `mib_backend` (`resources/defaults/dot_grid/registry.json`, embedded by
+  `cmake/GenerateEmbeddedText.cmake` as `DotGridBundledRegistry.h`; parsed once
+  and shared). It is the Qt-free twin of the `:/defaults/dot_grid_registry.json`
+  Qt resource that `AppConfigWatcher::loadDotGridRegistry` reads, so a shell
+  without the Qt resource system (Tauri, the bridge server) decodes against the
+  same designs; `backend.dot_grid_facade` checks the two are the same file.
 
 ## Threading
 
@@ -62,6 +77,24 @@ and merges the local file; clashes are logged and skipped.
 `MIB_DISABLED_SERVICES=dot_grid` leaves the service constructed but not
 started. The [[../frontend/OverviewTab]]'s **Wafer Grid** button toggles
 `enabled`; the Experiment tab has no toggle and never decodes.
+
+### Qt-free shells (Tauri, bridge server)
+
+There is no `AppConfigWatcher` there, so `AppBackend::setDotGridEnabled(bool,
+std::string*)` does what the Qt toggle plus the watcher do together: it flips
+`Config::enabled`; switching on with no codebook source configured yet sets
+`Config::registry` to `bundledRegistry()` and `umPerPxHint` to the processing
+pixel-to-micron factor (as `AppConfigWatcher` does). It fails with the reason
+when the registry cannot be loaded (the UI shows "Dot-grid localization is not
+available: <reason>"). `BackendFacade` exposes it as bridge ABI next (#878, set at merge)
+`set_dot_grid_enabled`, `set_dot_grid_paused` and `fetch_dot_grid_pose` (pose
+JSON: [[../architecture/Rust-Bridge]]); the React Overview's **Wafer Grid** button
+([[../frontend/OverviewTab]]) drives them. `BackendFacade::initialize` starts the
+service **paused** (Qt's `OverviewTab` constructor does the same); the Overview
+resumes it while its stage is on screen. The `dot_grid` section of a profile's
+`config.json` is not applied in this app (`ConfigDocumentApply` still lists it as
+"Qt shell only"): the toggle is the way to switch decoding on, and
+`registry_path`, `codebook_path` and the other keys have no effect there.
 
 ## Codec cores (ADR 0010)
 
@@ -95,7 +128,12 @@ loop decodes the newest frame immediately instead of after `interval_ms`
   unregistered design never decodes, bundled registry regenerates the
   archived Wafer_soRT codebook), `backend.dot_grid_service` (lifecycle,
   sampling under a producer burst, disable/enable, bad config, registry mode
-  and source precedence, stop idempotence, watchdog),
+  and source precedence, frame-store swap, stop idempotence, watchdog),
+  `backend.dot_grid_facade` (CONNECT-054: the compiled-in registry is the shipped
+  file; the facade's enable / pause / pose JSON on the real `AppBackend`: paused
+  at start, nothing decodes while paused, a valid pose names the design and lists
+  the dots, `since_sequence` returns only the state block, a frame without a grid
+  is an invalid pose with a reason, disabling hides the pose),
   `scripts.dot_grid_reference` (incl. `register` end to end and the Python
   codec gold), `processing.dot_grid_codec_gold` (C++ core vs
   `scripts/dot_grid/gold/codec-contract1.json`).

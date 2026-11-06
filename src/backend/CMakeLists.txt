@@ -9,6 +9,15 @@ mib_generate_embedded_text(
     "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/review/BundledEModulusLut.h"
     generatedBundledEModulusLutText)
+# The bundled dot-grid design registry's bytes in mib_backend: a shell without the Qt
+# resource system (Tauri, the bridge server) decodes the wafer grid against the same
+# registry the Qt build reads from :/defaults/dot_grid_registry.json (resources/defaults.qrc).
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/resources/defaults/dot_grid/registry.json")
+mib_generate_embedded_text(
+    "${PROJECT_SOURCE_DIR}/resources/defaults/dot_grid/registry.json"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/backend/services/DotGridBundledRegistry.h"
+    generatedDotGridBundledRegistryText)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt")
 mib_generate_review_isoelastic(
@@ -513,6 +522,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/CalibrationStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/CameraWindowProfile.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/CameraWindowSave.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/RecordingCapacity.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/DestinationWriteRate.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/MethodProvenance.cpp

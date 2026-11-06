@@ -326,6 +326,179 @@ held at ~10 fps by per-byte frame copies in the bridge.
 `vitest` discovery is limited to `src/` (`vite.config.ts`): crawling
 `src-tauri/target`'s cxx symlink loop hung `vitest run`.
 
+### eGrabber cameras (#863, #846)
+
+An eGrabber hardware camera has no overview preset, so `useCameraModeSwitch` (areas/connect/useConnect.ts)
+drives its two scripts the way Qt's `MainWindow::onTabChanged` does, once per entry into a stage
+(`cameraStage.ts`, `runEgrabberStage`, tested with a fake backend): never during an experiment (the
+Overview stage tab is disabled with Qt's sentence while one runs), not with raw recording on and not from a
+browser that only watches (viewer-only); a running camera is
+stopped, the stage's script applied with its role (`apply_camera_script_with_role`: Overview as
+is, Experiment followed by the profile's `camera.window`), the camera restarted; Overview also starts a
+stopped, configured camera ("Failed to start camera. Please check camera connection and try again." when
+it fails; never a MindVision camera, as in Qt, whose MindVision branch returns first). Script paths (`ScriptSources`, filled each
+render by `syncScriptSources` from the config area's state): Experiment = Config > Camera script selection,
+else the EGrabber script editor's file, else the active profile folder's `egrabberConfig.js` if it exists
+("No Experiment camera script: the camera keeps its current window" otherwise); Overview = the Overview
+script editor's resolved path (below), made from the bundled default when it is the default file and
+missing. A remote (browser) client does not look for script files: the server reads no `.js` file by path
+(`camera_document_confined` serves only the PZ7035 document), so `scriptExists` answers false there
+without asking, and the no-script notice says why (`REMOTE_NO_PROFILE_SCRIPT`, also instead of "Overview
+camera script not found"). It never claims a file it cannot see: the stage change would stop the camera
+for an apply that then fails. The window box is the geometry's `roi` (profile, else script);
+Qt's snapping (`snapEgrabberWindow`: offsets rounded then snapped down, sizes snapped down) runs while
+dragging and the backend repeats it when `save_camera_window` writes the script and the profile, on release
+and a moment after each W/H/X/Y edit (`useCameraWindow.edit`); a window that changed in the backend (a
+profile applied or reloaded) redraws the box unless an edit is in progress (`syncFromGeometry`); geometry
+errors and save results are lines in the Overview (`CameraStageNotice`). The Overview also shows the
+backend's Recording capacity (`fetch_recording_capacity` once a second with the box as the planned window,
+frozen during an experiment; `recordingCapacity.ts`, `RecordingCapacityPanel.tsx`).
+
+### Overview script, ROI overlay and MindVision details (#863 A2)
+
+- **Overview script editor** (`OverviewScriptEditor.tsx`, state in `useOverviewScript.ts`, rules in
+  `overviewScript.ts`; Qt `OverviewTab` `onReloadJs`/`onSaveJs`/`onApplyJs`/`onBrowseJs`/`onClearJs`): a text
+  area for `overviewConfig.js` with the path and Qt's "Unsaved changes – click Save to apply." Reset reloads
+  (the default file is made from the bundled `resources/defaults/overviewConfig.js` when missing, Qt
+  `ensureDefaultsFile`); Save writes the file (revision-checked, CRLF kept) and says "Saved." inline; Apply to
+  Camera saves, stops a running camera (the Rust guard refuses a running one) and applies with the Overview
+  role (`applyCameraScriptWithRole(path, true)`), then "Applied to camera. Capture remains stopped."; failures
+  use Qt's "Failed to load/save/save script/apply script: ..." texts. Browse... keeps the external path in
+  `localStorage` `mib.overview.script-path` (Qt `Config/ExternalOverviewScriptPath`); Clear removes it and asks
+  Qt's Yes/No question. The default path is `<active profile folder>/overviewConfig.js` (the file is not part
+  of the profile's revision), else `<app config dir>/overviewConfig.js`. It uses `camera_document` kind
+  `overview` (a `.js` document whose `default` is the bundled script; the server refuses it like `js`). The
+  hook is called by `useStudioController` after the config documents (the editor needs the active profile) and
+  fills `ScriptSources.overviewScriptPath` / `overviewDefaultPath` through `syncScriptSources`, so the stage
+  change applies the file the operator edits. The whole area is hidden for a MindVision camera (Qt hides it).
+  Config > Camera script (`cameraScript.tsx`) is unchanged and still points a MindVision camera to the JSON
+  editor below it, which is true there.
+- **ROI Overlay** (`roiOverlay.ts`, `useCameraWindowing`): "ROI Overlay: Off/On", off until a camera is
+  connected (a new valid, configured selection switches it on once; the operator's choice survives polls).
+  `roiOverlayRef` is what `usePreview.ts` `draw()` and the drag read: off = no box and no grab (Qt). The
+  PZ7035 has no toggle and always shows its Run window.
+- **MindVision** (`cameraAlignment.ts` `mirrorOf`/`displayedWindow`/`dragStoredWindow`, `overviewInfo.ts`): the
+  geometry carries the profile's `flip_horizontal`/`flip_vertical` (via `readMindVisionOverviewProfile`) and the
+  box and drag direction are mirrored as `SimpleImageCanvas::setRoiTransform` does, the stored offset staying in
+  sensor coordinates. W/H have the SDK minimum..sensor limits in steps of 1 and save after each change
+  (`useCameraWindow.edit`, same pause as eGrabber); a refused save puts the old window back and keeps "ROI
+  was not saved: <reason>" (`cameraWin.notice`) until a save works. The mode label is Qt's: "[Trigger: 400 Hz | ]Full
+  sensor overview | Capture: N fps | Display: up to D fps. Drag the ROI for the experiment." (`capture_fps`
+  from the geometry, D the preview limit), or the profile error.
+- **ROI summary:** the Experiment header's "ROI: W × H @ (x, y)" shows the Overview rectangle (Qt
+  `roiLabel_`); without a camera window it is the processing ROI as before, which is also given in the tooltip.
+  The Overview rectangle does not set the processing ROI (see the recent note for why).
+
+## Connect stage (Qt parity, epic #863 B1)
+
+`areas/connect/` mirrors Qt's `ConnectTab` and `DeviceInitManager`. Pure rules (wording, selection,
+block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCameraConnection`
+(`useConnect.ts`); the startup follow-up in `useStartupSelection.ts`; modals in `CameraDialogs.tsx`.
+
+- **Status line.** One line, as Qt's `statusLabel`: "Scanning for cameras and framegrabbers..." while a scan
+  runs; the last action ("Connected to <label> (not capturing)", "Mock camera configured (not capturing)",
+  "Delivery mode set to ..."); else the last scan with the selection. A cancelled scan reads "Camera scan
+  cancelled.", an incomplete one "(incomplete: <provider> <kind>)" (a compiled-out SDK is not a gap), a
+  refused or timed-out one "Camera discovery incomplete: <reason>"; none reads as "0 cameras found".
+  `CameraDiscovery` carries the job `state` and `errors` for this (`discovery.ts`).
+- **Scans.** One at a time: Refresh and every other refresh join the scan in flight; Refresh is disabled
+  while scanning but not while capturing (the backend's refusal is the status line). Row 0 of every list is
+  selected after a scan (a row the operator picked that is still listed stays); the synthetic mock source is
+  never preselected. Framegrabber rows are selectable; Connect uses the shown sub-tab's pick.
+- **Connect / Configure Mock** are blocked, with the reason as tooltip, while the camera runs, an experiment
+  is active or a script apply is in flight; backend guards back them (`select_hardware_camera` in Rust,
+  `ConfigureMockCamera` in the facade). A refusal is a modal warning ("Connect Device", "Configure Mock
+  Camera") and status text, in Qt's words ("Cannot change camera connection while camera is running. Please stop the
+  camera first.", "Please select a <device> from the list."). After Connect or Configure Mock the selection is read
+  and the stage moves to Overview at once, the device rescan runs behind it; the Overview stage applies its script
+  and starts the live view (separate stream).
+- **Startup.** `useStartupSelection` polls `startup_discovery_status` (500 ms) and reports each camera job of
+  the startup coordinator once: lists refreshed from that job's snapshot, then the auto-selected camera is
+  highlighted with its sub-tab open and the stage moves to Overview; no camera shows "No cameras found." and
+  the "No camera found" dialog (check power, green LED; Try again runs the immediate camera step, OK) and
+  forces the Connect stage; several cameras and incomplete scans say so on the status line. The shell mirrors
+  the backend's `decideCamera` (`startupCameraOutcome`) because the facade installs no outcome listener.
+  The startup selection is on by default; the Hardware controls start it where they exist (they install the
+  nanopositioner preference first), `useStartupSelection` on other instruments (after its first status reading, so
+  a scan that ends at once is reported, not taken for a job from before a webview reload), whose Connect stage
+  shows the opt-out checkbox. Nanopositioner step wording stays with the hardware area (#868). The Hardware
+  controls' checkbox default (`StartupDiscoveryControls`, on unless the operator stored `false`) is the one line
+  HW-037 (#890) also writes; #895 carries it verbatim so that the two PRs merge cleanly in either order, and
+  `startupPreference.ts` (`readAutoSelect`/`resolveAutoSelect`) reads the same key for the Connect stage.
+- **Delivery mode.** A select on the Connect stage ("Every Frame (preserves sequence)" / "Latest Frame (lowest
+  latency, may drop)"), read with the preflight poll (so a profile apply shows within one poll) and set with
+  `set_frame_delivery_mode` (see [[Rust-Bridge]]). Decision: it is not written back to the saved profile (Qt
+  rewrites the watched config.json; here the applied profile is a revisioned file and the startup restore is pinned
+  to its revision, so a rewrite would make the next launch refuse the profile). The choice holds for the session,
+  the run's method records it as a change after apply, and the control's tooltip says to edit
+  `camera.frame_delivery_mode` in the profile to keep it.
+
+## Start / Stop Camera and the Mock dialog (Qt parity, epic #863 B2)
+
+`useCameraConnection` (`useConnect.ts`) holds the camera commands, `useCameraActions.ts` what surrounds them,
+`CameraActions.tsx` the buttons and the phase text, `MockCameraDialog.tsx` the mock dialog.
+
+- **One command at a time** (CONNECT-033, Qt `commandInFlight_`): a click, key press or shortcut while Start or
+  Stop is in flight sends no second backend command (`cameraCommandRef`, so two calls in one tick are caught);
+  Start/Stop name the reason they are blocked (`startCameraBlockReason`, `stopCameraBlockReason`) in Qt's words.
+  The stage change (`useCameraModeSwitch`: stop, script apply, restart; the Overview auto-start) and the Overview
+  editor's Apply to Camera (`useOverviewScript`: stop, apply; not the rescan after it) hold the same guard
+  (`holdCameraCommand`, kind "stage"), so Start/Stop Camera and the space bar are blocked for the whole sequence and a
+  Start or Stop already in flight is waited for first, 15 s at most (#863: without it Start Camera was enabled between
+  the stop and the script apply, and a start there made the backend refuse the script).
+- **Phase text** (CONNECT-034): `useCameraPhase` reads `fetch_capture_lifecycle` every 250 ms (60 ms while the
+  session is Starting/Stopping or a command is in flight); `cameraPhase` projects it as Qt's
+  `CameraController::project()` ("Camera idle/starting.../running/stopping.../failed/not configured") beside the
+  buttons, with the failure message of this session.
+- **Refusals** (CONNECT-036): a refused or failed Start or Stop is a modal warning titled "Camera" and the
+  Connect status line, not only the log. The backend refuses Stop while an experiment is Starting, Active or
+  Stopping, and while the status is `flushing` (data being saved, CONNECT-038; also a Failed run still saving after a
+  fatal save error, as Qt's `flushInProgress_`; `cameraStopRefusal`, mirrored by `stopCameraBlockReason`) and reports
+  a device teardown that was not confirmed
+  (`ShutdownFailed` of this session) as a failed command with the camera's message (CONNECT-040).
+- **Raw recording** (CONNECT-039, decision): Qt refuses Stop while a raw recording runs. The Stop Camera button
+  finishes the recording first (the file is closed, nothing is lost) and then stops; if the recording cannot be
+  closed the camera keeps running. The space bar, which is easy to hit, never ends a take: Qt's refusal, "Cannot
+  stop camera while frame recording is active. Stop recording first.".
+- **Space bar** (CONNECT-041): `useCameraShortcut` toggles the camera on the Experiment stage's Preview sub-tab
+  (Qt's shortcut belongs to the Preview page's PlaybackPanel) through the same guarded commands; not during an experiment, not while a text field, button, list or dialog
+  has the key, not with a modifier or a repeat (`spaceTogglesCamera`, `spaceCameraAction`).
+- **Display rate** (CONNECT-045, decision): the live view draws at the profile's `display_fps` (default 30, 1 to
+  240), not Qt's fixed up-to-50 fps: the camera's 50 fps full-sensor stream is 104 MB/s over IPC, a 50 fps
+  default would nearly double the 60 MB/s the pulls cost now, and a bench that wants 50 sets `display_fps` in
+  its profile. The canvas hint "No frame yet - configure a camera and press Start Camera" is Tauri-only and
+  stays (it is the empty state of a canvas Qt leaves black).
+- **Mock dialog** (CONNECT-014/016): the frame rate is Qt's spin box in fps, 1 to 10000, 5000 by default (the
+  rig's rate); `configure_mock_fps` turns it into a whole-microsecond interval (the millisecond field of
+  `configure_mock` floors at 1 ms, 1000 fps). The folder is trimmed and starts from the one used last time
+  (`mib.mock-camera.v1` in localStorage), else the folder the backend's mock holds (`MIB_MOCK_CAMERA_DIR`), else
+  Documents (the desktop app ships no `../data/mock_frames`, and the shell cannot test that a folder exists).
+- **Expected camera** (App.tsx:1237): `useProfileCameraContext` reads the active profile's
+  `camera.window.camera_model` (#833) as the preflight's expected identity; the connected camera matches by its
+  discovered model or by its label, without case; a mock source is skipped. The vendor is not compared:
+  discovery reports none.
+- **Storage** (preflight.ts:360-363): the preflight's Storage check reads `fetch_instrument_status.storage` (the
+  recording target, answered on every server) with the preflight poll; the Start gates still check the file
+  chosen at Start.
+- **Focus staleness** (App.tsx:1306) is not changed here: #883 (HW-034) reads the autofocus config's
+  `ring_ratio_stale_ms` into the shell (`afStaleMs`) and the Overview focus gate uses it; one implementation.
+- **Not changed here** (App.tsx:1229, `experimentCompleted` in `areas/shell/workflowModel.ts`): the constant
+  `false` is the shell's (#862) and the experiment epic's. The retained terminal outcome its comment waits for now
+  exists in `fetch_experiment_status` (`terminal`, `finalization_ok`, `cancelled`, `completion`); deriving Complete
+  from it for the current run is a small change there, with the question when Complete resets for a new run.
+
+## Wafer Grid (Overview, CONNECT-054)
+
+The Overview stage has Qt's **Wafer Grid** toggle (bridge ABI next (#878, set at merge), [[Rust-Bridge]]): dot-grid localization decodes
+the live frame only while the Overview is on screen, and the live canvas shows the detected dots, the image-centre
+cross and the pose text (wafer X/Y, theta, um/px, design, chip) or the failure reason. Files:
+`areas/connect/waferGrid.ts` (pure: text, reducer, pause rule, overlay geometry, drawing),
+`useWaferGrid.ts` (pause / resume on the stage and `document.visibilitychange`, the 4 Hz poll, the toggle),
+`WaferGridControls.tsx` (the toolbar button inside a `<ViewerGate>`, the refusal notice); the overlay is a ref in
+`useConnectState()` that `areas/preview/usePreview.ts` `draw()` calls last on the live canvas. Qt's details:
+[[../frontend/OverviewTab]]. The decoder's design registry is compiled into the backend, so the bundle's
+`resources/defaults/dot_grid/` copy is not read; `config.json`'s `dot_grid` section is not applied by profile apply.
+
 ## Command layer
 
 Thin wrappers over the bridge (all take the managed `AppState`; bodies in
@@ -717,7 +890,8 @@ backend Start transaction (which rechecks readiness). A synchronous pending owne
 prevents duplicate chooser/start requests; Starting joins Active/Stopping guards.
 
 Startup discovery is now available through an explicit auto-select/retry panel and a
-persisted opt-in preference for subsequent startup sessions (off by default). Scheduling
+persisted preference for subsequent startup sessions (on by default since #852 and the Connect parity
+work below; an opt-out is remembered; the PZ7035 defaults off). Scheduling
 acceptance is distinct from camera-configured/nanopositioner-connected completion.
 `onSelectionChanged` refreshes shell-owned camera state when startup results change it.
 

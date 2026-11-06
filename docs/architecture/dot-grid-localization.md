@@ -16,11 +16,11 @@ design registry) and which chip (die) of that wafer the view is on.
 | Codec gold reference (contract 1) | `scripts/dot_grid/gold/codec-contract1.json`, `scripts/dot_grid/dotgrid/gold.py` |
 | Design registry (Qt-free; every design, one seed each) | `include/backend/processing/DotGridRegistry.h`, `src/backend/processing/DotGridRegistry.cpp`, `scripts/dot_grid/dotgrid/registry.py` |
 | Live service (samples FrameStore, publishes poses) | `include/backend/services/DotGridService.h`, `src/backend/services/DotGridService.cpp` — [vault note](../../knowledge_map/services/DotGridService.md) |
-| Overview overlay + "Wafer Grid" toggle (Overview tab only) | `src/frontend/tabs/OverviewTab.cpp`, `src/frontend/utils/SimpleImageCanvas.cpp` |
+| Overview overlay + "Wafer Grid" toggle (Overview tab only) | `src/frontend/tabs/OverviewTab.cpp`, `src/frontend/utils/SimpleImageCanvas.cpp`; Tauri twin (bridge ABI next (#878, set at merge)): `desktop/src/areas/connect/{waferGrid.ts,useWaferGrid.ts,WaferGridControls.tsx}`, commands `set_dot_grid_enabled` / `set_dot_grid_paused` / `fetch_dot_grid_pose` (`BackendFacade`, `AppBackend::setDotGridEnabled`) |
 | Mask generator, reference decoder, simulator (Python) | `scripts/dot_grid/` — see [howto/dot-grid-mask-generation.md](../howto/dot-grid-mask-generation.md) |
-| Bundled registry (compiled into the app as `:/defaults/dot_grid_registry.json`) | `resources/defaults/dot_grid/registry.json` |
+| Bundled registry (compiled into the Qt app as `:/defaults/dot_grid_registry.json` and into `mib_backend` as `DotGridService::bundledRegistry()` for the Tauri and bridge-server shells) | `resources/defaults/dot_grid/registry.json` |
 | Archived full codebook of the Wafer_soRT design | `resources/defaults/dot_grid/wafer_soRT_2025-03-16_seed7_p30.json` |
-| Tests | `processing.dot_grid_codebook`, `processing.dot_grid_decoder`, `processing.dot_grid_registry`, `backend.dot_grid_service`, `scripts.dot_grid_reference` |
+| Tests | `processing.dot_grid_codebook`, `processing.dot_grid_decoder`, `processing.dot_grid_registry`, `backend.dot_grid_service`, `backend.dot_grid_facade`, `scripts.dot_grid_reference` |
 | Decision records | [ADR 0008](../decisions/0008-dot-grid-localization.md) (pattern, decoder, service), [ADR 0009](../decisions/0009-dot-grid-design-registry.md) (design registry), [ADR 0010](../decisions/0010-dot-grid-codec-cores.md) (codec cores) |
 
 ## Pattern

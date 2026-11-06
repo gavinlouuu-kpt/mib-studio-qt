@@ -82,6 +82,33 @@ the Experiment Preview page has no toggle.
 - Test: `frontend.dot_grid_overview` (tab switches pause/resume, overlay,
   toggle, no toggle on the Preview page).
 
+**Tauri (React) twin (CONNECT-054, bridge ABI next (#878, set at merge)).** The Overview stage of
+`desktop/src/areas/connect/OverviewTab.tsx` has the same toggle:
+`WaferGridToggle` (`WaferGridControls.tsx`, inside a `<ViewerGate>`, hidden
+when `caps.frame_buffer` is false as on the PZ7035 Align) calls
+`set_dot_grid_enabled`; a refusal shows "Dot-grid localization is not
+available: <reason>" under the toolbar (`WaferGridNotice`, `role="alert"`) and in
+the log instead of Qt's dialog. `useWaferGrid.ts` mirrors `showEvent` /
+`hideEvent`: `set_dot_grid_paused(false)` while the Overview stage is shown in a
+visible window (`document.visibilitychange`) with no experiment running,
+`set_dot_grid_paused(true)` on any stage change, a hidden window, an experiment
+or unmount (the bridge starts paused). While enabled it polls
+`fetch_dot_grid_pose(since_sequence)` every 250 ms and copies the pose only when
+the sequence moved (the reply to the current sequence has no dot list); one read
+on arrival learns whether the service is already on. The overlay is a ref
+(`waferGridOverlayRef`, connect state) that `areas/preview/usePreview.ts`
+`draw()` calls last on the live canvas after the frame and the camera-window
+box: orange dot circles, cyan centre cross, then the text box (`waferGrid.ts`:
+the same three lines as Qt, or "Wafer grid: <reason> (<n> dots)", or "Wafer grid:
+waiting for a frame"). The marks are sized in display pixels (Qt: dot radius
+max(3, 6 x scale), 14 px cross arms) and divided by the canvas's display
+scale, so they keep their size in Fit: Window; they are drawn only when the
+pose was decoded from a frame of the canvas's size. Tests:
+`waferGrid.test.ts` (text, reducer, pause rule, geometry, draw order),
+`useWaferGrid.test.tsx` (pause / resume, polling, refused toggle),
+`ViewerGate.test.tsx`; backend `backend.dot_grid_facade`, Rust
+`dot_grid_commands_decode_the_mock_camera_view`.
+
 Operator workflow, registry coverage and failure messages: [Acquire & record — Wafer Grid](../../docs/manual/acquire-and-record.md#wafer-grid--locate-the-chip).
 
 ## Gotchas
