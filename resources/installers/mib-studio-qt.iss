@@ -114,9 +114,10 @@ Source: "{#SourceDir}resources\isoelastic_curve\*"; DestDir: "{app}\resources\is
 Source: "{#VCRedistPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installvcredist
 #endif
 
-; eGrabber installer (bundled but only run if user selects the task)
+; eGrabber installer (bundled but only extracted and run if the user selects the task
+; and eGrabber is not installed yet)
 #if FileExists(EgrabberPath)
-Source: "{#EgrabberPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installegrabber
+Source: "{#EgrabberPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installegrabber; Check: EGrabberNotInstalled
 #endif
 
 ; MindVision Camera SDK installer (bundled but only run if user selects the task)
@@ -227,8 +228,9 @@ begin
     Exit;
   end;
 
-  // The SDK's install folder (the path the Windows build and bench scripts use).
-  if DirExists(ExpandConstant('{commonpf64}\Euresys\eGrabber\bin')) then
+  // The SDK's GenTL tool in its install folder (the path scripts/win11_bench_camera.ps1 uses);
+  // a file, so an empty folder left by an uninstall does not count.
+  if FileExists(ExpandConstant('{commonpf64}\Euresys\eGrabber\bin\x86_64\gentl.exe')) then
   begin
     Result := False; // Already installed
     Exit;

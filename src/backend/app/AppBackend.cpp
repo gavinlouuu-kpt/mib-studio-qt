@@ -434,8 +434,11 @@ namespace backend
                 SPDLOG_INFO("AppBackend: no state migrated from {}: {}", legacyDataDir_.string(), migration->note);
             for (const auto &entry : migration->copied)
                 SPDLOG_INFO("AppBackend: migrated {} from {} to {}", entry, legacyDataDir_.string(), dataDir);
+            for (const auto &entry : migration->kept)
+                SPDLOG_INFO("AppBackend: {} already in {}, not migrated again", entry, dataDir);
             for (const auto &failure : migration->failed)
-                SPDLOG_WARN("AppBackend: could not migrate {} from {}", failure, legacyDataDir_.string());
+                SPDLOG_WARN("AppBackend: could not migrate {} from {} (retried at the next start)", failure,
+                            legacyDataDir_.string());
         }
 
         // Simulated serial hardware (MIB_SERIAL_MODE=sim), before any service

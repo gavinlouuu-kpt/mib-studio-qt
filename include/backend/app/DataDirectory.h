@@ -8,7 +8,9 @@
 //      <exe dir>/data cannot be written, the data dir is
 //      %LOCALAPPDATA%/MIB_Studio_Qt/data. The Program Files test is by path,
 //      so an elevated and a normal launch of an installed app use the same
-//      folder.
+//      folder. %LOCALAPPDATA% must have an ASCII form (its 8.3 short name for
+//      a non-ASCII account name): the backend reads narrow path strings partly
+//      as UTF-8 and partly in the ANSI code page (#762). Without one, rule 3.
 //   3. Otherwise <exe dir>/data, as before (dev builds, portable copies,
 //      Linux).
 //
@@ -26,7 +28,10 @@ namespace backend::app::datadir {
 // (include/) and, for installed builds, the data dir.
 inline constexpr const char* kUserFolderName = "MIB_Studio_Qt";
 // Environment override for the data dir (all platforms); empty means unset.
+// Use an ASCII path.
 inline constexpr const char* kDataDirEnv = "MIB_DATA_DIR";
+// In the data dir while a migration from <exe dir>/data is unfinished.
+inline constexpr const char* kMigrationPendingMarker = ".legacy-migration-pending";
 
 enum class Source {
     Override,  // MIB_DATA_DIR
@@ -75,19 +80,22 @@ std::filesystem::path logDirFor(const std::filesystem::path& dataDir,
 std::filesystem::path logDirFor(const std::filesystem::path& dataDir);
 
 // True when a component of the path is "Program Files" or
-// "Program Files (x86)" (case-insensitive).
+// "Program Files (x86)" (case-insensitive), or their 8.3 names PROGRA~<n>.
 bool isUnderProgramFiles(const std::filesystem::path& dir);
+
+// True when every character of the path is ASCII.
+bool isAsciiPath(const std::filesystem::path& path);
 
 // Creates the directory when missing, then writes and removes a probe file.
 bool probeWritable(const std::filesystem::path& dir);
 
-// %LOCALAPPDATA% on Windows (CSIDL_LOCAL_APPDATA, wide API); empty elsewhere
-// or when the lookup fails.
+// %LOCALAPPDATA% on Windows (CSIDL_LOCAL_APPDATA, wide API), as its 8.3
+// short name when the long one is not ASCII and a short one exists; empty
+// elsewhere or when the lookup fails.
 std::filesystem::path localAppDataDir();
 
-// The data dir as the std::string AppBackend takes (the native narrow
-// encoding std::filesystem::path(std::string) reads back). Falls back to
-// UTF-8 when the native code page cannot represent the path.
+// A path as the std::string the backend takes: UTF-8 (#762,
+// app::pathToUtf8). resolve() only hands it ASCII user-local paths.
 std::string toBackendString(const std::filesystem::path& path);
 
 // ---- One-time migration of the legacy <exe dir>/data state ----
@@ -102,8 +110,9 @@ const std::vector<std::string>& stateEntries();
 bool hasState(const std::filesystem::path& dataDir);
 
 struct MigrationResult {
-    bool attempted = false;           // the new dir had no state, the legacy dir had some
+    bool attempted = false;           // the new dir had no state (or a pending migration), the legacy dir had some
     std::vector<std::string> copied;  // entry names copied
+    std::vector<std::string> kept;    // already in the data dir (a resumed migration), not copied
     std::vector<std::string> failed;  // "entry: reason"
     std::string note;                 // why nothing was copied, when attempted is false
 };
@@ -111,7 +120,9 @@ struct MigrationResult {
 // When dataDir has no state and legacyDir has some, copies every state entry
 // from legacyDir into dataDir. Each entry is copied under a temporary name and
 // renamed into place, so a failed copy leaves no partial state. Never deletes
-// or changes anything in legacyDir, never overwrites in dataDir.
+// or changes anything in legacyDir, never overwrites in dataDir. The
+// kMigrationPendingMarker file stays in dataDir until every entry is in place,
+// so the next start copies whatever is still missing.
 MigrationResult migrateLegacyState(const std::filesystem::path& legacyDir,
                                    const std::filesystem::path& dataDir);
 

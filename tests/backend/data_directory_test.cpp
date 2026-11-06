@@ -150,6 +150,25 @@ void resolverRules() {
         MIB_EXPECT(layout.legacyDataDir == exe / "data", "legacy dir set");
         MIB_EXPECT(layout.reason.find("not writable") != std::string::npos, "reason says not writable");
     }
+    // A non-ASCII %LOCALAPPDATA% (account name) with no ASCII short form: the backend's narrow
+    // paths cannot carry it (#762), so the old behaviour, never a crash at Start.
+    {
+        ProbeLog probe;
+        probe.answer = false;
+        auto in = windowsInputs("C:/Program Files/MIB Studio Qt", probe);
+        in.localAppData = fs::u8path("C:/Users/\xE9\x99\xB3\xE5\xA4\xA7\xE6\x96\x87/AppData/Local");
+        const auto layout = datadir::resolve(in);
+        MIB_EXPECT(layout.source == datadir::Source::ExeDir, "non-ASCII LOCALAPPDATA -> exe-dir");
+        MIB_EXPECT(layout.reason.find("no ASCII form") != std::string::npos, "reason says no ASCII form");
+        MIB_EXPECT(layout.legacyDataDir.empty(), "nothing to migrate");
+        in.exeDir = "D:/locked/mib";
+        MIB_EXPECT(datadir::resolve(in).source == datadir::Source::ExeDir, "nor for an unwritable exe dir");
+        in.localAppData = "C:/Users/CHANTA~1/AppData/Local"; // its 8.3 short form
+        MIB_EXPECT(datadir::resolve(in).source == datadir::Source::UserLocal, "the ASCII short form is used");
+    }
+    MIB_EXPECT(datadir::isAsciiPath("C:/Users/kenny/AppData/Local"), "ASCII path");
+    MIB_EXPECT(!datadir::isAsciiPath(fs::u8path("C:/Users/J\xC3\xB6rg")), "accented name is not ASCII");
+
     // %LOCALAPPDATA% unknown: nothing better than the old behaviour.
     {
         ProbeLog probe;
@@ -197,6 +216,10 @@ void resolverRules() {
     MIB_EXPECT(datadir::isUnderProgramFiles("C:/Program Files (x86)/MIB"), "Program Files (x86)");
     MIB_EXPECT(!datadir::isUnderProgramFiles("C:/my program files backup/MIB"), "a lookalike folder");
     MIB_EXPECT(!datadir::isUnderProgramFiles("/home/u/Program Filesystem/mib"), "a prefix only");
+    MIB_EXPECT(datadir::isUnderProgramFiles("C:/PROGRA~1/MIBSTU~1"), "8.3 name of Program Files");
+    MIB_EXPECT(datadir::isUnderProgramFiles("c:/progra~2/mib"), "8.3 name of Program Files (x86)");
+    MIB_EXPECT(!datadir::isUnderProgramFiles("C:/PROGRA~X/mib") && !datadir::isUnderProgramFiles("C:/PROGRAMS/mib"),
+               "other short names");
 
     // logDirFor (AppBackend's side of the rule) agrees with resolve().
     MIB_EXPECT(datadir::logDirFor(kUserRoot / "data", kLocalAppData, true) == kUserRoot / "logs",
@@ -290,6 +313,7 @@ void migrationRoundTrip(const mib::test::TempDir& scratch) {
                    fs::exists(legacy / "methods" / "rev-1" / "config.json") && fs::exists(legacy / "logs" / "app.log"),
                "legacy files kept");
     MIB_EXPECT(datadir::hasState(fresh), "the new dir now holds state");
+    MIB_EXPECT(!fs::exists(fresh / datadir::kMigrationPendingMarker), "a finished migration leaves no marker");
 
     // Once only: a second start migrates nothing, even after the legacy dir changed.
     writeText(legacy / "instrument_calibration.json", "{\"records\":[\"newer, written elevated\"]}\n");
@@ -326,6 +350,31 @@ void migrationSkips(const mib::test::TempDir& scratch) {
         MIB_EXPECT(!none.attempted, "no legacy dir given");
         const auto same = datadir::migrateLegacyState(logsOnly, logsOnly / ".");
         MIB_EXPECT(!same.attempted && same.note.find("is the data dir") != std::string::npos, "same dir");
+    }
+    // A start cut off after the first entry (marker written, identity copied) is resumed: the
+    // next start copies what is missing and keeps what is there.
+    {
+        const fs::path legacy = scratch / "resume" / "legacy";
+        const fs::path fresh = scratch / "resume" / "fresh";
+        seedLegacy(legacy);
+        writeText(fresh / "instrument_identity.json", readText(legacy / "instrument_identity.json"));
+        writeText(fresh / datadir::kMigrationPendingMarker, "copying\n");
+        const auto result = datadir::migrateLegacyState(legacy, fresh);
+        MIB_EXPECT(result.attempted && result.failed.empty(), "resumed");
+        MIB_EXPECT(contains(result.kept, "instrument_identity.json"), "the copied entry is kept, not copied again");
+        MIB_EXPECT(contains(result.copied, "instrument_calibration.json") && contains(result.copied, "methods"),
+                   "the missing entries are copied");
+        MIB_EXPECT(!fs::exists(fresh / datadir::kMigrationPendingMarker), "marker removed once complete");
+        MIB_EXPECT(!datadir::migrateLegacyState(legacy, fresh).attempted, "and then it is done");
+    }
+    // A pending marker with nothing left to copy is cleared.
+    {
+        const fs::path legacy = scratch / "resume2" / "legacy";
+        const fs::path fresh = scratch / "resume2" / "fresh";
+        writeText(legacy / "logs" / "app.log", "x");
+        writeText(fresh / datadir::kMigrationPendingMarker, "copying\n");
+        datadir::migrateLegacyState(legacy, fresh);
+        MIB_EXPECT(!fs::exists(fresh / datadir::kMigrationPendingMarker), "stale marker cleared");
     }
     // A staging leftover from an interrupted start is not state and is replaced.
     {
@@ -364,8 +413,35 @@ void migrationFaults(const mib::test::TempDir& scratch) {
         MIB_EXPECT(!fs::exists(fresh / "instrument_calibration.json") && !fs::exists(fresh / "methods"),
                    "no partial file or folder in place");
         for (const auto& item : fs::directory_iterator(fresh))
-            MIB_EXPECT(item.path().filename().string().rfind(".", 0) != 0, "no staging entry left after a failure");
+            MIB_EXPECT(item.path().filename() == datadir::kMigrationPendingMarker ||
+                           item.path().filename().string().rfind(".", 0) != 0,
+                       "no staging entry left after a failure");
         MIB_EXPECT(fs::exists(legacy / "instrument_calibration.json"), "legacy entry kept");
+        MIB_EXPECT(fs::exists(fresh / datadir::kMigrationPendingMarker), "the failure leaves the marker");
+
+        // The next start (the file readable again) copies what failed, and only that.
+        const auto retry = datadir::migrateLegacyState(legacy, fresh);
+        MIB_EXPECT(retry.attempted && retry.failed.empty(), "retried at the next start");
+        MIB_EXPECT(contains(retry.copied, "instrument_calibration.json") && contains(retry.copied, "methods") &&
+                       retry.copied.size() == 2,
+                   "only the failed entries are copied");
+        MIB_EXPECT(contains(retry.kept, "instrument_identity.json"), "the others are kept");
+        MIB_EXPECT(readText(fresh / "instrument_calibration.json") == readText(legacy / "instrument_calibration.json"),
+                   "calibration now migrated");
+        MIB_EXPECT(!fs::exists(fresh / datadir::kMigrationPendingMarker), "marker removed");
+    }
+    // A symbolic link in the legacy dir (an operator's camera folder): its content is copied.
+    {
+        const fs::path legacy = scratch / "link" / "legacy";
+        const fs::path fresh = scratch / "link" / "fresh";
+        const fs::path target = scratch / "link" / "operator-camera";
+        writeText(target / "camera.json", "{\"c\":1}");
+        fs::create_directories(legacy);
+        fs::create_directory_symlink(target, legacy / "camera");
+        const auto result = datadir::migrateLegacyState(legacy, fresh);
+        MIB_EXPECT(contains(result.copied, "camera") && result.failed.empty(), "linked folder copied");
+        MIB_EXPECT(readText(fresh / "camera" / "camera.json") == "{\"c\":1}", "with its content");
+        MIB_EXPECT(!fs::is_symlink(fresh / "camera"), "as a real folder");
     }
     // The new data dir cannot be created: every entry fails, nothing thrown.
     {

@@ -26,12 +26,16 @@ run_entries = [line for line in code_lines(setup) if 'Tasks: installegrabber' in
 assert len(run_entries) == 1, run_entries
 assert 'Check: EGrabberNotInstalled' in run_entries[0], 'eGrabber [Run] must skip an installed eGrabber'
 
+files_entries = [line for line in code_lines(setup) if 'Tasks: installegrabber' in line and line.startswith('Source:')]
+assert len(files_entries) == 1, files_entries
+assert 'Check: EGrabberNotInstalled' in files_entries[0], 'an installed eGrabber is not even extracted'
+
 task = [line for line in code_lines(setup) if line.startswith('Name: "installegrabber"')]
 assert len(task) == 1, task
 assert 'unchecked' not in task[0].lower(), 'eGrabber task stays ticked by default on a new PC'
 
 body = setup.split('function EGrabberNotInstalled: Boolean;', 1)[1].split('end;\n\nprocedure', 1)[0]
 assert "RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\\Euresys\\eGrabber', 'Version', Version)" in body
-assert "DirExists(ExpandConstant('{commonpf64}\\Euresys\\eGrabber\\bin'))" in body
+assert "FileExists(ExpandConstant('{commonpf64}\\Euresys\\eGrabber\\bin\\x86_64\\gentl.exe'))" in body
 assert 'Result := True;' in body, 'not found -> install'
 print('installers: no {app}\\data; eGrabber [Run] skips an installed eGrabber; task ticked by default')

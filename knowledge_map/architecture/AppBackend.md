@@ -144,10 +144,20 @@ The Qt shell resolves the data dir once, in `main.cpp`, with
 
 1. `MIB_DATA_DIR` set and not empty: that folder, on every platform.
 2. Windows, and the exe is under a `Program Files` / `Program Files (x86)`
-   folder (by path, so an elevated launch resolves the same folder), or
-   `<exe dir>/data` fails the write probe: `%LOCALAPPDATA%/MIB_Studio_Qt/data`.
-   The legacy `<exe dir>/data` becomes the migration source.
+   folder (by path, also as `PROGRA~<n>`, so an elevated launch resolves the
+   same folder), or `<exe dir>/data` fails the write probe:
+   `%LOCALAPPDATA%/MIB_Studio_Qt/data`. The legacy `<exe dir>/data` becomes the
+   migration source. `%LOCALAPPDATA%` must have an ASCII form: the backend
+   reads `dataDir` partly as UTF-8 (#762, `storageRoot()`, the crash-state
+   JSON) and partly as `path(std::string)` (ANSI code page on MSVC), which only
+   agree on ASCII. For a non-ASCII account name `localAppDataDir()` uses the
+   8.3 short name; with none, rule 3 applies and the log says so.
 3. Otherwise `<exe dir>/data` (dev builds, portable copies, Linux).
+
+Gotcha: an unwritable exe dir outside Program Files is decided by the write
+probe, so an elevated launch there (writable) and a normal one (not) resolve
+different data dirs. `%LOCALAPPDATA%` is per Windows user, so a second account
+on the same PC gets its own instrument id.
 
 The same layout gives the log dir (`%LOCALAPPDATA%/MIB_Studio_Qt/logs` for the
 user-local data dir, else `<dataDir>/logs`; `logDirFor` is the one rule, used
@@ -164,7 +174,11 @@ Everything below `dataDir` follows: `instrument_identity.json`,
 under `dataDir` must be added to `datadir::stateEntries()`, or an upgrade over a
 build that wrote it under `<exe dir>/data` loses it. The migration copies once
 (only into a dir with no state), entry by entry through a staging name, never
-overwrites and never deletes the legacy files. Tests: `backend.data_directory`.
+overwrites and never deletes the legacy files; a symbolic link is copied as
+its content. `.legacy-migration-pending` stays in `dataDir` until every entry is
+in place, so a start that failed or was cut off part-way copies the missing
+entries at the next start. `mock_frames/` is not migrated. Tests:
+`backend.data_directory`.
 `config.json` is not in the data dir: [[../frontend/ConfigTabs]]'s
 `ConfigPathManager` already keeps it in `%LOCALAPPDATA%/MIB_Studio_Qt/include`
 for a Program Files install.

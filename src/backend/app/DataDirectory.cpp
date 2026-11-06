@@ -73,6 +73,9 @@ bool isUnderProgramFiles(const fs::path& dir)
     {
         const std::string name = lowerAscii(utf8(component));
         if (name == "program files" || name == "program files (x86)") return true;
+        // The 8.3 short names (C:\PROGRA~1, C:\PROGRA~2), when the exe was started through one.
+        if (name.size() == 8 && name.compare(0, 7, "progra~") == 0 && std::isdigit(static_cast<unsigned char>(name[7])))
+            return true;
     }
     return false;
 }
@@ -98,26 +101,44 @@ bool probeWritable(const fs::path& dir)
     return written;
 }
 
+bool isAsciiPath(const fs::path& path)
+{
+    const std::string text = utf8(path);
+    return std::all_of(text.begin(), text.end(), [](char c) { return static_cast<unsigned char>(c) < 0x80; });
+}
+
 fs::path localAppDataDir()
 {
 #ifdef _WIN32
     wchar_t buffer[MAX_PATH];
-    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, buffer)))
-        return fs::path(buffer);
-#endif
+    if (!SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, buffer)))
+        return {};
+    const fs::path longPath(buffer);
+    if (isAsciiPath(longPath)) return longPath;
+    // A non-ASCII account name (C:\Users\<name>): its 8.3 short name is ASCII when the volume
+    // keeps short names (the system drive does by default).
+    const std::wstring wide = longPath.wstring();
+    const DWORD needed = GetShortPathNameW(wide.c_str(), nullptr, 0);
+    if (needed > 0)
+    {
+        std::wstring shortPath(needed, L'\0');
+        const DWORD written = GetShortPathNameW(wide.c_str(), shortPath.data(), needed);
+        if (written > 0 && written < needed)
+        {
+            shortPath.resize(written);
+            const fs::path candidate(shortPath);
+            if (isAsciiPath(candidate)) return candidate;
+        }
+    }
+    return longPath;
+#else
     return {};
+#endif
 }
 
 std::string toBackendString(const fs::path& path)
 {
-    try
-    {
-        return path.string();
-    }
-    catch (const std::exception&)
-    {
-        return utf8(path);
-    }
+    return utf8(path);
 }
 
 fs::path logDirFor(const fs::path& dataDir, const fs::path& localAppData, bool windows)
@@ -144,6 +165,9 @@ Layout resolve(const Inputs& in)
 {
     Layout out;
     const bool knowsUserDir = in.windows && !in.localAppData.empty();
+    // AppBackend reads its data dir as a narrow string, partly as UTF-8 and partly in the ANSI
+    // code page (#762): only an ASCII path reads the same both ways.
+    const bool userDirUsable = knowsUserDir && isAsciiPath(in.localAppData);
     const fs::path userRoot = knowsUserDir ? in.localAppData / kUserFolderName : fs::path();
     const fs::path exeData = in.exeDir / "data";
 
@@ -153,14 +177,14 @@ Layout resolve(const Inputs& in)
         out.source = Source::Override;
         out.reason = std::string(kDataDirEnv) + " is set";
     }
-    else if (knowsUserDir && isUnderProgramFiles(in.exeDir))
+    else if (userDirUsable && isUnderProgramFiles(in.exeDir))
     {
         out.dataDir = userRoot / "data";
         out.legacyDataDir = exeData;
         out.source = Source::UserLocal;
         out.reason = "installed under Program Files, which a normal user cannot write";
     }
-    else if (knowsUserDir && in.writable && !in.writable(exeData))
+    else if (userDirUsable && in.writable && !in.writable(exeData))
     {
         out.dataDir = userRoot / "data";
         out.legacyDataDir = exeData;
@@ -173,6 +197,9 @@ Layout resolve(const Inputs& in)
         out.source = Source::ExeDir;
         if (in.windows && !knowsUserDir && isUnderProgramFiles(in.exeDir))
             out.reason = "%LOCALAPPDATA% is unknown, kept <exe dir>/data";
+        else if (knowsUserDir && !userDirUsable && isUnderProgramFiles(in.exeDir))
+            out.reason = "%LOCALAPPDATA% (" + utf8(in.localAppData) +
+                         ") has no ASCII form, kept <exe dir>/data (state is not saved)";
         else
             out.reason = in.windows ? "<exe dir>/data is writable" : "<exe dir>/data (not Windows)";
     }
@@ -250,7 +277,9 @@ MigrationResult migrateLegacyState(const fs::path& legacyDir, const fs::path& da
         result.note = "no legacy data dir at " + utf8(legacyDir);
         return result;
     }
-    if (hasState(dataDir))
+    const fs::path pending = dataDir / kMigrationPendingMarker;
+    const bool resuming = entryExists(pending);
+    if (!resuming && hasState(dataDir))
     {
         result.note = "the data dir already holds state";
         return result;
@@ -261,6 +290,7 @@ MigrationResult migrateLegacyState(const fs::path& legacyDir, const fs::path& da
     if (present.empty())
     {
         result.note = "the legacy data dir " + utf8(legacyDir) + " holds no state";
+        if (resuming) fs::remove(pending, ec);
         return result;
     }
 
@@ -270,6 +300,19 @@ MigrationResult migrateLegacyState(const fs::path& legacyDir, const fs::path& da
     {
         for (const auto& entry : present) result.failed.push_back(entry + ": cannot create the data dir: " + ec.message());
         return result;
+    }
+    // Written before the first copy and removed once every entry is in place: a start that
+    // failed or was cut off part-way is resumed (the entries still missing are copied) instead
+    // of being taken for a finished migration.
+    if (!resuming)
+    {
+        std::ofstream marker(pending, std::ios::binary | std::ios::trunc);
+        marker << "copying the state of " << utf8(legacyDir) << "\n";
+        if (!marker)
+        {
+            for (const auto& entry : present) result.failed.push_back(entry + ": cannot write to the data dir");
+            return result;
+        }
     }
     for (const auto& entry : present)
     {
@@ -281,10 +324,10 @@ MigrationResult migrateLegacyState(const fs::path& legacyDir, const fs::path& da
         error.clear();
         if (entryExists(target))
         {
-            result.failed.push_back(entry + ": already exists in the data dir");
+            result.kept.push_back(entry); // copied by an earlier start, or the data dir's own
             continue;
         }
-        const auto status = fs::symlink_status(source, error);
+        const auto status = fs::status(source, error); // a symbolic link: its target is copied
         if (!error && fs::is_regular_file(status))
             fs::copy_file(source, staging, fs::copy_options::overwrite_existing, error);
         else if (!error && fs::is_directory(status))
@@ -304,6 +347,7 @@ MigrationResult migrateLegacyState(const fs::path& legacyDir, const fs::path& da
         }
         result.copied.push_back(entry);
     }
+    if (result.failed.empty()) fs::remove(pending, ec);
     return result;
 }
 

@@ -16,10 +16,14 @@ calibration records, SQLite database and profile cache went to the same folder. 
 - **One-time migration:** when the new data dir holds no state and `<exe dir>/data` does, the
   state entries (identity, calibration, SQLite, profile registry cache, methods and the smaller
   instrument records) are copied once, each through a staging name; the old files are never
-  deleted; the log names every entry copied or failed.
+  deleted; the log names every entry copied or failed. A `.legacy-migration-pending` marker makes
+  a failed or interrupted migration resume at the next start.
+- **Non-ASCII account names:** the backend's narrow paths only agree on ASCII (#762), so a
+  non-ASCII `%LOCALAPPDATA%` is used through its 8.3 short name; with none, the app keeps the old
+  `<exe dir>/data` behaviour and logs why. `PROGRA~<n>` counts as Program Files.
 - **Installer:** neither script creates `{app}\data` any more (an existing one is left alone). F3:
-  the eGrabber `[Run]` step has `Check: EGrabberNotInstalled`, which also looks for
-  `{commonpf64}\Euresys\eGrabber\bin`; the task stays ticked by default.
+  the eGrabber `[Files]` and `[Run]` entries have `Check: EGrabberNotInstalled`, which also looks
+  for `{commonpf64}\Euresys\eGrabber\bin\x86_64\gentl.exe`; the task stays ticked by default.
 - **F4:** the main window title is `MIB Studio Qt <version>` (the version Help ▸ About shows), not
   "MIB Studio Qt Scaffold". File ▸ Open Logs Folder opens `AppBackend::logDir()`, which was wrong
   for dev builds and Linux.
