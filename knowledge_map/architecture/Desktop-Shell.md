@@ -437,7 +437,8 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
 - **One command at a time** (CONNECT-033, Qt `commandInFlight_`): a click, key press or shortcut while Start or
   Stop is in flight sends no second backend command (`cameraCommandRef`, so two calls in one tick are caught);
   Start/Stop name the reason they are blocked (`startCameraBlockReason`, `stopCameraBlockReason`) in Qt's words.
-  The stage change (`useCameraModeSwitch`: stop, script apply, restart; the Overview auto-start) holds the same guard
+  The stage change (`useCameraModeSwitch`: stop, script apply, restart; the Overview auto-start) and the Overview
+  editor's Apply to Camera (`useOverviewScript`: stop, apply; not the rescan after it) hold the same guard
   (`holdCameraCommand`, kind "stage"), so Start/Stop Camera and the space bar are blocked for the whole sequence and a
   Start or Stop already in flight is waited for first, 15 s at most (#863: without it Start Camera was enabled between
   the stop and the script apply, and a start there made the backend refuse the script).

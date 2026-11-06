@@ -19,7 +19,7 @@ vi.mock("../../bridge", () => ({ bridge: bridgeMock }));
 vi.mock("../../transport", () => ({ invoke: invokeMock }));
 vi.mock("../../transport/dialogs", () => dialogs);
 import { OverviewScriptEditor } from "./OverviewScriptEditor";
-import { useOverviewScript, type OverviewScriptContext, type OverviewScriptModel } from "./useOverviewScript";
+import { overviewScriptContext, useOverviewScript, type OverviewScriptContext, type OverviewScriptModel } from "./useOverviewScript";
 import { MSG_APPLIED, MSG_CLEARED_QUESTION, OVERVIEW_SCRIPT_KEY } from "./overviewScript";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -228,6 +228,36 @@ describe("unsaved changes, Reset and Save (CONNECT-056, 057)", () => {
 
 describe("Apply to Camera (CONNECT-058)", () => {
   beforeEach(() => { seed(PROFILE_SCRIPT, "// full sensor\n"); });
+
+  // #863 integration: the stop and the apply run under Start / Stop Camera's one-command guard, the rescan after them does not.
+  it("holds the camera command guard for the stop and the apply only", async () => {
+    bridgeMock.fetchCameraSelection.mockImplementation(async () => selection({ running: true }));
+    const held: string[] = [];
+    let holding = false;
+    bridgeMock.stopCapture.mockImplementation(async () => { held.push(`stop:${holding}`); return { ok: true, message: "stopped" }; });
+    bridgeMock.applyCameraScriptWithRole.mockImplementation(async () => { held.push(`apply:${holding}`); return { ok: true, message: "applied" }; });
+    await render({
+      holdCamera: async (work) => { holding = true; try { return await work(); } finally { holding = false; } },
+      refreshCameraState: async () => { held.push(`refresh:${holding}`); },
+    });
+    await click("Apply to Camera");
+    expect(held).toEqual(["stop:true", "apply:true", "refresh:false"]);
+  });
+
+  // The studio wiring: the context's holdCamera is Start / Stop Camera's guard itself (cameraCommandRef), kind "stage".
+  it("the studio context holds Start / Stop Camera's own guard while the sequence runs", async () => {
+    const ref: { current: "start" | "stop" | "stage" | null } = { current: null };
+    const seen: Array<string | null> = [];
+    const ctx = overviewScriptContext({
+      ready: true, expActive: false, recording: false, caps: { egrabber_script: true }, camSelection: null, profiles: { activeProfile: null },
+      append: () => undefined, refreshCameraState: async () => undefined, refreshCameraGeometry: async () => null, setRunning: () => undefined,
+      cameraCommandRef: ref, setCameraCommand: (command: string | null) => { seen.push(command); },
+    } as never);
+    const result = await ctx.holdCamera!(async () => { seen.push(`work:${ref.current}`); return 7; });
+    expect(result).toBe(7);
+    expect(seen).toEqual(["stage", "work:stage", null]);
+    expect(ref.current).toBeNull();
+  });
 
   it("saves first, stops a running camera, applies with the Overview role, and leaves the capture stopped", async () => {
     bridgeMock.fetchCameraSelection.mockImplementation(async () => selection({ running: true }));

@@ -9,6 +9,7 @@ import type { ConfigDocumentsModel } from "../config/useConfig";
 import type { MonitoringState } from "../monitoring/useMonitoring";
 import type { PreviewState } from "../preview/usePreview";
 import type { ShellState } from "../shell/useShell";
+import { holdCameraCommand } from "./connectFlow";
 import type { CameraConnectionModel, CameraWindowingModel, ConnectState } from "./useConnect";
 import {
   differsFromFile, failedToApply, failedToLoad, failedToSave, failedToSaveScript, isHardwareCamera, loadOverviewScript,
@@ -31,10 +32,13 @@ export interface OverviewScriptContext {
   refreshCameraState: () => Promise<void>;
   refreshGeometry: () => Promise<unknown>;
   setRunning: (running: boolean) => void;
+  /** Run a camera stop / apply sequence under Start / Stop Camera's one-command guard (B's CONNECT-033), so the camera cannot be
+   *  started between the stop and the apply. Without it the sequence runs unguarded. */
+  holdCamera?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
 type ContextDeps = Pick<ShellState, "ready" | "caps" | "append"> & Pick<MonitoringState, "expActive"> & Pick<PreviewState, "recording">
-  & Pick<ConnectState, "camSelection" | "setRunning"> & Pick<CameraConnectionModel, "refreshCameraState">
+  & Pick<ConnectState, "camSelection" | "setRunning" | "cameraCommandRef" | "setCameraCommand"> & Pick<CameraConnectionModel, "refreshCameraState">
   & Pick<CameraWindowingModel, "refreshCameraGeometry"> & Pick<ConfigDocumentsModel, "profiles">;
 
 /** The editor's inputs from the studio's state (called by the controller, after the config documents hook). */
@@ -43,6 +47,7 @@ export function overviewScriptContext(s: ContextDeps): OverviewScriptContext {
     ready: s.ready, expActive: s.expActive, recording: s.recording, eGrabberScripts: s.caps.egrabber_script, selection: s.camSelection,
     profileConfigPath: s.profiles.activeProfile?.path ?? "", append: s.append, refreshCameraState: s.refreshCameraState,
     refreshGeometry: s.refreshCameraGeometry, setRunning: s.setRunning,
+    holdCamera: (work) => holdCameraCommand({ ref: s.cameraCommandRef, set: s.setCameraCommand }, work),
   };
 }
 
@@ -159,23 +164,34 @@ export function useOverviewScript(ctx: OverviewScriptContext) {
     const block = overviewApplyBlock({ ready: c.ready, expActive: c.expActive, recording: c.recording });
     if (block) { fail(failedToApply(block)); return; }
     if (!await write(failedToSaveScript)) return;
+    // Only the stop and the apply hold the guard; the rescan and the geometry read that follow may take seconds.
+    let attempted = false;
+    await (c.holdCamera ?? ((work) => work()))(async () => {
+      try {
+        // A fresh selection: the poll behind ctx.selection may be stale.
+        const selection = await bridge.fetchCameraSelection();
+        if (!isHardwareCamera(selection)) { fail(failedToApply(MSG_NO_HARDWARE_CAMERA)); return; }
+        if (selection.running) {
+          const stopped = await bridge.stopCapture();
+          if (!stopped.ok) { fail(failedToApply(`the camera could not be stopped: ${stopped.message}`)); return; }
+          c.setRunning(false);
+        }
+        const result = await bridge.applyCameraScriptWithRole(docFor, true);
+        attempted = true;
+        if (!result.ok) {
+          fail(failedToApply(result.message));
+          c.append(`Overview script not applied: ${result.message}`);
+        } else {
+          info(MSG_APPLIED);
+          c.append(`Overview script applied from ${docFor}`);
+        }
+      } catch (e) {
+        fail(failedToApply(errorText(e)));
+        c.append(`Overview script not applied: ${errorText(e)}`);
+      }
+    });
+    if (!attempted) return;
     try {
-      // A fresh selection: the poll behind ctx.selection may be stale.
-      const selection = await bridge.fetchCameraSelection();
-      if (!isHardwareCamera(selection)) { fail(failedToApply(MSG_NO_HARDWARE_CAMERA)); return; }
-      if (selection.running) {
-        const stopped = await bridge.stopCapture();
-        if (!stopped.ok) { fail(failedToApply(`the camera could not be stopped: ${stopped.message}`)); return; }
-        c.setRunning(false);
-      }
-      const result = await bridge.applyCameraScriptWithRole(docFor, true);
-      if (!result.ok) {
-        fail(failedToApply(result.message));
-        c.append(`Overview script not applied: ${result.message}`);
-      } else {
-        info(MSG_APPLIED);
-        c.append(`Overview script applied from ${docFor}`);
-      }
       await c.refreshCameraState();
       await c.refreshGeometry();
     } catch (e) {
