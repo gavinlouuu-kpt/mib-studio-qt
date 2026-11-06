@@ -82,7 +82,7 @@ the Experiment Preview page has no toggle.
 - Test: `frontend.dot_grid_overview` (tab switches pause/resume, overlay,
   toggle, no toggle on the Preview page).
 
-**Tauri (React) twin (CONNECT-054, bridge ABI 45).** The Overview stage of
+**Tauri (React) twin (CONNECT-054, bridge ABI next (#878, set at merge)).** The Overview stage of
 `desktop/src/areas/connect/OverviewTab.tsx` has the same toggle:
 `WaferGridToggle` (`WaferGridControls.tsx`, inside a `<ViewerGate>`, hidden
 when `caps.frame_buffer` is false as on the PZ7035 Align) calls

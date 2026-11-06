@@ -1309,7 +1309,7 @@ pub mod ffi {
             -> BridgeCommandResult;
         /// Mode, sensor size, saved window, window steps and the last camera read-back (JSON).
         fn fetch_camera_geometry(self: Pin<&mut BackendBridge>) -> String;
-        /// Wafer Grid (ABI 45, CONNECT-054): switch dot-grid localization on or off. Switching on
+        /// Wafer Grid (ABI next (#878, set at merge), CONNECT-054): switch dot-grid localization on or off. Switching on
         /// loads the bundled design registry when none is configured; `message` carries the reason
         /// when that fails ("Dot-grid localization is not available: <reason>" in the UI).
         fn set_dot_grid_enabled(self: Pin<&mut BackendBridge>, enabled: bool) -> BridgeCommandResult;

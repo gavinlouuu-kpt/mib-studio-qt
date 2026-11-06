@@ -2,7 +2,7 @@
 
 The React Overview stage has Qt's **Wafer Grid** toggle: dot-grid localization decodes the live frame only while the
 Overview is on screen, and the live canvas shows the detected dots, the image-centre cross and the pose text (or the
-failure reason). Bridge ABI 45 adds `set_dot_grid_enabled`, `set_dot_grid_paused` and `fetch_dot_grid_pose`
+failure reason). Bridge ABI next (#878, set at merge) adds `set_dot_grid_enabled`, `set_dot_grid_paused` and `fetch_dot_grid_pose`
 ([[architecture/Rust-Bridge]]); the Qt-free half is `DotGridService::bundledRegistry()` (the registry compiled into
 `mib_backend`), `AppBackend::setDotGridEnabled` and the `BackendFacade` pose JSON ([[services/DotGridService]]). The
 facade starts the service paused and the Overview resumes it. Also fixed: `AppBackend::installFrameStore` now hands the

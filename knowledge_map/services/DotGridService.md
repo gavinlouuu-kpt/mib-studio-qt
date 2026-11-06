@@ -86,7 +86,7 @@ std::string*)` does what the Qt toggle plus the watcher do together: it flips
 `Config::registry` to `bundledRegistry()` and `umPerPxHint` to the processing
 pixel-to-micron factor (as `AppConfigWatcher` does). It fails with the reason
 when the registry cannot be loaded (the UI shows "Dot-grid localization is not
-available: <reason>"). `BackendFacade` exposes it as bridge ABI 45
+available: <reason>"). `BackendFacade` exposes it as bridge ABI next (#878, set at merge)
 `set_dot_grid_enabled`, `set_dot_grid_paused` and `fetch_dot_grid_pose` (pose
 JSON: [[../architecture/Rust-Bridge]]); the React Overview's **Wafer Grid** button
 ([[../frontend/OverviewTab]]) drives them. `BackendFacade::initialize` starts the

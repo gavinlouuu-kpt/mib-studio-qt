@@ -483,7 +483,7 @@ block reasons, the startup outcome) are in `connectFlow.ts`; actions in `useCame
 
 ## Wafer Grid (Overview, CONNECT-054)
 
-The Overview stage has Qt's **Wafer Grid** toggle (bridge ABI 45, [[Rust-Bridge]]): dot-grid localization decodes
+The Overview stage has Qt's **Wafer Grid** toggle (bridge ABI next (#878, set at merge), [[Rust-Bridge]]): dot-grid localization decodes
 the live frame only while the Overview is on screen, and the live canvas shows the detected dots, the image-centre
 cross and the pose text (wafer X/Y, theta, um/px, design, chip) or the failure reason. Files:
 `areas/connect/waferGrid.ts` (pure: text, reducer, pause rule, overlay geometry, drawing),

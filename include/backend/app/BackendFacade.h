@@ -1085,7 +1085,7 @@ namespace backend::bridge
         // recordingCapacity as JSON. With `planned`, the window being placed on the Overview instead
         // of the running session's frames. A read; never waits behind a Start (busy: true).
         std::string fetchRecordingCapacityJson(bool planned, int x, int y, int width, int height) const;
-        // Wafer Grid (ABI 45, CONNECT-054): dot-grid localization of the live frame, shown on the
+        // Wafer Grid (ABI next (#878, set at merge), CONNECT-054): dot-grid localization of the live frame, shown on the
         // Overview. Switching on loads the bundled design registry when no codebook source is
         // configured; a failure carries the reason ("Dot-grid localization is not available:
         // <reason>" is the UI's text). The bridge starts paused (initialize()): the Overview

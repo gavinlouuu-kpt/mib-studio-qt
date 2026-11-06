@@ -1,4 +1,4 @@
-// Wafer Grid on the Overview (CONNECT-054, epic #863; bridge ABI 45). Qt parity: OverviewTab's
+// Wafer Grid on the Overview (CONNECT-054, epic #863; bridge ABI next (#878, set at merge)). Qt parity: OverviewTab's
 // "Wafer Grid" button, showEvent / hideEvent (decode only while the Overview is on screen),
 // onToggleDotGrid and updateDotGridOverlay. The state the button reads is React state; the overlay
 // the live canvas draws is a ref (a pose arrives at 4 Hz and must not re-render the whole view).

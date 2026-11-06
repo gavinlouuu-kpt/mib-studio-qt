@@ -706,7 +706,7 @@ fn recording_capacity_through_the_bridge() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
-// ABI 45 (CONNECT-054): the contract describes Wafer Grid and its bound (pinned in shim.cpp).
+// ABI next (#878, set at merge) (CONNECT-054): the contract describes Wafer Grid and its bound (pinned in shim.cpp).
 #[test]
 fn dot_grid_is_described() {
     let contract: serde_json::Value =
@@ -722,7 +722,7 @@ fn dot_grid_is_described() {
     }
 }
 
-// ABI 45 (CONNECT-054): Wafer Grid through cxx. Before init the commands refuse and the pose says
+// ABI next (#878, set at merge) (CONNECT-054): Wafer Grid through cxx. Before init the commands refuse and the pose says
 // unavailable; after init the service is paused and off; enabling loads the bundled design
 // registry (the file compiled into mib_backend); with the mock camera showing a rendered view of
 // that design (tests/fixtures/dot_grid_wafer_sort_rt_40000_52000.png: wafer position 40000 /

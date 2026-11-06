@@ -258,7 +258,7 @@ static_assert(cal::kCalibrationDefaultMaxAgeHours == 24.0);
 static_assert(cal::kCalibrationRateWindowSeconds == 1.0);
 static_assert(cal::kCalibrationRateMinWindows == 3);
 static_assert(cal::kCalibrationStoreMaxVersions == 2048);
-// ABI 45 (CONNECT-054): Wafer Grid pose document (bridge-contract.json dot_grid).
+// ABI next (#878, set at merge) (CONNECT-054): Wafer Grid pose document (bridge-contract.json dot_grid).
 static_assert(backend::bridge::BackendFacade::kDotGridMaxDots == 1024);
 // ABI 44 (#716 A7a): the run quick look (bridge-contract.json run_quick_look; backend/review/RunStatistics.h).
 static_assert(backend::review::kRunQuickLookMaxPaths == 32);
@@ -2345,7 +2345,7 @@ rust::String BackendBridge::fetch_camera_geometry() {
     }
 }
 
-// ABI 45 (CONNECT-054): Wafer Grid. enabled -> loads the bundled design registry when none is
+// ABI next (#878, set at merge) (CONNECT-054): Wafer Grid. enabled -> loads the bundled design registry when none is
 // configured (the failure text is the command message); paused -> the Overview's on-screen gate.
 BridgeCommandResult BackendBridge::set_dot_grid_enabled(bool enabled) {
     try {
@@ -2793,7 +2793,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 45; }
+std::uint32_t bridge_abi_version() { return 44; }
 
 } // namespace mib_bridge
 

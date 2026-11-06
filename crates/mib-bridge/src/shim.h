@@ -210,7 +210,7 @@ public:
     BridgeCommandResult set_camera_overview(bool overview);
     BridgeCommandResult save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width, std::int32_t height);
     rust::String fetch_camera_geometry();
-    // ABI 45 (CONNECT-054): Wafer Grid on the Overview (bridge-contract.json dot_grid).
+    // ABI next (#878, set at merge) (CONNECT-054): Wafer Grid on the Overview (bridge-contract.json dot_grid).
     BridgeCommandResult set_dot_grid_enabled(bool enabled);
     BridgeCommandResult set_dot_grid_paused(bool paused);
     rust::String fetch_dot_grid_pose(std::uint64_t since_sequence);

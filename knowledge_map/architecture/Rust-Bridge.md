@@ -582,7 +582,7 @@ Three functions and additive geometry members; contract `camera_alignment`.
   `egrabber_window_edits_are_control_only_but_the_capacity_is_not`; C++ `backend.camera_window_profile`
   (snap, rewrite, choose) and `backend.camera_window_save` (geometry, save, revision follow, restart).
 
-## ABI 45: Wafer Grid on the Overview (CONNECT-054)
+## ABI next (#878, set at merge): Wafer Grid on the Overview (CONNECT-054)
 
 Additive over ABI 44. Qt's dot-grid localization ([[../services/DotGridService]]) for the Tauri and
 WebSocket shells, three commands (contract: `dot_grid`):

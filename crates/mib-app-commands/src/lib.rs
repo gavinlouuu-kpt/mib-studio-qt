@@ -1676,7 +1676,7 @@ pub fn fetch_camera_geometry(state: &AppState) -> Result<serde_json::Value, Stri
     serde_json::from_str(&guard.pin_mut().fetch_camera_geometry()).map_err(|e| e.to_string())
 }
 
-/// Wafer Grid (ABI 45, CONNECT-054): dot-grid localization on or off. `message` is the failure
+/// Wafer Grid (ABI next (#878, set at merge), CONNECT-054): dot-grid localization on or off. `message` is the failure
 /// reason when switching on is refused.
 pub fn set_dot_grid_enabled(state: &AppState, enabled: bool) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;

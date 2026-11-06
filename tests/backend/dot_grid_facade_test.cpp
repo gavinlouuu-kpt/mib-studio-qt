@@ -1,4 +1,4 @@
-// dot_grid_facade_test (CONNECT-054, bridge ABI 45)
+// dot_grid_facade_test (CONNECT-054, bridge ABI next (#878, set at merge))
 //
 // Wafer Grid through the BackendFacade surface the bridge calls, with the real AppBackend and
 // DotGridService (no camera: frames are pushed into the backend's FrameStore):

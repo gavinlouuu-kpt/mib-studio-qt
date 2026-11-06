@@ -801,7 +801,7 @@ async fn calibration_records_over_the_websocket() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
-// Wafer Grid (CONNECT-054, ABI 45): one shared service per instrument, so switching it on or off and
+// Wafer Grid (CONNECT-054, ABI next (#878, set at merge)): one shared service per instrument, so switching it on or off and
 // pausing it need control (a viewer gets VIEWER_ONLY and nothing reaches the backend); every client may
 // read the pose document. The controller switches it on (the bundled registry loads) and off.
 #[tokio::test(flavor = "multi_thread")]

@@ -811,7 +811,7 @@ export interface RecordingCapacity {
 }
 
 /**
- * Wafer Grid state and the latest pose (ABI 45, CONNECT-054, `fetch_dot_grid_pose`). Only the first
+ * Wafer Grid state and the latest pose (ABI next (#878, set at merge), CONNECT-054, `fetch_dot_grid_pose`). Only the first
  * block when `unchanged` (the poll's `since_sequence` was current) or when there is no pose; an invalid
  * pose has no position and no dots, only `reason`.
  */
@@ -1051,7 +1051,7 @@ export const bridge = {
   // The recording capacity of the next run; `planned` is the window being placed on the Overview.
   fetchRecordingCapacity: (planned?: WindowRect) =>
     invoke<RecordingCapacity>("fetch_recording_capacity", planned ? {x: planned.x, y: planned.y, w: planned.width, h: planned.height} : {}),
-  // Wafer Grid (ABI 45, CONNECT-054): dot-grid localization of the live frame, Overview only. Enabling
+  // Wafer Grid (ABI next (#878, set at merge), CONNECT-054): dot-grid localization of the live frame, Overview only. Enabling
   // loads the bundled design registry (`message` is the reason when that fails); the Overview pauses
   // decoding whenever it is not on screen; the pose poll sends the last `sequence` it copied.
   setDotGridEnabled: (enabled: boolean) => invokeCommand("set_dot_grid_enabled", {enabled}),

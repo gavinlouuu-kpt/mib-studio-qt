@@ -782,7 +782,7 @@ mib_backend_test_link(dot_grid_service_test PRIVATE Threads::Threads)
 add_test(NAME backend.dot_grid_service COMMAND $<TARGET_FILE:mib_backend_tests> dot_grid_service_test)
 set_tests_properties(backend.dot_grid_service PROPERTIES LABELS "backend;processing;stress" TIMEOUT 120)
 
-# Wafer Grid through the BackendFacade (CONNECT-054, bridge ABI 45): the compiled-in registry is the
+# Wafer Grid through the BackendFacade (CONNECT-054, bridge ABI next (#878, set at merge)): the compiled-in registry is the
 # shipped file; enable / pause / pose JSON on the real AppBackend with frames pushed into its store.
 mib_add_backend_test_executable(dot_grid_facade_test backend/dot_grid_facade_test.cpp)
 mib_backend_test_link(dot_grid_facade_test PRIVATE Threads::Threads)

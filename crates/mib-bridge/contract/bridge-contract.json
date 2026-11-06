@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 45,
+  "abi_version": 44,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -669,7 +669,7 @@
     "delta": "run - reference per median, computed by the backend (the UI does no arithmetic): {area_um2_median, deformability_median, emodulus_median_kpa: each {value | null, withheld | null}, differs {profile, method_revision (the central revision when both have one, else the config hash), core, contract: each \"same\" | \"differs\" | \"unknown\" (either side not recorded)}}. Withheld with a reason: area \"factor_not_recorded\" (either side); E \"no_emodulus\" (either side not computed or without a median), \"lut_unidentified\" (a sha256 missing), \"lut_differs\" (the LUT sha256s differ); any \"no_value\" (a median missing). A different profile, revision, core or contract is flagged in differs, never withheld. No % change and no significance."
   },
   "dot_grid": {
-    "$comment": "ABI 45 (CONNECT-054, epic #863): Wafer Grid on the Overview, Qt's DotGridService decoding the live frame against the dot-grid design registry (docs/architecture/dot-grid-localization.md). Three commands; the Qt shell toggles the same service through AppConfigWatcher and OverviewTab, the Qt-free shells through backend::AppBackend::setDotGridEnabled.",
+    "$comment": "ABI next (#878, set at merge) (CONNECT-054, epic #863): Wafer Grid on the Overview, Qt's DotGridService decoding the live frame against the dot-grid design registry (docs/architecture/dot-grid-localization.md). Three commands; the Qt shell toggles the same service through AppConfigWatcher and OverviewTab, the Qt-free shells through backend::AppBackend::setDotGridEnabled.",
     "max_dots": 1024,
     "set_dot_grid_enabled": "enabled bool -> CommandResult; controller only. Switching on, with no codebook source configured yet, loads the design registry compiled into mib_backend (resources/defaults/dot_grid/registry.json, the file the Qt build reads from its resource system) and sets the blob-detector hint from the processing pixel-to-micron factor; a refusal puts the reason in `message` (the UI shows \"Dot-grid localization is not available: <message>\"). Off keeps the registry. The dot_grid section of config.json is not applied by profile apply in this app (ConfigDocumentApply keeps reporting \"dot_grid (Qt shell only)\"): the Overview toggle is the way to switch it on.",
     "set_dot_grid_paused": "paused bool -> CommandResult; controller only. The runtime gate on top of enabled (DotGridService::setPaused): BackendFacade::initialize starts the service paused, the Overview resumes it while its stage is on screen and pauses it on a stage change or when the window is hidden or minimised, so nothing decodes next to an experiment. Not persisted.",
