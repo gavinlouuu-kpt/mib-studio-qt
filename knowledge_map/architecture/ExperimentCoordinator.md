@@ -462,7 +462,11 @@ the worker's switch to Stopping and the file's closing all need that mutex, and 
 to stop (`stopRequested_`, a fatal save error, shutdown) is refused too. Starting, Stopping and Failed stay
 refused with the old reason, and so does an Active run on a PL instrument (`midRunTuneAllowed`): the PL
 runs with the profile compiled at Start (`liveWatcherLoop` recompiles it only for a live session without a
-run), so a host-side change would only make the file's recorded settings untrue. The thread-local owners
+run), so a host-side change would only make the file's recorded settings untrue. A calibration method's
+run (`activeCalibration_`, #716 A4a) is refused as well: `deriveCalibrationRecord` reads the run's valid
+rows at close and stamps the Start's method and configuration identity on them, so a criteria change
+mid-run would put rows validated under two rule sets into a record that names only the first (#879
+review; Qt's tune panel applies mid-run without this check, a follow-up there). The thread-local owners
 are two: an idle transaction still lends its authorization to nested setters, while a mid-run one lends
 none (a `withIdleConfiguration` inside it returns false instead of locking the held mutex).
 

@@ -11,6 +11,7 @@ configuration only, and says so.
 Backend: the cell acceptance and target group criteria now apply while an experiment is Active
 (`ExperimentCoordinator::withTuneConfiguration`, `processingPatchIsTuneOnly`), through both
 `apply_processing_config_json` and `apply_config_document`, as Qt does (MON-080). Every other key,
-`multi_image` included, Starting, Stopping, Failed, a run being stopped and a PL instrument stay locked. No
+`multi_image` included, Starting, Stopping, Failed, a run being stopped, a PL instrument and a calibration
+method's run (its record is derived from the run's rows under the Start's identity; #879 review) stay locked. No
 bridge ABI change. Test `backend.experiment_tune_apply`. See [[ExperimentCoordinator]], [[architecture/Rust-Bridge]]
 and [[architecture/Desktop-Shell]].

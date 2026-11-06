@@ -2351,7 +2351,7 @@ bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& t
 }
 
 bool ExperimentCoordinator::midRunTuneAllowed(ExperimentRunState state, bool hasRun, bool stopping, bool hostProcessing,
-                                              std::string* why) {
+                                              bool calibrationRun, std::string* why) {
     if (why) why->clear();
     if (state != ExperimentRunState::Active || !hasRun) return false; // Starting, Stopping, Failed: plainly not idle
     if (stopping) {
@@ -2360,6 +2360,13 @@ bool ExperimentCoordinator::midRunTuneAllowed(ExperimentRunState state, bool has
     }
     if (!hostProcessing) {
         if (why) *why = "this instrument's PL runs the science with the settings compiled at Start";
+        return false;
+    }
+    if (calibrationRun) {
+        // deriveCalibrationRecord reads the run's valid rows at close and stamps the Start's method
+        // and configuration identity on them: a criteria change mid-run would mix rows validated
+        // under two rule sets in a record that names only the first (#879 review).
+        if (why) *why = "a calibration run derives its record from the rows validated under the criteria applied at Start";
         return false;
     }
     return true;
@@ -2383,7 +2390,7 @@ bool ExperimentCoordinator::withTuneConfiguration(const std::function<void(bool 
         return true;
     }
     if (!midRunTuneAllowed(state, activeRun_.has_value(), stopRequested_ || fatalRequested_ || workerExit_,
-                           app::hostProcessingAvailable(), refusal))
+                           app::hostProcessingAvailable(), activeCalibration_.has_value(), refusal))
         return false;
     SPDLOG_DEBUG("ExperimentCoordinator: tuning run {} while it is Active", activeRun_->startGeneration);
     OwnerScope<ExperimentCoordinator> scope(tlTuneOwner, this);
