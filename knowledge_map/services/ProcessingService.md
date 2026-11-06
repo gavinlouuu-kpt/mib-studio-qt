@@ -395,8 +395,9 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   images for its newest rows only (memory budget)" instead of "this instrument
   reports measurements without images". 32 MiB per ring is 66 whole 1216x208
   rows, against what the tab shows from the newest rows: 25 thumbnails per grid
-  ([[../frontend/ExperimentMonitoringTab]] `MAX_FRAMES_TO_SHOW`), at most 24
-  strip cells ([[MonitoringCellStore]] `kStripMaxCells`, whose crops are
+  ([[../frontend/ExperimentMonitoringTab]] `MAX_FRAMES_TO_SHOW`), 25 cells in
+  each of the valid and invalid strips ([[MonitoringCellStore]]
+  `kStripMaxCells`, `kInvalidStripMaxCells`, each strip's crops capped at
   4 MiB), and a click on a scatter point, which shows its image while the row
   still holds one. The tab's own rolling copy of the rings shares the images
   and would keep them after the ring released them, so it is trimmed to the same
