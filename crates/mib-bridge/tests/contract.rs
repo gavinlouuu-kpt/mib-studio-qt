@@ -126,9 +126,12 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    // v45 (#863) the eGrabber camera window: apply_camera_script_with_role, save_camera_window,
-    // fetch_recording_capacity and the geometry's window_source / script_role / window_apply.
-    assert_eq!(ffi::bridge_abi_version(), 45);
+    // ABI next (#895, set at merge) (#863) fetch_frame_delivery_mode / set_frame_delivery_mode: the Connect stage's delivery mode
+    // (Every Frame / Latest Frame), applied at the next capture start. ABI next (#896, set at merge) (#863): configure_mock_camera_fps: the
+    // mock camera by frame rate (1 to 10000 fps, whole-microsecond interval). ABI next (#892, set at merge) (#863) the eGrabber camera
+    // window: apply_camera_script_with_role, save_camera_window, fetch_recording_capacity and the geometry's window_source /
+    // script_role / window_apply.
+    assert_eq!(ffi::bridge_abi_version(), 44);
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.

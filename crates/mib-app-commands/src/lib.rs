@@ -127,6 +127,22 @@ pub fn init(state: &AppState, data_dir: &str, resource_dir: &str) -> Result<bool
     Ok(guard.pin_mut().initialize_with_resources(data_dir, resource_dir))
 }
 
+/// Configure the mock camera by frame rate (ABI next (#896, set at merge), #863): `fps` is Qt's spin box, 1 to 10000; the
+/// interval is whole microseconds, so 5000 fps is 200 us (the millisecond field of `configure_mock`
+/// cannot go below 1 ms). A rate outside the range is refused here.
+pub fn configure_mock_fps(
+    state: &AppState,
+    frame_dir: String,
+    fps: f64,
+    loop_files: bool,
+) -> Result<CmdResult, String> {
+    if !fps.is_finite() || !(1.0..=10_000.0).contains(&fps) {
+        return Err("Mock frame rate must be 1 to 10000 fps".into());
+    }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().configure_mock_camera_fps(&frame_dir, fps, loop_files).into())
+}
+
 pub fn configure_mock(
     state: &AppState,
     frame_dir: String,
@@ -521,6 +537,18 @@ pub fn startup_discovery_run(state: &AppState, action: String) -> Result<serde_j
 pub fn startup_discovery_status(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().startup_discovery_status()).map_err(|e| e.to_string())
+}
+
+/// The capture delivery mode (ABI next (#895, set at merge), #863): `mode`, the camera-confirmed `active_mode`, and whether a capture runs.
+pub fn fetch_frame_delivery_mode(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_frame_delivery_mode()).map_err(|e| e.to_string())
+}
+
+/// Set the capture delivery mode ("everyFrame" or "latestFrame"); it applies at the next capture start.
+pub fn set_frame_delivery_mode(state: &AppState, mode: String) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().set_frame_delivery_mode(&mode)).map_err(|e| e.to_string())
 }
 
 pub fn pulse_generator_command(state: &AppState, json: String) -> Result<CmdResult, String> {
@@ -1413,6 +1441,17 @@ pub fn fetch_camera_selection(state: &AppState) -> Result<CameraSelection, Strin
     })
 }
 
+/// Why the camera selection cannot change now, or `None`: the same rule as `select_mindvision_camera`
+/// and `apply_camera_script` (capture running, or an experiment Starting/Active/Stopping).
+fn camera_change_blocker(guard: &mut std::sync::MutexGuard<'_, cxx::UniquePtr<ffi::BackendBridge>>) -> Option<String> {
+    let selected = guard.pin_mut().fetch_camera_selection();
+    let experiment = guard.pin_mut().fetch_experiment_status();
+    if !selected.valid || !experiment.valid || selected.running || matches!(experiment.state, 1..=3) {
+        return Some("Stop capture and finalize the experiment before changing camera settings".into());
+    }
+    None
+}
+
 /// Select a hardware (EGrabber) camera.
 pub fn select_hardware_camera(
     state: &AppState,
@@ -1421,6 +1460,11 @@ pub fn select_hardware_camera(
     label: String,
 ) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    // #863 CONNECT-009: like select_mindvision_camera, the camera does not change under a running
+    // capture or a live experiment (the shell disables the button too; this is the backend's own rule).
+    if let Some(reason) = camera_change_blocker(&mut guard) {
+        return Err(reason);
+    }
     Ok(guard
         .pin_mut()
         .select_hardware_camera(interface_index, device_index, &label)

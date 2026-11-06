@@ -173,6 +173,12 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow), backend_(backend)
 {
     ui->setupUi(this);
+    // Rig check F4: the title names the build, the same version Help > About shows.
+    {
+        const QString version = QCoreApplication::applicationVersion();
+        setWindowTitle(version.isEmpty() ? QStringLiteral("MIB Studio Qt")
+                                         : QStringLiteral("MIB Studio Qt %1").arg(version));
+    }
 
     // Connect menu actions
     connect(ui->exitAct, &QAction::triggered, this, &QWidget::close);
@@ -327,16 +333,15 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         openFolder(QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation))
                        .absoluteFilePath(QStringLiteral("MIB_Studio_Qt")));
     });
-    connect(ui->openLogsFolderAct, &QAction::triggered, this, [openFolder]() {
+    // The folder app.log is in (AppBackend::logDir, the data-dir rule of
+    // backend/app/DataDirectory.h): %LOCALAPPDATA%/MIB_Studio_Qt/logs on an
+    // installed Windows build, else <data dir>/logs.
+    connect(ui->openLogsFolderAct, &QAction::triggered, this, [this, openFolder]() {
 #ifdef _WIN32
-        const QString localAppData = qEnvironmentVariable("LOCALAPPDATA");
-        const QString base = localAppData.isEmpty()
-            ? QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
-            : localAppData;
+        openFolder(QString::fromStdWString(backend_.logDir().wstring()));
 #else
-        const QString base = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+        openFolder(QString::fromStdString(backend_.logDir().string()));
 #endif
-        openFolder(QDir(base).absoluteFilePath(QStringLiteral("MIB_Studio_Qt/logs")));
     });
     connect(ui->whatsNewAct, &QAction::triggered, this, [this]() {
         frontend::HelpDialog(false, this).exec();
@@ -522,6 +527,7 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
 
     // Tabs: Connect + Overview + Experiment (Preview + Monitoring) + Review
     connectTab_ = new frontend::ConnectTab(backend_, ui->tabs);
+    connectTab_->setCameraState(cameraController_->state()); // later changes: onCameraStateChanged (#860)
     overviewTab_ = new frontend::OverviewTab(backend_, ui->tabs);
     
     // Create Experiment tab with nested Preview and Monitoring tabs
@@ -1193,6 +1199,9 @@ void MainWindow::onCameraStateChanged(const frontend::CameraActionState& state)
         statsTimer_->stop();
     }
 
+    // The Connect tab's "Connected to … (capturing)" line follows the same state (#860).
+    if (connectTab_) connectTab_->setCameraState(state);
+
     if (!statusLabel_) return;
     switch (state.phase)
     {
@@ -1628,6 +1637,7 @@ void MainWindow::onStopExperiment()
         {
             // The backend already finalized (fatal save error); mirror it.
             experimentActive_ = false;
+            releaseRealtimeHeldForRun();
             updateExperimentButtonStates();
         }
         return;
@@ -1770,6 +1780,7 @@ void MainWindow::onExperimentStatus(const backend::app::ExperimentStatus& status
     experimentActive_ = false;
     stopInProgress_ = false;
     flushInProgress_ = false;
+    releaseRealtimeHeldForRun(); // #899: the run left the tab with processing kept for it
     // Complete becomes Failed automatically when a failure was latched.
     runStatusModel_->setPhase(frontend::RunPhase::Complete, runOperationId_);
     updateExperimentButtonStates(); // This will also call updateTabStates() to enable Overview and Review tabs
@@ -1949,9 +1960,10 @@ void MainWindow::startExperimentServices()
         return;
     }
 
-    backend_.processing().startRealtime(frameStore);
+    backend_.processing().startRealtime(frameStore); // no-op while it still runs for a run (#899)
     backend_.playback().play();
     experimentServicesActive_ = true;
+    realtimeHeldForRun_ = false; // the shown tab owns realtime processing again
     SPDLOG_INFO("MainWindow: Experiment services started");
 }
 
@@ -1961,10 +1973,39 @@ void MainWindow::stopExperimentServices()
         return; // Already stopped
     }
 
-    backend_.processing().stopRealtime();
     backend_.playback().pause();
     experimentServicesActive_ = false;
+    // #899: the realtime loop is the run's only consumer: it admits, processes and saves the run's
+    // frames. Stopping it because a tab is hidden stopped the recording for as long as the user
+    // looked elsewhere (3.3 s on the Connect tab on the bench), and the run ended incompleteLoss.
+    // During a run only the view pauses; processing is stopped once the run is over.
+    if (runOwnsRealtime()) {
+        realtimeHeldForRun_ = true;
+        SPDLOG_INFO("MainWindow: Experiment view paused; realtime processing kept for the run");
+        return;
+    }
+    backend_.processing().stopRealtime();
     SPDLOG_INFO("MainWindow: Experiment services stopped");
+}
+
+bool MainWindow::runOwnsRealtime() const
+{
+    if (experimentActive_ || stopInProgress_) return true;
+    // A run started by another client (the bridge) is known to the coordinator only. Same states as
+    // the camera-mode guard in AppBackend; Failed is left out there too: a failed run stays Failed
+    // after its file is closed, until the fault is acknowledged.
+    using State = backend::app::ExperimentRunState;
+    const auto state = backend_.experiment().stateNow();
+    return state == State::Starting || state == State::Active || state == State::Stopping;
+}
+
+void MainWindow::releaseRealtimeHeldForRun()
+{
+    if (!realtimeHeldForRun_ || runOwnsRealtime()) return;
+    realtimeHeldForRun_ = false;
+    if (experimentServicesActive_) return; // the Experiment or Overview tab is shown again
+    backend_.processing().stopRealtime();
+    SPDLOG_INFO("MainWindow: realtime processing kept for the run stopped (Experiment tab not shown)");
 }
 
 void MainWindow::onNoCamerasFound()
