@@ -25,3 +25,8 @@
   dialog uses `SyringePumpService::getComPort(PumpId)` to enforce.
 - `flowRateUnit` is an integer code, not a string — `100` = µL/min.
 - See `docs/dLSP_pump.pdf` for the protocol.
+- `saveConfig` runs on `aboutToQuit`. It reads the active config's raw bytes
+  (`ConfigDocumentStore::readDocument`) and writes only when a pump key
+  changed, through `ConfigDocumentStore::writeText` (#907). It used to rewrite
+  the active profile in Text mode on every close. A missing file is still
+  created with the pump keys.

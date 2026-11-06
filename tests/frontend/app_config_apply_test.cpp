@@ -12,7 +12,11 @@
 //    the watcher catches up the apply succeeds;
 //  - malformed JSON on disk, a directory path, a missing document, an empty
 //    patch and an inverted range all fail closed with nothing written;
-//  - a genuine external edit still reloads and is broadcast.
+//  - a genuine external edit still reloads and is broadcast;
+//  - a CRLF document (Windows profiles, issue #904): the loaded fingerprint
+//    is that of the raw bytes, a byte-identical rewrite is an echo, the
+//    Young's modulus gate Apply persists and applies (twice), and a real
+//    external CRLF edit is still a conflict until reloaded.
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
@@ -334,6 +338,100 @@ int main(int argc, char* argv[])
         req.patch.values[frontend::TuneField::RingRatioMin] = 12.5;
         watcher.onApplyProcessingDraft(req);
         MIB_EXPECT(got.requestId == 30 && got.ok() && processing.getProcessingConfig().ring_ratio_min == 12.5, "slot wrapper delivers the result");
+        settleMs(400);
+    }
+
+    // ---- 5. CRLF document (issue #904) ------------------------------------------
+    // Windows profiles are CRLF. The loaded fingerprint, the apply baseline,
+    // the on-disk check and the echo check must all hash the same raw bytes.
+    wd.mark("crlf");
+    {
+        const QString crlfPath = QString::fromStdString((td.path() / "crlf_config.json").string());
+        QByteArray crlf(kConfig);
+        crlf.replace("\n", "\r\n");
+        crlf.append("\r\n");
+        writeFile(crlfPath, crlf);
+        MIB_REQUIRE(fileBytes(crlfPath).count("\r\n") > 10, "fixture has CRLF line endings");
+
+        frontend::AppConfigWatcher crlfWatcher(backend, nullptr);
+        int crlfChanged = 0;
+        QObject::connect(&crlfWatcher, &frontend::AppConfigWatcher::configFileChanged, [&](const QString&) { ++crlfChanged; });
+        crlfWatcher.setWatchedPath(crlfPath);
+        settleMs(50);
+        MIB_REQUIRE(crlfWatcher.watchedPath() == crlfPath, "watching the CRLF config");
+        MIB_EXPECT(crlfWatcher.documentFingerprint() == frontend::ConfigDocumentStore::fingerprintOf(crlf)
+                       && *frontend::ConfigDocumentStore::currentFingerprint(crlfPath) == crlfWatcher.documentFingerprint(),
+                   "loaded fingerprint == fingerprint of the raw CRLF bytes on disk");
+        MIB_EXPECT(processing.getProcessingConfig().area_threshold_max == 290, "CRLF document parsed and applied");
+
+        // Echo check: a byte-identical rewrite (the app's own write, or a
+        // touch) is recognised and neither reloaded nor re-broadcast.
+        crlfChanged = 0;
+        writeFile(crlfPath, crlf);
+        settleMs(600);
+        MIB_EXPECT(crlfChanged == 0, "byte-identical CRLF rewrite is an echo: no reload, no broadcast");
+
+        // Tune-panel Apply of the Young's modulus gate on the CRLF document.
+        frontend::ApplyProcessingDraftRequest req;
+        req.requestId = 40;
+        req.baselineFingerprint = crlfWatcher.documentFingerprint();
+        req.patch.values[frontend::TuneField::TargetEmodulusEnabled] = true;
+        req.patch.values[frontend::TuneField::TargetEmodulusMin] = 1.0;
+        req.patch.values[frontend::TuneField::TargetEmodulusMax] = 3.0;
+        const auto r = crlfWatcher.applyProcessingDraft(req);
+        MIB_EXPECT(r.persisted && r.applied && !r.conflict && r.error.isEmpty(),
+                   "CRLF document: persisted=true applied=true conflict=false");
+        {
+            const QJsonObject tg = imageProcessing(crlfPath).value(QStringLiteral("target_group")).toObject();
+            MIB_EXPECT(tg.value(QStringLiteral("emodulus_enabled")).toBool() && tg.value(QStringLiteral("emodulus_min")).toDouble() == 1.0
+                           && tg.value(QStringLiteral("emodulus_max")).toDouble() == 3.0
+                           && tg.value(QStringLiteral("area_max")).toInt() == 191,
+                       "E gate values written to the file, siblings kept");
+            const auto rt = processing.getProcessingConfig();
+            MIB_EXPECT(rt.enable_target_group_emodulus && rt.target_group_emodulus_min == 1.0 && rt.target_group_emodulus_max == 3.0,
+                       "runtime carries the E gate");
+        }
+        MIB_EXPECT(crlfWatcher.documentFingerprint() == r.fingerprint
+                       && *frontend::ConfigDocumentStore::currentFingerprint(crlfPath) == r.fingerprint,
+                   "recorded fingerprint is that of the bytes on disk after the self-write");
+        crlfChanged = 0;
+        settleMs(600);
+        MIB_EXPECT(crlfChanged == 1, "self-write: one broadcast, the watcher echo is not reloaded");
+
+        // A second Apply (the panel's baseline is the last result) succeeds too.
+        frontend::ApplyProcessingDraftRequest req2;
+        req2.requestId = 41;
+        req2.baselineFingerprint = r.fingerprint;
+        req2.patch.values[frontend::TuneField::TargetEmodulusMax] = 4.0;
+        const auto r2 = crlfWatcher.applyProcessingDraft(req2);
+        MIB_EXPECT(r2.ok() && !r2.conflict && processing.getProcessingConfig().target_group_emodulus_max == 4.0,
+                   "second Apply on the same document succeeds");
+        settleMs(600);
+
+        // A real external edit, still CRLF, is a conflict until reloaded.
+        QJsonObject root = QJsonDocument::fromJson(fileBytes(crlfPath)).object();
+        QJsonObject ip = root.value(QStringLiteral("image_processing")).toObject();
+        ip.insert(QStringLiteral("ring_ratio_max"), 41.0);
+        root.insert(QStringLiteral("image_processing"), ip);
+        QByteArray external = QJsonDocument(root).toJson(QJsonDocument::Indented);
+        external.replace("\n", "\r\n");
+        writeFile(crlfPath, external);
+        frontend::ApplyProcessingDraftRequest req3;
+        req3.requestId = 42;
+        req3.baselineFingerprint = r2.fingerprint;
+        req3.patch.values[frontend::TuneField::TargetEmodulusMin] = 2.0;
+        const auto r3 = crlfWatcher.applyProcessingDraft(req3);
+        MIB_EXPECT(r3.conflict && !r3.persisted && !r3.applied && fileBytes(crlfPath) == external,
+                   "external CRLF edit -> conflict, nothing written");
+        crlfChanged = 0;
+        settleMs(600);
+        MIB_EXPECT(crlfChanged >= 1 && processing.getProcessingConfig().ring_ratio_max == 41.0
+                       && crlfWatcher.documentFingerprint() == frontend::ConfigDocumentStore::fingerprintOf(external),
+                   "external CRLF edit reloaded with the raw-bytes fingerprint");
+        req3.baselineFingerprint = crlfWatcher.documentFingerprint();
+        const auto r4 = crlfWatcher.applyProcessingDraft(req3);
+        MIB_EXPECT(r4.ok() && processing.getProcessingConfig().target_group_emodulus_min == 2.0,
+                   "after the reload the Apply succeeds");
         settleMs(400);
     }
 

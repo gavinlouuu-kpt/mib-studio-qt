@@ -272,6 +272,12 @@ The profile lifecycle regression uses unique profile names and clicks the Qt
 confirmation buttons; closing a QMessageBox with `done(Yes)` does not select its
 Yes button. This avoids skipped actions and stale directories between runs.
 
+`writeTextFile` / `readTextFile` (profile save of `config.json` and
+`egrabberConfig.js`, profile meta) go through `ConfigDocumentStore`: binary
+UTF-8, atomic, `\n` kept as `\n`. They used `QIODevice::Text`, which wrote
+CRLF on Windows only, so the bytes on disk differed from the text the app
+serialized (#904).
+
 Fresh Windows defaults may contain CRLF from the bundled resource. The editor
 normalizes line endings, so its clean/dirty baseline is separate from the raw
 file fingerprint used for Save conflicts. Deleting an active profile reloads

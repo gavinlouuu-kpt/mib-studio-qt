@@ -16,6 +16,8 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QStandardPaths>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QUrl>
 
 #include "frontend/dialogs/SoftwareUpdatesDialog.h"
@@ -62,6 +64,7 @@
 #include "frontend/widgets/AlertBanner.h"
 #include <QPlainTextEdit>
 #include "frontend/utils/WindowGeometryPolicy.h"
+#include "frontend/utils/ExperimentSaveLocation.h"
 #include "frontend/tabs/ConnectTab.h"
 #include "frontend/tabs/PreviewPage.h"
 #include "frontend/tabs/HdfReviewTab.h"
@@ -1535,11 +1538,21 @@ void MainWindow::onStartExperiment()
         }
     }
 
-    // Show file dialog to select HDF5 save location
+    // Show file dialog to select HDF5 save location. #906: start in the
+    // profile's save_directory, a relative one under Documents/MIB_Studio_Qt;
+    // "" made Windows open the working directory, which for the Start-menu
+    // shortcut is the install folder under Program Files.
+    const QString saveDir = frontend::resolveExperimentSaveDirectory(
+        QJsonDocument::fromJson(QByteArray::fromStdString(backend_.getLastConfigJson()))
+            .object()
+            .value(QStringLiteral("save_directory"))
+            .toString(),
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
+    QDir().mkpath(saveDir);
     QString filePath = QFileDialog::getSaveFileName(
         this,
         tr("Save Experiment Data"),
-        "",
+        saveDir,
         tr("HDF5 Files (*.h5 *.hdf5);;All Files (*)"));
 
     if (filePath.isEmpty())

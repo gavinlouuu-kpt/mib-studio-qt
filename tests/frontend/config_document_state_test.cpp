@@ -5,7 +5,8 @@
 // conflict that retains local bytes, a checked QSaveFile write replaces the
 // file atomically, a stale baseline is refused as a conflict before writing,
 // a failed write keeps the state dirty, and a file-as-directory target fails
-// cleanly.
+// cleanly. readDocument() returns the raw bytes of a CRLF file and its
+// fingerprint equals the on-disk one (issue #904).
 
 #include "frontend/models/ConfigDocumentState.h"
 #include "frontend/system/ConfigDocumentStore.h"
@@ -74,6 +75,42 @@ int main()
         const auto bad2 = ConfigDocumentStore::writeText(path + QStringLiteral("/child.json"), QStringLiteral("x"));
         MIB_EXPECT(!bad2.ok, "file-as-parent fails");
         MIB_EXPECT(ConfigDocumentStore::writeText(QString(), QStringLiteral("x")).ok == false, "empty path fails");
+    }
+
+    // ---- raw-bytes read (issue #904) ----------------------------------------
+    // The one read behind every fingerprint keeps CRLF, so "what was loaded"
+    // and "what is on disk" hash the same bytes on every platform.
+    {
+        const QString crlfPath = QString::fromStdString((td.path() / "crlf.json").string());
+        const QByteArray crlf("{\r\n  \"a\": 1,\r\n  \"b\": [1, 2]\r\n}\r\n");
+        {
+            QFile f(crlfPath);
+            MIB_REQUIRE(f.open(QIODevice::WriteOnly | QIODevice::Truncate), "write CRLF fixture");
+            f.write(crlf);
+        }
+        const auto rr = ConfigDocumentStore::readDocument(crlfPath);
+        MIB_EXPECT(rr.ok && rr.exists && rr.bytes == crlf, "readDocument returns the raw bytes, CRLF kept");
+        MIB_EXPECT(rr.fingerprint == ConfigDocumentStore::fingerprintOf(crlf)
+                       && ConfigDocumentStore::currentFingerprint(crlfPath).value_or(QByteArray()) == rr.fingerprint,
+                   "loaded fingerprint == on-disk fingerprint for a CRLF file");
+        // Why: a QIODevice::Text read drops the '\r', so its fingerprint can
+        // never match the on-disk one (the #904 Apply refusal).
+        {
+            QFile f(crlfPath);
+            MIB_REQUIRE(f.open(QIODevice::ReadOnly | QIODevice::Text), "text-mode read");
+            const QByteArray text = f.readAll();
+            MIB_EXPECT(!text.contains('\r') && ConfigDocumentStore::fingerprintOf(text) != rr.fingerprint,
+                       "a Text-mode read of a CRLF file does not fingerprint the on-disk bytes");
+        }
+        // A save of the app's own text writes exactly those bytes ('\n' stays '\n').
+        const auto w = ConfigDocumentStore::writeText(crlfPath, QStringLiteral("{\n  \"a\": 2\n}\n"), rr.fingerprint);
+        const auto after = ConfigDocumentStore::readDocument(crlfPath);
+        MIB_EXPECT(w.ok && after.bytes == QByteArray("{\n  \"a\": 2\n}\n") && after.fingerprint == w.fingerprint,
+                   "write fingerprint is that of the bytes on disk");
+        const auto missing = ConfigDocumentStore::readDocument(crlfPath + QStringLiteral(".nope"));
+        MIB_EXPECT(!missing.ok && !missing.exists && !missing.error.isEmpty(), "missing file: not ok, not exists");
+        MIB_EXPECT(ConfigDocumentStore::currentFingerprint(crlfPath + QStringLiteral(".nope")).value_or(QByteArray("x")).isEmpty(),
+                   "missing file still counts as an empty baseline");
     }
     return mib::test::exitCode();
 }

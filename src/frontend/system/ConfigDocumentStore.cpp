@@ -13,12 +13,32 @@ QByteArray ConfigDocumentStore::fingerprintOf(const QByteArray& bytes)
     return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
 }
 
+ConfigReadResult ConfigDocumentStore::readDocument(const QString& path)
+{
+    ConfigReadResult r;
+    QFile f(path);
+    r.exists = !path.isEmpty() && f.exists();
+    if (!r.exists) {
+        r.error = QStringLiteral("file does not exist: %1").arg(path);
+        return r;
+    }
+    // Binary on purpose: no QIODevice::Text (issue #904).
+    if (!f.open(QIODevice::ReadOnly)) {
+        r.error = QStringLiteral("cannot read %1: %2").arg(path, f.errorString());
+        return r;
+    }
+    r.bytes = f.readAll();
+    r.fingerprint = fingerprintOf(r.bytes);
+    r.ok = true;
+    return r;
+}
+
 std::optional<QByteArray> ConfigDocumentStore::currentFingerprint(const QString& path)
 {
-    QFile f(path);
-    if (!f.exists()) return QByteArray();
-    if (!f.open(QIODevice::ReadOnly)) return std::nullopt;
-    return fingerprintOf(f.readAll());
+    const ConfigReadResult r = readDocument(path);
+    if (!r.exists) return QByteArray();
+    if (!r.ok) return std::nullopt;
+    return r.fingerprint;
 }
 
 ConfigWriteResult ConfigDocumentStore::writeText(const QString& path, const QString& text,

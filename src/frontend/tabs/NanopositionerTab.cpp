@@ -1,4 +1,5 @@
 #include "frontend/tabs/NanopositionerTab.h"
+#include "frontend/system/ConfigDocumentStore.h"
 #include "ui_NanopositionerTab.h"
 
 #include <QApplication>
@@ -502,16 +503,19 @@ void NanopositionerTab::loadConfig() {
 }
 
 void NanopositionerTab::saveConfig() {
-    QString path = configPath();
-    QFile file(path);
-    if (!file.open(QIODevice::ReadWrite | QIODevice::Text)) {
-        SPDLOG_WARN("Failed to save config.json to {}", path.toStdString());
+    // Runs at auto-connect and on quit (#907): raw-bytes read, and no write
+    // when nothing changed, so an unchanged profile keeps its bytes and mtime.
+    const QString path = configPath();
+    const ConfigReadResult current = ConfigDocumentStore::readDocument(path);
+    if (!current.ok) {
+        SPDLOG_WARN("Failed to save config.json to {}: {}", path.toStdString(), current.error.toStdString());
         return;
     }
 
     try {
-        QByteArray data = file.readAll();
+        const QByteArray& data = current.bytes;
         json config = json::parse(data.constData(), data.constData() + data.size());
+        const json before = config;
 
         // Save backend-neutral endpoint selection. Legacy COM settings remain
         // only for CoreMOR compatibility.
@@ -536,9 +540,10 @@ void NanopositionerTab::saveConfig() {
 
         // The live voltage is an observation, not an edit to the initial setting.
 
-        file.resize(0);
-        QTextStream out(&file);
-        out << QString::fromStdString(config.dump(4));
+        if (config == before) return;
+        const ConfigWriteResult wr =
+            ConfigDocumentStore::writeText(path, QString::fromStdString(config.dump(4)), current.fingerprint);
+        if (!wr.ok) SPDLOG_WARN("Failed to save config.json to {}: {}", path.toStdString(), wr.error.toStdString());
     } catch (const std::exception& e) {
         SPDLOG_ERROR("Failed to save config.json: {}", e.what());
     }

@@ -340,14 +340,16 @@ namespace frontend
 
 	void AppConfigWatcher::applyFromPathWhenIdle(const QString &path)
 	{
-		QFile f(path);
-		if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+		// Raw bytes (issue #904): the fingerprint must match what the apply
+		// path and the echo check read back from disk, CRLF included.
+		const ConfigReadResult loaded = ConfigDocumentStore::readDocument(path);
+		if (!loaded.ok)
 		{
-			SPDLOG_WARN("AppConfigWatcher: failed to open {}: {}", path.toStdString(), f.errorString().toStdString());
+			SPDLOG_WARN("AppConfigWatcher: failed to open {}: {}", path.toStdString(), loaded.error.toStdString());
 			return;
 		}
-		const QByteArray data = f.readAll();
-		documentFingerprint_ = ConfigDocumentStore::fingerprintOf(data);
+		const QByteArray& data = loaded.bytes;
+		documentFingerprint_ = loaded.fingerprint;
 		// Store raw JSON for HDF5 metadata persistence
 		backend_.setLastConfigJson(data.toStdString());
 
@@ -812,20 +814,19 @@ namespace frontend
 			}
 		}
 
-		QFile file(path);
-		if (!file.exists())
+		const ConfigReadResult current = ConfigDocumentStore::readDocument(path);
+		if (!current.exists)
 		{
 			r.error = tr("Configuration file does not exist: %1").arg(path);
 			return r;
 		}
-		if (!file.open(QIODevice::ReadOnly))
+		if (!current.ok)
 		{
-			r.error = tr("Cannot read %1: %2").arg(path, file.errorString());
+			r.error = tr("Cannot read %1: %2").arg(path, current.error);
 			return r;
 		}
-		const QByteArray data = file.readAll();
-		file.close();
-		const QByteArray onDisk = ConfigDocumentStore::fingerprintOf(data);
+		const QByteArray& data = current.bytes;
+		const QByteArray& onDisk = current.fingerprint;
 		if (!request.baselineFingerprint.isEmpty() && request.baselineFingerprint != onDisk)
 		{
 			r.conflict = true;
@@ -939,10 +940,9 @@ namespace frontend
 	bool AppConfigWatcher::writeBackCameraWindow(const camera::common::CameraWindow& window, bool createSection)
 	{
 		if (watchedPath_.isEmpty() || !window.valid()) return false;
-		QFile file(watchedPath_);
-		if (!file.exists() || !file.open(QIODevice::ReadOnly)) return false;
-		const QByteArray data = file.readAll();
-		file.close();
+		const ConfigReadResult current = ConfigDocumentStore::readDocument(watchedPath_);
+		if (!current.ok) return false;
+		const QByteArray& data = current.bytes;
 		QJsonParseError parseError;
 		QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 		if (parseError.error != QJsonParseError::NoError || !doc.isObject())
@@ -988,21 +988,20 @@ namespace frontend
 			return;
 		}
 
-		QFile file(watchedPath_);
-		if (!file.exists())
+		const ConfigReadResult current = ConfigDocumentStore::readDocument(watchedPath_);
+		if (!current.exists)
 		{
 			SPDLOG_DEBUG("AppConfigWatcher: config file does not exist, skipping camera write-back");
 			return;
 		}
 
-		if (!file.open(QIODevice::ReadOnly))
+		if (!current.ok)
 		{
-			SPDLOG_WARN("AppConfigWatcher: failed to open {} for camera write-back: {}", watchedPath_.toStdString(), file.errorString().toStdString());
+			SPDLOG_WARN("AppConfigWatcher: failed to open {} for camera write-back: {}", watchedPath_.toStdString(), current.error.toStdString());
 			return;
 		}
 
-		const QByteArray data = file.readAll();
-		file.close();
+		const QByteArray& data = current.bytes;
 		QJsonParseError parseError;
 		QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 		if (parseError.error != QJsonParseError::NoError || !doc.isObject())

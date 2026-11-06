@@ -63,5 +63,11 @@ alone cannot invalidate a snapshot already taken by the service.
 `saveConfig()` preserves `autofocus_initial_voltage`: connecting, observing the
 live voltage (including 0 V), unrelated edits and quitting do not edit that
 setting. The configured initial voltage remains separate from manual nudges.
+It runs at startup auto-connect and on `aboutToQuit`, so it reads the raw
+bytes through `ConfigDocumentStore::readDocument`, returns without writing
+when the JSON is unchanged, and otherwise writes through
+`ConfigDocumentStore::writeText` against the read fingerprint (#907: it used
+to rewrite the active profile in Text mode on every launch and close).
+`SyringePumpTab::saveConfig` (on `aboutToQuit`) follows the same rule.
 `frontend.nanopositioner_callback` uses a fake driver and retained callback
 snapshots to cover both persistence and concurrent destruction.

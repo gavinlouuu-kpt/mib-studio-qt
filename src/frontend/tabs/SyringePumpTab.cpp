@@ -1,4 +1,5 @@
 #include "frontend/tabs/SyringePumpTab.h"
+#include "frontend/system/ConfigDocumentStore.h"
 #include "ui_SyringePumpTab.h"
 
 #include <QApplication>
@@ -382,15 +383,19 @@ void SyringePumpTab::loadConfig() {
 }
 
 void SyringePumpTab::saveConfig() {
-    QString path = configPath();
-    QFile file(path);
-    if (!file.open(QIODevice::ReadWrite | QIODevice::Text)) return;
+    // Runs on quit (#907): raw-bytes read, and no write when nothing changed,
+    // so an unchanged profile keeps its bytes and mtime. A missing file is
+    // still created with the pump keys.
+    const QString path = configPath();
+    const ConfigReadResult current = ConfigDocumentStore::readDocument(path);
+    if (!current.ok && current.exists) return;
 
     try {
-        QByteArray data = file.readAll();
+        const QByteArray& data = current.bytes;
         json config;
         if (!data.isEmpty())
             config = json::parse(data.constData(), data.constData() + data.size());
+        const json before = config;
 
         config["pump_sample_flow_rate"] = ui->sampleFlowRateSpinBox->value();
         config["pump_sample_flow_unit"] = flowUnitFromCombo(ui->sampleFlowUnitCombo->currentIndex());
@@ -400,9 +405,11 @@ void SyringePumpTab::saveConfig() {
         config["pump_sheath_flow_unit"] = flowUnitFromCombo(ui->sheathFlowUnitCombo->currentIndex());
         config["pump_sheath_direction"] = ui->sheathDirectionCombo->currentIndex();
 
-        file.resize(0);
-        QTextStream out(&file);
-        out << QString::fromStdString(config.dump(4));
+        if (current.exists && config == before) return;
+        const ConfigWriteResult wr = ConfigDocumentStore::writeText(
+            path, QString::fromStdString(config.dump(4)),
+            current.exists ? std::optional<QByteArray>(current.fingerprint) : std::nullopt);
+        if (!wr.ok) SPDLOG_WARN("SyringePumpTab: failed to save config.json: {}", wr.error.toStdString());
     }
     catch (const std::exception& e) {
         SPDLOG_ERROR("SyringePumpTab: Failed to save config.json: {}", e.what());
