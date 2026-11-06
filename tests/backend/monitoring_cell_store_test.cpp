@@ -1169,6 +1169,53 @@ void testInvalidPins()
     MIB_EXPECT(r.cell->reasons.empty() && !r.cell->noImageReason.empty(), "measurements only: no reasons, the reason it has no image");
 }
 
+// The merge with #876 (#857): the ring's byte budget released an invalid row's images. The cell is listed in the
+// invalid strip with its reasons and the plain reason it has no image; no crop of an empty frame is made or served.
+void testInvalidReleasedImages()
+{
+    std::printf("invalid strip: a row whose images the ring's budget released\n");
+    FakeRing ring;
+    ring.serveInvalid = true;
+    MonitoringCellStore store(ring);
+    auto& gone = appendInvalid(ring, 1, 0, 10); // the oldest row: the budget took its pixels, kept its scalars
+    gone.image.release();
+    gone.mask.release();
+    gone.imageReleased = true;
+    appendInvalid(ring, 2, 0, 20); // the newest row keeps its images
+    store.refreshStrip();
+    const auto l = store.listing();
+    MIB_REQUIRE(l.strip.empty() && l.invalidStrip.size() == 2, "both invalid rows listed, in the invalid strip only");
+    const auto* released = inInvalid(l, 1);
+    MIB_REQUIRE(released, "the released row is listed");
+    MIB_EXPECT(!released->hasImage && !released->hasMask && released->bytes == 0 && released->width == 0 &&
+                   released->height == 0,
+               "no pixels and no crop geometry");
+    MIB_EXPECT(released->noImageReason.find("memory budget") != std::string::npos &&
+                   released->noImageReason.find("without images") == std::string::npos,
+               "the plain reason is the budget, not a results-only instrument: " + released->noImageReason);
+    MIB_REQUIRE(released->reasons.size() == 1, "its reasons are still derived from the row's measurements");
+    MIB_EXPECT(released->reasons[0].code == Code::Area && released->reasons[0].value == 10.0, "Area, 10 um^2");
+    const auto* kept = inInvalid(l, 2);
+    MIB_REQUIRE(kept, "the newest row is listed");
+    MIB_EXPECT(kept->hasImage && kept->hasMask && kept->noImageReason.empty() && kept->bytes == 2u * 40 * 36,
+               "the newest row keeps its crop and mask");
+    MIB_EXPECT(l.stats.invalidStripCells == 2 && l.stats.invalidStripBytes == 2u * 40 * 36 &&
+                   l.stats.invalidStripAdmitted == 2,
+               "the released cell counts as a cell, with no bytes");
+    MIB_EXPECT(ring.releasedShares == 2, "only the newest row had shares to return");
+
+    cv::Mat image;
+    auto img = store.image(key(ring, 0, 1, 0), false, image);
+    MIB_EXPECT(!img && !img.captureMismatch && image.empty(), "no image is served for it");
+    MIB_EXPECT(img.message == released->noImageReason, "the refusal names the reason: " + img.message);
+    MIB_EXPECT(!store.image(key(ring, 0, 1, 0), true, image) && image.empty(), "nor a mask");
+
+    auto r = store.pin(key(ring, 0, 1, 0));
+    MIB_REQUIRE(r.outcome == Outcome::PinnedWithoutImage && r.cell, "pinned with its measurements: " + r.message);
+    MIB_EXPECT(r.message == released->noImageReason && r.cell->reasons.size() == 1 && r.cell->bytes == 0,
+               "the pin keeps the reason and the reasons, no pixels");
+}
+
 // Direct checks of the reason derivation: every code with its value and range.
 bool isNan(double v) { return std::isnan(v); }
 
@@ -1402,6 +1449,7 @@ int main()
     testInvalidStripCaps();
     testInvalidStripContextAndCapture();
     testInvalidPins();
+    testInvalidReleasedImages();
     testReasons();
     testReasonsAgreeWithTheClassifier();
     testMemoryStats();
