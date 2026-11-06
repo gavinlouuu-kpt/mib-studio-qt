@@ -72,6 +72,7 @@ the full text; right-click to copy) rather than widening the window.
 |---|---|
 | Experiment recordings (HDF5) | The path you choose in the Save dialog when starting an experiment |
 | Default data folder | `Documents\MIB_Studio_Qt` (File ▸ Open Data Folder) |
+| Instrument identity, calibration records, database, method cache | `%LOCALAPPDATA%\MIB_Studio_Qt\data` |
 | Application logs | `%LOCALAPPDATA%\MIB_Studio_Qt\logs` (File ▸ Open Logs Folder) |
 | Crash reports | `%LOCALAPPDATA%\MIB_Studio_Qt\crashes` |
 

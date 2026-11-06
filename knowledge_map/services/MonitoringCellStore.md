@@ -88,8 +88,10 @@
   ("a run started") that sets the scope and drops the pins instead of ending them; the copies are
   released after unlocking.
 - **No image, never fabricated.** A row without pixels (results-only instruments), a format other
-  than 8/16-bit, or a row that left the ring before the pin carries its metadata and
-  `noImageReason` ("no image: …"); the image commands return an empty packet.
+  than 8/16-bit, a row whose images the ring released to stay within its byte budget (only the
+  newest rows keep images, #857; the candidate carries `imageReleased`), or a row that left the
+  ring before the pin carries its metadata and `noImageReason` ("no image: …"); the image
+  commands return an empty packet.
 - **Crop.** Bounding box grown by `max(8, longer side / 2)` per side, at most 256 square, shifted
   inside the source (the processing ROI) rather than shrunk; unknown box → centred on the centroid
   (else the image centre). Mono8: channel 0, 16-bit scaled by 1/256. The mask crop is the same

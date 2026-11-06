@@ -44,7 +44,7 @@ an upper bound on what those owners keep resident together.
 | `capture.sdkBuffers` | Estimated (SDK input-buffer count × last frame payload) or Unknown | count from telemetry | [[../architecture/AppBackend]] |
 | `playback.frameStore` | Measured (slot allocations, resident even when stale) | capacity × the latest reserved frame bytes (follows a smaller frame size down, #839) | [[../data-model/FrameStore]] `memoryStats()` |
 | `processing.experimentBuffer` | Measured | `maxBufferedFrames` **and** `maxBufferedBytes`, sized together from the camera window and rate at Start (#833; 512 MiB until a plan is applied) | `ExperimentFrameBuffer` |
-| `processing.monitoringRings` | Measured | 2 × 1000 entries (bytes follow the frame geometry) | `FrameRingBuffer` |
+| `processing.monitoringRings` | Measured | 2 × 1000 rows **and** 2 × 32 MiB of row images (`kMonitoringImageBytesPerRing`; past it the oldest rows keep their measurements and lose their images, #857) | `FrameRingBuffer` |
 | `monitoring.cellStore` | Measured (owned crops; a pinned strip cell has its own copy in each, #789) | 24 + 16 cells, 4 MiB + 4 MiB | [[../services/MonitoringCellStore]] (ABI 41) |
 | `processing.batchQueue` | Measured | `maxQueuedFrames` and `maxQueuedBytes` (default 256 MiB) | async batch pipeline |
 | `processing.flushQueue` | Measured | 3 batches in flight | `HdfWriteQueue<ExperimentBatch>` |
@@ -86,9 +86,12 @@ images (the trigger image shared with `originalImage` is counted once).
 
 ## Gotchas
 
-- `processing.monitoringRings.capacityBytes` is 0 on purpose: the rings are
-  count-bounded and their bytes follow the ROI geometry; the plateau is what
-  the guard asserts.
+- `processing.monitoringRings.capacityBytes` is 2 × `kMonitoringImageBytesPerRing`
+  (since #857; it was 0 while the rings were count-bounded only, so a
+  whole-frame ROI could pin 0.5 GB per ring). The newest row of a ring always
+  keeps its images, so one frame larger than the budget can exceed it by that
+  frame. `evictedByBudget` counts replaced rows plus rows whose images were
+  released.
 - `FrameStore` retained bytes are slot *allocations* (`capacity()`), which
   is what stays resident; a stale slot still counts. A smaller
   `reserveFrameBytes` (a new session with a smaller frame) releases the
