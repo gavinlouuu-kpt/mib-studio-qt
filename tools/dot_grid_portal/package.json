@@ -1,0 +1,30 @@
+{
+  "name": "mib-dot-grid-portal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "types": "wrangler types --include-runtime false",
+    "dev": "wrangler dev --ip 127.0.0.1"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7",
+    "driver.js": "1.10.2",
+    "jose": "6.2.15"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261104.1",
+    "@playwright/test": "1.64.1",
+    "@types/node": "26.6.6",
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261103.0-beta",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.1.0",
+    "wrangler": "4.157.0"
+  }
+}

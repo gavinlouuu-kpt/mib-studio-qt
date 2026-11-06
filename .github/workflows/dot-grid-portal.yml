@@ -1,0 +1,47 @@
+name: Dot Grid portal
+on:
+  pull_request:
+    paths:
+      - 'tools/dot_grid_portal/**'
+      - 'scripts/dot_grid/**'
+      - 'resources/defaults/dot_grid/**'
+      - '.github/workflows/dot-grid-portal.yml'
+permissions:
+  contents: read
+jobs:
+  local-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tools/dot_grid_portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: tools/dot_grid_portal/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: npm ci
+      - run: python -m venv .venv
+      - run: .venv/bin/pip install -r generator/requirements.lock.txt
+      - run: npm run check
+      - run: npm test
+      - run: .venv/bin/python -m pytest tests/test_pipeline.py -q
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium --only-shell
+      - run: npx playwright test
+      - run: npx wrangler deploy --dry-run --containers-rollout none
+      - name: Knowledge checks
+        working-directory: .
+        run: python scripts/check_docs.py
+  dwg-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t mib-dot-grid-portal:ci -f tools/dot_grid_portal/Dockerfile .
+      - run: docker run --rm --network none --memory 4g --cpus 2 -v "$PWD/tools/dot_grid_portal/tests:/app/tools/dot_grid_portal/tests:ro" mib-dot-grid-portal:ci python -m pytest /app/tools/dot_grid_portal/tests/test_pipeline.py -q -p no:cacheprovider

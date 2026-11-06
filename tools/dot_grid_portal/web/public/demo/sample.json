@@ -1,0 +1,10 @@
+{
+  "dot_count": 85060,
+  "source_sha256": "f5275e0c8e5bc26794f5b4ca48dd51c2d5472deb6ee4fc5cea7f7dcf90128383",
+  "extent_um": [
+    12000,
+    8000
+  ],
+  "illustration": "Actual exported DXF geometry, cropped at x=6600..8800 and y=3200..4800 um. Display uses CAD XY coordinates (positive Y downward in this SVG).",
+  "fabrication_approved": false
+}

@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Dot Grid · MIB Studio</title>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <div>
+          <span class="eyebrow">MIB STUDIO / DESIGN TOOLS</span>
+          <h1>Dot Grid</h1>
+        </div>
+        <div>
+          <span id="identity"></span> <button id="tour">Take a tour</button>
+        </div>
+      </header>
+      <main>
+        <section class="intro">
+          <span class="badge">PRIVATE DESIGN WORKSPACE</span>
+          <h2>Your device, with proprietary dots.</h2>
+          <p>
+            Upload your device drawing, inspect the geometry, and generate a
+            proprietary dot pattern while preserving your device geometry.
+          </p>
+          <div class="flow">
+            Upload CAD <span>→</span> Verify geometry <span>→</span> Add dots
+            <span>→</span> Download device + dots
+          </div>
+        </section>
+        <section class="card" id="demo">
+          <span class="badge">REAL CAD → GENERATED DOT GRID</span>
+          <h3>Explore a microfluidic chip design.</h3>
+          <p>
+            A 12 × 8 mm sorter concept: two inlets, a serpentine mixer, an
+            observation region and two outlets. Original illustrative
+            geometry—not a validated fluidic device or a customer design.
+          </p>
+          <div class="demo-grid">
+            <figure id="demo-device">
+              <img
+                src="/demo/device.svg"
+                alt="Annotated 12 by 8 millimetre microfluidic concept with a highlighted observation region"
+              />
+              <figcaption>
+                1 · Your original device geometry stays in the combined DXF.
+              </figcaption>
+            </figure>
+            <figure id="demo-detail">
+              <div class="row">
+                <strong>Observation region · magnified</strong
+                ><button id="demo-toggle" aria-pressed="true">
+                  Hide added dots
+                </button>
+              </div>
+              <img
+                id="demo-image"
+                src="/demo/after.svg"
+                alt="Actual generated dot pattern around the observation-region channel walls"
+              />
+              <figcaption>
+                2 · Orange dots are actual exported geometry. Teal lines are the
+                device. Toggle to compare the same region before and after.
+              </figcaption>
+            </figure>
+          </div>
+          <p id="demo-result">Loading verified sample details…</p>
+          <p id="demo-output">
+            3 · Download your device with proprietary dots, or the separate dot
+            layer. Channels and ports remain free of dots.
+          </p>
+          <div class="row">
+            <button id="demo-load" class="primary">Use this sample CAD</button
+            ><button id="demo-tour">Explain this example</button
+            ><a href="/demo/sorter-concept.dxf" download
+              >Download original DXF (mm)</a
+            >
+          </div>
+          <p class="hint">
+            Use this sample fills the upload form; you still inspect, confirm
+            and generate through the real workflow. This illustrative concept is
+            not fabrication-qualified.
+          </p>
+        </section>
+        <p id="message" role="status" aria-live="polite"></p>
+        <div class="columns">
+          <section class="card" id="upload-card">
+            <h3>1 · Upload a drawing</h3>
+            <form id="upload-form">
+              <label
+                >Design name<input
+                  id="name"
+                  maxlength="120"
+                  required
+                  placeholder="Sorter · revision 1" /></label
+              ><label
+                >CAD file<input
+                  id="file"
+                  type="file"
+                  accept=".dxf,.dwg"
+                  required /></label
+              ><label
+                >Drawing units<select id="units" required>
+                  <option value="">Choose explicitly…</option>
+                  <option value="um">Micrometres (µm)</option>
+                  <option value="mm">Millimetres (mm)</option>
+                  <option value="inch">Inches</option>
+                </select></label
+              >
+              <p class="hint">
+                DXF or DWG · up to 10 MiB. Planar lines, arcs, circles and
+                straight polylines. Unsupported geometry is rejected, not
+                silently dropped. Include closed channel, chamber and port areas
+                on a NO_DOT layer; open walls alone are not sufficient.
+              </p>
+              <button class="primary" id="upload" type="submit">
+                Upload & inspect
+              </button>
+            </form>
+          </section>
+          <section class="card" id="designs-card">
+            <div class="row">
+              <h3>Your designs</h3>
+              <button id="refresh">Refresh</button>
+            </div>
+            <div id="designs">Loading…</div>
+          </section>
+        </div>
+        <section class="card" id="review" hidden>
+          <h3>2 · Design for the chip after cutting</h3>
+          <div id="summary"></div>
+          <svg
+            id="preview"
+            role="img"
+            aria-label="Converted CAD geometry"
+          ></svg>
+          <button id="reset-view" type="button">Fit drawing</button>
+          <select id="dot-chip" aria-label="Chip detail" hidden></select>
+          <button id="dot-detail" type="button" hidden>
+            Magnify actual dots
+          </button>
+          <div id="dot-summary"></div>
+          <div id="region-controls" hidden>
+            <button id="region-tour" type="button">
+              Guide me through chip placement
+            </button>
+            <div aria-label="Before area review" class="flow">
+              Before: drawing bounds → dots on wafer waste → no dots on the cut
+              chip
+            </div>
+            <div aria-label="After area review" class="flow">
+              After: confirmed chip edge − fluid regions − clearances → dots
+              that stay on each chip
+            </div>
+            <p>
+              Blue outlines are final chip edges. Orange faces are
+              fluid/exclusion regions; their unshaded holes remain solid
+              material. Dots go inside blue boundaries and outside orange faces.
+              CAD topology cannot tell us what is fluid: review these roles
+              explicitly.
+            </p>
+            <label
+              >Assign clicked area as
+              <select id="region-role">
+                <option value="chip">Chip boundary after cutting</option>
+                <option value="fluid">Fluid / no-dot region</option>
+              </select>
+            </label>
+            <label
+              >Closed area
+              <select id="region-choice"></select
+            ></label>
+            <button id="toggle-region" type="button">
+              Assign / remove selected area
+            </button>
+            <button id="match-regions" type="button">
+              Assign verified translated copies
+            </button>
+            <button id="focus-region" type="button">
+              Zoom to selected area
+            </button>
+            <button id="clear-regions" type="button">
+              Clear boundary and fluid choices
+            </button>
+          </div>
+          <details>
+            <summary>Boundary missing? Define a rectangular chip</summary>
+            <p>
+              Mask coordinates in µm; this adds a review boundary, not geometry
+              to your CAD. For a non-rectangular chip, supply a closed outline
+              in the drawing.
+            </p>
+            <label
+              >Left X <input id="chip-x0" type="number" step="any"
+            /></label>
+            <label
+              >Bottom Y <input id="chip-y0" type="number" step="any"
+            /></label>
+            <label
+              >Right X <input id="chip-x1" type="number" step="any"
+            /></label>
+            <label>Top Y <input id="chip-y1" type="number" step="any" /></label>
+            <button id="add-manual-chip" type="button">
+              Add chip boundary
+            </button>
+          </details>
+          <label
+            >Dot-edge clearance from final cut (µm)
+            <input
+              id="cut-clearance"
+              type="number"
+              min="0"
+              max="5000"
+              value="200"
+          /></label>
+          <button id="reinspect" type="button">Reinspect original CAD</button>
+          <div id="selection-count"></div>
+          <div id="warnings"></div>
+          <label class="check"
+            ><input id="confirmed" type="checkbox" />I checked units,
+            dimensions, orientation, the final chip edges and cutting clearance,
+            and that orange regions cover all channels, chambers and
+            ports.</label
+          ><button id="generate" class="primary" disabled>Add dots</button>
+          <p class="hint">
+            Proprietary dot technology. Confirm the device geometry and no-dot
+            regions before proceeding.
+          </p>
+        </section>
+        <section class="card" id="downloads" hidden>
+          <h3>3 · Download your design</h3>
+          <div id="links"></div>
+          <p>
+            OASIS and GDS contain <strong>dots only</strong>. Use the combined DWG or DXF
+            for device + dot geometry. Review the final geometry before
+            fabrication.
+          </p>
+        </section>
+        <section class="card" id="members" hidden>
+          <h3>Invite a member</h3>
+          <p>
+            Members share this workspace’s designs. Invitations grant access to
+            an email address; no email is sent automatically.
+          </p>
+          <form id="invite-form">
+            <label>Email<input id="invite-email" type="email" required /></label
+            ><button type="submit">Grant workspace access</button>
+          </form>
+          <ul id="member-list"></ul>
+        </section>
+
+        <section class="card" id="feedback">
+          <h3>Anything unclear?</h3>
+          <form id="feedback-form">
+            <label
+              >Feedback<textarea
+                id="feedback-text"
+                maxlength="2000"
+                required
+                placeholder="Tell us what needs improving…"
+              ></textarea></label
+            ><button type="submit">Save feedback</button>
+          </form>
+        </section>
+      </main>
+      <footer>
+        Private by default · Original CAD preserved · Proprietary dot technology
+      </footer>
+    </div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>
