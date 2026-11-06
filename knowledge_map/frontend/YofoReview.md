@@ -322,9 +322,25 @@ cells render with density ready in ~2–3 s.
   (`ReviewJobsOptions::forReviewBridge()`, #512 S7) keeps YOFO Review off the
   second lane (an export beside a regenerate / density / core job) until
   HDF5 is thread-safe (#722).
-- **Toolbar**: Export Metrics, Export All, and a **More…** menu with Batch
-  Metrics, Batch Export All, Export Charts, Regenerate masks (the Qt
-  layout); job buttons disable while a job runs.
+- **Toolbar**: Export Metrics, Export FCS, Export All, and a **More…** menu
+  with Batch Metrics, Batch Export FCS, Batch Export All, Export Charts,
+  Regenerate masks (the Qt layout); job buttons disable while a job runs.
+- **FCS (review ABI 7, #867; Qt #576)**: **Export FCS…** opens the Qt save
+  dialog ("Export FCS 3.1", FCS + All Files) on `<base>.fcs` in the
+  remembered export directory, else the first free `<base>_N.fcs` pair
+  (`defaultFcsName`: both the `.fcs` and `<stem>_event_map.csv` must be free,
+  the Qt `uniqueFcsPath` first gap), appends `.fcs`
+  (`withFcsExtension`), and runs `review_export_fcs` (job kind `ExportFcs` 9,
+  `ReviewJobs::startExportFcs`: valid detections at the session's factor, the
+  pair published without replacing one). The terminal message is
+  `<path> (N events: V valid, I invalid)`; the dialog shows the Qt success
+  text with the event map (`fcsOutcomeText`) and Show in folder reveals the
+  `.fcs`. **Batch Export FCS…** picks HDF files then a folder and runs
+  `review_batch_export_fcs` (kind `BatchExport`, the engine's source policy:
+  each file's recorded factor, the fallback when it records none,
+  `<root>/<base>[_N].fcs`, recordings refused with the Qt wording). Disabled
+  for recording files. The `data-tour` anchor `review-export-fcs` marks the
+  button for the guided tour (Driver.js is not on develop yet, PR #827).
 - **Rules** (`exports/exportHelpers.ts`, Qt parity): metrics default to
   `<basename>_metrics.csv`, then `_N` one past the highest suffix in the
   directory (`HdfExportService::nextAvailableName`, mirrored; directory

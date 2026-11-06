@@ -67,6 +67,7 @@ namespace backend::review
         case ReviewJobKind::BatchExport:
         case ReviewJobKind::ExportCharts:
         case ReviewJobKind::Export:
+        case ReviewJobKind::ExportFcs:
             return ReviewJobLane::Export;
         case ReviewJobKind::RegenerateMasks:
         case ReviewJobKind::ComputeCore:
@@ -572,13 +573,16 @@ namespace backend::review
         job.onFailure = [impl](std::uint64_t id, const std::string &error) {
             impl->setStatus(ReviewJobLane::Export, exportStartFailedStatusJson(id, error));
         };
-        job.body = [impl, request = batch.request, sources = batch.sources](std::uint64_t id, const Impl::CancelFlag &flag) {
+        job.body = [impl, request = batch.request, sources = batch.sources, policy = batch.policy](std::uint64_t id, const Impl::CancelFlag &flag) {
+            ExportRunOptions options;
+            options.policy = policy;
             const auto outcome = runExportBatch(
                 request, sources, flag,
                 [&](std::size_t index, const recording::HdfExportProgress &progress, const std::vector<ExportFileOutcome> &done) {
                     impl->setStatus(ReviewJobLane::Export, exportProgressStatusJson(id, sources, index, progress, done));
                     impl->progress(id, ReviewJobKind::Export, progress.completed, progress.total);
-                });
+                },
+                options);
             const auto state = outcome.cancelled ? ReviewJobState::Cancelled
                                : outcome.failed  ? ReviewJobState::Failed
                                                  : ReviewJobState::Completed;
@@ -902,6 +906,47 @@ namespace backend::review
         }, error);
     }
 
+    std::uint64_t ReviewJobs::startExportFcs(const std::string &outputPath, std::string *error)
+    {
+        const std::string source = impl_->session.filePath();
+        if (source.empty())
+        {
+            if (error) *error = "No review file open";
+            return 0;
+        }
+        if (outputPath.empty())
+        {
+            if (error) *error = "Export output path is empty";
+            return 0;
+        }
+        if (impl_->session.metadata().recordingFile)
+        {
+            if (error) *error = "Recording files carry no object metrics for FCS export";
+            return 0;
+        }
+        const double factor = impl_->session.pixelToMicron();
+        return impl_->startOwn(ReviewJobKind::ExportFcs, [impl = impl_.get(), source, outputPath, factor](std::uint64_t id, auto flag) {
+            recording::HdfExportRequest request;
+            request.sourcePath = source;
+            request.outputRoot = fs::path(outputPath).parent_path().string();
+            request.format = recording::HdfExportFormat::Fcs;
+            request.conversionFactor = factor;
+            request.explicitDestination = outputPath;
+            ExportRunOptions options;
+            options.polling = ExportCancelPolling::AtProgress;
+            const auto result = runExportFile(
+                request, flag, [&](const recording::HdfExportProgress &p) { impl->exportProgress(id, ReviewJobKind::ExportFcs, p); },
+                options);
+            auto outcome = Impl::exportOutcome(result);
+            // The Qt success text's counts, after the path (as Regenerate masks' message).
+            if (result.completed())
+                outcome.message += " (" + std::to_string(result.validCount + result.invalidCount) + " events: " +
+                                   std::to_string(result.validCount) + " valid, " + std::to_string(result.invalidCount) +
+                                   " invalid)";
+            return outcome;
+        }, error);
+    }
+
     std::uint64_t ReviewJobs::startExportAll(const ExportAllRequest &req, std::string *error)
     {
         const std::string source = impl_->session.filePath();
@@ -955,39 +1000,41 @@ namespace backend::review
             base.series = toServiceRange(req.series);
             ExportRunOptions options;
             options.polling = ExportCancelPolling::AtProgress;
-            options.prepare = [&](std::size_t i, recording::HdfExportRequest &request, std::string &skipped) {
-                const std::string &source = req.sources[i];
-                impl->progress(id, ReviewJobKind::BatchExport, i, req.sources.size(), source);
-                bool recordingFile = false;
-                {
-                    services::Hdf5Service probe;
-                    if (probe.loadFile(source))
+            if (req.fcs)
+            {
+                // The engine's per-source rules (#867): the recorded factor (the fallback when a
+                // file records none), the "<root>/<base>[_N].fcs" pair, recordings refused.
+                base.format = recording::HdfExportFormat::Fcs;
+                options.policy.recordedFactor = true;
+                options.policy.refuseRecordings = true;
+                options.prepare = [&](std::size_t i, recording::HdfExportRequest &, std::string &) {
+                    impl->progress(id, ReviewJobKind::BatchExport, i, req.sources.size(), req.sources[i]);
+                    return true;
+                };
+            }
+            else
+            {
+                // The same per-source policy as the FCS batch (ExportEngine's applySourcePolicy
+                // probes each file once: its recorded factor, the fallback when it records none,
+                // and whether it is a raw recording): a metrics batch refuses recordings, an
+                // "All" batch exports them as images only.
+                base.format = req.metricsOnly ? recording::HdfExportFormat::MetricsCsv : recording::HdfExportFormat::All;
+                options.policy.recordedFactor = true;
+                options.policy.refuseRecordings = req.metricsOnly;
+                options.policy.recordingsAsImages = !req.metricsOnly;
+                options.prepare = [&](std::size_t i, recording::HdfExportRequest &request, std::string &) {
+                    const std::string &source = req.sources[i];
+                    impl->progress(id, ReviewJobKind::BatchExport, i, req.sources.size(), source);
+                    if (req.metricsOnly)
                     {
-                        recordingFile = probe.isRecordingFile();
-                        if (const double f = ReviewSession::recordedPixelToMicron(probe); f > 0.0) request.conversionFactor = f;
-                        probe.closeFile();
+                        request.explicitDestination =
+                            recording::HdfExportService::nextAvailableName(
+                                req.outputRoot, recording::HdfExportService::sourceBaseName(source) + "_metrics.csv",
+                                recording::HdfExportService::sourceBaseName(source) + "_metrics_", ".csv");
                     }
-                }
-                if (req.metricsOnly && recordingFile)
-                {
-                    // As the Qt tab: recording files are refused, not attempted.
-                    skipped = "recording files do not contain metrics";
-                    return false;
-                }
-                if (req.metricsOnly)
-                {
-                    request.format = recording::HdfExportFormat::MetricsCsv;
-                    request.explicitDestination =
-                        recording::HdfExportService::nextAvailableName(
-                            req.outputRoot, recording::HdfExportService::sourceBaseName(source) + "_metrics.csv",
-                            recording::HdfExportService::sourceBaseName(source) + "_metrics_", ".csv");
-                }
-                else
-                {
-                    request.format = recordingFile ? recording::HdfExportFormat::Images : recording::HdfExportFormat::All;
-                }
-                return true;
-            };
+                    return true;
+                };
+            }
             const auto batch = runExportBatch(
                 base, req.sources, flag,
                 [&](std::size_t, const recording::HdfExportProgress &p, const std::vector<ExportFileOutcome> &) {

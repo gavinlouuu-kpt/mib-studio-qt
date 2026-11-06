@@ -940,6 +940,24 @@ pub fn review_export_metrics(state: State<AppState>, output_path: String) -> Res
     Ok(guard.pin_mut().review_export_metrics(&output_path).into())
 }
 
+/// Export FCS 3.1 (#867, review ABI 7): `output_path` is the `.fcs` file.
+#[tauri::command]
+pub fn review_export_fcs(state: State<AppState>, output_path: String) -> Result<ReviewCmdResult, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_export_fcs(&output_path).into())
+}
+
+/// Batch Export FCS (#867, review ABI 7): one pair per source under `output_root`.
+#[tauri::command]
+pub fn review_batch_export_fcs(
+    state: State<AppState>,
+    sources: Vec<String>,
+    output_root: String,
+) -> Result<ReviewCmdResult, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().review_batch_export_fcs(sources, &output_root).into())
+}
+
 #[tauri::command]
 pub fn review_export_all(
     state: State<AppState>,

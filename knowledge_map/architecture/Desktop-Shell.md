@@ -638,12 +638,17 @@ ROI/calibration/realtime/camera settings. The old live JSON editor remains a
 separate, non-persistent path. DOM tests cover conflict, partial outcomes, repeated
 saves, navigation, command failures and duplicate submissions.
 
-`exportControls.tsx` uses the shared export engine for CSV/images/all, retains
-status across navigation, and exposes cancellation and partial paths. Polls are
-single-flight and status errors do not erase command failures. Conversion uses
-known current calibration or delegates to the backend's current factor; no
-fabricated UI fallback value is sent. Chart images/series range controls remain
-unexposed. Config and export controls have interaction tests, not just codec tests.
+`exportControls.tsx` uses the shared export engine for CSV/images/all/charts and
+FCS (#867), retains status across navigation, and exposes cancellation and partial
+paths. Polls are single-flight and status errors do not erase command failures.
+Every export sends `conversion_factor_source: "recorded"`: each file is exported at
+the px→µm factor it records, and the live processing factor (when known; else the
+backend's) is only the fallback for a file that records none (#854, as Qt). Dialogs
+follow the Qt tab (`reviewExport.ts` `exportDialogPlan`: titles, `<base>_metrics.csv`
+and `<base>.fcs` defaults, HDF5 + All Files), the folder of the last successful export
+is remembered (`mib.review.lastExportDir`), batch metrics / FCS refuse recordings, and
+keep-partial is an option (default off). Config and export controls have interaction
+tests, not just codec tests.
 
 
 Monitoring placeholders are now bounded SVG plots over existing snapshot rows:
@@ -759,6 +764,11 @@ owned session. Desktop CI now runs this in addition to unit tests and launch smo
 Initial local pass: 2 persistence-admitted/committed frames, 2 exported images.
 The gate exposed and drove fixes for the disabled Start button and missing
 realtime processing consumer. It does not establish physical hardware timing.
+It finds each GTK dialog by window title. The Review open dialog is matched as
+`Open HDF File|Open recording` (an xdotool regex), because MIB Studio's Review tab
+now uses Qt's "Open HDF File" title (#873) and the YOFO Review panel keeps "Open recording".
+The Export All folder picker is matched as `Select Export Root Directory` (Qt's title, `exportDialogPlan` in
+`reviewExport.ts`), which replaced "Choose export parent folder" when #873 moved the Review tab to Qt's titles.
 
 ### Managed profiles and startup provenance
 

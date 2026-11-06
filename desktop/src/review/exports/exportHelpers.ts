@@ -82,6 +82,31 @@ export function defaultMetricsName(sourcePath: string, existing: readonly string
   return nextAvailableName(existing, `${b}_metrics.csv`, `${b}_metrics_`, ".csv");
 }
 
+/** The Qt FCS default (#576, HdfReviewExportPaths uniqueFcsPath): `<base>.fcs`
+ * while it and `<base>_event_map.csv` are both free, else the first free
+ * `<base>_N.fcs` pair (N from 2). Names compare ignoring case, as
+ * `nextAvailableName`; the backend refuses an existing pair in any case. */
+export function defaultFcsName(sourcePath: string, existing: readonly string[]): string {
+  const b = stem(sourcePath);
+  const taken = new Set(existing.map((n) => n.toLowerCase()));
+  for (let n = 1; n < MAX_NAME_PROBES; n++) {
+    const s = n === 1 ? b : `${b}_${n}`;
+    if (!taken.has(`${s}.fcs`.toLowerCase()) && !taken.has(`${s}_event_map.csv`.toLowerCase())) return `${s}.fcs`;
+  }
+  return `${b}_${nameStamp(new Date())}.fcs`;
+}
+
+/** The FCS file the operator chose, with `.fcs` appended when it has another
+ * extension or none (the Qt dialog's rule). */
+export function withFcsExtension(path: string): string {
+  return /\.fcs$/i.test(path) ? path : `${path}.fcs`;
+}
+
+/** `<dir>/<stem>_event_map.csv` beside an FCS file (FcsWriter's pair). */
+export function eventMapPathOf(fcsPath: string): string {
+  return joinPath(dirName(fcsPath), `${stem(fcsPath)}_event_map.csv`);
+}
+
 /** Regenerate masks never replaces a file (#512 S8, D6): `<base>_remasked.h5`
  * while free, else `_2`, `_3`, … one past the highest suffix in `existing`. */
 export function defaultRegenerateName(base: string, existing: readonly string[], now: Date = new Date()): string {
@@ -122,20 +147,20 @@ export const LAST_EXPORT_DIR_KEY = "yofo.review.lastExportDir";
 
 /** The Qt metricsExportDir(): last successful export dir, else the open
  * file's directory, else "" (the OS dialog's default). */
-export function exportDir(openFile: string, storage: Pick<Storage, "getItem"> | null = safeStorage()): string {
+export function exportDir(openFile: string, storage: Pick<Storage, "getItem"> | null = safeStorage(), key: string = LAST_EXPORT_DIR_KEY): string {
   let last: string | null = null;
   try {
-    last = storage?.getItem(LAST_EXPORT_DIR_KEY) ?? null;
+    last = storage?.getItem(key) ?? null;
   } catch {
     last = null;
   }
   return last || dirName(openFile);
 }
 
-export function rememberExportDir(dir: string, storage: Pick<Storage, "setItem"> | null = safeStorage()): void {
+export function rememberExportDir(dir: string, storage: Pick<Storage, "setItem"> | null = safeStorage(), key: string = LAST_EXPORT_DIR_KEY): void {
   if (!dir) return;
   try {
-    storage?.setItem(LAST_EXPORT_DIR_KEY, dir);
+    storage?.setItem(key, dir);
   } catch {
     // Storage unavailable: remembered for nothing; the default still works.
   }

@@ -18,6 +18,8 @@ export function ReviewTab() {
     metricsGeneration, setMetricsPage, setReviewTab, setReviewImgIndex, loadMetricsPage, reviewOutcome, caps, reanalysis,
     reviewImgIndex, fitWindow, reviewCanvasRef, reviewIndex, onScrub, metricsPage, metricsOffset, METRICS_PAGE_SIZE,
   } = useStudio();
+  // The fallback for a file that records no px→µm factor: the live processing factor (Qt).
+  const liveFactor = stats?.valid ? stats.pixel_to_micron ?? undefined : undefined;
   return (
     <>
       <div className="toolbar">
@@ -33,18 +35,29 @@ export function ReviewTab() {
           clearReviewSource();
           }catch(e){append(`Close review failed: ${e}`);}finally{reviewSourcePending.current=false;setReviewSourceBusy(false);}
         }}>Close File</button>
+        {/* Every file exports at its own recorded px→µm factor; the live factor only for a
+            file that records none (TD-17, #854). */}
         <button
-          onClick={() => void reviewExport.start("metrics_csv", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}
-          disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy}
-          title={reviewMeta?.file_open ? "Export frame/object metrics as a cancellable job" : "No file loaded"}
+          onClick={() => void reviewExport.start("metrics_csv", liveFactor)}
+          disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy || reviewSourceBusy}
+          title={!reviewMeta?.file_open ? "No file loaded" : reviewMeta.recording_file ? "Recording files carry no object metrics" : "Export frame/object metrics as a cancellable job (the file's recorded px→µm factor)"}
         >
           Export Metrics to CSV…
         </button>
-        <button disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export All…</button>
-        <button disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("images", stats?.valid ? stats.pixel_to_micron ?? undefined : undefined)}>Export Images…</button>
-        <button disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("charts")}>Export Charts…</button>
-        <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("metrics_csv", undefined, true)}>Batch Metrics…</button>
-        <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", undefined, true)}>Batch Export All…</button>
+        <button
+          data-tour="studio-review-export-fcs"
+          onClick={() => void reviewExport.start("fcs", liveFactor)}
+          disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy || reviewSourceBusy}
+          title={!reviewMeta?.file_open ? "No file loaded" : reviewMeta.recording_file ? "Recording files carry no object metrics" : "Write an FCS 3.1 file of the valid detections and its event map (the file's recorded px→µm factor)"}
+        >
+          Export FCS…
+        </button>
+        <button disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", liveFactor)}>Export All…</button>
+        <button disabled={!reviewMeta?.file_open || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("images", liveFactor)}>Export Images…</button>
+        <button disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("charts", liveFactor)}>Export Charts…</button>
+        <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("metrics_csv", liveFactor, true)}>Batch Metrics…</button>
+        <button data-tour="studio-review-batch-fcs" disabled={!ready || reviewExport.busy || reviewSourceBusy} title="One FCS 3.1 file and event map per HDF file, each at its recorded px→µm factor; recordings are skipped" onClick={() => void reviewExport.start("fcs", liveFactor, true)}>Batch Export FCS…</button>
+        <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", liveFactor, true)}>Batch Export All…</button>
         </ViewerGate>
 
         <span className="legend">

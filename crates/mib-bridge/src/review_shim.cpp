@@ -52,6 +52,12 @@ static_assert(static_cast<std::uint32_t>(br::ReprocessSettings::Default) == 1);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::ExportMetrics) == 0);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::Density) == 5);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::ExportCharts) == 6);
+// 7 and 8 are MIB Studio's JSON jobs (review_export_json / review_reanalysis_json on the
+// facade's lanes), listed in the contract so the kinds stay contiguous; this bridge never
+// starts them.
+static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::Export) == 7);
+static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::Reanalysis) == 8);
+static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::ExportFcs) == 9);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobState::Started) == 0);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobState::TimedOut) == 5);
 static_assert(static_cast<std::uint32_t>(br::RegenerateSource::CurrentValid) == 0);
@@ -683,6 +689,28 @@ ReviewResult ReviewBridge::review_export_metrics(rust::Str output_path) {
     }
 }
 
+ReviewResult ReviewBridge::review_export_fcs(rust::Str output_path) {
+    try {
+        std::string error;
+        return impl_->started(impl_->jobs->startExportFcs(toStd(output_path), &error), error, "FCS export");
+    } catch (const std::exception& e) {
+        return fail(std::string("review_export_fcs: ") + e.what());
+    }
+}
+
+ReviewResult ReviewBridge::review_batch_export_fcs(rust::Vec<rust::String> sources, rust::Str output_root) {
+    try {
+        br::BatchExportRequest req;
+        for (const auto& s : sources) req.sources.push_back(std::string(s));
+        req.outputRoot = toStd(output_root);
+        req.fcs = true;
+        std::string error;
+        return impl_->started(impl_->jobs->startBatchExport(req, &error), error, "Batch FCS export");
+    } catch (const std::exception& e) {
+        return fail(std::string("review_batch_export_fcs: ") + e.what());
+    }
+}
+
 ReviewResult ReviewBridge::review_export_all(rust::Str output_root, bool export_series, std::uint64_t series_start,
                                              std::uint64_t series_end, rust::Vec<ReviewChartSnapshot> charts) {
     try {
@@ -822,7 +850,9 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // (#783): the identity's emodulus_lut also reads a regenerated file's
 // @emodulus_lut_json, named by emodulus_lut_provenance (snapshot | recorded |
 // host). v6 (#716 A7a): review_run_statistics, the run quick look's twin.
-std::uint32_t review_bridge_abi_version() { return 6; }
+// v7 (#867): review_export_fcs and review_batch_export_fcs (operation kind
+// ExportFcs 9; the batch reports as BatchExport 2).
+std::uint32_t review_bridge_abi_version() { return 7; }
 
 namespace {
 

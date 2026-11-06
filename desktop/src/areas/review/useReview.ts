@@ -9,7 +9,10 @@ import { decimalU64 } from "../../framePacket";
 import { useReanalysis } from "../../reanalysisControls";
 import { describeReviewOutcome } from "../../runOutcome";
 import { open } from "../../transport/dialogs";
-import { H5_FILTER } from "../../studio/constants";
+
+// The Qt tab's open dialog (HdfReviewTab: "Open HDF File", *.h5 *.hdf5 + All Files). MIB raw
+// recordings from tools/yzr-extract (zu15eg-linux) open the same way (/recording_info).
+export const REVIEW_OPEN_FILTERS = [{ name: "HDF5 Files", extensions: ["h5", "hdf5"] }, { name: "All Files", extensions: ["*"] }];
 import type { LiveFramesModel, PreviewState } from "../preview/usePreview";
 import type { ShellState, StatePollingModel } from "../shell/useShell";
 
@@ -102,7 +105,7 @@ export function useReviewSource({
     if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);
     const sourceGeneration=++reviewSourceGeneration.current;
     try {
-    const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
+    const picked = await open({ title: "Open HDF File", filters: REVIEW_OPEN_FILTERS, multiple: false });
     if (typeof picked !== "string") return;
     ++metricsGeneration.current;
     framePulls.current.invalidate("review");

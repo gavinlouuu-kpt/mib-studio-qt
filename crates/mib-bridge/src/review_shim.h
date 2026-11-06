@@ -58,6 +58,9 @@ public:
     ReviewResult review_save_core_record(rust::Str json, bool overwrite);
 
     ReviewResult review_export_metrics(rust::Str output_path);
+    // Review ABI 7 (#867): Export FCS 3.1 (+ event map) and its batch.
+    ReviewResult review_export_fcs(rust::Str output_path);
+    ReviewResult review_batch_export_fcs(rust::Vec<rust::String> sources, rust::Str output_root);
     ReviewResult review_export_all(rust::Str output_root, bool export_series, std::uint64_t series_start,
                                    std::uint64_t series_end, rust::Vec<ReviewChartSnapshot> charts);
     ReviewResult review_export_charts(rust::Str output_dir, rust::Vec<ReviewChartSnapshot> charts);

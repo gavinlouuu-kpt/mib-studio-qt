@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   baseName,
   batchSummaryText,
+  defaultFcsName,
   defaultMetricsName,
   defaultRegenerateName,
+  eventMapPathOf,
   dirName,
   exportDir,
   joinPath,
@@ -16,13 +18,14 @@ import {
   rememberExportDir,
   seriesRangeFor,
   stem,
+  withFcsExtension,
 } from "./exportHelpers";
 import { OPERATION_STATES } from "../../bridgeContract";
 import { REVIEW_OPERATION_KINDS } from "../reviewContract";
 import { REGENERATE_SOURCE, type ReviewEvent } from "../reviewBridge";
 import { regenerateRequest } from "../RegenerateMasks";
 import { loadPixelToMicron, PX_TO_UM_KEY } from "../ReviewApp";
-import { outcomeText, outputPathOf, shortProgress } from "./ExportDialogs";
+import { fcsOutcomeText, outcomeText, outputPathOf, parseFcsOutcome, shortProgress } from "./ExportDialogs";
 import { applyJobEvent, isTerminal, type TrackedJob } from "./useReviewJobs";
 
 describe("paths", () => {
@@ -230,6 +233,40 @@ describe("chart export outcome", () => {
     const j = job({ kind: REVIEW_OPERATION_KINDS.ExportCharts, phase: "completed", message: "exported 2 chart(s) to /out/charts" });
     expect(outputPathOf(j)).toBe("/out/charts");
     expect(outcomeText(j)).toBe("Exported 2 chart(s) to /out/charts");
+  });
+});
+
+describe("FCS export (#576, #867)", () => {
+  it("proposes the Qt default: <base>.fcs, else the first free <base>_N pair", () => {
+    expect(defaultFcsName("/d/run.h5", [])).toBe("run.fcs");
+    expect(defaultFcsName("/d/run.h5", ["run.fcs"])).toBe("run_2.fcs");
+    // Either half of a pair takes the name, ignoring case.
+    expect(defaultFcsName("/d/run.h5", ["RUN_event_map.csv", "run_2.fcs"])).toBe("run_3.fcs");
+    // The first gap, not one past the highest (Qt uniqueFcsPath).
+    expect(defaultFcsName("/d/run.h5", ["run.fcs", "run_3.fcs", "run_3_event_map.csv"])).toBe("run_2.fcs");
+  });
+  it("appends .fcs and pairs the event map", () => {
+    expect(withFcsExtension("/o/cells")).toBe("/o/cells.fcs");
+    expect(withFcsExtension("/o/cells.FCS")).toBe("/o/cells.FCS");
+    expect(withFcsExtension("/o/cells.csv")).toBe("/o/cells.csv.fcs");
+    expect(eventMapPathOf("/o/cells.fcs")).toBe("/o/cells_event_map.csv");
+    expect(eventMapPathOf("C:\\o\\cells.fcs")).toBe("C:\\o\\cells_event_map.csv");
+  });
+  it("reads the job's message as the Qt success text", () => {
+    const message = "/o/run.fcs (3 events: 2 valid, 1 invalid)";
+    expect(parseFcsOutcome(message)).toEqual({ path: "/o/run.fcs", events: 3, valid: 2, invalid: 1 });
+    expect(parseFcsOutcome("/o/run.fcs")).toEqual({ path: "/o/run.fcs" });
+    expect(fcsOutcomeText(message)).toBe("Exported 3 FCS 3.1 events (2 valid, 1 invalid) to /o/run.fcs. Event map: /o/run_event_map.csv");
+    const j = job({ kind: REVIEW_OPERATION_KINDS.ExportFcs, phase: "completed", message });
+    expect(outputPathOf(j)).toBe("/o/run.fcs");
+    expect(outcomeText(j)).toBe(fcsOutcomeText(message));
+  });
+  it("keeps MIB Studio's remembered folder apart from YOFO Review's", () => {
+    const saved = new Map<string, string>();
+    const storage = { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v) };
+    rememberExportDir("/studio", storage, "mib.review.lastExportDir");
+    expect(exportDir("/data/run.h5", storage)).toBe("/data");
+    expect(exportDir("/data/run.h5", storage, "mib.review.lastExportDir")).toBe("/studio");
   });
 });
 
