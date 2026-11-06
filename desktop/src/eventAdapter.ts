@@ -154,6 +154,10 @@ export function decodeExperimentReadiness(value:unknown):ExperimentReadiness {
 export interface ProcessingStats {
   valid:boolean;
   algo_fps1s:number|null; valid_fps1s:number|null; invalid_fps1s:number|null; pixel_to_micron:number|null;
+  /** Average algorithm time per frame (microseconds) and the age of that figure (ms), as Qt's Statistics panel shows them
+   *  (epic #866 MON-095). Optional: the bridge's processing stats carry rates only until it adds `algo_avg_us` and
+   *  `algo_avg_age_ms`; a backend without them leaves both undefined and the side panel hides the row. */
+  algo_avg_us?:number|null; algo_avg_age_ms?:number|null;
   freshness:"unavailable";
 }
 export function decodeProcessingStats(value:unknown):ProcessingStats {
@@ -163,7 +167,9 @@ export function decodeProcessingStats(value:unknown):ProcessingStats {
     if(v!==null && typeof v!=="number") throw new Error("TRANSPORT_INVALID_METRIC");
     return valid && typeof v==="number" && Number.isFinite(v) ? v : null;
   };
-  return {valid,algo_fps1s:sample("algo_fps1s"),valid_fps1s:sample("valid_fps1s"),invalid_fps1s:sample("invalid_fps1s"),pixel_to_micron:sample("pixel_to_micron"),freshness:"unavailable"};
+  const stats:ProcessingStats={valid,algo_fps1s:sample("algo_fps1s"),valid_fps1s:sample("valid_fps1s"),invalid_fps1s:sample("invalid_fps1s"),pixel_to_micron:sample("pixel_to_micron"),freshness:"unavailable"};
+  if(o.algo_avg_us!==undefined){stats.algo_avg_us=sample("algo_avg_us");stats.algo_avg_age_ms=o.algo_avg_age_ms===undefined?null:sample("algo_avg_age_ms");}
+  return stats;
 }
 export function formatMetric(value:number|null|undefined, digits=1):string {
   return typeof value==="number" && Number.isFinite(value) ? value.toFixed(digits) : "Unavailable";

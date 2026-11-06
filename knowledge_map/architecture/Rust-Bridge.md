@@ -520,6 +520,28 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI next (#891, set at merge): the Latest Frame acknowledgement at Start (#858)
+
+Additive over ABI 44. `experiment_start(output_path, acknowledge_discard_ring, start_request_json,
+acknowledge_latest_frame_drops)`; the transports take an optional boolean `acknowledgeLatestFrameDrops`
+(absent = false; a non-boolean is an argument error). It sets `ExperimentCommand.acknowledgeLatestFrameDrops`,
+which the coordinator already required: a start while the capture runs Latest Frame is refused with
+`start_outcome` NotReady ("Latest Frame delivery discards frames; acknowledge the policy or switch to
+Every Frame") unless the operator acknowledged it ([[ExperimentCoordinator]]). Before this change no client
+could send it, so the Tauri app could not record in Latest Frame at all (real-camera parity run S7).
+Contract key `experiment_start_latest_frame`.
+
+- **Path:** `shim.cpp` `experiment_start` → `mib-app-commands` `experiment_start(.., acknowledge_latest_frame_drops)`
+  → the Tauri command (`acknowledge_latest_frame_drops: Option<bool>`) and the server's dispatch
+  (`acknowledgeLatestFrameDrops`, serde default) → `bridge.experimentStart(path, ack, startRequestJson?,
+  acknowledgeLatestFrameDrops)` (sent only when true).
+- **Client:** the Start flow asks Qt's question when the standing readiness's `camera.deliveryMode`
+  gate warns ([[architecture/Desktop-Shell]], "Experiment start/stop").
+- **Tests:** `contract.rs` `latest_frame_start_needs_the_acknowledgement` (a mock capture in Latest
+  Frame from an applied profile: the gate warns, the unacknowledged start is NotReady and starts
+  nothing, the acknowledged one runs and finalizes); `dispatch.rs`
+  `start_request_json_reaches_the_backend_unparsed` (the flag is accepted, a string is refused).
+
 ## ABI 44: the run quick look (#716 A7a)
 
 Additive over ABI 43. `run_quick_look {paths: 1..32, reference?: {path, run_id, start_generation?}}`

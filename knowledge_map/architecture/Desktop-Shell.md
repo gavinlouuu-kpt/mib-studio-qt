@@ -82,6 +82,43 @@ the built CSS is byte-identical. Owners, seams and rules:
 [desktop-area-ownership](../../docs/howto/desktop-area-ownership.md); program plan:
 [2026-11-05-tauri-parity-program](../../docs/exec-plans/active/2026-11-05-tauri-parity-program.md).
 
+**Experiment start/stop and run status (#866, PR D).** The monitoring area keeps the Qt-parity
+logic in pure modules beside `useMonitoring.ts`, each with a vitest file: `startReadiness.ts` (gate
+wording as Qt `explainReadiness`, blocking vs Warn gates, per-`start_outcome` wording, the multi-image
+inline-mode check), `runStatus.ts` (Qt `RunStatusModel` phases derived from the backend experiment
+status, the run lock, Stop Camera and Raw Record refusal reasons, stop/save progress text),
+`runFinish.ts` (the "Experiment Accounting" modal), `statsReadouts.ts` (Algo Time with the stale cue,
+Camera group, Runtime hh:mm:ss, the one-line status bar), `pollHealth.ts` (a notice only after three
+consecutive poll failures) and `clearBuffer.ts` (Yes/No before Clear Buffer, the `onMonitoringCleared`
+hook point). `experimentStart.ts` runs the Qt order of checks: readiness without a destination, the
+Latest Frame question, the discard-ring question, the file dialog, the inline-mode note, readiness with
+the destination, Start; every dialog goes through `transport/dialogs` (`message`, and `choose` for a
+question with custom buttons). **Latest Frame (#858, SHELL-054):** when the preflight's
+`camera.deliveryMode` gate warns (a running capture confirmed in Latest Frame), Qt's question opens
+before the file dialog: "Latest Frame prioritizes low latency and may intentionally discard frames.
+The recorded sequence may be incomplete." with Switch to Every Frame / Continue with Latest Frame /
+Cancel. Both Switch and Continue send `acknowledgeLatestFrameDrops` (ABI next (#891, set at merge), [[Rust-Bridge]]); Switch
+also sets Every Frame for the next camera start and the start notice says this recording still runs
+Latest Frame. The coordinator's rule is wider than the gate (a capture switched after the preflight,
+an instrument with no live-camera gate), so a refusal with its "Latest Frame delivery discards frames"
+message asks the same question and starts once more. Switch needs the Connect stage's delivery-mode
+setter (#863); until it is wired (`switchToEveryFrame` in `useExperimentLifecycle`) the question offers
+Continue and Cancel. A question that cannot be shown rejects and is logged ("experiment start error"). `useStartReadiness` reads
+`fetch_experiment_readiness("")` every 2 s on the Experiment stage (no run active) for the standing
+list of blocking and Warn gates; the Start flow's own preflight read refreshes it, and a refusal's
+inline alert lasts until that standing readiness decides differently (`readinessDecisionKey`: gate ids
+and statuses, not reason texts with live figures) or the operator dismisses it. Starting lasts until
+the status after the Start reply is set (a refused reply ends it at once, before its dialog), and the run outcome waits up to 5 s for the run's accounting
+read (no saved-row count shown as "admitted" in between). The run phase (`experimentModel`'s `runPresentation`, `runLocked`)
+locks the Overview and Review stage tabs, Review's Select HDF File and Open Recording, Stop Camera and
+Raw Record; the lock on the two stages is enforced at the stage setter (`useRunLockedNavigation` wraps
+the shell's `setTab` in `useStudioController`, so the context bar, the workflow's next step and every
+other route keep the current stage mid-run; `runStatus.runLockedTabChange`), and the context bar
+disables a segment that leads to a shut stage; the shell views (`Sidebar`, `StatusBar`, `Workflow`) and `CameraActions`, `PreviewPanel`,
+`ReviewTab` only place what these modules return. `ProcessingStats` (eventAdapter) carries the
+optional `algo_avg_us` / `algo_avg_age_ms` the bridge does not send yet. Tests: `areas/monitoring/*.test.ts(x)`,
+`experimentStart.test.ts`, `transport/dialogsMessage.test.ts`.
+
 **Guided workflow (UX-1, issue #305):** `desktop/src/workflow.ts` layers an
 authoritative *stage state* on the Connect / Overview / Experiment / Review
 tabs. `deriveWorkflow(facts)` is a pure function of backend snapshots (camera

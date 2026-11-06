@@ -126,6 +126,8 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
+    // ABI next (#891, set at merge): #858 experiment_start's acknowledge_latest_frame_drops: the operator's Latest Frame
+    // acknowledgement (Qt's Start prompt), without which a Latest Frame start is refused.
     assert_eq!(ffi::bridge_abi_version(), 44);
 }
 
@@ -1502,6 +1504,72 @@ fn recording_load_emits_operation_lifecycle() {
     let _ = std::fs::remove_file(&rec_path);
 }
 
+// ABI next (#891, set at merge) (#858): a capture that runs Latest Frame starts an experiment only with the operator's
+// acknowledgement. Before this change no client could send it, so a Latest Frame run could not start from
+// Tauri at all (the real-camera parity run, S7). The refusal is NotReady with the backend's wording;
+// the acknowledged start runs and finalizes as usual.
+#[test]
+#[serial]
+fn latest_frame_start_needs_the_acknowledgement() {
+    let frame_dir = make_frame_dir();
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_latest_data_{}", std::process::id()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let out_path = std::env::temp_dir().join(format!("mib_bridge_latest_{}.h5", std::process::id()));
+
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    assert!(bridge.pin_mut().configure_mock_camera(&frame_dir.to_string_lossy(), 5, true).ok);
+    // The delivery mode comes from an applied profile (camera.frame_delivery_mode), applied while the camera is stopped.
+    let base = data_dir.join("profiles").to_string_lossy().to_string();
+    let mut command = |request: serde_json::Value| -> serde_json::Value {
+        serde_json::from_str(&bridge.pin_mut().profile_command(&base, &request.to_string())).unwrap()
+    };
+    let document = r#"{"config_schema_version":1,"camera":{"frame_delivery_mode":"latestFrame"}}"#;
+    let created = command(serde_json::json!({"operation": "create", "name": "latest", "document_json": document}));
+    assert_eq!(created["ok"], true, "{created}");
+    let read = command(serde_json::json!({"operation": "read", "name": "latest"}));
+    let applied = command(serde_json::json!({"operation": "apply", "name": "latest", "baseline": read["profile"]["revision"]}));
+    assert_eq!(applied["ok"], true, "{applied}");
+    assert!(bridge.pin_mut().apply_processing(true, 1.0).ok);
+    assert!(bridge.pin_mut().start_capture().ok);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && !bridge.pin_mut().fetch_latest_frame().valid {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // The standing readiness warns (it does not block), so the UI can ask before the file dialog.
+    let readiness = bridge.pin_mut().fetch_experiment_readiness("");
+    let gate = readiness.gates.iter().find(|g| g.id == "camera.deliveryMode").expect("camera.deliveryMode gate");
+    assert_eq!(gate.status, 1, "Latest Frame is a Warn gate: {}", gate.reason);
+
+    let out = out_path.to_string_lossy().into_owned();
+    let refused = bridge.pin_mut().experiment_start(&out, false, "", false);
+    assert!(!refused.ok && refused.has_start_outcome && refused.start_outcome == 1, "NotReady: {refused:?}");
+    assert!(refused.message.contains("Latest Frame"), "{}", refused.message);
+    assert_eq!(bridge.pin_mut().fetch_experiment_status().state, 0, "nothing started");
+
+    let start = bridge.pin_mut().experiment_start(&out, false, "", true);
+    assert!(start.ok && start.start_outcome == 0, "acknowledged start: {start:?}");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(bridge.pin_mut().experiment_stop(true, 1).ok);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut finalized = false;
+    while Instant::now() < deadline {
+        let s = bridge.pin_mut().fetch_experiment_status();
+        if s.valid && s.state == 0 {
+            finalized = true;
+            break;
+        }
+        assert_ne!(s.state, 4, "experiment failed: {}", s.message);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(finalized, "experiment did not finalize within 10s");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&frame_dir);
+    let _ = std::fs::remove_dir_all(&data_dir);
+    let _ = std::fs::remove_file(&out_path);
+}
+
 // Mock E2E for the experiment lifecycle (BE-4): preconditions, start →
 // accumulate → stop → the finalized HDF5 reopens, and the experiment's
 // operation lifecycle completes.
@@ -1530,7 +1598,7 @@ fn experiment_lifecycle_end_to_end() {
         .find(|g| g.id == "camera.session")
         .expect("camera.session gate present");
     assert!(camera_gate.status == 2 || camera_gate.status == 3, "camera.session should Fail/Unavailable");
-    let early = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, "");
+    let early = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, "", false);
     assert!(!early.ok, "experiment started without a running camera");
     // ABI 40 (#741): the typed outcome travels with the reply: NotReady (1).
     assert!(early.has_start_outcome && early.start_outcome == 1 && !early.has_stop_outcome, "{early:?}");
@@ -1560,7 +1628,7 @@ fn experiment_lifecycle_end_to_end() {
         // none is applied here, so this is a mismatch.
         (r#"{"calibration_record_id":"cal-7"}"#, "calibration_record_id"),
     ] {
-        let refused = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, bad);
+        let refused = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, bad, false);
         assert!(!refused.ok, "startRequest {bad} must be refused");
         assert!(refused.has_start_outcome && refused.start_outcome == 7, "InvalidRequest (ABI 40): {refused:?}");
         assert!(
@@ -1573,13 +1641,13 @@ fn experiment_lifecycle_end_to_end() {
         "sample_ref":"S2","operator":{"name":"Alice"},
         "annotation":{"condition":"vehicle","experimental_unit":"donor A",
         "concentration":{"value":10,"unit":"uM"},"temperature_c":21.5,"free":{"passage":"4"}}}"#;
-    let start = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, declared);
+    let start = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, declared, false);
     assert!(start.ok, "experiment_start failed: {}", start.message);
     assert!(start.operation_id != 0, "experiment has no operation id");
     assert!(start.has_start_outcome && start.start_outcome == 0, "Started (ABI 40): {start:?}");
 
     // Duplicate start must fail without desynchronizing state: AlreadyActive (3).
-    let duplicate = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, "");
+    let duplicate = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, "", false);
     assert!(!duplicate.ok && duplicate.has_start_outcome && duplicate.start_outcome == 3, "{duplicate:?}");
 
     // The camera cannot stop underneath an active experiment (Qt parity).
