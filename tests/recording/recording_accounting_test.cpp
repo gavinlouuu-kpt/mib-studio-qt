@@ -165,6 +165,41 @@ int main(int argc, char** argv)
         MIB_EXPECT(snap.admitted == 5 && snap.sequenceGaps == 1 && snap.sequenceGapFrames == 3, "sequence gap tracked");
         MIB_EXPECT(snap.firstFrameIndex == 10 && snap.lastFrameIndex == 15 && snap.sessionGeneration == 7, "range + generation");
         MIB_EXPECT(snap.reconciled && snap.completion == rec::RunCompletionState::IncompleteLoss, "gap + overwrite -> loss");
+
+        // admitLostRange: frames evicted before the loop reached them are booked once. They close the
+        // hole they would otherwise leave, so the next admitted frame reads no sequence gap (the same
+        // loss was counted as storeOverwritten and as a gap, #857).
+        rec::RecordingAccounting ranged;
+        ranged.reset(8, false);
+        ranged.admit(10); ranged.admit(11);
+        ranged.admitLostRange(12, 4, rec::FrameOutcome::StoreOverwritten); // F12..F15 lost
+        ranged.admit(16); ranged.admit(17);
+        ranged.count(rec::FrameOutcome::Empty, 4);
+        auto rs = rec::reconcile(ranged.snapshot());
+        MIB_EXPECT(rs.admitted == 8 && rs.storeOverwritten == 4, "ranged loss booked as admitted + storeOverwritten");
+        MIB_EXPECT(rs.sequenceGaps == 0 && rs.sequenceGapFrames == 0, "ranged loss leaves no sequence gap");
+        MIB_EXPECT(rs.firstFrameIndex == 10 && rs.lastFrameIndex == 17, "range spans the lost frames");
+        MIB_EXPECT(ranged.wasAdmitted(13), "a lost index lies in the admitted range");
+        MIB_EXPECT(rs.reconciled && rs.completion == rec::RunCompletionState::IncompleteLoss, "ranged loss -> incompleteLoss");
+
+        // Frames before the lost range that nobody admitted are still a hole.
+        rec::RecordingAccounting hole;
+        hole.reset(9, false);
+        hole.admit(10);
+        hole.admitLostRange(14, 2, rec::FrameOutcome::StoreOverwritten); // F11..F13 were never admitted
+        hole.admit(16);
+        auto hs = hole.snapshot();
+        MIB_EXPECT(hs.sequenceGaps == 1 && hs.sequenceGapFrames == 3 && hs.lastFrameIndex == 16,
+                   "an unadmitted hole before the lost range is still one gap");
+
+        // Before the first admitted frame there is no range to extend: it starts at the first admitted frame.
+        rec::RecordingAccounting early;
+        early.reset(10, false);
+        early.admitLostRange(3, 5, rec::FrameOutcome::StoreOverwritten);
+        early.admit(8);
+        auto es = early.snapshot();
+        MIB_EXPECT(es.admitted == 6 && es.storeOverwritten == 5 && es.sequenceGaps == 0 && es.firstFrameIndex == 8,
+                   "a loss before the first admitted frame leaves the range to start at the first admitted one");
     }
 
     // ---- 2. Mock recording runs through AppBackend ----------------------------
