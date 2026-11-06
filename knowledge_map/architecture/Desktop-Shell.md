@@ -1057,7 +1057,7 @@ current Qt live scatter's use of the current factor is not authoritative for mix
 
 `.github/workflows/desktop-windows-candidate.yml` builds a Windows x64 SDK-free Tauri candidate on `dev/react-tauri` pushes or manual dispatch. This is separate from the existing Qt Windows release workflow and never creates tags, releases, update feeds or signed installers. It uses the repository VS2022/MSVC194 Conan profile with the team Conan remote first (read-only; ConanCenter has no binary for the opencv FFmpeg dependency and its source build fails on the runner), VS CMake backend-only build and existing bridge link-manifest generator, then release-mode Rust tests/build.
 
-`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
+`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. By default the candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
 
 Local minimum path: VS2022 x64 developer PowerShell, Node22, stable Rust/MSVC, Python/Conan/CMake; install dependencies with `conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194`, provision required assets, configure `windows-default` with the workflow's SDK-free/backend-only flags, build backend libraries and `mib_backend_smoke_test`, run `tools/gen_bridge_link_manifest.py`, then `npm --prefix desktop ci`, frontend test/build and release Cargo desktop build with `custom-protocol`. Run the packaging script last. Never use Qt's release workflow to build this candidate.
 
@@ -1074,9 +1074,10 @@ With `camera_sdk=true`, the job:
   Windows default (on) and the processing-core signer pin from the repository variable;
 - fails unless the link manifest defines `MIB_HAS_EGRABBER=1`;
 - fails if any eGrabber, GenTL or Euresys file is packaged;
-- applies #870's no-OS-DLL rule (#851) whatever the built ref's packaging does: it deletes every
-  staged DLL that System32 also has, except the app-local MSVC runtime, and lists them in
-  `os-dlls-removed.txt`, before the smoke run;
+- applies #870's no-OS-DLL rule (#851) whatever the built ref's packaging does: before the smoke
+  run, it deletes each staged DLL whose source path in `native-runtime-files.txt` is under
+  `%SystemRoot%`, keeps the app-local MSVC runtime, and lists the deleted DLLs in
+  `os-dlls-removed.txt`;
 - checks that the exe holds the eGrabber backend: a string that only `MIB_HAS_EGRABBER=1` builds
   contain is present, the SDK-free fallback string is absent, and `dumpbin /dependents` shows no
   eGrabber import.

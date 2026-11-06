@@ -58,13 +58,16 @@ jobs:
           ref: ${{ inputs.ref }}
       - name: Record the built commit
         id: src
+        env:
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
         run: |
           $sha = git rev-parse HEAD
           if ($LASTEXITCODE) { throw 'git rev-parse failed' }
           "sha=$sha" >> $env:GITHUB_OUTPUT
           $kind = if ($env:CAMERA_SDK -eq 'true') { 'egrabber' } else { 'sdk-free' }
           "artifact=unsigned-$kind-windows-tauri-$sha" >> $env:GITHUB_OUTPUT
-          Write-Host "Building $sha ($kind; workflow from ${{ github.ref }} at ${{ github.sha }})"
+          Write-Host "Building $sha ($kind; workflow from $env:WORKFLOW_REF at $env:WORKFLOW_SHA)"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -233,19 +236,26 @@ jobs:
             ForEach-Object { $_.Name.ToLowerInvariant() } | Where-Object { $_ -notmatch '^(msvcp140|vcruntime140|concrt140|vccorlib140|vcomp140)' } | Sort-Object -Unique)
           if ($euresys.Count -lt 5) { throw "Expected the eGrabber install's DLLs to compare against, found $($euresys.Count)" }
           $sdk = @(Get-ChildItem $dest -Recurse -File | Where-Object { $_.Extension -eq '.cti' -or ($_.Extension -eq '.dll' -and $euresys -contains $_.Name.ToLowerInvariant()) })
-          $sdk += @(Get-Content "$dest/native-runtime-files.txt" | Where-Object { $_ -match 'Euresys' })
+          # The built ref's windows-runtime.cmake records the source path of every resolved DLL here.
+          if (-not (Test-Path "$dest/native-runtime-files.txt")) { throw "The built ref's packaging wrote no native-runtime-files.txt (desktop/scripts/windows-runtime.cmake); camera mode needs it" }
+          $resolvedSources = @((Get-Content "$dest/native-runtime-files.txt" -Raw) -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          $sdk += @($resolvedSources | Where-Object { $_ -match 'Euresys' })
           if ($sdk.Count) { throw "eGrabber runtime files must not be packaged: $($sdk -join ', ')" }
           Write-Host "No GenTL producer and none of the $($euresys.Count) eGrabber install DLL names in the package"
           # #870's rule (#851): never ship a Windows OS DLL. Built refs without #870's packaging fix stage the
           # runner's copies (kernel32, d3d11, dxgi, mf*, ...), which a rig PC on another Windows build would
-          # load from the app folder. Drop every staged DLL that System32 also has, except the app-local MSVC
+          # load from the app folder. Drop each staged DLL whose recorded source is under %SystemRoot% (by path,
+          # not by name, so a third-party DLL that shares a System32 name stays), except the app-local MSVC
           # runtime, and list them in os-dlls-removed.txt. The smoke below then runs the cleaned package.
-          $system32 = Join-Path $env:SystemRoot 'System32'
+          $systemRoot = $env:SystemRoot.TrimEnd('\').ToLowerInvariant() + '\'
+          $osSources = @{}
+          $resolvedSources | ForEach-Object { $_.Replace('/', '\') } | Where-Object { $_.ToLowerInvariant().StartsWith($systemRoot) } |
+            ForEach-Object { $osSources[[IO.Path]::GetFileName($_).ToLowerInvariant()] = $_ }
           $osDlls = @(Get-ChildItem $dest -File -Filter *.dll | Where-Object {
-            $_.Name -notmatch '^(msvcp140.*|vcruntime140.*|concrt140|vccorlib140|vcamp140|vcomp140|mfc140.*)\.dll$' -and (Test-Path -LiteralPath (Join-Path $system32 $_.Name)) })
+            $_.Name -notmatch '^(msvcp140.*|vcruntime140.*|concrt140|vccorlib140|vcamp140|vcomp140|mfc140.*)\.dll$' -and $osSources.ContainsKey($_.Name.ToLowerInvariant()) })
           if ($osDlls.Count) {
             Write-Host "Removed $($osDlls.Count) Windows OS DLLs staged by the built ref's packaging (#851): $($osDlls.Name -join ' ')"
-            $osDlls.Name | Set-Content "$dest/os-dlls-removed.txt"
+            $osDlls | ForEach-Object { "$($_.Name) <- $($osSources[$_.Name.ToLowerInvariant()])" } | Set-Content "$dest/os-dlls-removed.txt"
             $osDlls | Remove-Item
           } else { Write-Host 'No Windows OS DLL staged' }
           $features = (Get-Content build/mib-bridge-link-manifest.json -Raw | ConvertFrom-Json).defines | Where-Object { $_ -match '^MIB_HAS_' }

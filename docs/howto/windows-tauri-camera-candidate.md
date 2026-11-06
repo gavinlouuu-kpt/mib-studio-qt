@@ -21,6 +21,13 @@ vault-agent-run github -- gh workflow run desktop-windows-candidate.yml \
   tool and source file comes from `ref`, the commit being built.
 - `ref` empty: the commit of `--ref`. `camera_sdk` omitted: the SDK-free candidate, unchanged.
 - A run takes about 20 minutes. Dispatches for different commits queue separately.
+- **Dispatch only refs you trust.** `ref` accepts any commit in the repository network, a fork PR's
+  commit included. The built ref's `conanfile.py`, `env/requirements-build.txt` and `tools/*.py` run
+  in the step that holds the team Conan remote's read credentials.
+- The built ref must be recent enough for camera mode. Its `desktop/scripts/windows-runtime.cmake`
+  must write `native-runtime-files.txt`, and its `AppBackend.cpp` must hold the log strings the
+  proof step looks for (below). An older or reworded ref fails there, with a message that names the
+  missing piece.
 
 Find the run: its title is `Windows Tauri candidate (eGrabber) <ref>`.
 
@@ -71,7 +78,8 @@ not signed, so SmartScreen may ask once.
 
 ## What the workflow checks in camera mode
 
-1. The installer has the pinned size and SHA-256, the silent install exits 0, and the headers exist.
+1. The installer is at least 100 MB (the same minimum as `build-windows.yml`) and has the pinned
+   SHA-256, the silent install exits 0, and the headers exist.
 2. CMake reports `EGrabber SDK integration: ON`, and `build/mib-bridge-link-manifest.json` defines
    `MIB_HAS_EGRABBER=1`, so the Rust bridge compiles against the eGrabber backend.
 3. The usual frontend, bridge and desktop tests, then the DLL closure, then a 10 s smoke run of the
@@ -80,9 +88,11 @@ not signed, so SmartScreen may ask once.
    also has.
 5. No Windows OS DLL is shipped (#851). This is #870's rule. A built ref without #870's packaging fix
    stages the runner's copies (kernel32, d3d11, dxgi, mf*, …), and a rig PC on another Windows build
-   would load them from the app folder. Camera mode deletes every staged DLL that System32 also has,
-   except the app-local MSVC runtime, and lists them in `os-dlls-removed.txt`. The smoke run then
-   starts the cleaned package.
+   would load them from the app folder. Camera mode deletes each staged DLL whose source path, as
+   recorded in `native-runtime-files.txt`, is under `%SystemRoot%`. It goes by path, not by name, so a
+   third-party DLL that shares a System32 name stays. The app-local MSVC runtime is kept. The deleted
+   names and their sources go to `os-dlls-removed.txt`, and the smoke run then starts the cleaned
+   package.
 6. The exe contains `AppBackend: configuring hardware EGrabber camera`. That code exists only in an
    `MIB_HAS_EGRABBER=1` build. The exe does not contain the SDK-free fallback
    `EGrabber SDK is unavailable in this build`. `dumpbin /dependents` shows no eGrabber import.
@@ -97,9 +107,14 @@ candidate has no MindVision SDK, no Sentry DSN and no installer.
 The rig session drives apps from PowerShell. Before any Tauri rig steps, run
 `desktop/scripts/rig-tauri-gui-probe.ps1` (at most about 2 minutes). It starts the candidate with the
 mock camera and WebView2's DevTools port (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`).
-The port listens on 127.0.0.1 only. Over the Chrome DevTools Protocol, the probe reads
-`document.title` and opens and closes the Help menu. If that fails, it looks for the Help button with
-UI Automation. Then it closes the app.
+The port listens on 127.0.0.1 only. The probe:
+- refuses to start if something already listens on that port;
+- takes only a page whose origin is the app's (`tauri.localhost`);
+- waits up to 60 s after launch for the menu bar to render;
+- then, over the Chrome DevTools Protocol, reads `document.title` and opens and closes the Help menu.
+
+If that fails, it looks for a button named Help with UI Automation, waiting 30 s at most even when
+the app's UI thread hangs. Then it closes the app.
 
 The rig PC cannot fetch from P5. Paste the script into a file there, for example with
 `Set-Content C:\MIBTest\rig-tauri-gui-probe.ps1 -Encoding ASCII -Value @' ... '@`. Then run it:
@@ -110,5 +125,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\MIBTest\rig-tauri-gui-pro
 
 The last line of its output is the result:
 - `RESULT: CDP`: drive the GUI over CDP.
-- `RESULT: UIA`: drive it with UI Automation.
+- `RESULT: UIA`: UI Automation sees the Help button in the WebView2 tree. The probe does not try
+  Invoke, so this does not prove that clicking through UIA works. Treat the first UIA rig step as
+  the test of that.
 - `RESULT: no Tauri GUI control` (exit code 2): stop and report.
