@@ -523,8 +523,11 @@ void CaptureService::run(uint64_t generation) {
         size_t reservedFrameBytes = 0;
 
         // One run() is one generation. Once this session's first-frame
-        // observation is latched, later frames skip the observation block
-        // entirely (no extra lock or FrameStore reads on the hot path).
+        // observation is latched, later frames skip the observation block:
+        // no lifecycleMutex_ and no FrameStore committedCount() reads. The
+        // per-frame copy of the callback and store under callbackMutex_
+        // below still runs on every frame (tens of nanoseconds); it guards
+        // against concurrent setFrameCallback()/setFrameStore().
         bool firstFrameLatched = false;
 
         // Declared outside the loop so grabFrame's data.assign reuses the
@@ -650,6 +653,11 @@ void CaptureService::run(uint64_t generation) {
                         // Copy under the callback mutex, invoke with no lock held.
                         FirstFrameObservedCallback observed;
                         { std::lock_guard<std::mutex> lk(callbackMutex_); observed = firstFrameObservedCallback_; }
+                        // Once per generation, with every lock released, so a
+                        // bench run can observe the event in the log even when
+                        // no consumer reads the lifecycle snapshot.
+                        SPDLOG_INFO("CaptureService first frame observed (generation={}, index={}, host_us={})",
+                                    event.generation, event.frameIndex, event.hostTimeUs);
                         if (observed) observed(event);
                     }
                 }

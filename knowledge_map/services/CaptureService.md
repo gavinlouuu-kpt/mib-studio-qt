@@ -66,6 +66,7 @@ void setFrameCallback(FrameCallback cb);        // UI live preview hook
 void setFrameStore(shared_ptr<FrameStore>);     // ring buffer sink
 void setCameraFactory(CameraFactory);           // injects ICamera builder
 void setCameraReadyCallback(CameraReadyCallback); // (ICamera*, generation): ptr on start, nullptr on stop
+void setFirstFrameObservedCallback(FirstFrameObservedCallback); // {generation, hostTimeUs, frameIndex}: once per generation
 bool start();  void stop();  bool isRunning();   // compatibility API
 CaptureStartOutcome requestStart();             // Accepted | AlreadyActive | RejectedStopping | RejectedNoFactory
 CaptureLifecycleSnapshot lifecycleSnapshot();   // authoritative state/generation/cameraReady/lastFailure
@@ -199,16 +200,28 @@ The latch is checked under `lifecycleMutex_`: the generation must be current and
 the state `Running`. `stop()` publishes Stopping under the same mutex, so a frame
 that is mid-delivery when it does is still published to the store but is not
 reported as the first frame. `run()` keeps a local latch per generation; once set,
-later frames skip the observation block, so the push loop adds no lock or
-`FrameStore` read per frame. Event callback access is copied under the callback
-mutex and invoked after all lifecycle locks are released. As with the ready
+later frames skip the observation block, so they take no `lifecycleMutex_` and
+make no `committedCount()` reads. The push loop is not lock-free, though: every
+frame still copies the frame callback and the `FrameStore` pointer under
+`callbackMutex_` (it guards concurrent `setFrameCallback`/`setFrameStore`), which
+costs tens of nanoseconds per frame. Event callback access is copied under the
+same mutex and invoked after all lifecycle locks are released. As with the ready
 callback, consumers must use the generation to reject stale work.
+
+Once per generation, just before the callback runs, the capture thread logs
+`CaptureService first frame observed (generation=<g>, index=<i>, host_us=<t>)` at
+info level. A bench run of the Qt executable, which never reads the lifecycle
+snapshot, can confirm the event from `data/logs/app.log`: the line is absent when
+the camera delivers no frames and appears once per restart, with a later
+generation (and, with a `FrameStore`, a larger index).
 
 The fake-camera lifecycle test covers a blocked first grab (ready without
 observation), one committed event, exactly-once delivery, a duplicate start that
 keeps the observation, retention after stop, reset on restart with a fresh
-observation, empty and zero-dimension frames, an unstored (zero-capacity) preview,
-a frame delivered while `stop()` runs, and concurrent snapshot/event accounting.
+observation, empty and zero-dimension frames (with and without a store), an
+unstored (zero-capacity) preview, a session with no `FrameStore` at all (index is
+the session's zero-based frame count and restarts at 0), a frame delivered while
+`stop()` runs, and concurrent snapshot/event accounting.
 Its barrier is `FakeLifecycleCamera::releaseGrab()`, which returns once the
 released grab has returned its frame; the capture thread handles that frame
 before the next grab, so the next blocked grab proves it was processed. The

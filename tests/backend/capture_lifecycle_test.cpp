@@ -253,6 +253,60 @@ int main(int argc, char** argv)
         svc.stop();
     }
 
+    // Without a FrameStore there is nothing to commit, so a valid frame is
+    // observed as soon as it is processed and frameIndex is this session's
+    // zero-based frame count (it restarts at 0 for every generation).
+    {
+        wd.mark("first frame observed without a store");
+        Rig rig;
+        rig.script.blockGrab = true;
+        CaptureService svc;
+        std::atomic<int> events{0};
+        CaptureService::FirstFrameObservedEvent event;
+        svc.setFirstFrameObservedCallback([&](const auto& value) { event = value; ++events; });
+        svc.setCameraFactory(rig.factory());
+        MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "accepted");
+        MIB_REQUIRE(svc.waitForState({CaptureLifecycleState::Running}, std::chrono::seconds(5)) ==
+                        CaptureLifecycleState::Running, "camera ready");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "first grab blocked");
+        MIB_EXPECT(!svc.lifecycleSnapshot().firstFrameObserved && events.load() == 0,
+                   "no observation before a frame");
+
+        MIB_REQUIRE(rig.camera->releaseGrab(), "first grab released");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "second grab blocked");
+        MIB_EXPECT(svc.stats().framesProcessed.load() == 1, "first frame fully processed");
+        const auto first = svc.lifecycleSnapshot();
+        MIB_REQUIRE(first.firstFrameObserved && events.load() == 1,
+                    "a valid frame is observed with no FrameStore");
+        MIB_EXPECT(event.generation == 1 && event.frameIndex == 0,
+                   "no store: the index is this session's zero-based frame count");
+        MIB_EXPECT(event.hostTimeUs != 0 && event.hostTimeUs == first.firstFrameHostTimeUs &&
+                       event.frameIndex == first.firstFrameIndex,
+                   "snapshot carries the event's metadata");
+
+        MIB_REQUIRE(rig.camera->releaseGrab(), "second grab released");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "third grab blocked");
+        MIB_EXPECT(svc.stats().framesProcessed.load() == 2, "second frame fully processed");
+        MIB_EXPECT(events.load() == 1 && svc.lifecycleSnapshot().firstFrameIndex == 0,
+                   "later frames neither fire again nor move the latched index");
+
+        // The next generation counts from its own first frame again.
+        svc.stop();
+        MIB_REQUIRE(svc.requestStart() == CaptureStartOutcome::Accepted, "restart accepted");
+        MIB_REQUIRE(svc.waitForState({CaptureLifecycleState::Running}, std::chrono::seconds(5)) ==
+                        CaptureLifecycleState::Running, "restart reaches Running");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "restart grab blocked");
+        MIB_EXPECT(!svc.lifecycleSnapshot().firstFrameObserved && events.load() == 1,
+                   "new generation is not observed before its own frame");
+        MIB_REQUIRE(rig.camera->releaseGrab(), "restart grab released");
+        MIB_REQUIRE(rig.camera->waitUntilGrabBlocked(std::chrono::seconds(5)), "restart next grab blocked");
+        MIB_REQUIRE(events.load() == 2, "second generation event delivered");
+        MIB_EXPECT(event.generation == 2 && event.frameIndex == 0 &&
+                       svc.lifecycleSnapshot().firstFrameIndex == 0,
+                   "second generation restarts the session frame count at 0");
+        svc.stop();
+    }
+
     // A successful SDK grab is insufficient when configured preview storage
     // cannot commit the frame (zero-capacity store rejects publication).
     {
@@ -280,12 +334,13 @@ int main(int argc, char** argv)
     // A frame the SDK delivered but that is empty (no payload) or has zero
     // width/height never satisfies observation, with or without a store (a
     // store commits any non-empty payload, so the validity check is what
-    // gates the zero-dimension case).
-    for (int variant = 0; variant < 2; ++variant) {
+    // gates the zero-dimension case). Variants: 0 empty payload (no store),
+    // 1 zero-dimension with a store, 2 zero-dimension without a store.
+    for (int variant = 0; variant < 3; ++variant) {
         wd.mark("malformed first frame");
         Rig rig;
         rig.script.emptyPayloadFrames = variant == 0;
-        rig.script.zeroDimensionFrames = variant == 1;
+        rig.script.zeroDimensionFrames = variant >= 1;
         CaptureService svc;
         std::shared_ptr<backend::playback::FrameStore> store;
         if (variant == 1) {
@@ -305,7 +360,8 @@ int main(int argc, char** argv)
         MIB_EXPECT(snap.cameraReady && !snap.firstFrameObserved && events.load() == 0 &&
                        snap.firstFrameHostTimeUs == 0 && snap.firstFrameIndex == 0,
                    variant == 0 ? "empty frame does not satisfy observation"
-                                : "zero-dimension frame does not satisfy observation");
+                   : variant == 1 ? "zero-dimension frame does not satisfy observation"
+                                  : "zero-dimension frame without a store does not satisfy observation");
         if (store) {
             MIB_EXPECT(store->committedCount() > 0, "the store did commit the zero-dimension frames");
         }

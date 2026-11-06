@@ -104,6 +104,9 @@ public:
     struct FirstFrameObservedEvent {
         uint64_t generation{0};
         uint64_t hostTimeUs{0};
+        // FrameStore's absolute committed index of the frame when a store is
+        // configured (the store outlives restarts, so a later generation's
+        // index is larger); otherwise this session's zero-based frame count.
         uint64_t frameIndex{0};
     };
     using FirstFrameObservedCallback = std::function<void(const FirstFrameObservedEvent&)>;
