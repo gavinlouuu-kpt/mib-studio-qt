@@ -24,7 +24,8 @@ hold-to-purge state machine) are in `pumpControlModel.ts`, the gate in `hardware
   change, also while running. Typing or pausing in the field never sends an intermediate value.
 - **Hold-to-purge** (HW-012): pointer down / Space / Enter purges in the selected direction, release, pointer
   leave or cancel, blur, hidden page, unmount or disconnect stops it; a release is never lost, even while the
-  start is still in flight. The latched Purge and Stop purge button are gone.
+  start is still in flight, and also after a start that reached the pump and then reported a failure (review of
+  #875, 2026-11-06). The latched Purge and Stop purge button are gone.
 - **Syringe volume** (HW-019, D9): 0.1-9999, 1 decimal, µL|mL, applied with Apply volume (also while running);
   sent as an exact whole number the dLSP takes (0.5 mL goes out as 500 µL) or refused with a message. The same
   rule covers the dLSP flow rate, which the backend would otherwise clamp to a whole 1-9999 in silence.

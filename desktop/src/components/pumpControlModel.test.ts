@@ -168,14 +168,25 @@ describe('PurgeHold (hold-to-purge, HW-012)', () => {
     expect(hooks.onError).toHaveBeenCalledWith('Pump purge failed');
     expect(hooks.stop).toHaveBeenCalledTimes(1);
   });
-  it('is idle again after a failed start while still held, and can be pressed once more', async () => {
+  it('stays held after a start that reached the device failed while still held, so the release stops it (Qt), then can be pressed again', async () => {
     let fail = true;
-    const {purge, hooks} = hold({start: vi.fn(async attempt => { attempt.markSent(); if (fail) throw new Error('busy'); return true; })});
+    const {purge, hooks} = hold({start: vi.fn(async attempt => { attempt.markSent(); if (fail) throw new Error('timeout'); return true; })});
     purge.press(); await settle();
-    expect(purge.active).toBe(false);
+    expect(hooks.onError).toHaveBeenCalledWith('timeout');
+    expect(purge.active).toBe(true);
     expect(hooks.stop).not.toHaveBeenCalled();
+    purge.release(); await settle();
+    expect(hooks.stop).toHaveBeenCalledTimes(1);
+    expect(purge.active).toBe(false);
     fail = false; purge.press(); await settle();
     expect(purge.active).toBe(true);
+  });
+  it('is idle again after a start refused before it reached the device, and the release sends nothing', async () => {
+    const {purge, hooks} = hold({start: vi.fn(async () => { throw new Error('Pump is not connected'); })});
+    purge.press(); await settle();
+    expect(purge.active).toBe(false);
+    purge.release(); await settle();
+    expect(hooks.stop).not.toHaveBeenCalled();
   });
   it('reports a failing stop', async () => {
     const {purge, hooks, started} = hold({stop: vi.fn(async () => { throw new Error('Port gone'); })});
