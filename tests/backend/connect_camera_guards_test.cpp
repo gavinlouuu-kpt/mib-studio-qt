@@ -3,7 +3,7 @@
 // The Connect stage's camera-source and delivery-mode rules at the facade (what the Tauri shell and
 // the YOFO Studio server reach):
 //  - ConfigureMockCamera is refused while a capture runs (the camera source is never swapped under a
-//    live capture), and accepted again once it is stopped;
+//    live capture) or a run holds the camera (also a Failed run still saving), and accepted again once it is stopped;
 //  - the delivery mode reads Every Frame by default, accepts Every/Latest Frame, refuses an unknown
 //    mode, and says when it applies: at the next capture start while a capture runs (the running
 //    capture is never restarted);
@@ -207,17 +207,52 @@ int main()
 
     configUnderConcurrentChange();
 
-    // The camera source and the delivery mode are held by a run that is starting, running or saving; a Failed run (waiting
-    // for its fault to be acknowledged) and an idle one hold nothing, so the Tauri buttons (which only look at the three
-    // in-flight states) and the backend agree.
+    // The camera source and the delivery mode are held by a run that is starting, running or saving its data, also a
+    // Failed run still saving after a fatal save error (Qt flushInProgress_); a Failed run that has finished saving
+    // (waiting for its fault to be acknowledged) and an idle one hold nothing.
     {
         using backend::app::ExperimentRunState;
+        using backend::app::ExperimentStatus;
+        using backend::app::cameraSourceChangeRefusal;
         using backend::app::experimentHoldsCamera;
-        MIB_EXPECT(!experimentHoldsCamera(ExperimentRunState::Idle) && !experimentHoldsCamera(ExperimentRunState::Failed),
-                   "Idle and Failed hold no camera");
-        MIB_EXPECT(experimentHoldsCamera(ExperimentRunState::Starting) && experimentHoldsCamera(ExperimentRunState::Active) &&
-                       experimentHoldsCamera(ExperimentRunState::Stopping),
+        const auto status = [](ExperimentRunState state, bool flushing) {
+            ExperimentStatus s;
+            s.state = state;
+            s.flushing = flushing;
+            return s;
+        };
+        MIB_EXPECT(!experimentHoldsCamera(status(ExperimentRunState::Idle, false)) &&
+                       !experimentHoldsCamera(status(ExperimentRunState::Failed, false)),
+                   "Idle and a saved Failed run hold no camera");
+        MIB_EXPECT(experimentHoldsCamera(status(ExperimentRunState::Starting, false)) &&
+                       experimentHoldsCamera(status(ExperimentRunState::Active, false)) &&
+                       experimentHoldsCamera(status(ExperimentRunState::Stopping, true)),
                    "Starting, Active and Stopping hold the camera");
+        MIB_EXPECT(experimentHoldsCamera(status(ExperimentRunState::Failed, true)),
+                   "a Failed run still saving its data holds the camera");
+        // The camera source: the running capture is named first; a run holding the camera refuses on its own, also
+        // when the capture already stopped under it.
+        MIB_EXPECT(cameraSourceChangeRefusal(false, status(ExperimentRunState::Idle, false)).empty(), "idle: allowed");
+        MIB_EXPECT(cameraSourceChangeRefusal(true, status(ExperimentRunState::Idle, false)) ==
+                       "Cannot change camera connection while camera is running. Please stop the camera first.",
+                   "a running capture refuses");
+        for (const auto& held : {status(ExperimentRunState::Starting, false), status(ExperimentRunState::Active, false),
+                                 status(ExperimentRunState::Stopping, true), status(ExperimentRunState::Failed, true)})
+            MIB_EXPECT(cameraSourceChangeRefusal(false, held) == "Cannot change camera connection while an experiment is active.",
+                       "a run that holds the camera refuses with the capture stopped");
+        // Stop Camera (#863 CONNECT-038): Qt's words per state; a Failed run still saving refuses as "being saved".
+        using backend::app::cameraStopRefusal;
+        MIB_EXPECT(cameraStopRefusal(status(ExperimentRunState::Idle, false)).empty() &&
+                       cameraStopRefusal(status(ExperimentRunState::Failed, false)).empty(),
+                   "idle or saved: Stop allowed");
+        MIB_EXPECT(cameraStopRefusal(status(ExperimentRunState::Active, false)) ==
+                       "Cannot stop camera while experiment is active. Please stop the experiment first.", "Active");
+        MIB_EXPECT(cameraStopRefusal(status(ExperimentRunState::Starting, false)) ==
+                       "Cannot stop camera while an experiment is starting.", "Starting");
+        for (const auto& saving : {status(ExperimentRunState::Stopping, true), status(ExperimentRunState::Failed, true)})
+            MIB_EXPECT(cameraStopRefusal(saving) ==
+                           "Cannot stop camera while experiment data is being saved. Wait for the save to finish.",
+                       "Stopping, or Failed while still saving");
     }
 
     // ---- delivery mode ---------------------------------------------------------------

@@ -12,3 +12,9 @@ null. Bridge ABI next (#892, set at merge): `apply_camera_script_with_role`, `sa
 additive geometry members. Bug #846 (the early return on `supported=false`) is closed by an eGrabber
 geometry. The Overview's own script editor (`overviewConfig.js`) is not part of this change. See
 [[architecture/Rust-Bridge]], [[architecture/AppBackend]] and [[architecture/Desktop-Shell]].
+
+Review fixes (2026-11-07, #892 non-author review): a remote (browser) client no longer probes the profile
+folder's scripts through `camera_document`, which the server refuses for `.js`. It skips the profile-folder
+fallback and says so in the no-script notice (desktop-only; the explicit script selection still applies).
+`camera_window_save_test` now proves the backend refuses `save_camera_window` in Starting/Active/Stopping
+and during a raw recording before any file is written, and that the same save goes through afterwards.

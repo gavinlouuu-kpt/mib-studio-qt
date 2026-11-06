@@ -5,20 +5,26 @@
 //    the applied profile (in memory and its config.json) and moves the revision the profile store
 //    remembers, so a restart restores the edited window instead of refusing a "changed" profile;
 //  - what is not safe to rewrite is left alone with the reason: a profile that changed on disk, a
-//    configuration without a camera.window, a script that is not there.
+//    configuration without a camera.window, a script that is not there;
+//  - the backend refuses the save during an experiment and during a raw recording, before any file is
+//    written (the buttons are not the only guard).
 // No camera is needed: the eGrabber selection is set through a test-access struct (the SDK is absent
 // on this host), and nothing here applies a script to a device.
 #include "backend/app/AppBackend.h"
 #include "backend/app/CameraWindowSave.h"
+#include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/ProfileStore.h"
 #include "backend/app/StartupConfiguration.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/services/CaptureService.h"
 #include "support/assert.h"
+#include "support/frames.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -52,6 +58,17 @@ struct CameraGeometryTestAccess {
 };
 } // namespace backend
 
+namespace backend::app {
+// Friend of ExperimentCoordinator (same definition as tests/frontend/app_config_apply_test.cpp): puts the
+// run in a state without starting one.
+struct ExperimentConfigurationTestAccess {
+    static void setState(ExperimentCoordinator& coordinator, ExperimentRunState state) {
+        std::lock_guard<std::mutex> lock(coordinator.mutex_);
+        coordinator.state_ = state;
+    }
+};
+} // namespace backend::app
+
 namespace {
 
 // Braced initializers do not survive a macro argument list: build the value in a call.
@@ -70,6 +87,14 @@ std::string readText(const fs::path& p) {
     std::stringstream s;
     s << in.rdbuf();
     return s.str();
+}
+
+void unsetEnv(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
 }
 
 void writeText(const fs::path& p, const std::string& text) {
@@ -367,6 +392,68 @@ int main() {
         const auto gone = third.cameraGeometry();
         MIB_EXPECT(gone.windowSource == "none" && gone.experimentScriptPath.empty(), "no such script: no window and no path");
         third.shutdown();
+    }
+
+    wd.mark("an experiment holds the camera: the save is refused before anything is written");
+    {
+        backend::AppBackend busy;
+        MIB_REQUIRE(busy.initialize((td.path() / "data5").string()), "busy backend init");
+        backend::CameraGeometryTestAccess::selectEgrabber(busy, std::nullopt);
+        const auto dir = applyProfile(busy, base, "busy-run", kConfigWithWindow, kScript);
+        const std::string script = readText(dir / "egrabberConfig.js");
+        const std::string config = readText(dir / "config.json");
+        const std::string revision = revisionOf(busy, base, "busy-run");
+        for (const auto state : {backend::app::ExperimentRunState::Starting, backend::app::ExperimentRunState::Active,
+                                 backend::app::ExperimentRunState::Stopping}) {
+            backend::app::ExperimentConfigurationTestAccess::setState(busy.experiment(), state);
+            const auto r = backend::app::saveEgrabberWindow(busy, (dir / "egrabberConfig.js").string(), {800, 120, 160, 40});
+            MIB_EXPECT(!r.ok && r.error == "Stop the experiment before editing the camera window",
+                       std::string("refused in ") + backend::app::toString(state) + ": " + r.error);
+            MIB_EXPECT(readText(dir / "egrabberConfig.js") == script && readText(dir / "config.json") == config &&
+                           revisionOf(busy, base, "busy-run") == revision,
+                       std::string("nothing written in ") + backend::app::toString(state));
+            MIB_EXPECT(busy.acquisitionProfile().window->window == win(1216, 208, 368, 616), "the session window stays");
+        }
+        backend::app::ExperimentConfigurationTestAccess::setState(busy.experiment(), backend::app::ExperimentRunState::Idle);
+        const auto r = backend::app::saveEgrabberWindow(busy, (dir / "egrabberConfig.js").string(), {800, 120, 160, 40});
+        MIB_REQUIRE(r.ok, "the same save goes through once the run is idle: " + r.error);
+        MIB_EXPECT(readText(dir / "egrabberConfig.js") != script, "and rewrites the script");
+        busy.shutdown();
+    }
+
+    wd.mark("a raw recording: the save is refused before anything is written");
+    {
+        using backend::services::CaptureLifecycleState;
+        const auto frames = td.path() / "frames";
+        MIB_REQUIRE(mib::test::writeFrames(frames, 4, 64, 64), "mock frames");
+        setEnv("MIB_CAMERA_MODE", "mock");
+        setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
+        backend::AppBackend recording;
+        MIB_REQUIRE(recording.initialize((td.path() / "data6").string()), "recording backend init");
+        const auto dir = applyProfile(recording, base, "busy-raw", kConfigWithWindow, kScript);
+        const std::string script = readText(dir / "egrabberConfig.js");
+        const std::string config = readText(dir / "config.json");
+        const std::string revision = revisionOf(recording, base, "busy-raw");
+        MIB_REQUIRE(recording.capture().start(), "mock capture accepted");
+        MIB_REQUIRE(recording.capture().waitForState({CaptureLifecycleState::Running, CaptureLifecycleState::Faulted},
+                                                     std::chrono::seconds(10)) == CaptureLifecycleState::Running,
+                    "mock capture running");
+        MIB_REQUIRE(recording.startFrameRecording((td.path() / "raw.h5").string()), "raw recording started");
+        MIB_REQUIRE(recording.isFrameRecording(), "raw recording running");
+        const auto r = backend::app::saveEgrabberWindow(recording, (dir / "egrabberConfig.js").string(), {800, 120, 160, 40});
+        MIB_EXPECT(!r.ok && r.error == "Stop recording before editing the camera window", "refused while recording: " + r.error);
+        MIB_EXPECT(readText(dir / "egrabberConfig.js") == script && readText(dir / "config.json") == config &&
+                       revisionOf(recording, base, "busy-raw") == revision,
+                   "nothing written while recording");
+        recording.stopFrameRecording();
+        recording.capture().stop();
+        MIB_EXPECT(!recording.isFrameRecording() && !recording.capture().isRunning(), "recording and capture stopped");
+        const auto after = backend::app::saveEgrabberWindow(recording, (dir / "egrabberConfig.js").string(), {800, 120, 160, 40});
+        MIB_REQUIRE(after.ok, "the same save goes through once the recording ended: " + after.error);
+        MIB_EXPECT(readText(dir / "egrabberConfig.js") != script, "and rewrites the script");
+        recording.shutdown();
+        unsetEnv("MIB_CAMERA_MODE");
+        unsetEnv("MIB_MOCK_CAMERA_DIR");
     }
     return mib::test::exitCode();
 }
