@@ -667,7 +667,9 @@ can close the Monitoring rows that need the backend (MON-043, 058-064, 066, 068,
     <reason>", `source`/`core_fraction`/`core_percent` null, `contours: []`. Read only, never opens the
     file in Review, and refused with plain text while an experiment runs or starts (HDF5 is not
     thread-safe, #722: the read takes the review lanes' lock and the session mutex inside the
-    coordinator's non-waiting idle transaction, as the run quick look does). Path 1..4096 bytes.
+    coordinator's non-waiting idle transaction, as the run quick look does); also refused while a raw
+    recording writes HDF5. Path 1..4096 bytes. `file_name` is the last component split on `/` or `\`;
+    text that is not UTF-8 is sent as U+FFFD, never a throw (the handler is `noexcept`; #886 review).
   - `fetch_emodulus_lut {knownIdentity?}` (at most 8192 bytes) -> `{valid, loaded, identity, unchanged,
     info, lut}`: `identity` is `"<sha256>|<path>"`; `lut` is `{area_min, area_step, area_bins,
     deform_min, deform_step, deform_bins, values}` (row-major `[deform * area_bins + area]`, kPa, `null`
