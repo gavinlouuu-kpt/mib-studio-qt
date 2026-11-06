@@ -72,8 +72,27 @@ jobs:
           if ($LASTEXITCODE) { throw 'Conan recipe regression failed' }
           conan profile detect --force
           if ($LASTEXITCODE) { throw 'Conan detection failed' }
+          # Team remote first (as build-windows.yml): ConanCenter has no binary for our
+          # ffmpeg (opencv dependency), and its source build fails on the runner
+          # ("aom >= 2.0.0 not found using pkg-config"). Read-only: nothing is uploaded.
+          if ($env:CONAN_REMOTE_URL) {
+            conan remote add team-conan $env:CONAN_REMOTE_URL --index 0
+            conan remote login team-conan $env:CONAN_REMOTE_USER -p $env:CONAN_REMOTE_PASSWORD
+            Write-Host "Team Conan remote configured"
+          } else {
+            Write-Host "CONAN_REMOTE_URL not set, using ConanCenter only" -ForegroundColor Yellow
+          }
           conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194 -o '&:with_qt=False'
+          if ($LASTEXITCODE -and $env:CONAN_REMOTE_URL) {
+            Write-Host "Conan install failed with team-conan; retrying with ConanCenter only." -ForegroundColor Yellow
+            conan remote remove team-conan 2>$null
+            conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194 -o '&:with_qt=False'
+          }
           if ($LASTEXITCODE) { throw 'Conan dependency resolution failed' }
+        env:
+          CONAN_REMOTE_URL: ${{ secrets.CONAN_REMOTE_URL }}
+          CONAN_REMOTE_USER: ${{ secrets.CONAN_REMOTE_USER }}
+          CONAN_REMOTE_PASSWORD: ${{ secrets.CONAN_REMOTE_PASSWORD }}
       - name: Save completed dependency cache before application checks
         if: steps.conan-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
