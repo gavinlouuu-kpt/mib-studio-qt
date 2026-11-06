@@ -6,7 +6,7 @@ an enumerated port list with description, S/N and VID:PID and Refresh; baud 4800
 bits, parity, stop bits; Modbus address with a read-only **Scan** of addresses 1–16; **Set**, **Start** (frequency,
 duty and output on in one click, one backend command) and **Stop** with no Service mode and no arm (D5: Connect,
 Disconnect, Set and Start are locked while an experiment is active because the generator is the acquisition clock;
-Stop always works, even queued behind a command in flight); Qt's status wording ("Verified addr N — ChX: f Hz,
+Stop always works, even queued behind a command in flight, and is sent as soon as that command's answer arrives); Qt's status wording ("Verified addr N — ChX: f Hz,
 d% duty, output ON/off"); the port, framing, address, channel, frequency and duty survive a restart (the
 instrument's shell preferences, with USB-identity re-resolution of a renamed port); and the one-click **Use XGC +
 R5D preset for Live View** that writes Qt's MindVision rig preset and the generator connection into the camera

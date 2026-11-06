@@ -696,7 +696,9 @@ The acquisition pulse generator panel (`components/PulseGeneratorControls.tsx`; 
   (left untouched) and corrupt replies, and fills the first generator's address; **Cancel scan** cancels the job.
 - **Set / Start / Stop (D5):** no Service mode and no arm. Start is one `pulse_generator_command` (`start`:
   frequency, duty, output on, under the idle lock); Set is `set` (frequency and duty); Stop gates the output off
-  (`enable false`, bypasses the idle lock) and is queued behind a command in flight, never lost. While an
+  (`enable false`, bypasses the idle lock) and is queued behind a command in flight, never lost: it is sent as
+  soon as the generator answers that command (not after the settings save or status read that follow), and a
+  Stop pressed during a Stop goes right after it, never after a later Start (review of #881). While an
   experiment is active Connect, Disconnect, Set and Start are locked (the generator is the acquisition clock);
   the coordinated live view's ownership refuses every write as before. Frequency 400–40000 Hz and duty 0–100 %
   (0.01 steps) are refused with a message; the limits come from `pulse_generator_status` (a test pins the
