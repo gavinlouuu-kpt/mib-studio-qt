@@ -82,6 +82,28 @@ the built CSS is byte-identical. Owners, seams and rules:
 [desktop-area-ownership](../../docs/howto/desktop-area-ownership.md); program plan:
 [2026-11-05-tauri-parity-program](../../docs/exec-plans/active/2026-11-05-tauri-parity-program.md).
 
+**Experiment start/stop and run status (#866, PR D).** The monitoring area keeps the Qt-parity
+logic in pure modules beside `useMonitoring.ts`, each with a vitest file: `startReadiness.ts` (gate
+wording as Qt `explainReadiness`, blocking vs Warn gates, per-`start_outcome` wording, the multi-image
+inline-mode check), `runStatus.ts` (Qt `RunStatusModel` phases derived from the backend experiment
+status, the run lock, Stop Camera and Raw Record refusal reasons, stop/save progress text),
+`runFinish.ts` (the "Experiment Accounting" modal), `statsReadouts.ts` (Algo Time with the stale cue,
+Camera group, Runtime hh:mm:ss, the one-line status bar), `pollHealth.ts` (a notice only after three
+consecutive poll failures) and `clearBuffer.ts` (Yes/No before Clear Buffer, the `onMonitoringCleared`
+hook point). `experimentStart.ts` runs the Qt order of checks: readiness without a destination, the
+discard-ring question, the file dialog, the inline-mode note, readiness with the destination, Start;
+every dialog goes through `transport/dialogs.message`. `useStartReadiness` reads
+`fetch_experiment_readiness("")` every 2 s on the Experiment stage (no run active) for the standing
+list of blocking and Warn gates. The run phase (`experimentModel`'s `runPresentation`, `runLocked`)
+locks the Overview and Review stage tabs, Review's Select HDF File and Open Recording, Stop Camera and
+Raw Record; the lock on the two stages is enforced at the stage setter (`useRunLockedNavigation` wraps
+the shell's `setTab` in `useStudioController`, so the context bar, the workflow's next step and every
+other route keep the current stage mid-run; `runStatus.runLockedTabChange`), and the context bar
+disables a segment that leads to a shut stage; the shell views (`Sidebar`, `StatusBar`, `Workflow`) and `CameraActions`, `PreviewPanel`,
+`ReviewTab` only place what these modules return. `ProcessingStats` (eventAdapter) carries the
+optional `algo_avg_us` / `algo_avg_age_ms` the bridge does not send yet. Tests: `areas/monitoring/*.test.ts(x)`,
+`experimentStart.test.ts`, `transport/dialogsMessage.test.ts`.
+
 **Guided workflow (UX-1, issue #305):** `desktop/src/workflow.ts` layers an
 authoritative *stage state* on the Connect / Overview / Experiment / Review
 tabs. `deriveWorkflow(facts)` is a pure function of backend snapshots (camera
@@ -533,8 +555,8 @@ No develop UI uses them; the workspace Prepare card (A4b) will. Guard:
 
 **Live cell images (ABI 41, #716 A6a).** `monitoringCells.ts` types and checks
 the backend's live cell store ([[../services/MonitoringCellStore]]):
-`bridge.fetchMonitoringCells()` (`fetch_monitoring_cells` → the strip of recent
-cells and the pins, `MONITORING_CELLS_INVALID` on a reply that breaks the
+`bridge.fetchMonitoringCells()` (`fetch_monitoring_cells` → the strip of recent valid
+cells, the `invalid_strip` of recent invalid cells with their `reasons` (ABI next (#880, set at merge)) and the pins, `MONITORING_CELLS_INVALID` on a reply that breaks the
 contract or its caps), `bridge.monitoringCellPin(key)` (args
 `{expectedStartGeneration, captureEpoch, frameIndex, objectId}`, a pin reply with
 `outcome` from `MONITORING_CELL_PIN_OUTCOMES`, `CaptureMismatch` (6) when the key names
@@ -556,8 +578,114 @@ listing cell or a monitoring snapshot row (`MonitoringRow.start_generation` and
 canonical decimal strings and throws
 `INVALID_U64` / `INVALID_OBJECT_ID` before anything is sent. Pin, unpin and
 clear are control commands on the remote server (`VIEWER_ONLY` for a viewer).
-No develop UI uses them; the workspace Live view (A6b) will. Guard:
-`monitoringCells.test.ts`, `framePacket.test.ts` (the cell golden).
+The workspace Live view (A6b) uses the strip and the pins; the classic Monitoring sub-tab shows
+the strips (below). Guard: `monitoringCells.test.ts`, `framePacket.test.ts` (the cell golden).
+
+**Monitoring cell strips (ABI next (#880, set at merge), #866 MON-052 .. MON-055).** `areas/monitoring/CellStrips.tsx`, below
+the charts of the Monitoring sub-tab, shows the Qt tab's two strips: the last 25 **valid** and the last
+25 **invalid** cells as 100 px thumbnails, five per row in a scrollable box
+(`cellStripsModel.ts` `THUMBNAIL_SIZE` / `GRID_COLUMNS` / `STRIP_CELLS`). Thumbnails are the backend's
+object-centred crops of the processing ROI (not the whole ROI scaled down as Qt draws it: a crop
+is at most 256 px, so a wide ROI would be unreadable at 100 px). Each invalid cell carries the red
+9 px short reasons joined by " | " (No contour, Border, Area, Ring, Deform, Ratio, Focus, Wall) and a
+tooltip with the measured value and range per reason, from `fetch_monitoring_cells`
+`invalid_strip[].reasons` (the shared classifier's codes; the labels and Qt's wording are
+`REASON_LABELS` / `reasonTooltip`). A "Show Overlay" checkbox per strip (off until ticked, as Qt)
+paints the mask crop over the image on the thumbnail's canvas: the filled inner contours tinted 30 %
+and every contour outlined, blue for the target group, green valid, red invalid (`overlayRegions`,
+`composeThumbnail`: a pixel re-implementation of `createOverlayImage` without OpenCV). Empty strips,
+a row without an image (the backend's `no_image_reason`), a pull that found the cell gone or failed
+and a new capture clearing the strips (`last_capture_change`) are each said in words.
+`useMonitoringCells.ts` is the consumer of `bridge.fetchMonitoringCells` /
+`fetchMonitoringCellImage` (formerly without one): it polls the listing every 500 ms **only while the
+Monitoring sub-tab is shown** (the `isMonitoringVisible` predicate the snapshot polling uses), applies a
+listing only when its `revision` moved, pulls the crop and mask of cells the cache does not hold (a
+crop never changes) four at a time, prunes the cache to the cells the listing names (at most two
+strips) and retries a failed pull once: no per-frame or per-row work between revisions (the Qt bug
+#857 pattern is not ported), and a thumbnail redraws only when its own pixels or overlay flag change.
+It sends no command, so it is outside `ViewerGate`. Anchors: `data-tour="monitoring-cell-strips"`,
+`monitoring-valid-cells`, `monitoring-invalid-cells`, `monitoring-valid-overlay`,
+`monitoring-invalid-overlay`. Guard: `cellStripsModel.test.ts`, `CellStrips.dom.test.tsx`,
+`monitoringCells.test.ts`.
+
+**Density, reference contour, E-modulus table, stats telemetry (ABI next (#886, set at merge), #866 PR E).**
+`monitoringDensity.ts` holds the types, strict decoders (`MONITORING_DENSITY_INVALID`) and argument
+builders for the backend's live density (`bridge.monitoringDensitySetSettings` /
+`monitoringDensityRequestUpdate` are control commands: `VIEWER_ONLY` for a viewer;
+`fetchMonitoringDensity(sinceGeneration)`, `fetchKdeReferenceFromFile(path)`, `fetchEmodulusLut(knownIdentity)`
+and `fetchProcessingTelemetry` are reads), plus `densityByRow` (a point matches a snapshot row by
+`(start_generation, capture_epoch, frame_index, object_id)`) and `formatMetricSample`. The E-modulus table
+and the telemetry are consumed by PR E1 (below); the density by PR E2. Guard: `monitoringDensity.test.ts`.
+Shapes: [[Rust-Bridge]] (ABI next (#886, set at merge)).
+
+## Monitoring click to view, gate overlay and E table (#866 PR E1)
+
+MON-043 (E readout), 044, 046..048, 064..068, 077 and the sidebar's camera telemetry (MON-095, 098).
+`areas/monitoring/LiveMonitoringCharts.tsx` is what `MonitoringPanel` mounts (it wraps
+`components/MonitoringCharts`); the new modules sit in `clickView/`, `gate/`, `emodulusLut.ts`,
+`useMonitoringView.ts` and `click-view.css`.
+
+- **E-modulus table.** `useEmodulusTable` (a hook call in `useStudioController`) asks
+  `fetchEmodulusLut(knownIdentity)` when the Monitoring sub-tab becomes visible and the backend is ready, with
+  the identity it holds, so the 200 x 200 grid comes back only when the identity differs (the backend loads its
+  table once at bootstrap: in practice once per session). Never on the 500 ms snapshot poll. The state is
+  `emodulusTable` in `useMonitoringState()` (`unknown` / `none` / `error` / `loaded`). `emodulusLut.ts` ports
+  `EModulusLut::lookup` (bilinear, NaN outside the table or when a corner has no value) over a prepared
+  `Float64Array` grid; `emodulusAt` gives the empty-plot tooltip its "· E 1.52 kPa" (only with a table and a
+  finite value).
+- **Click to view.** A left click on a point selects the cell (`monSelection`, a copy of the snapshot row, so it
+  outlives its place in the ring). The pane is docked at the top of the histogram's card, hidden until the
+  first click, with Qt's title ("Frame N · A µm² · deformability D", " · target group", " · no longer on the
+  scatter (left the monitoring buffer)"), Previous / Next through the plotted points in buffer order (wrapping;
+  from a vanished selection Next starts at the oldest, Previous at the newest), "Open in window…" and ✕ (hides
+  the pane and clears the selection; Clear Buffer clears it too, `useSelectionReset` on `onMonitoringCleared`).
+  The window is a non-modal floating panel inside the app (no backdrop, dragged by its title bar) that
+  follows the selection while the charts keep updating; closing it hides it and keeps the selection.
+- **The pin lifecycle** (`clickView/useCellView.ts`, called by `useStudioController`, whose state reaches the
+  pane as `cellView`). Selecting PINS the cell (`monitoring_cell_pin`, a control command), then pulls its crop
+  and mask by identity (pins are served first); nothing is pulled per poll. The hook runs at the always-mounted
+  controller level, NOT in the Monitoring panel, so the pin and the image live exactly as long as the selection:
+  a switch to the Preview sub-tab or to another stage and back neither unpins the cell nor pulls it again (a
+  cell that left the monitoring ring meanwhile could not be pinned again, and Qt keeps its copy of the frame
+  until ✕ or Clear Buffer); nothing is sent while the view is hidden. The pin this view made is released when
+  the selection moves, on ✕, on Clear Buffer and when the studio unmounts
+  (`monitoring_cell_unpin`); a pin that was already held (AlreadyPinned) is not released. Pin and unpin run
+  strictly one after the other, a selection that moves while its pin is in flight unpins the stale pin before
+  the next is pinned, and a selection replaced before its turn never sends its pin. PinnedWithoutImage shows
+  the measurements and the reason; CaptureMismatch, RunMismatch, NotFound and LimitReached show the backend's
+  plain message. A client that does not control the instrument (a viewer in a browser) does not pin
+  (`canPin: !viewerOnly`, guarded by `components/ViewerGate.test.tsx`, which scans the controller too): it
+  pulls the image of a cell the strips still hold and says why when the backend has let go. The picture is the
+  backend's object-centred crop with the valid strip's Show Overlay (`validOverlay` in `useMonitoringState()`,
+  lifted out of `CellStrips`) drawing the mask, not Qt's whole ROI frame (the accepted difference, #880).
+- **Gate overlay.** `gate/targetGate.ts` is the pure port of `TargetGatePreview` (predicate equal to
+  ProcessingScience's target-group rule, sampled mask, iso-E marching squares, handle hit test at 6 px, drag
+  maths relative to the press with clamp / round / min <= max, the count); `gate/gateOverlay.ts` draws it on
+  the scatter's `overlay.draw` from the DRAFT (`tuneDraft`), only while the draft's target group is on: the tint
+  (exact rectangle when the E layer does not filter, else the sampled predicate in 3 px cells, cached by gate /
+  table / viewport), the dashed box, dash-dot contours labelled "E ≥ x kPa" / "E ≤ x kPa" (cached by level,
+  at most 8, cleared with the table), the pill "Target group" / "Target group (unapplied)" and, with the E gate
+  on and no table, the red pill "No E-modulus table loaded: the target group uses the box only" (box tinted, no
+  contours, no E handles; the same words as a line under the scatter for assistive technology). Nothing relies
+  on colour alone. `gate/useGateOverlay.ts` turns it into the scatter's overlay: hover over a handle shows a
+  resize cursor and "Target group area maximum (µm²): 400 µm² — drag to change"; a press within 6 px of an edge
+  or contour, past the drag threshold, writes the draft through `setTuneField` (the panel's own edit path: `*`
+  markers, "N unapplied changes", Apply still required); a handle is editable exactly when its input would be
+  (`gateHandles.ts`: no apply in flight, the gate and for an E contour the E range on, not a viewer); a click
+  without travel still selects the cell, a drag elsewhere pans. The live count "Target group preview: N of M
+  plotted valid cells (P%)" sits under the scatter (E from each plotted row's stored modulus, not read without a
+  table).
+- **Statistics.** `bridge.fetchProcessingStats` decodes the algorithm time and the camera telemetry from ONE
+  `fetch_processing_stats` reply (`stats.telemetry`, or `stats.telemetry_error` when the reply broke the
+  contract); the sidebar's Camera FPS and Data Rate rows show the backend's samples as Qt's `formatMetric` writes
+  them (whole numbers, "n/a", "unsupported", "error", "<n> (stale 3.0 s)") and fall back to the rate measured
+  from the frames this window received, with a tooltip saying so, only when the backend sends none.
+- Anchors: `monitoring-cell-pane`, `-cell-pane-close`, `-cell-prev`, `-cell-next`, `-cell-open-window`,
+  `-cell-window`, `-cell-window-close`, `-cell-window-prev`, `-cell-window-next`, `-gate-label`,
+  `-gate-no-table`, `-tune-emodulus-table`. Guards: `gate/targetGate.test.ts` (the Qt cases),
+  `gate/gateOverlay.test.ts`, `gate/gateHandles.test.ts`, `gate/useGateOverlay.dom.test.tsx`,
+  `clickView/selection.test.ts`, `clickView/useCellView.dom.test.tsx`, `LiveMonitoringCharts.dom.test.tsx` (incl. the pin outliving a panel unmount),
+  `useMonitoringView.dom.test.tsx`, `emodulusLut.test.ts`, `statsTelemetry.test.ts`.
 
 ## Central profile registry (ABI 25, issue #398)
 
@@ -646,11 +774,100 @@ fabricated UI fallback value is sent. Chart images/series range controls remain
 unexposed. Config and export controls have interaction tests, not just codec tests.
 
 
-Monitoring placeholders are now bounded SVG plots over existing snapshot rows:
-deformability vs raw pixel area and dimensionless ring-ratio histogram. They
-cap at 200 rows, discard non-finite values, retain negative/range extrema, and
-label ring ratio separately from physical ring width. No calibration, new metric
-computation, or identity-matched overlay is implied.
+**Monitoring charts and settings (epic #866, MON-036..043, 049..051, 082, 087..091).**
+The Monitoring sub-tab's charts are canvas charts in `areas/monitoring/charts/`
+(`components/MonitoringCharts.tsx` keeps the `<MonitoringCharts snapshot>` call and
+reads the settings from the studio state when mounted in the classic view):
+
+- *Window.* `useMonitoringPolling` fetches `MONITORING_FETCH_ROWS` = 1015 rows every
+  500 ms while the Monitoring sub-tab is shown: the backend's monitoring ring is
+  1000 valid + 1000 invalid frames (`MonitoringSnapshot.capacity`) and the snapshot
+  returns the valid tail first, so 1000 rows are Qt's plotted window (MAX_RECENT_FRAMES)
+  and 15 more carry the newest invalid rows for the latest-rows table (no chart plots
+  invalid rows; the invalid cells strip has its own listing). Asking for both whole rings
+  (2000 rows) would double the JSON to ~713 KiB per poll for nothing on screen.
+  `monitoringChartData` plots the newest 1000 valid rows. A poll that finds nothing new
+  (`sameSnapshot`: appended and held counters, newest timestamp) keeps the previous
+  snapshot object, so nothing re-renders or redraws; the canvases draw only when data,
+  view, selection or overlay change, never on hover. No per-row work beyond what is drawn
+  (the Qt #857 pattern is not ported).
+- *Scatter* (`MonitoringScatter`, `drawMonitoringScatter`): deformability vs area (µm²),
+  Qt colours (valid green, target group blue), each point with its own analysis-time
+  calibration, uncalibrated valid rows omitted and counted. Fixed default axes from the
+  settings (X 0-1000 µm², Y 0-1) that hold between polls. The isoelastic curves
+  (`fetch_monitoring_chart_reference`) are always drawn with a legend on the right
+  ("Valid Frames", "Target Group", each "x.xx kPa", highest first) and the curve-source
+  text underneath. Gestures are Qt's `ZoomableChartView` (`useChartView`, sharing the
+  Review charts' `chartMath` / `scatterGestures` / `scatterHitTest`): wheel zoom about
+  the pointer ~10 % a notch (Ctrl X only, Shift Y only, over an axis that axis only), drag
+  or middle-drag pans after 10 px, double-click on empty space resets (never on a point),
+  plus a Reset zoom button. Tooltips: "Area X µm² · deformability Y" anywhere in the plot
+  (plus " · E Z kPa" from the loaded E-modulus table, see below), "Frame N · ... · click to view"
+  and a hand cursor over a point. The tooltip is placed from its measured width (right of the pointer, left
+  of it when it would leave the chart, wrapping when longer than the chart), so a long handle tooltip is
+  never cut off.
+- *Seams:* `onSelectPoint(row)` and `selectedKey` (`monitoringRowKey`: run:capture:frame:object, the
+  orange 13 px marker; hidden for exports via `drawMonitoringScatter(..., {selection: false})`) are
+  click to view; the `overlay` prop (`draw(g, vp)` with the live axis transform, a press `interceptor`,
+  `hover` returning true or `{cursor, tooltip}`, `onLeave`, `version`) is the target-group gate. Both
+  are used by "Monitoring click to view, gate overlay and E table" below; the view takes two
+  render slots for them, `histogramPane(scatter)` (top of the histogram's card) and
+  `scatterFooter(scatter)` (under the scatter). `density` (PR E2) is the KDE layer.
+- *Ring histogram* (`MonitoringHistogram`): valid cells with ring ratio > 0, bins =
+  round((X max - X min) / bin width), out-of-range values in the end bins, fixed Y 0..max,
+  same zoom/pan/reset. Still labelled ring ratio, not ring width. The Young's-modulus
+  histogram (MON-051, Tauri only) is unchanged (ten bins over the data extent).
+- *Monitoring Settings dialog* (`MonitoringSettingsDialog`; Settings > Monitoring Settings...
+  opens it, mounted in `ShellDialogs`): modal, OK / Cancel / Apply, fields from
+  `MONITORING_SETTINGS_GROUPS` in `monitoringSettings.ts` (scatter X 0-100000 µm² and Y
+  0-10, histogram X 0-100, Y max 1-1,000,000, bin width 0.01-10; Qt defaults and decimals; KDE bandwidth factor 0.2-5 step 0.1, update interval 500-60000 ms step 500, core contour 5-100 % step 5);
+  a range whose minimum is not below its maximum is not applied. In-memory view preference
+  (`monSettings` in `useMonitoringState`), not persisted, like Qt (the three KDE numbers are the exception, as in Qt). The histogram X range
+  follows the runtime config's `image_processing.ring_ratio_min/max`
+  (`useMonitoringConfigRange`, from `liveDraft.baseline`): when the sub-tab is shown and
+  whenever the config's range changes. The Density (KDE) fields are the first group in that
+  list (see the next bullet).
+- *Density (KDE) colouring, core contour and reference (PR E2, MON-058..063, 083..086;
+  ABI next (#886, set at merge)).* `areas/monitoring/density/`. The backend's `MonitoringDensityService`
+  ([[services/MonitoringDensityService]]) computes the estimate on its own lowest-priority
+  worker; the shell pushes settings and polls. `useMonitoringDensity` (called after
+  `useTunePanel` in `useStudioController`; its state is the `PR E2: density (KDE)` block of
+  `useMonitoringState`) sends `monitoring_density_set_settings` whenever one input changes:
+  enabled = toggle on AND the Monitoring sub-tab shown (false when hidden, as Qt), interval,
+  bandwidth factor, core fraction (the dialog's percent / 100) and the scatter's fixed axes
+  as x0..y1. While enabled it polls `fetch_monitoring_density(since_generation)` every
+  500 ms, one request at a time; a reply of `unchanged` sets no state, so nothing re-renders
+  or redraws. A refused or failing command or poll shows one notice beside the toggle (and
+  one log line), not one per poll. The settings are one set per instrument and a control
+  command, so a viewer (browser client without control) sends and polls nothing, its toggle
+  sits in a `ViewerGate` and the chart is the plain one. The "Density (KDE)" checkbox
+  (`DensityToggle`, `data-tour="monitoring-density-toggle"`) sits under the scatter's
+  heading; its tooltip is Qt's text (point count, bandwidth x × y, compute ms, "refreshed
+  every max(interval, service spacing)", core cells and loops, reference label).
+  Colouring: `densityLevel` is Qt's `kdeLevelForDensity` (8 levels, truncated), the ramp is
+  `levelColor` over `REVIEW_DENSITY.ramp_rgb` (= `densityRampColor`, checked stop by stop in
+  `densityModel.test.ts`), a row the estimate does not name (`densityByRow` over
+  `monitoringRowKey`) is newer than it and takes the sparsest level. `drawMonitoringScatter`
+  gets one optional `density` model: valid cells as circles and the target group as
+  squares, one path per level and shape (no per-point element, no per-poll work beyond what is
+  drawn; the legend keeps the two series apart by shape and the note under the chart says "colour: local density (darker is denser), squares: target group"), then the core contour (solid, #2a78d6, 2 px) and the reference (dashed, #eb6834)
+  over the points, under the selection marker and the overlay. Without the model the canvas
+  calls are byte-identical to before (`drawDensity.test.ts` pins a digest taken at the base
+  commit). Reference: Pin current keeps the live loops (`pinned HH:mm:ss`, forgets the file
+  path), From file… (`transport/dialogs.open`, then `fetch_kde_reference_from_file`; the
+  error dialog is Qt's "No reference contour loaded from <path>" + reason) and Clear are
+  the buttons under the dialog's density fields (`DensityReferenceControls`; not in a
+  `ViewerGate`: they send no control command). The read is refused while an experiment runs,
+  a review job runs or a raw recording writes HDF5: From file… is disabled while a run is
+  active, and the start-up reload of the remembered path (`restoreOutcome`) keeps the path
+  on such a refusal and retries when the run ends, but drops it with one log line when the
+  file is gone or has no contour (Qt drops it on any failure). Preferences (on/off,
+  factor, interval, core fraction, reference path) are one versioned record
+  (`densityPrefs.ts`, key `yofo.monitoring.kde`) in `persistedState.ts` with
+  `store: "local"` (the per-tab sessionStorage would lose them when the app closes);
+  Qt's guard is kept (an obsolete version gives the defaults, the path outside the guard;
+  numbers clamp). Clear Buffer (`onMonitoringCleared`) drops the densities and contours
+  (a reply in flight is not drawn), asks the service to wake and keeps the reference.
 
 ## Software replacement follow-up (2026-09-23)
 
@@ -967,6 +1184,41 @@ three places:
 
 None of them blocks a run. Desktop builds are unchanged.
 
+## Monitoring tune panel (#866 MON-069..081)
+
+The Monitoring sub-tab shows the Qt tune panel beside the charts (`areas/monitoring/TunePanel.tsx`,
+`tune.css`, 220-280 px; it replaced the "Processing settings" stub that jumped to Preview > App config).
+Parts: `tuneDraft.ts` (pure: the 23 fields with Qt's ranges, steps, decimals and units, the draft, the
+changed set, `validateTuneConfig`, the conflict rules of `ProcessingConfigDraft::noteExternalBaseline`,
+the footer texts, the patch of changed keys only, the experiment scope), `useTune.ts` (the hook that keeps
+the baseline in step and applies / reverts) and `TunePanel.tsx` (the view; every control inside a
+`<ViewerGate>`, `data-tour="monitoring-tune-*"` anchors). The draft state is in `useMonitoringState()`
+(`tune`, `dispatchTune`, `tuneDraft`, `setTuneField`) so the scatter's gate overlay (MON-064..068) reads and
+writes the same draft.
+
+- **Baseline.** The running configuration (`fetch_processing_config_json`, exposed fields only), read when
+  Monitoring is shown and every 2 s while it is (visibility-gated like the monitoring poll, no frame work).
+  Clean draft: refreshed silently; dirty and an exposed field differs: Conflict (draft kept, Apply blocked)
+  until Revert; Revert adopts the latest. Not read yet: the panel is read-only and says so.
+- **Apply** sends the changed keys only. Qt writes them to "the active config file"; Tauri has none (a
+  profile, a central method or an opened document may each have set the running configuration), so: with a
+  checked configuration document open in App config, not being edited, and agreeing with the running
+  configuration over every key it carries, Apply goes through `apply_config_document` (revision check, writes
+  the patch, applies it, reads it back; the editor gets the re-read file through `adopt`); otherwise it goes
+  to the running configuration only (`bridge.applyProcessingTune`, a non-source-mutating
+  `apply_processing_config_json`) and the footer says "Not saved to a file: <why>". Both are confirmed by
+  reading the running configuration back; "Saved, not applied" is the file taking it and the runtime not.
+- **During a run** the criteria and the target group apply live ([[ExperimentCoordinator]] "Live tuning of
+  the criteria during a run"); multi-image stays locked (its controls are disabled with the reason, and a
+  multi-image change made before the run waits for its end); Starting, Stopping, Failed and a PL instrument
+  hold Apply back and say why. Editing and Revert always work.
+- **E-modulus table.** The Young's-modulus range shows whether a table is loaded (ABI next (#886, set at merge),
+  `emodulusLut.ts` `emodulusTableHint`): "E-modulus table loaded (<id>): this range filters the target
+  group." or Qt's tooltip text as a line, "No E-modulus table is loaded: this range is skipped and the target
+  group is the area and deformability box alone."; the tooltip stays.
+- Tests: `tuneDraft.test.ts` (model), `TunePanel.dom.test.tsx` (panel and hook, mocked bridge),
+  `components/ViewerGate.test.tsx`; backend `backend.experiment_tune_apply`.
+
 ## How a run ended (#549)
 
 `desktop/src/runOutcome.ts` (pure) turns the finished run's experiment status
@@ -1048,11 +1300,11 @@ never reapplies saved profile/core selections over current native state. Existin
 and reanalysis jobs are polled by App-owned hooks; unknown initial status is busy, not idle.
 
 Monitoring scientific scope: `MonitoringRow.area` is raw px²; `youngs_modulus` is the
-stored kernel/LUT kPa result (zero means unavailable). Tauri renders a bounded raw-area
-scatter plus valid-object ring-ratio and modulus histograms. It does not apply current
-calibration to retained historical rows. Live calibrated scatter/isoelastic parity needs
-per-row calibration provenance captured by every inline and batch processing path; the
-current Qt live scatter's use of the current factor is not authoritative for mixed epochs.
+stored kernel/LUT kPa result (zero means unavailable). Tauri renders a calibrated scatter
+(each row's own analysis-time factor, uncalibrated rows omitted; ABI 19) with the isoelastic
+reference curves, plus valid-object ring-ratio and modulus histograms. It does not apply
+current calibration to retained historical rows; the current Qt live scatter's use of the
+current factor is not authoritative for mixed epochs.
 ## Windows nonpublishing candidate lane
 
 `.github/workflows/desktop-windows-candidate.yml` builds a Windows x64 SDK-free Tauri candidate on `dev/react-tauri` pushes or manual dispatch. This is separate from the existing Qt Windows release workflow and never creates tags, releases, update feeds or signed installers. It uses the repository VS2022/MSVC194 Conan profile, VS CMake backend-only build and existing bridge link-manifest generator, then release-mode Rust tests/build.

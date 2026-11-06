@@ -3,6 +3,7 @@ import { CAMERA_STATES, FRAME_READY_SOURCES, COMMAND_TYPES, ERROR_SOURCES, EVENT
   JSON_TRANSPORT, OPERATION_KINDS, OPERATION_STATES, RECORDING_STATES, READINESS_GATE_STATUSES, RUN_COMPLETION_STATES } from "./bridgeContract";
 import { decimalU64 } from "./framePacket";
 import { decodeMethodCalibration, type MethodCalibration } from "./calibrationRecords";
+import type { ProcessingTelemetry } from "./monitoringDensity";
 
 export function wireU64(value: unknown): string {
   if (typeof value !== "string") throw new Error("TRANSPORT_U64_MUST_BE_STRING");
@@ -154,6 +155,15 @@ export function decodeExperimentReadiness(value:unknown):ExperimentReadiness {
 export interface ProcessingStats {
   valid:boolean;
   algo_fps1s:number|null; valid_fps1s:number|null; invalid_fps1s:number|null; pixel_to_micron:number|null;
+  /** Average algorithm time per frame (microseconds) and the age of that figure (ms), as Qt's Statistics panel shows them
+   *  (epic #866 MON-095). Optional: the bridge's processing stats carry rates only until it adds `algo_avg_us` and
+   *  `algo_avg_age_ms`; a backend without them leaves both undefined and the side panel hides the row. */
+  algo_avg_us?:number|null; algo_avg_age_ms?:number|null;
+  /** Bridge ABI next (#886, set at merge) (#866 PR E1, MON-098): the realtime mode and the camera telemetry of the same `fetch_processing_stats` reply
+   *  (bridge.fetchProcessingStats decodes both from it). Absent from a stats object built elsewhere. */
+  telemetry?:ProcessingTelemetry;
+  /** Why `telemetry` is missing when the reply carried it but broke the contract; the sidebar says so. */
+  telemetry_error?:string;
   freshness:"unavailable";
 }
 export function decodeProcessingStats(value:unknown):ProcessingStats {
@@ -163,7 +173,9 @@ export function decodeProcessingStats(value:unknown):ProcessingStats {
     if(v!==null && typeof v!=="number") throw new Error("TRANSPORT_INVALID_METRIC");
     return valid && typeof v==="number" && Number.isFinite(v) ? v : null;
   };
-  return {valid,algo_fps1s:sample("algo_fps1s"),valid_fps1s:sample("valid_fps1s"),invalid_fps1s:sample("invalid_fps1s"),pixel_to_micron:sample("pixel_to_micron"),freshness:"unavailable"};
+  const stats:ProcessingStats={valid,algo_fps1s:sample("algo_fps1s"),valid_fps1s:sample("valid_fps1s"),invalid_fps1s:sample("invalid_fps1s"),pixel_to_micron:sample("pixel_to_micron"),freshness:"unavailable"};
+  if(o.algo_avg_us!==undefined){stats.algo_avg_us=sample("algo_avg_us");stats.algo_avg_age_ms=o.algo_avg_age_ms===undefined?null:sample("algo_avg_age_ms");}
+  return stats;
 }
 export function formatMetric(value:number|null|undefined, digits=1):string {
   return typeof value==="number" && Number.isFinite(value) ? value.toFixed(digits) : "Unavailable";

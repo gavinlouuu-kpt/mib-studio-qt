@@ -20,7 +20,7 @@ export function PreviewPanel() {
     runFrozen, ring, onResumeRun, append, experimentRequestBusy, lastMeta, runPreviewInfo, instrumentModes, runMode,
     cameraWin, modeError, previewCanvasRef, fitWindow, instrument, resultsNow, showRunMask, setShowRunMask, faultNote,
     expActive, onStopRun, viewerOnly, hostProcessing, ready, running, caps, backgroundSet, autoBackgroundEnabled,
-    refreshConfig, setConfigTab, onToggleRecord, recording, setFitWindow, previewBuffer, tab, expTab,
+    refreshConfig, setConfigTab, onToggleRecord, recording, setFitWindow, previewBuffer, tab, expTab, recordReason,
   } = useStudio();
   return (
     <>
@@ -73,7 +73,7 @@ export function PreviewPanel() {
 
         {/* Raw Record is the host camera path; on a PL-science instrument it would save only the preview
             frames (G9), so it is hidden until #649 saves the buffered frames. */}
-        {caps.frame_buffer && <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
+        {caps.frame_buffer && <button onClick={onToggleRecord} disabled={!running || !!recordReason} title={recordReason ?? (running ? "Record raw frames to an HDF5 file" : "Camera is not running")}>
           {recording ? "Stop Recording" : "Record"}
         </button>}
         </ViewerGate>

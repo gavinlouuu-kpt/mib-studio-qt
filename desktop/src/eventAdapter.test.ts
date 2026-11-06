@@ -38,7 +38,7 @@ it("distinguishes command acceptance from a terminal operation notification",()=
 });
 // Bridge ABI 40 (#741): experiment replies carry their typed outcome; the message is unchanged.
 it("decodes the typed start and stop outcomes of experiment replies",()=>{
-  expect(BRIDGE_ABI_VERSION).toBe(44); // ABI 44 (#716 A7a): run_quick_look, runQuickLook.test.ts; ABI 43 (#776) method_calibration
+  expect(BRIDGE_ABI_VERSION).toBe(44); // ABI next (#886, set at merge) (#866 PR E): monitoring_density, kde_reference_from_file, emodulus_lut, processing_stats telemetry, monitoringDensity.test.ts; ABI next (#880, set at merge) (#866): monitoring_cells invalid_strip + reasons, monitoringCells.test.ts; ABI 44 (#716 A7a): run_quick_look, runQuickLook.test.ts; ABI 43 (#776) method_calibration
   expect(EXPERIMENT_START_OUTCOMES).toMatchObject({Started:0,NotReady:1,StaleReadiness:2,AlreadyActive:3,StorageFailed:4,ProvenanceFailed:5,Busy:6,InvalidRequest:7});
   expect(EXPERIMENT_STOP_OUTCOMES).toEqual({Accepted:0,NotActive:1,Busy:2,RunMismatch:3});
   const base={transport_version:1,ok:false,command:6,operation_id:"0"};
@@ -92,4 +92,14 @@ it("does not invent zero or freshness for unavailable/invalid processing samples
   expect(formatMetric(decoded.algo_fps1s)).toBe("0.0");
   expect(formatMetric(decoded.valid_fps1s)).toBe("Unavailable");
   expect(decodeProcessingStats({...s,valid:false}).algo_fps1s).toBeNull();
+});
+
+it("carries the algorithm time and its age only when the backend reports them (epic #866 MON-095)",()=>{
+  const s={transport_version:1,valid:true,algo_fps1s:120,valid_fps1s:1,invalid_fps1s:2,pixel_to_micron:1};
+  expect(decodeProcessingStats(s)).not.toHaveProperty("algo_avg_us");
+  expect(decodeProcessingStats({...s,algo_avg_us:85.5,algo_avg_age_ms:1500})).toMatchObject({algo_avg_us:85.5,algo_avg_age_ms:1500});
+  expect(decodeProcessingStats({...s,algo_avg_us:85.5})).toMatchObject({algo_avg_us:85.5,algo_avg_age_ms:null});
+  expect(decodeProcessingStats({...s,algo_avg_us:null})).toMatchObject({algo_avg_us:null});
+  expect(decodeProcessingStats({...s,valid:false,algo_avg_us:85.5}).algo_avg_us).toBeNull();
+  expect(()=>decodeProcessingStats({...s,algo_avg_us:"fast"})).toThrow("TRANSPORT_INVALID_METRIC");
 });

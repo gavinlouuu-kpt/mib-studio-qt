@@ -1,20 +1,41 @@
 // Experiment start/stop and Monitoring (epic #866): the backend-owned experiment lifecycle, the
-// last run's outcome, the Monitoring snapshot polling and the SATA SSD record store status.
-// Moved from App.tsx without change (#869 wave 0); studio/useStudioController.ts calls these
-// hooks in App.tsx's original effect order.
-import { useCallback, useEffect, useRef, useState } from "react";
-import { bridge, type ExperimentStatus, type MonitoringSnapshot, type RunAccounting } from "../../bridge";
+// last run's outcome, the Monitoring snapshot polling, the standing Start readiness and the SATA SSD
+// record store status. Moved from App.tsx (#869 wave 0); studio/useStudioController.ts calls these
+// hooks in App.tsx's original effect order. The Qt-parity behaviour (epic #866, PR D) is in the pure
+// modules beside this file: startReadiness, runStatus, runFinish, statsReadouts, pollHealth, clearBuffer.
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { bridge, type ExperimentStatus, type MonitoringRow, type MonitoringSnapshot, type RunAccounting, type TriggerStatus } from "../../bridge";
 import { EXPERIMENT_STATES } from "../../bridgeContract";
-import { startExperiment } from "../../experimentStart";
+import { startExperiment, type StartReadiness } from "../../experimentStart";
 import { describeRunOutcome, runKey } from "../../runOutcome";
 import type { SsdStatus } from "../../ssdView";
 import { isRemote } from "../../transport";
-import { confirm, save } from "../../transport/dialogs";
-import { H5_FILTER } from "../../studio/constants";
-import type { CoresModel } from "../config/useConfig";
+import { confirm, message, save } from "../../transport/dialogs";
+import { initialTuneState, tuneReducer, type TuneFieldId } from "./tuneDraft";
+import { EMODULUS_TABLE_UNKNOWN, type EmodulusTableState } from "./emodulusLut";
+import type { DensityEstimate, DensityReference } from "./density/densityModel";
+import { loadDensityPrefs, settingsWithDensityPrefs } from "./density/densityPrefs";
+import type { ConfigState, CoresModel } from "../config/useConfig";
 import type { ConnectState } from "../connect/useConnect";
 import type { HardwareState } from "../hardware/useHardware";
+import type { PreviewState } from "../preview/usePreview";
+import type { ReviewState } from "../review/useReview";
 import type { ShellState } from "../shell/useShell";
+import { MONITORING_FETCH_ROWS, sameSnapshot } from "./monitoringChartModel";
+import {
+  DEFAULT_MONITORING_SETTINGS, ringRatioRangeOfConfig, withHistogramXRange, type MonitoringSettings,
+} from "./monitoringSettings";
+import { POLL_HEALTHY, pollHealthAfter, pollNotice, type PollHealth } from "./pollHealth";
+import { accountingDialog } from "./runFinish";
+import { cameraStopBlock, deriveRunPresentation, recordBlock, runLockedTabChange, runProgressText } from "./runStatus";
+import { sameReadiness, seriesForcesInline, summarizeReadiness } from "./startReadiness";
+
+/** MON-009: Qt's "Save Experiment Data" filter, "HDF5 Files (*.h5 *.hdf5);;All Files (*)". Review shares H5_FILTER
+ *  (studio/constants.ts), which stays .h5 only. */
+export const EXPERIMENT_FILE_FILTER = [
+  { name: "HDF5 Files", extensions: ["h5", "hdf5"] },
+  { name: "All Files", extensions: ["*"] },
+];
 
 export const EXPERIMENT_STATE_NAMES: Record<number, string> = {
   [EXPERIMENT_STATES.Idle]: "Inactive",
@@ -24,6 +45,19 @@ export const EXPERIMENT_STATE_NAMES: Record<number, string> = {
   [EXPERIMENT_STATES.Failed]: "Failed",
 };
 
+/** MON-013 (#585 run-lock): wraps the shell's stage setter so every route to a stage the run has shut (stage
+ *  tabs, the context bar, the workflow's next step, a notice's link) keeps the current stage while the run is
+ *  locked (#877 review: the context bar's Calibration segment opened Overview mid-run). The controller sets
+ *  `runLockRef.current` from the render-time `runLocked`; it is read when a navigation happens. No effect. */
+export function useRunLockedNavigation<T extends string>(rawSetTab: Dispatch<SetStateAction<T>>) {
+  const runLockRef = useRef(false);
+  const setTab = useCallback<Dispatch<SetStateAction<T>>>(
+    (next) => rawSetTab((cur) => runLockedTabChange(cur, typeof next === "function" ? next(cur) : next, runLockRef.current)),
+    [rawSetTab],
+  );
+  return { setTab, runLockRef };
+}
+
 export function useMonitoringState() {
   const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files" | "recordings">("preview");
 
@@ -32,6 +66,11 @@ export function useMonitoringState() {
 
   // Monitoring + trigger (bridge schema v6, BE-5).
   const [monSnapshot, setMonSnapshot] = useState<MonitoringSnapshot | null>(null);
+  // Monitoring Settings (MON-082): the fixed chart axes and the histogram bin width. A view preference
+  // kept in memory, like Qt's; the dialog is areas/monitoring/MonitoringSettingsDialog.tsx.
+  // The density (KDE) numbers start from the stored preferences (PR E2, MON-063); the axes and bin width are Qt's defaults.
+  const [monSettings, setMonSettings] = useState<MonitoringSettings>(() => settingsWithDensityPrefs(DEFAULT_MONITORING_SETTINGS, loadDensityPrefs()));
+  const [showMonitoringSettings, setShowMonitoringSettings] = useState(false);
   const experimentPending = useRef(false);
   const [experimentRequestBusy, setExperimentRequestBusy] = useState(false);
   const [readinessMessage, setReadinessMessage] = useState("");
@@ -48,40 +87,172 @@ export function useMonitoringState() {
   const elapsedWallSeconds = expStatus?.valid && BigInt(expStatus.start_time_ns) > 0n
     ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
   const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
+  // The tune panel's draft (#866 MON-069..081; tuneDraft.ts). `tuneDraft` and `setTuneField` are what the
+  // scatter's gate overlay (MON-064..068) reads and writes, so a gate dragged on the chart is the same
+  // draft as the panel's fields and goes through the same Apply.
+  const [tune, dispatchTune] = useReducer(tuneReducer, undefined, initialTuneState);
+  const tuneDraft = tune.draft;
+  const setTuneField = useCallback((field: TuneFieldId, value: unknown) => dispatchTune({ type: "edit", field, value }), []);
+  // Run state for the operator (MON-022/025): Start has left for the backend / Stop was pressed and the backend has not said so yet.
+  const [startInFlight, setStartInFlight] = useState(false);
+  const [stopRequested, setStopRequested] = useState(false);
+  // The finished run the operator moved past (the camera started or stopped after it): Qt drops its Complete state then.
+  const [runDismissed, setRunDismissed] = useState("");
+  // The standing readiness with no destination (MON-028), polled while the Experiment stage is shown.
+  const [startReadiness, setStartReadiness] = useState<StartReadiness | null>(null);
+  const [readinessHealth, setReadinessHealth] = useState<PollHealth>(POLL_HEALTHY);
+  // Failures the Monitoring polls used to swallow (App.tsx:533, 542-544, 1031 at 5f906ac2).
+  const [monitoringIssue, setMonitoringIssue] = useState("");
+  const [snapshotHealth, setSnapshotHealth] = useState<PollHealth>(POLL_HEALTHY);
+  const [triggerHealth, setTriggerHealth] = useState<PollHealth>(POLL_HEALTHY);
+  const [accountingError, setAccountingError] = useState("");
+  // A new value each time the processing configuration was re-read with a background set: the side panel's thumbnail refetches on it (MON-102).
+  const [backgroundRevision, setBackgroundRevision] = useState(0);
+  // Whoever shows the monitoring buffer's derived state (KDE, the selection) registers here: called after Clear Buffer succeeded (MON-029).
+  const monitoringClearedListeners = useRef(new Set<() => void>());
+  /** The hook point: `const off = onMonitoringCleared(() => resetKde())` (returns the unsubscribe); called after Clear Buffer succeeded. */
+  const onMonitoringCleared = useCallback((listener: () => void) => {
+    monitoringClearedListeners.current.add(listener);
+    return () => { monitoringClearedListeners.current.delete(listener); };
+  }, []);
+  const notifyMonitoringCleared = useCallback(() => { monitoringClearedListeners.current.forEach((listener) => listener()); }, []);
+  // PR E1: selection, frame window, E-modulus table (click to view MON-044..048, the gate overlay MON-064..068). The
+  // selected cell is a copy of its snapshot row, so it outlives its place in the monitoring ring; the pin that keeps
+  // its image (useCellView) and the table fetch (useEmodulusTable) are hooks in their own files.
+  const [monSelection, setMonSelection] = useState<MonitoringRow | null>(null);
+  const [cellWindowOpen, setCellWindowOpen] = useState(false);
+  // The valid strip's Show Overlay (CellStrips.tsx): the selected cell's pane follows it, as in Qt.
+  const [validOverlay, setValidOverlay] = useState(false);
+  const [emodulusTable, setEmodulusTable] = useState<EmodulusTableState>(EMODULUS_TABLE_UNKNOWN);
+  // PR E2: density (KDE). The state of the scatter's density colouring (MON-058..063); the effects and callbacks are
+  // useMonitoringDensity() in areas/monitoring/density/. The bandwidth factor, interval and core percent are in `monSettings`.
+  const [kdeEnabled, setKdeEnabled] = useState(() => loadDensityPrefs().enabled);
+  // The experiment file the reference contour comes from ("" = none, or a pinned one); restored at start-up.
+  const [kdeReferencePath, setKdeReferencePath] = useState(() => loadDensityPrefs().referencePath);
+  const [kdeReference, setKdeReference] = useState<DensityReference | null>(null);
+  // The last estimate the backend published (null: none, KDE off or Monitoring hidden).
+  const [kdeEstimate, setKdeEstimate] = useState<DensityEstimate | null>(null);
+  // A refused or failing density command or poll, said once.
+  const [kdeNotice, setKdeNotice] = useState("");
   return {
-    expTab, setExpTab, expStatus, setExpStatus, monSnapshot, setMonSnapshot,
+    tune, dispatchTune, tuneDraft, setTuneField,
+    expTab, setExpTab, expStatus, setExpStatus, monSnapshot, setMonSnapshot, monSettings, setMonSettings,
+    showMonitoringSettings, setShowMonitoringSettings,
     experimentPending, experimentRequestBusy, setExperimentRequestBusy, readinessMessage, setReadinessMessage,
     startNotice, setStartNotice, expState, runAccounting, setRunAccounting, runOutcome, finishedRun, loggedRun,
     elapsedWallSeconds, expActive,
+    startInFlight, setStartInFlight, stopRequested, setStopRequested, runDismissed, setRunDismissed,
+    startReadiness, setStartReadiness, readinessHealth, setReadinessHealth, monitoringIssue, setMonitoringIssue,
+    snapshotHealth, setSnapshotHealth, triggerHealth, setTriggerHealth, accountingError, setAccountingError,
+    backgroundRevision, setBackgroundRevision, onMonitoringCleared, notifyMonitoringCleared,
+    monSelection, setMonSelection, cellWindowOpen, setCellWindowOpen, validOverlay, setValidOverlay, emodulusTable, setEmodulusTable,
+    kdeEnabled, setKdeEnabled, kdeReferencePath, setKdeReferencePath, kdeReference, setKdeReference, kdeEstimate, setKdeEstimate, kdeNotice, setKdeNotice,
   };
 }
 export type MonitoringState = ReturnType<typeof useMonitoringState>;
 
-type MonitoringPollingDeps = Pick<ShellState, "ready" | "tab"> & Pick<MonitoringState, "expTab" | "setMonSnapshot">
+type MonitoringPollingDeps = Pick<ShellState, "ready" | "tab" | "append" | "caps">
+  & Pick<MonitoringState, "expTab" | "setMonSnapshot" | "setMonitoringIssue" | "setSnapshotHealth" | "setTriggerHealth">
   & Pick<HardwareState, "setTrigStatus">;
 
-export function useMonitoringPolling({ ready, tab, expTab, setMonSnapshot, setTrigStatus }: MonitoringPollingDeps) {
+/** The one visibility predicate of Monitoring (BE-5): the Experiment stage with its Monitoring
+ *  sub-tab shown. The snapshot polling and the live cell strips (CellStrips.tsx) both gate on it. */
+export const isMonitoringVisible = (tab: string, expTab: string): boolean => tab === "experiment" && expTab === "monitoring";
+
+// A thrown value that is never undefined (pollHealthAfter reads undefined as "the poll succeeded").
+const thrown = (e: unknown): unknown => (e === undefined || e === null ? "unknown error" : e);
+
+export function useMonitoringPolling({
+  ready, tab, expTab, append, caps, setMonSnapshot, setTrigStatus, setMonitoringIssue, setSnapshotHealth, setTriggerHealth,
+}: MonitoringPollingDeps) {
   // Monitoring is visibility-gated (BE-5): accumulation and its per-frame
   // image clones run only while the Monitoring view is actually shown.
-  const monitoringVisible = tab === "experiment" && expTab === "monitoring";
+  const monitoringVisible = isMonitoringVisible(tab, expTab);
+  // The platform info arrives after the first render: read the capability when a poll finishes, not when the effect starts.
+  const hasTrigger = useRef(caps.trigger);
+  hasTrigger.current = caps.trigger;
   useEffect(() => {
     if (!ready) return;
-    bridge.monitoringSetActive(monitoringVisible).catch(() => {});
-    if (!monitoringVisible) return;
-    let polling = false, disposed = false;
+    let disposed = false;
+    // A refused switch used to vanish: Monitoring then showed an empty buffer with no word why (App.tsx:533 at 5f906ac2).
+    const verb = monitoringVisible ? "enable" : "disable";
+    const failed = (why: string) => {
+      if (disposed) return;
+      append(`monitoring could not ${verb} the backend's accumulation: ${why}`);
+      if (monitoringVisible) setMonitoringIssue(`Monitoring could not be switched on in the backend (${why}): rows and charts may stay empty.`);
+    };
+    bridge.monitoringSetActive(monitoringVisible)
+      .then((res) => { if (res.ok) { if (!disposed) setMonitoringIssue(""); } else failed(res.message || "refused"); })
+      .catch((e) => failed(String(e)));
+    if (!monitoringVisible) return () => { disposed = true; };
+    setSnapshotHealth(POLL_HEALTHY); setTriggerHealth(POLL_HEALTHY);
+    let polling = false;
     const id = window.setInterval(async () => {
       if (polling) return; polling = true;
       try {
-        const snapshot = await bridge.fetchMonitoringSnapshot(200);
-        const trigger = await bridge.fetchTriggerStatus();
-        if (!disposed) { setMonSnapshot(snapshot); setTrigStatus(trigger); }
-      } catch {
-        /* backend gone — next tick will surface it */
+        // Each read counts on its own: a trigger service that stops answering must not stop the buffer table, and the
+        // other way round. One lost tick is a blip; consecutive failures raise the notice in the Monitoring panel.
+        let snapshot: MonitoringSnapshot | null = null, snapshotError: unknown;
+        let trigger: TriggerStatus | null = null, triggerError: unknown;
+        // The plotted window (1000 valid rows, MON-036) plus the latest-rows table, not a fixed 200 rows.
+        try { snapshot = await bridge.fetchMonitoringSnapshot(MONITORING_FETCH_ROWS); } catch (e) { snapshotError = thrown(e); }
+        try { trigger = await bridge.fetchTriggerStatus(); } catch (e) { triggerError = thrown(e); }
+        if (disposed) return;
+        // A poll that finds nothing new keeps the previous snapshot: no re-render, no redraw.
+        if (snapshot) { const fresh = snapshot; setMonSnapshot((previous) => (sameSnapshot(previous, fresh) ? previous : fresh)); }
+        if (trigger) setTrigStatus(trigger);
+        setSnapshotHealth((h) => pollHealthAfter(h, snapshotError));
+        // A trigger service the instrument does not have is not an error.
+        setTriggerHealth((h) => pollHealthAfter(h, hasTrigger.current ? triggerError : undefined));
       } finally { polling = false; }
     }, 500);
     return () => { disposed = true; window.clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monitoringVisible, ready]);
   return { monitoringVisible };
+}
+
+type MonitoringConfigRangeDeps = Pick<MonitoringState, "setMonSettings"> & Pick<ConfigState, "liveDraft">
+  & { monitoringVisible: boolean };
+
+// MON-050: the histogram's X range is the runtime config's ring_ratio_min/max, taken when the Monitoring
+// sub-tab is shown (overwriting a range set in the dialog, as Qt's showEvent does) and again whenever
+// the config's range changes, which is what an Apply or a Revert of the processing configuration does.
+// The baseline is the last config the backend gave (liveConfigDraft), not an unapplied edit.
+export function useMonitoringConfigRange({ monitoringVisible, liveDraft, setMonSettings }: MonitoringConfigRangeDeps) {
+  const range = useMemo(() => ringRatioRangeOfConfig(liveDraft.baseline), [liveDraft.baseline]);
+  const min = range?.min, max = range?.max;
+  useEffect(() => {
+    if (!monitoringVisible || min === undefined || max === undefined) return;
+    setMonSettings((current) => withHistogramXRange(current, min, max));
+  }, [monitoringVisible, min, max]);
+}
+
+type StartReadinessDeps = Pick<ShellState, "ready" | "tab"> & Pick<MonitoringState, "expActive" | "setStartReadiness" | "setReadinessHealth">;
+
+// The standing readiness (MON-028): what would block Start, and what only warns, read with no destination while the
+// Experiment stage is shown and no run holds its plan. Qt does the same every second (MainWindow::refreshRecordingCapacity).
+// The read is the backend's own evaluation, not a copy of its rules; one at a time, every 2 s, no state set when nothing changed.
+export function useStartReadiness({ ready, tab, expActive, setStartReadiness, setReadinessHealth }: StartReadinessDeps) {
+  const visible = tab === "experiment" && !expActive;
+  useEffect(() => {
+    if (!ready || !visible) return;
+    let disposed = false, polling = false;
+    const poll = async () => {
+      if (polling) return; polling = true;
+      try {
+        const readiness = await bridge.fetchExperimentReadiness("");
+        if (disposed) return;
+        setStartReadiness((prev) => (sameReadiness(prev, readiness) ? prev : readiness));
+        setReadinessHealth((h) => pollHealthAfter(h));
+      } catch (e) {
+        if (!disposed) setReadinessHealth((h) => pollHealthAfter(h, thrown(e)));
+      } finally { polling = false; }
+    };
+    void poll();
+    const id = window.setInterval(() => void poll(), 2000);
+    return () => { disposed = true; window.clearInterval(id); };
+  }, [ready, visible]);
 }
 
 export function useSsdStatus({ ready }: Pick<ShellState, "ready">) {
@@ -100,14 +271,15 @@ export function useSsdStatus({ ready }: Pick<ShellState, "ready">) {
   return { ssd, ssdConfigured };
 }
 
-type ExperimentLifecycleDeps = Pick<ShellState, "append">
+type ExperimentLifecycleDeps = Pick<ShellState, "append" | "hostProcessing"> & Pick<ConnectState, "running">
   & Pick<MonitoringState, "experimentPending" | "setExperimentRequestBusy" | "setReadinessMessage" | "setStartNotice"
-    | "setExpStatus" | "finishedRun" | "loggedRun" | "expStatus" | "setRunAccounting">;
+    | "setExpStatus" | "finishedRun" | "loggedRun" | "expStatus" | "setRunAccounting" | "setStartInFlight" | "setStopRequested"
+    | "setRunDismissed" | "setAccountingError">;
 
 // Start / Stop Experiment, and the outcome line logged once per finished run.
 export function useExperimentLifecycle({
-  append, experimentPending, setExperimentRequestBusy, setReadinessMessage, setStartNotice, setExpStatus, finishedRun,
-  loggedRun, expStatus, setRunAccounting,
+  append, hostProcessing, running, experimentPending, setExperimentRequestBusy, setReadinessMessage, setStartNotice, setExpStatus,
+  finishedRun, loggedRun, expStatus, setRunAccounting, setStartInFlight, setStopRequested, setRunDismissed, setAccountingError,
 }: ExperimentLifecycleDeps) {
   // ---- Experiment lifecycle (backend-owned, BE-4) ----
 
@@ -118,44 +290,96 @@ export function useExperimentLifecycle({
       const outcome = await startExperiment({
         fetchRingStatus: () => bridge.fetchRingStatus(),
         confirm,
-        pickFile: () => save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" }),
+        // No default name (Qt: ""): the desktop dialog opens where the operator last saved. A browser has no file dialog, so its
+        // prompt keeps a suggested name under the instrument's data directory (#651 G8).
+        pickFile: () => save({ title: "Save Experiment Data", filters: EXPERIMENT_FILE_FILTER, defaultPath: isRemote ? "experiment.h5" : undefined }),
         fetchReadiness: (path) => bridge.fetchExperimentReadiness(path),
-        start: (path, acknowledgeDiscardRing) => bridge.experimentStart(path, acknowledgeDiscardRing),
+        start: async (path, acknowledgeDiscardRing) => {
+          setStartInFlight(true);
+          try {
+            const res = await bridge.experimentStart(path, acknowledgeDiscardRing);
+            return { ok: res.ok, message: res.message, outcome: res.start_outcome };
+          } finally { setStartInFlight(false); }
+        },
+        inform: ({ kind, title, text }) => message(text, { title, kind }),
+        // MON-008: a multi-image series runs inline; only the host pipeline has the realtime mode.
+        needsInlineForSeries: hostProcessing
+          ? async () => { const doc = await bridge.fetchProcessingConfigJson(); return doc.valid && seriesForcesInline(doc.json); }
+          : undefined,
       });
-      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return; }
-      if (outcome.kind === "refused") {setReadinessMessage(`${outcome.path}: ${outcome.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${outcome.message}`); }
+      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); append(`experiment not ready: ${outcome.message}`); return; }
+      if (outcome.kind === "refused") {
+        setReadinessMessage(`${outcome.path}: ${outcome.summary}`);
+        setExpStatus(await bridge.fetchExperimentStatus());
+        return append(`experiment start failed: ${outcome.summary}`);
+      }
       if (outcome.kind === "started") {
         // The backend's path: a relative one is resolved under the data directory (#762).
         const status = await bridge.fetchExperimentStatus();
         append(`experiment started → ${status?.output_path || outcome.path}`);
-        if (outcome.notice) { setStartNotice(outcome.notice); append(outcome.notice); }
+        if (outcome.notice) { setStartNotice(outcome.notice); append(outcome.notice.replace(/\n/g, "; ")); }
         setExpStatus(status);
       }
     } catch (e) {
       append(`experiment start error: ${e}`);
     } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
-  }, [append]);
+  }, [append, hostProcessing]);
 
   const onStopExperiment = useCallback(async () => {
+    // "Stopping experiment…" until the backend reports it is saving (MON-025); the run state widget reads this flag.
+    setStopRequested(true);
     try {
       const res = await bridge.experimentStop();
-      if (!res.ok) return append(`experiment stop failed: ${res.message}`);
+      if (!res.ok) append(`experiment stop failed: ${res.message}`);
+      else append("Stopping experiment…");
+      // Also after a refusal: a run the backend already finalized (a fatal save error) is mirrored by the fresh status (Qt NotActive).
       setExpStatus(await bridge.fetchExperimentStatus());
     } catch (e) {
       append(`experiment stop error: ${e}`);
-    }
+    } finally { setStopRequested(false); }
   }, [append]);
+
+  // The run this client saw go through Starting/Active/Stopping: only such a run ends with the loss modal (a status recovered
+  // after a reload belongs to a run the operator already dealt with).
+  const observedRun = useRef("");
+  useEffect(() => {
+    if (expStatus?.valid && !expStatus.terminal && expStatus.state !== EXPERIMENT_STATES.Idle) observedRun.current = expStatus.start_generation;
+  }, [expStatus]);
+
+  // Qt drops "Complete" from the run state widget once the camera state changes after the run.
+  const lastRunning = useRef(running);
+  useEffect(() => {
+    if (lastRunning.current === running) return;
+    lastRunning.current = running;
+    if (finishedRun) setRunDismissed(finishedRun);
+  }, [running, finishedRun]);
 
   useEffect(() => {
     if (!finishedRun || finishedRun === loggedRun.current) return;
     loggedRun.current = finishedRun;
     let live = true;
     const status = expStatus;
-    void bridge.fetchRunAccounting("last_run").catch(() => null).then((acc) => {
+    const observed = !!status && observedRun.current === status.start_generation;
+    if (!observed) setRunDismissed(finishedRun);
+    // A failed read used to vanish (App.tsx:1031 at 5f906ac2): the loss counts then came from the status alone with no word why.
+    void bridge.fetchRunAccounting("last_run").then(
+      (acc) => ({ acc, error: !acc.available && acc.error ? acc.error : "" }),
+      (e) => ({ acc: null as RunAccounting | null, error: String(e) }),
+    ).then(({ acc, error }) => {
       if (!live) return;
       setRunAccounting(acc);
+      if (error) {
+        setAccountingError(`The run's frame accounting could not be read (${error}); the counts below come from the saved status only.`);
+        append(`run accounting unavailable: ${error}`);
+      } else setAccountingError("");
       const outcome = describeRunOutcome(status, acc);
       if (outcome) append(outcome.headline);
+      const presentation = deriveRunPresentation({ cameraRunning: running, status });
+      const saved = runProgressText(presentation, status);
+      if (saved && observed) append(saved);
+      // The modal waits for the file to close (this status is terminal): a dialog before it held the HDF5 open for 108 s on the Qt bench.
+      const dialog = observed ? accountingDialog(status, acc) : null;
+      if (dialog) void message(dialog.text, { title: dialog.title, kind: dialog.kind });
     });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -164,11 +388,16 @@ export function useExperimentLifecycle({
 }
 
 type ExperimentModelDeps = Pick<ShellState, "ready" | "instrumentModes"> & Pick<ConnectState, "running">
-  & Pick<MonitoringState, "expActive" | "experimentRequestBusy"> & CoresModel & { runModeBlock: string | undefined };
+  & Pick<PreviewState, "recording"> & Pick<ReviewState, "reviewMeta">
+  & Pick<MonitoringState, "expActive" | "expState" | "expStatus" | "experimentRequestBusy" | "startInFlight" | "stopRequested"
+    | "runDismissed" | "startReadiness" | "readinessHealth" | "monitoringIssue" | "snapshotHealth" | "triggerHealth" | "accountingError">
+  & Pick<ShellState, "caps"> & CoresModel & { runModeBlock: string | undefined };
 
-// Render-time value: why Start Experiment is disabled (undefined when it is enabled).
+// Render-time values: why Start Experiment is disabled (undefined when it is enabled), the run state and what it locks,
+// the standing readiness, and the Monitoring failures to tell the operator about.
 export function experimentModel({
-  ready, instrumentModes, running, expActive, experimentRequestBusy, cores, runModeBlock,
+  ready, instrumentModes, running, expActive, expState, expStatus, experimentRequestBusy, cores, runModeBlock, recording, reviewMeta,
+  startInFlight, stopRequested, runDismissed, startReadiness, readinessHealth, monitoringIssue, snapshotHealth, triggerHealth, accountingError, caps,
 }: ExperimentModelDeps) {
   const startExperimentReason = !ready || !cores.initialized
     ? "Backend is not initialized"
@@ -179,5 +408,20 @@ export function experimentModel({
         : expActive
           ? "Experiment is already running"
           : experimentRequestBusy ? "Experiment start request pending" : undefined;
-  return { startExperimentReason };
+  // MON-022: the Qt run state (glyph + text); `runLocked` is Qt's experimentActive_ (MON-013: Overview and Review are shut for the whole run).
+  const runPresentation = deriveRunPresentation({ cameraRunning: running, status: expStatus, startInFlight, stopRequested, dismissedRun: runDismissed });
+  const runLocked = runPresentation.locked;
+  const runProgress = runProgressText(runPresentation, expStatus);
+  // MON-012 and MON-014: the reasons Stop Camera and Raw Record are refused (the controls are in connect/ and preview/).
+  const stopCameraBlock = cameraStopBlock({ expActive: runLocked, flushing: !!expStatus?.flushing, recording });
+  const recordReason = recordBlock({ recording, experimentIdle: expState === EXPERIMENT_STATES.Idle, hdf5Open: !!reviewMeta?.file_open });
+  // MON-028: what would block Start, and what only warns.
+  const readinessSummary = startReadiness?.valid ? summarizeReadiness(startReadiness.gates) : null;
+  const readinessNotice = pollNotice("The Start readiness check", readinessHealth);
+  // The Monitoring panel's failures: a refused switch-on, polls that keep failing, a trigger service that stops answering.
+  const monitoringNotices = [monitoringIssue, pollNotice("Monitoring data", snapshotHealth), caps.trigger ? pollNotice("Trigger status", triggerHealth) : ""].filter(Boolean);
+  return {
+    startExperimentReason, runPresentation, runLocked, runProgress, stopCameraBlock, recordReason, readinessSummary, readinessNotice,
+    monitoringNotices, accountingNotice: accountingError,
+  };
 }

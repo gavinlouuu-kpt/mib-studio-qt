@@ -470,8 +470,10 @@ export const EXPERIMENT_START_REQUEST = {
 } as const;
 
 export const MONITORING_CELLS = {
-  "strip_max_cells": 24,
+  "strip_max_cells": 25,
   "strip_max_bytes": 4194304,
+  "invalid_strip_max_cells": 25,
+  "invalid_strip_max_bytes": 4194304,
   "max_pins": 16,
   "pin_max_bytes": 4194304,
   "crop_max_side": 256,
@@ -482,6 +484,17 @@ export const MONITORING_CELLS = {
 export const MONITORING_CELL_ERROR_CODES = {
   "capture_mismatch": "CAPTURE_MISMATCH"
 } as const;
+
+export const MONITORING_CELL_REASON_CODES = [
+  "no_contour",
+  "border",
+  "area",
+  "ring",
+  "deform",
+  "area_ratio",
+  "focus",
+  "wall"
+] as const;
 
 export const CALIBRATION_RECORDS = {
   "record_id_max_bytes": 128,
@@ -501,6 +514,48 @@ export const RUN_QUICK_LOOK = {
   "low_n_valid_rows": 200,
   "cache_entries": 64,
   "schema_version": 1
+} as const;
+
+export const MONITORING_DENSITY = {
+  "interval_ms_min": 500,
+  "interval_ms_max": 60000,
+  "interval_ms_default": 2000,
+  "bandwidth_factor_min": 0.2,
+  "bandwidth_factor_max": 5.0,
+  "bandwidth_factor_default": 1.0,
+  "core_fraction_min": 0.05,
+  "core_fraction_max": 1.0,
+  "core_fraction_default": 0.9,
+  "grid_nx": 128,
+  "grid_ny": 64,
+  "compute_budget_factor": 20,
+  "max_points": 1000,
+  "density_digits": 6,
+  "contour_digits": 7
+} as const;
+
+export const KDE_REFERENCE_FROM_FILE = {
+  "path_max_bytes": 4096,
+  "max_vertices": 20000
+} as const;
+
+export const EMODULUS_LUT = {
+  "known_identity_max_bytes": 8192,
+  "values_digits": 6
+} as const;
+
+export const PROCESSING_STATS = {
+  "metric_states": [
+    "valid",
+    "stale",
+    "unavailable",
+    "unsupported",
+    "error"
+  ],
+  "realtime_modes": [
+    "inline",
+    "async_batch"
+  ]
 } as const;
 
 export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {

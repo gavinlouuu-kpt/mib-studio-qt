@@ -1,14 +1,18 @@
 // Shell (epic #862): the collapsible telemetry sidebar. Moved from App.tsx without change (#869 wave 0).
+// Epic #866 (monitoring) made small edits here: the readouts (Algo Time, Camera, Flush Status, Runtime) come from
+// areas/monitoring/statsReadouts, the background thumbnail is areas/monitoring/BackgroundThumbnail.
 import { EXPERIMENT_STATES } from "../../bridgeContract";
 import { experimentCounterRows } from "../../experimentCounters";
 import { latencyReadout, linkReadout, sensorReadout } from "../../linkHealth";
 import { metricNumber } from "../../metricFormat";
 import { useStudio } from "../../studio/StudioContext";
+import { BackgroundThumbnail } from "../monitoring/BackgroundThumbnail";
+import { algoTimeReadout, cameraRateReadouts, cameraStatusReadout, flushReadout, runtimeText } from "../monitoring/statsReadouts";
 import { EXPERIMENT_STATE_NAMES } from "../monitoring/useMonitoring";
 
-function SideRow(props: { k: string; v: string; cls?: string }) {
+function SideRow(props: { k: string; v: string; cls?: string; title?: string }) {
   return (
-    <div className="side-row">
+    <div className="side-row" title={props.title}>
       <span className="k">{props.k}</span>
       <span className={`v ${props.cls ?? ""}`}>{props.v}</span>
     </div>
@@ -18,16 +22,22 @@ function SideRow(props: { k: string; v: string; cls?: string }) {
 export function TelemetrySidebar() {
   const {
     sidebarCollapsed, caps, backgroundSet, displayFps, hostProcessing, stats, algoFps, validFps, invalidFps, running,
-    camStatus, dataRate, pz7035, instrument, afStatus, expState, expActive, runOutcome, expStatus, elapsedWallSeconds,
-    toggleSidebar,
+    dataRate, pz7035, instrument, afStatus, expState, expActive, runOutcome, expStatus, elapsedWallSeconds,
+    toggleSidebar, ready, backgroundRevision,
   } = useStudio();
+  const algoTime = algoTimeReadout(stats?.algo_avg_us, stats?.algo_avg_age_ms);
+  const camStatus = cameraStatusReadout(running);
+  // The capture rate and data rate are the backend's own (processing_stats.camera, ABI next (#886, set at merge), the same reply as the algorithm time).
+  const camera = stats?.telemetry?.camera ?? null;
+  const camRates = cameraRateReadouts({
+    running, displayFps, dataRateMBs: dataRate, captureFps: camera?.frame_rate, captureMBs: camera?.data_rate_mbps, telemetryError: stats?.telemetry_error,
+  });
+  const flush = flushReadout(!!expStatus?.flushing);
   return (
     <>
       <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`} aria-label="Telemetry sidebar">
         {caps.host_background && <div className="side-section">
-          <div className="bg-preview" title="Processing background state (set/clear in Experiment ▸ Preview)">
-            {backgroundSet ? "Background set" : "No background set"}
-          </div>
+          <BackgroundThumbnail backgroundSet={backgroundSet} revision={backgroundRevision} ready={ready} />
         </div>}
         <div className="side-section">
           <h4>Display</h4>
@@ -36,6 +46,7 @@ export function TelemetrySidebar() {
         <div className="side-section">
           <h4>Processing</h4>
           {!hostProcessing && <SideRow k="Runs on:" v="PL (every frame)" />}
+          {hostProcessing && algoTime && <SideRow k="Algo Time:" v={algoTime.text} cls={algoTime.cls} title={algoTime.title} />}
           {hostProcessing && <SideRow k="Algo FPS:" v={stats?.valid ? metricNumber(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
           {hostProcessing && <SideRow k="Valid FPS:" v={stats?.valid ? metricNumber(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
           {hostProcessing && <SideRow k="Invalid FPS:" v={stats?.valid ? metricNumber(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
@@ -43,9 +54,9 @@ export function TelemetrySidebar() {
         </div>
         <div className="side-section">
           <h4>Camera</h4>
-          <SideRow k="Status:" v={running ? "Running" : camStatus} cls={running ? "ok" : ""} />
-          <SideRow k="Display rate:" v={`${metricNumber(displayFps, 1)} fps`} />
-          <SideRow k="Data rate:" v={`${metricNumber(dataRate, 1)} MB/s`} />
+          <SideRow k="Status:" v={camStatus.text} cls={camStatus.cls} />
+          <SideRow k="FPS:" v={camRates.fps.text} title={camRates.fps.title} />
+          <SideRow k="Data Rate:" v={camRates.dataRate.text} title={camRates.dataRate.title} />
         </div>
         {pz7035 && <div className="side-section" title={instrument && !instrument.available && instrument.error ? instrument.error : "PZ7035 PL core and health (#501)"}>
           <h4>PL core</h4>
@@ -89,14 +100,11 @@ export function TelemetrySidebar() {
           )}
           <SideRow k="Valid Buffered:" v={expStatus?.valid ? expStatus.valid_buffered : "Unavailable"} />
           <SideRow k="Invalid Buffered:" v={expStatus?.valid ? expStatus.invalid_buffered : "Unavailable"} />
-          <SideRow k="Flush Status:" v={expStatus?.flushing ? "Flushing" : "Idle"} />
+          <SideRow k="Flush Status:" v={flush.text} cls={flush.cls} />
           {experimentCounterRows(expStatus).map(([label, value]) => <SideRow key={label} k={label} v={value} />)}
-          <SideRow
-            k="Elapsed (wall):"
-            v={elapsedWallSeconds === null || elapsedWallSeconds < 0 ? "—" : `${elapsedWallSeconds}s`}
-          />
+          <SideRow k="Runtime:" v={runtimeText(expActive, elapsedWallSeconds)} />
         </div>
-        {caps.autofocus && <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
+        {caps.autofocus && <div className="side-section" title="Live backend state of the nanopositioner autofocus. Connect and configure it in the Connect tab, under Autofocus / nanopositioner.">
           <h4>Nanopositioner Autofocus</h4>
           <SideRow
             k="Endpoint:"

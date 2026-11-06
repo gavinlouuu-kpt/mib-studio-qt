@@ -7,6 +7,7 @@ import { isRemote } from "../../transport";
 import { openUrl, revealItemInDir } from "../../transport/dialogs";
 import { useStudio } from "../../studio/StudioContext";
 import { ModeToggle } from "../hardware/ServiceMode";
+import { STAGE_LOCK_REASON } from "../monitoring/runStatus";
 
 // A menu-bar dropdown. Items with a `pending` reason render disabled with the
 // reason as tooltip.
@@ -44,15 +45,15 @@ function Menu(props: {
 
 export function MenuBar() {
   const {
-    openReviewFromMenu, viewerOnly, append, requestClose, setTab, setExpTab, setConfigTab, setShowDiagnostics,
-    setShowCentralMethods, openOfflineHelp, setShowAbout,
+    openReviewFromMenu, viewerOnly, runLocked, append, requestClose, setTab, setExpTab, setConfigTab, setShowDiagnostics,
+    setShowCentralMethods, openOfflineHelp, setShowAbout, setShowMonitoringSettings,
   } = useStudio();
   return (
     <nav className="menubar" aria-label="Main menu">
       <Menu
         label="File"
         items={[
-          { label: "Open Recording…", onClick: openReviewFromMenu, pending: viewerOnly ? VIEWER_ONLY_REASON : undefined },
+          { label: "Open Recording…", onClick: openReviewFromMenu, pending: viewerOnly ? VIEWER_ONLY_REASON : runLocked ? STAGE_LOCK_REASON : undefined },
           // The browser cannot open a folder on the instrument: the item would only throw (#651 G10).
           ...(isRemote ? [] : [{
             label: "Open Data Folder",
@@ -71,7 +72,7 @@ export function MenuBar() {
         items={[
           { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
           { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
-          { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
+          { label: "Monitoring Settings…", onClick: () => setShowMonitoringSettings(true) },
           // Board diagnostics (versions, log tail, download) are served by the instrument's server: browser only.
           ...(isRemote ? [{ label: "Diagnostics…", onClick: () => setShowDiagnostics(true) }] : []),
           // The central registry import and the application updater are desktop-shell features: in the

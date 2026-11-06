@@ -354,6 +354,12 @@ set_tests_properties(backend.monitoring_cell_store PROPERTIES LABELS "backend;mo
 mib_add_backend_test_executable(monitoring_cells_facade_test backend/monitoring_cells_facade_test.cpp)
 add_test(NAME e2e.monitoring_cells_facade COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cells_facade_test)
 set_tests_properties(e2e.monitoring_cells_facade PROPERTIES LABELS "backend;bridge;e2e;monitoring;safety" TIMEOUT 180)
+
+# The live Monitoring density, the reference contour from a file, the E-modulus table and the stats telemetry
+# through the facade the bridge calls (#866 PR E, bridge ABI next (#886, set at merge)).
+mib_add_backend_test_executable(monitoring_density_facade_test backend/monitoring_density_facade_test.cpp)
+add_test(NAME e2e.monitoring_density_facade COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_facade_test)
+set_tests_properties(e2e.monitoring_density_facade PROPERTIES LABELS "backend;bridge;e2e;monitoring" TIMEOUT 240)
 # #716 A6a: the store over the real ring while the realtime loop appends (TSan lane: concurrency/stress).
 mib_add_backend_test_executable(monitoring_cell_concurrency_test processing/monitoring_cell_concurrency_test.cpp)
 mib_backend_test_link(monitoring_cell_concurrency_test PRIVATE Threads::Threads)
@@ -551,6 +557,12 @@ set_tests_properties(backend.processing_config_transaction PROPERTIES LABELS "ba
 mib_add_backend_test_executable(backend_facade_boundary_test backend/backend_facade_boundary_test.cpp)
 add_test(NAME backend.facade_boundary COMMAND $<TARGET_FILE:mib_backend_tests> backend_facade_boundary_test)
 set_tests_properties(backend.facade_boundary PROPERTIES LABELS "backend;bridge")
+# Live tuning of the cell acceptance and target group criteria during an Active run (#866 MON-080):
+# runtime and document paths, the refusals (other keys, Starting, Stopping, PL), and the race with Stop.
+mib_add_backend_test_executable(experiment_tune_apply_test backend/experiment_tune_apply_test.cpp)
+mib_backend_test_link(experiment_tune_apply_test PRIVATE Threads::Threads)
+add_test(NAME backend.experiment_tune_apply COMMAND $<TARGET_FILE:mib_backend_tests> experiment_tune_apply_test)
+set_tests_properties(backend.experiment_tune_apply PROPERTIES LABELS "backend;bridge;concurrency;safety" TIMEOUT 180)
 # The facade owns the ReviewSession (#512 S5): its review surface equals the
 # pre-slice facade code (kept as the oracle), the writer's handle is untouched
 # by load / close, and a review file fails storage.hdf5 like a file in the

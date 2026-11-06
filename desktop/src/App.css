@@ -22,3 +22,8 @@
 @import "./areas/connect/mode-notice.css";
 @import "./areas/preview/ring-playback.css";
 @import "./areas/monitoring/ssd.css";
+@import "./areas/monitoring/tune.css";
+@import "./areas/monitoring/monitoring-charts.css";
+@import "./areas/monitoring/cell-strips.css";
+@import "./areas/monitoring/click-view.css";
+@import "./areas/monitoring/density/density.css";

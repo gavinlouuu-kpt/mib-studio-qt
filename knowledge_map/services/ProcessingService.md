@@ -395,8 +395,9 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   images for its newest rows only (memory budget)" instead of "this instrument
   reports measurements without images". 32 MiB per ring is 66 whole 1216x208
   rows, against what the tab shows from the newest rows: 25 thumbnails per grid
-  ([[../frontend/ExperimentMonitoringTab]] `MAX_FRAMES_TO_SHOW`), at most 24
-  strip cells ([[MonitoringCellStore]] `kStripMaxCells`, whose crops are
+  ([[../frontend/ExperimentMonitoringTab]] `MAX_FRAMES_TO_SHOW`), 25 cells in
+  each of the valid and invalid strips ([[MonitoringCellStore]]
+  `kStripMaxCells`, `kInvalidStripMaxCells`, each strip's crops capped at
   4 MiB), and a click on a scatter point, which shows its image while the row
   still holds one. The tab's own rolling copy of the rings shares the images
   and would keep them after the ring released them, so it is trimmed to the same
@@ -411,9 +412,10 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   (`getMonitoringValidAppended`/`getMonitoringInvalidAppended`, reset by
   `clearMonitoringFrames` under the rings' lock) make ring evictions
   observable (appended − held) for the bridge snapshot.
-  `getMonitoringValidPoints()` copies only (index, area, deformability) of
-  the valid ring under its lock — no image or contour references — for
-  [[MonitoringDensityService]]; `appendMonitoringFrameForTests` is the test
+  `getMonitoringValidPoints()` copies only (index, area, deformability and,
+  since ABI next (#886, set at merge), the row's identity: `startGeneration`, `captureEpoch` from
+  the slot's tag and the object id) of the valid ring under its lock — no
+  image or contour references — for [[MonitoringDensityService]]; `appendMonitoringFrameForTests` is the test
   seam that fills the ring without the activity gate. `BatchPipelineStats`
   carries `queueCapacity` (configured `maxQueuedFrames`) so the density
   service can treat a quarter-full queue as load.
@@ -469,7 +471,9 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   published capture epoch). Visitors
   may only copy scalars and cv::Mat headers (refcount shares of frozen
   images); the bridge snapshot uses it for POD rows instead of copying the
-  whole ring, and [[MonitoringCellStore]]'s source uses it to find rows and
+  whole ring (`visitMonitoringNewestPerRing(maxValid, maxInvalid, visit)`, ABI next (#880, set at merge), gives
+  each ring a budget of its own under one lock hold: the valid and the invalid strip's one read),
+  and [[MonitoringCellStore]]'s source uses it to find rows and
   share their images, cropping outside the lock and giving the shares back
   through `releaseMonitoringShares(shares)`, which drops them under the ring
   lock (so a free by an eviction or by the last reader follows every reader in

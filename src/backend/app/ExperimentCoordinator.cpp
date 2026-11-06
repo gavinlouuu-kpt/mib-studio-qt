@@ -2314,6 +2314,20 @@ void ExperimentCoordinator::setStageBusyProbe(std::function<bool()> probe) {
     stageBusyProbe_ = std::move(probe);
 }
 
+namespace {
+// The coordinator whose idle / mid-run transaction this thread is inside (nested service setters
+// reuse that authorization instead of locking the mutex twice).
+thread_local backend::app::ExperimentCoordinator* tlIdleOwner = nullptr;
+thread_local backend::app::ExperimentCoordinator* tlTuneOwner = nullptr;
+template <typename T>
+struct OwnerScope {
+    T*& owner;
+    T* previous;
+    OwnerScope(T*& slot, T* self) : owner(slot), previous(slot) { owner = self; }
+    ~OwnerScope() { owner = previous; }
+};
+} // namespace
+
 bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction) {
     return withIdleConfiguration(transaction, true);
 }
@@ -2321,22 +2335,66 @@ bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& t
 bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction, bool wait) {
     // Service setters can be called from a facade's idle transaction. Reuse
     // that authorization on this thread without locking the mutex twice.
-    static thread_local ExperimentCoordinator* idleOwner = nullptr;
-    if (idleOwner == this) {
+    if (tlIdleOwner == this) {
         transaction();
         return true;
     }
+    // Inside a mid-run tune transaction the lock is already held and the run is not idle.
+    if (tlTuneOwner == this) return false;
     std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
     if (wait) lock.lock();
     else if (!lock.try_lock()) return false;
     if (state_ != ExperimentRunState::Idle) return false;
-    struct IdleScope {
-        ExperimentCoordinator*& owner;
-        ExperimentCoordinator* previous;
-        ~IdleScope() { owner = previous; }
-    } scope{idleOwner, idleOwner};
-    idleOwner = this;
+    OwnerScope<ExperimentCoordinator> scope(tlIdleOwner, this);
     transaction();
+    return true;
+}
+
+bool ExperimentCoordinator::midRunTuneAllowed(ExperimentRunState state, bool hasRun, bool stopping, bool hostProcessing,
+                                              bool calibrationRun, std::string* why) {
+    if (why) why->clear();
+    if (state != ExperimentRunState::Active || !hasRun) return false; // Starting, Stopping, Failed: plainly not idle
+    if (stopping) {
+        if (why) *why = "the run is being stopped";
+        return false;
+    }
+    if (!hostProcessing) {
+        if (why) *why = "this instrument's PL runs the science with the settings compiled at Start";
+        return false;
+    }
+    if (calibrationRun) {
+        // deriveCalibrationRecord reads the run's valid rows at close and stamps the Start's method
+        // and configuration identity on them: a criteria change mid-run would mix rows validated
+        // under two rule sets in a record that names only the first (#879 review).
+        if (why) *why = "a calibration run derives its record from the rows validated under the criteria applied at Start";
+        return false;
+    }
+    return true;
+}
+
+bool ExperimentCoordinator::withTuneConfiguration(const std::function<void(bool midRun)>& transaction, std::string* refusal) {
+    if (refusal) refusal->clear();
+    if (tlIdleOwner == this) {
+        transaction(false);
+        return true;
+    }
+    if (tlTuneOwner == this) {
+        transaction(true);
+        return true;
+    }
+    std::unique_lock<std::mutex> lock(mutex_);
+    const ExperimentRunState state = state_.load();
+    if (state == ExperimentRunState::Idle) {
+        OwnerScope<ExperimentCoordinator> scope(tlIdleOwner, this);
+        transaction(false);
+        return true;
+    }
+    if (!midRunTuneAllowed(state, activeRun_.has_value(), stopRequested_ || fatalRequested_ || workerExit_,
+                           app::hostProcessingAvailable(), activeCalibration_.has_value(), refusal))
+        return false;
+    SPDLOG_DEBUG("ExperimentCoordinator: tuning run {} while it is Active", activeRun_->startGeneration);
+    OwnerScope<ExperimentCoordinator> scope(tlTuneOwner, this);
+    transaction(true);
     return true;
 }
 }

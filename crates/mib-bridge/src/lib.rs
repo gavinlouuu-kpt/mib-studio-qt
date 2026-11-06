@@ -123,6 +123,26 @@ pub mod ffi {
         pub valid_fps1s: f64,
         pub invalid_fps1s: f64,
         pub pixel_to_micron: f64,
+        /// ABI next (#886, set at merge) (#866 PR E; MON-095): the last published algorithm time per frame (1 s window, µs)
+        /// and its age in ms; `algo_avg_published` is false until the realtime metrics publish one.
+        pub algo_avg_published: bool,
+        pub algo_avg_us: f64,
+        pub algo_avg_age_ms: f64,
+        /// ABI next (#886, set at merge) (MON-008): the realtime processing mode, "inline" or "async_batch".
+        pub realtime_mode: String,
+        /// ABI next (#886, set at merge) (MON-098): the capture session is running, and the device/SDK frame rate and data
+        /// rate (MB/s) as Qt's Statistics panel shows them. `*_state` is a TelemetrySample.h
+        /// MetricValidity name ("valid", "stale", "unavailable", "unsupported", "error"); the value and
+        /// age (ms) are meaningful only when `*_has_value` (valid or stale).
+        pub camera_running: bool,
+        pub camera_frame_rate_state: String,
+        pub camera_frame_rate_has_value: bool,
+        pub camera_frame_rate: f64,
+        pub camera_frame_rate_age_ms: f64,
+        pub camera_data_rate_state: String,
+        pub camera_data_rate_has_value: bool,
+        pub camera_data_rate_mbps: f64,
+        pub camera_data_rate_age_ms: f64,
     }
 
     /// Pollable experiment lifecycle snapshot (schema v5, BE-4; shared
@@ -1101,12 +1121,20 @@ pub mod ffi {
         /// profile selection when no startup pointer exists.
         fn restore_startup_configuration(self: Pin<&mut BackendBridge>, profile_base: &str) -> String;
         fn fetch_config_document(self: Pin<&mut BackendBridge>, path: &str) -> BridgeCheckedConfigDocument;
+        /// Idle: any image_processing patch. While an experiment is Active it also takes a patch of the
+        /// cell acceptance and target group criteria only (#866 MON-080; any other key, multi_image
+        /// included, is refused and nothing is written), applying exactly the patch to the running
+        /// configuration. Starting, Stopping and Failed refuse it. No ABI change.
         fn apply_config_document(self: Pin<&mut BackendBridge>, path: &str, baseline: &str, patch: &str) -> BridgeConfigTransactionResult;
 
 
         /// Merge-apply a processing configuration document (schema v8, BE-3):
         /// only keys present in the JSON change; malformed values fail the
-        /// whole command without touching state.
+        /// whole command without touching state. Locked while an experiment
+        /// is not idle, except that an Active run takes a `{"image_processing":
+        /// {...}}` patch of the cell acceptance and target group criteria only
+        /// (#866 MON-080: the Monitoring tune panel); every other key is
+        /// refused naming it, nothing changes. No ABI change.
         fn apply_processing_config_json(self: Pin<&mut BackendBridge>, json: &str)
             -> BridgeCommandResult;
 
@@ -1327,8 +1355,9 @@ pub mod ffi {
 
         /// ABI 41 (#716 A6a): the live cell strip and pins as JSON (bridge-contract.json
         /// `monitoring_cells`): brings the strip up to date with the monitoring ring first (at
-        /// most the strip cap of new crops, off the hot path), then lists it and the pins,
-        /// metadata only. `{"valid": false}` before init.
+        /// most the strip caps of new crops, off the hot path), then lists the strip, the invalid
+        /// strip (ABI next (#880, set at merge): each invalid cell with its rejection `reasons`) and the pins, metadata
+        /// only. `{"valid": false}` before init.
         fn fetch_monitoring_cells(self: Pin<&mut BackendBridge>) -> String;
         /// Pin the row `(expected_start_generation, capture_epoch, frame_index, object_id)`: an
         /// owned copy that survives the ring. JSON `{ok, outcome, message, cell, revision}`;
@@ -1379,6 +1408,34 @@ pub mod ffi {
         /// cache miss is computed only while the instrument is idle and no review job runs,
         /// otherwise deferred. `{"ok": false, ...}` before init and for a refused request.
         fn run_quick_look(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
+
+        /// ABI next (#886, set at merge) (#866 PR E; bridge-contract.json `monitoring_density`): the live Monitoring density
+        /// (KDE). Settings go to the backend's MonitoringDensityService (clamped there); the reply is
+        /// JSON `{ok, message, settings}` with the clamped settings applied. Nothing is computed in the
+        /// call: the service's own lowest-priority worker does.
+        #[allow(clippy::too_many_arguments)] // one argument per setting; the facade takes the same eight
+        fn monitoring_density_set_settings(
+            self: Pin<&mut BackendBridge>,
+            enabled: bool,
+            interval_ms: i32,
+            bandwidth_factor: f64,
+            core_fraction: f64,
+            x0: f64,
+            x1: f64,
+            y0: f64,
+            y1: f64,
+        ) -> String;
+        /// Wake the density worker now (a no-op while disabled).
+        fn monitoring_density_request_update(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        /// The last density estimate as JSON: `{valid, generation, unchanged: true}` when nothing is
+        /// newer than `since_generation`, else the result with a density per monitoring row. A read.
+        fn fetch_monitoring_density(self: Pin<&mut BackendBridge>, since_generation: u64) -> String;
+        /// A reference core contour from an experiment file (read only; refused while a run is active):
+        /// JSON `{ok, path, file_name, error, reason, source, core_fraction, core_percent, loops, contours}`.
+        fn fetch_kde_reference_from_file(self: Pin<&mut BackendBridge>, path: &str) -> String;
+        /// The loaded E-modulus table as JSON `{valid, loaded, identity, unchanged, info, lut}`; `lut` (the
+        /// grid) only when `known_identity` differs from the table's.
+        fn fetch_emodulus_lut(self: Pin<&mut BackendBridge>, known_identity: &str) -> String;
 
         /// Set the sorter trigger pulse duration in microseconds.
         fn trigger_set_pulse_duration(self: Pin<&mut BackendBridge>, pulse_us: i32)

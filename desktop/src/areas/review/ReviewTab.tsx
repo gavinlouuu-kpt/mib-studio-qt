@@ -10,19 +10,20 @@ import { ReviewExportOptions } from "../../exportControls";
 import { ReanalysisControls } from "../../reanalysisControls";
 import { noImagesNotice } from "../../review/noImages";
 import { useStudio } from "../../studio/StudioContext";
+import { STAGE_LOCK_REASON } from "../monitoring/runStatus";
 
 export function ReviewTab() {
   const {
     onSelectHdf, ready, reviewSourceBusy, reviewMeta, expActive, recording, reviewSourcePending, setReviewSourceBusy,
     reviewSourceGeneration, append, clearReviewSource, reviewExport, stats, reviewing, reviewPath, reviewTab,
     metricsGeneration, setMetricsPage, setReviewTab, setReviewImgIndex, loadMetricsPage, reviewOutcome, caps, reanalysis,
-    reviewImgIndex, fitWindow, reviewCanvasRef, reviewIndex, onScrub, metricsPage, metricsOffset, METRICS_PAGE_SIZE,
+    reviewImgIndex, fitWindow, reviewCanvasRef, reviewIndex, onScrub, metricsPage, metricsOffset, METRICS_PAGE_SIZE, runLocked,
   } = useStudio();
   return (
     <>
       <div className="toolbar">
         <ViewerGate>
-        <button onClick={onSelectHdf} disabled={!ready || reviewSourceBusy} title={ready ? undefined : "Backend is not initialized"}>
+        <button onClick={onSelectHdf} disabled={!ready || reviewSourceBusy || runLocked} title={runLocked ? STAGE_LOCK_REASON : ready ? undefined : "Backend is not initialized"}>
           Select HDF File…
         </button>
         <button disabled={!reviewMeta?.file_open || expActive || recording || reviewSourceBusy} onClick={async () => {

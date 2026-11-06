@@ -15,6 +15,7 @@
 // The identity probe (#717 B1a) takes the same mutex per file.
 #pragma once
 
+#include "backend/review/KdeReference.h"
 #include "backend/review/ReviewTypes.h"
 #include "backend/review/RunStatistics.h"
 
@@ -98,6 +99,12 @@ namespace backend::review
         // (#722); the open file is left as it was. Hosts gate it on the job
         // lanes as well (ReviewJobs::runStatistics); the bridges only call that.
         RunStatisticsResult runStatistics(const std::string &path, const std::string &computedAt) const;
+
+        // #866 PR E: the stored KDE core record of one file (KdeReference.h), the live Monitoring
+        // scatter's reference contour. A short-lived reader of its own under this session's mutex,
+        // like the probe (#722); the open file is left as it was. Hosts gate it on the job lanes
+        // as well (ReviewJobs::readKdeReference); the bridges only call that.
+        KdeReferenceResult readKdeReference(const std::string &path) const;
 
         ReviewMetadata metadata() const;
         bool isRecordingFile() const;
