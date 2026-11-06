@@ -1111,6 +1111,7 @@ namespace backend
                 mockFrameDir_ = options.folder.string();
                 mockIntervalMs_ = static_cast<int>(
                     std::chrono::duration_cast<std::chrono::milliseconds>(options.frameInterval).count());
+                mockIntervalUs_ = options.frameInterval.count();
                 mockLoop_ = options.loopFiles;
                 effectiveCameraSource_ = "mock";
             };
@@ -2419,6 +2420,7 @@ namespace backend
         mockFrameDir_ = options.folder.string();
         mockIntervalMs_ = static_cast<int>(
             std::chrono::duration_cast<std::chrono::milliseconds>(options.frameInterval).count());
+        mockIntervalUs_ = options.frameInterval.count();
         mockLoop_ = options.loopFiles;
     }
 
@@ -2498,6 +2500,11 @@ namespace backend
         selectedDevIndex_ = deviceIndex;
         selectedLabel_ = label;
         selectedMvCameraIndex_ = -1;
+        {
+            // The sensor size belongs to the camera the last script was applied to (#846).
+            std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
+            egrabberSensor_ = {};
+        }
         lastMindVisionConfigPath_.clear();
         mockCameraConfigured_ = false;
         aravisCameraConfigured_ = false;
@@ -2628,13 +2635,48 @@ namespace backend
             lastCameraScriptPath_ = path;
             std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
             lastCameraScriptRole_ = role;
+            if (report.sensorWidth > 0 && report.sensorHeight > 0)
+                egrabberSensor_ = {report.sensorWidth, report.sensorHeight};
             if (role == CameraScriptRole::Experiment)
             {
                 report.sequence = lastCameraWindowApply_.sequence + 1;
                 lastCameraWindowApply_ = report;
+                lastExperimentScriptPath_ = path;
             }
         }
         return ok;
+    }
+
+    bool AppBackend::isEgrabberCameraSelected() const
+    {
+        return selectedIfIndex_ >= 0 && selectedDevIndex_ >= 0 && selectedMvCameraIndex_ < 0;
+    }
+
+    std::string AppBackend::lastExperimentScriptPath() const
+    {
+        std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
+        return lastExperimentScriptPath_;
+    }
+
+    void AppBackend::setExperimentScriptPath(const std::string& path)
+    {
+        std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
+        lastExperimentScriptPath_ = path;
+    }
+
+    AppBackend::EgrabberSensor AppBackend::egrabberSensor() const
+    {
+        std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
+        return egrabberSensor_;
+    }
+
+    bool AppBackend::updateAcquisitionWindow(const ::camera::common::CameraWindow& window)
+    {
+        std::lock_guard<std::mutex> lock(acquisitionProfileMutex_);
+        if (!acquisitionProfile_.window)
+            return false;
+        acquisitionProfile_.window->window = window;
+        return true;
     }
 
     bool AppBackend::stageMindVisionConfigFromFile(const std::string& path, std::string* errorOut) {
@@ -3092,6 +3134,8 @@ namespace backend
     AppBackend::CameraGeometry AppBackend::cameraGeometry() const
     {
         CameraGeometry g;
+        // The camera's own measured rate, as Qt's MindVision mode label shows it ("Capture: N fps").
+        g.captureFps = captureService_ ? captureService_->stats().lastFrameRate.load() : 0;
         if (isMindVisionCameraSelected()) {
             g.supported = true;
             g.camera = "mindvision";
@@ -3102,14 +3146,18 @@ namespace backend
             g.minWidth = std::max(1, sensor.minWidth);
             g.minHeight = std::max(1, sensor.minHeight);
             try {
-                std::ifstream input(std::filesystem::u8path(lastMindVisionConfigPath_));
-                const auto parsed = camera::mindvision::parseConfig(
-                    std::string(std::istreambuf_iterator<char>(input), {}));
-                if (input && parsed.ok) {
-                    g.roiX = parsed.config.offsetX;
-                    g.roiY = parsed.config.offsetY;
-                    g.roiWidth = parsed.config.width;
-                    g.roiHeight = parsed.config.height;
+                const auto profile = app::readMindVisionOverviewProfile(lastMindVisionConfigPath_);
+                if (profile.ok) {
+                    g.roiX = profile.offsetX;
+                    g.roiY = profile.offsetY;
+                    g.roiWidth = profile.width;
+                    g.roiHeight = profile.height;
+                    g.illuminatedLive = profile.illuminatedLive;
+                    // #863 A2: the ISP mirroring the Overview box and its drag compensate (Qt setRoiTransform).
+                    g.flipHorizontal = profile.flipHorizontal;
+                    g.flipVertical = profile.flipVertical;
+                } else {
+                    g.profileError = profile.error;
                 }
             } catch (...) {
             }
@@ -3138,8 +3186,64 @@ namespace backend
                 g.roiWidth = aravisProfile_.width;
                 g.roiHeight = aravisProfile_.height;
             }
+            return g;
         }
 #endif
+        if (isEgrabberCameraSelected()) {
+            // #846: an eGrabber camera has an Overview too, driven by its two scripts (the full-sensor
+            // Overview script, the Experiment script followed by the profile's camera.window), not by
+            // a camera preset. The window is the profile's, else the Experiment script's own.
+            g.supported = true;
+            g.camera = "egrabber";
+            const auto profile = acquisitionProfile();
+            const auto sensor = egrabberSensor();
+            const auto role = lastCameraScriptRole();
+            const auto apply = lastCameraWindowApply();
+            std::string scriptPath = lastExperimentScriptPath();
+            if (scriptPath.empty()) {
+                // Before any Experiment script was applied or saved (the Overview is usually entered first),
+                // Qt's Overview reads the script it would apply: here the applied local profile's own, the first
+                // fallback the desktop resolves too.
+                const std::string profileScript = app::appliedProfileScriptPath(getLastConfigJson());
+                std::error_code ec;
+                if (!profileScript.empty() && std::filesystem::is_regular_file(std::filesystem::u8path(profileScript), ec))
+                    scriptPath = profileScript;
+            }
+            g.overview = role && *role == CameraScriptRole::Overview;
+            g.scriptRole = !role ? "" : (*role == CameraScriptRole::Overview ? "overview" : "experiment");
+            g.sensorWidth = sensor.width > 0 ? sensor.width : app::kEgrabberDefaultSensorWidth;
+            g.sensorHeight = sensor.height > 0 ? sensor.height : app::kEgrabberDefaultSensorHeight;
+            g.widthIncrement = app::kEgrabberWidthStep;
+            g.heightIncrement = app::kEgrabberHeightStep;
+            g.offsetXIncrement = app::kEgrabberOffsetXStep;
+            g.offsetYIncrement = app::kEgrabberOffsetYStep;
+            g.minWidth = app::kEgrabberMinWidth;
+            g.minHeight = app::kEgrabberMinHeight;
+            g.experimentScriptPath = scriptPath;
+            std::optional<::camera::common::CameraWindow> scriptWindow;
+            if (!scriptPath.empty()) {
+                std::error_code ec;
+                if (std::filesystem::is_regular_file(std::filesystem::u8path(scriptPath), ec)) {
+                    std::ifstream input(std::filesystem::u8path(scriptPath), std::ios::binary);
+                    if (input)
+                        scriptWindow = app::parseScriptCameraWindow(
+                            std::string(std::istreambuf_iterator<char>(input), {}));
+                }
+            }
+            // The camera's own read-back after the last Experiment apply stands in when the file is gone.
+            if (!scriptWindow && apply.sequence > 0 && apply.scriptWindowKnown && apply.scriptWindow.valid())
+                scriptWindow = apply.scriptWindow;
+            const auto chosen = app::chooseEgrabberWindow(profile.window, scriptWindow);
+            g.windowSource = app::toString(chosen.source);
+            if (chosen.source != app::WindowSource::None) {
+                g.roiX = chosen.window.offsetX;
+                g.roiY = chosen.window.offsetY;
+                g.roiWidth = chosen.window.width;
+                g.roiHeight = chosen.window.height;
+            }
+            g.windowApplyKnown = apply.sequence > 0;
+            g.windowApply = apply;
+        }
         return g;
     }
 

@@ -2,6 +2,7 @@
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/services/CaptureService.h"
 
 #include <opencv2/core.hpp>
 #include <nlohmann/json.hpp>
@@ -128,8 +129,30 @@ int main()
         std::mutex eventsMutex;
         std::atomic<int> lockedPhases{0};
         std::atomic<bool> mutationAccepted{false};
+        // #863 CONNECT-038/013: while the run Starts or Stops (data being saved) the camera cannot be stopped,
+        // the camera source cannot change and the delivery mode cannot change (Qt: flushInProgress_).
+        std::atomic<int> cameraRefusals{0};
+        std::atomic<bool> cameraGuardBroken{false};
+        std::mutex refusalMutex;
+        std::string startingStopMessage, stoppingStopMessage;
         facade.setEventSink([&](const bridge::BackendEvent &event) {
             if (const auto* status = std::get_if<bridge::ExperimentStatusEvent>(&event)) {
+                if (status->status.state == backend::app::ExperimentRunState::Starting ||
+                    status->status.state == backend::app::ExperimentRunState::Stopping) {
+                    bridge::CameraCommand stopDuring;
+                    stopDuring.action = bridge::CameraCommandAction::StopCapture;
+                    bridge::CameraCommand mockDuring;
+                    mockDuring.action = bridge::CameraCommandAction::ConfigureMockCamera;
+                    mockDuring.mockFrameDirectory = mockDir.string();
+                    const auto stopResult = facade.dispatch(stopDuring);
+                    const auto mockResult = facade.dispatch(mockDuring);
+                    const auto deliveryResult = nlohmann::json::parse(facade.setFrameDeliveryModeJson("latestFrame"));
+                    if (stopResult.ok || mockResult.ok || deliveryResult.at("ok").get<bool>()) cameraGuardBroken.store(true);
+                    else cameraRefusals.fetch_add(1);
+                    std::lock_guard<std::mutex> lock(refusalMutex);
+                    (status->status.state == backend::app::ExperimentRunState::Starting ? startingStopMessage : stoppingStopMessage) =
+                        stopResult.message;
+                }
                 if (status->status.state == backend::app::ExperimentRunState::Starting ||
                     status->status.state == backend::app::ExperimentRunState::Stopping) {
                     const std::uint8_t pixel = 17;
@@ -414,6 +437,18 @@ int main()
         }
         if (facade.runStartupDiscoveryJson("start").find("\"accepted\":false") == std::string::npos) return 73;
         {
+            // #863 CONNECT-019: the delivery mode does not change under an Active run (the capture runs, so only the
+            // experiment guard refuses it); the mode stays what it was.
+            const auto before = nlohmann::json::parse(facade.fetchFrameDeliveryModeJson()).at("mode");
+            const auto during = nlohmann::json::parse(facade.setFrameDeliveryModeJson(before == "latestFrame" ? "everyFrame" : "latestFrame"));
+            if (during.at("ok").get<bool>() || nlohmann::json::parse(facade.fetchFrameDeliveryModeJson()).at("mode") != before)
+            {
+                std::cerr << "the delivery mode must not change while the experiment is active: " << during.dump() << "\n";
+                facade.shutdown();
+                return 112;
+            }
+        }
+        {
             // The idle guard refuses review load / close during the run; the experiment's
             // writer handle is never closed or replaced by them (#512 S5).
             bridge::RecordingLoadCommand duringRun;
@@ -513,6 +548,24 @@ int main()
             std::cerr << "Stop after finalization should be NotActive\n";
             facade.shutdown();
             return 27;
+        }
+        {
+            std::lock_guard<std::mutex> lock(refusalMutex);
+            if (cameraGuardBroken.load() || cameraRefusals.load() != 2 ||
+                startingStopMessage != "Cannot stop camera while an experiment is starting." ||
+                stoppingStopMessage != "Cannot stop camera while experiment data is being saved. Wait for the save to finish.")
+            {
+                std::cerr << "camera stop / source / delivery mode must be refused while the run Starts and Stops: starting='"
+                          << startingStopMessage << "' stopping='" << stoppingStopMessage << "' refusals=" << cameraRefusals.load() << "\n";
+                facade.shutdown();
+                return 110;
+            }
+        }
+        if (!backend.capture().isRunning())
+        {
+            std::cerr << "the refused stop commands must leave the capture running\n";
+            facade.shutdown();
+            return 111;
         }
         std::vector<backend::app::ExperimentRunState> seen;
         {

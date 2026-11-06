@@ -31,6 +31,15 @@ export function isTerminalDiscoveryState(state: number): boolean {
   );
 }
 
+/** A discovery job the backend refused to start (for example a scan while a capture runs). `reason` is the
+ *  backend's text, kept apart from the message so the Connect stage can show it on its status line. */
+export class DiscoveryRefusedError extends Error {
+  constructor(readonly reason: string) {
+    super(`discovery refused: ${reason}`);
+    this.name = "DiscoveryRefusedError";
+  }
+}
+
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Start a discovery job and poll until it ends. Rejects on a refused start
@@ -43,7 +52,7 @@ export async function pollDiscovery(api: DiscoveryApi, opts: PollOptions = {}): 
 
   const start = await api.start();
   if (!start.accepted) {
-    throw new Error(`discovery refused: ${start.reason || `rejection ${start.rejection}`}`);
+    throw new DiscoveryRefusedError(start.reason || `rejection ${start.rejection}`);
   }
   const deadline = now() + timeoutMs;
   for (;;) {
@@ -101,6 +110,8 @@ export function toCameraDiscovery(snap: DiscoverySnapshot): CameraDiscovery {
     job_id: snap.job_id,
     cameras,
     framegrabbers,
+    state: snap.state,
+    errors: snap.errors,
   };
 }
 

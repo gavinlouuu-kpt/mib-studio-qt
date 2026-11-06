@@ -2,8 +2,11 @@ import { useViewerOnly } from "../components/ViewerGate";
 import { useWallClockSync } from "../transport/wallClockSync";
 import { useCameraSetup, useConfigDocuments, useConfigState, useConfigSync, useCores } from "../areas/config/useConfig";
 import {
-  connectModel, useAlignPeakReset, useCameraConnection, useCameraModeSwitch, useCameraWindowing, useConnectState,
+  connectModel, syncScriptSources, useAlignPeakReset, useCameraConnection, useCameraModeSwitch, useCameraWindowing, useConnectState,
 } from "../areas/connect/useConnect";
+import { useCameraPhase, useCameraShortcut, useProfileCameraContext } from "../areas/connect/useCameraActions";
+import { useStartupSelection } from "../areas/connect/useStartupSelection";
+import { overviewScriptContext, useOverviewScript } from "../areas/connect/useOverviewScript";
 import { useHardwareState, useServiceMode } from "../areas/hardware/useHardware";
 import {
   experimentModel, useExperimentLifecycle, useMonitoringPolling, useMonitoringState, useSsdStatus,
@@ -47,6 +50,8 @@ export function useStudioController() {
   const preferences = useShellPreferences(states); // shell
   const configSync = useConfigSync(states); // config
   const connection = useCameraConnection({ ...states, ...liveFrames, ...polling }); // connect
+  const startup = useStartupSelection(states); // connect: the startup camera step's outcome, the no-camera dialog
+  useCameraPhase(states); // connect: the capture lifecycle behind the Start / Stop phase text
   const livePreview = useLivePreview({ ...states, ...liveFrames, ...configSync }); // preview
   const ssd = useSsdStatus(states); // monitoring
   const reviewSource = useReviewSource({ ...states, ...liveFrames, ...polling }); // review
@@ -64,15 +69,19 @@ export function useStudioController() {
   const viewerOnly = useViewerOnly();
   const documents = useConfigDocuments({ ...states, ...configSync, ...cores }); // config
   const reviewJobs = useReviewJobs(states); // review
+  const overviewScript = useOverviewScript(overviewScriptContext({ ...states, ...connection, ...windowing, ...documents })); // connect: the Overview's overviewConfig.js editor
+  syncScriptSources({ ...states, ...cameraSetup, ...documents, overviewScript }); // connect: the camera scripts the stage change and the window save use
   const composed = {
-    ...states, ...liveFrames, ...polling, ...monitoringPolling, ...preferences, ...configSync, ...connection,
+    ...states, ...liveFrames, ...polling, ...monitoringPolling, ...preferences, ...configSync, ...connection, ...startup,
     ...livePreview, ...ssd, ...reviewSource, ...experiment, ...windowing, ...modeSwitch, ...cameraSetup,
-    ...previewBuffer, ...cores, viewerOnly, ...documents, ...reviewJobs,
+    ...previewBuffer, ...cores, viewerOnly, ...documents, ...reviewJobs, overviewScript,
   };
   const closeGuard = useShellCloseGuard(composed); // shell
   // Render-time values (no hooks).
   const startExperiment = experimentModel(composed); // monitoring
+  useProfileCameraContext(composed); // connect: the profile's expected camera
   const connectView = connectModel(composed); // connect: Start Camera gate, preflight, quality gates
+  useCameraShortcut({ ...composed, ...connectView }); // connect: the space bar toggles the camera
   const workflow = shellWorkflow({ ...composed, ...connectView }); // shell: workflow stages, context bar
   const telemetry = shellTelemetry(composed); // shell: sidebar and status-bar rates
   const serviceMode = useServiceMode(composed); // hardware

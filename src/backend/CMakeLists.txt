@@ -513,6 +513,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/CalibrationStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/CameraWindowProfile.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/CameraWindowSave.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/RecordingCapacity.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/DestinationWriteRate.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/MethodProvenance.cpp

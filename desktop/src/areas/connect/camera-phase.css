@@ -1,0 +1,6 @@
+/* Connect and Overview (#863): the camera's phase beside Start / Stop Camera (Qt CameraController phase text). */
+.camera-actions { align-items: center; }
+.camera-phase { margin-left: 6px; font-size: 12px; color: var(--muted, #777); white-space: nowrap; max-width: 36ch; overflow: hidden; text-overflow: ellipsis; }
+.camera-phase.running { color: var(--ok, #1a7f37); }
+.camera-phase.starting, .camera-phase.stopping { color: var(--warn, #b7791f); }
+.camera-phase.failed { color: var(--err, #b42318); }
