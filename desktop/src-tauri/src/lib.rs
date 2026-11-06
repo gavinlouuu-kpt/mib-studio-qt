@@ -215,6 +215,21 @@ fn startup_discovery_status(state: State<AppState>) -> Result<serde_json::Value,
 }
 
 #[tauri::command]
+fn configure_mock_fps(state: State<AppState>, frame_dir: String, fps: f64, loop_files: bool) -> Result<cmds::CmdResult, String> {
+    cmds::configure_mock_fps(&state, frame_dir, fps, loop_files)
+}
+
+#[tauri::command]
+fn fetch_frame_delivery_mode(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::fetch_frame_delivery_mode(&state)
+}
+
+#[tauri::command]
+fn set_frame_delivery_mode(state: State<AppState>, mode: String) -> Result<serde_json::Value, String> {
+    cmds::set_frame_delivery_mode(&state, mode)
+}
+
+#[tauri::command]
 fn pulse_generator_command(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
     cmds::pulse_generator_command(&state, json)
 }
@@ -820,6 +835,7 @@ pub fn run() {
             is_initialized,
             init,
             configure_mock,
+            configure_mock_fps,
             start_capture,
             stop_capture,
             seek_latest,
@@ -875,6 +891,8 @@ pub fn run() {
             startup_discovery_set_preference,
             startup_discovery_run,
             startup_discovery_status,
+            fetch_frame_delivery_mode,
+            set_frame_delivery_mode,
             pulse_generator_command,
             pulse_generator_status,
             autofocus_connect_endpoint,

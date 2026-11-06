@@ -126,9 +126,12 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    // v45 (#863) the eGrabber camera window: apply_camera_script_with_role, save_camera_window,
-    // fetch_recording_capacity and the geometry's window_source / script_role / window_apply.
-    assert_eq!(ffi::bridge_abi_version(), 45);
+    // ABI next (#895, set at merge) (#863) fetch_frame_delivery_mode / set_frame_delivery_mode: the Connect stage's delivery mode
+    // (Every Frame / Latest Frame), applied at the next capture start. ABI next (#896, set at merge) (#863): configure_mock_camera_fps: the
+    // mock camera by frame rate (1 to 10000 fps, whole-microsecond interval). ABI next (#892, set at merge) (#863) the eGrabber camera
+    // window: apply_camera_script_with_role, save_camera_window, fetch_recording_capacity and the geometry's window_source /
+    // script_role / window_apply.
+    assert_eq!(ffi::bridge_abi_version(), 44);
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.
@@ -531,14 +534,14 @@ fn mindvision_geometry_carries_mirroring_and_capture_rate() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
-// ABI 45 (#863): the contract describes the eGrabber window functions.
+// ABI next (#892, set at merge) (#863): the contract describes the eGrabber window functions.
 #[test]
 fn egrabber_window_functions_are_described() {
     let contract: serde_json::Value =
         serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
     let c = &contract["camera_alignment"];
     for (key, needle) in [
-        ("apply_camera_script_with_role", "ABI 45"),
+        ("apply_camera_script_with_role", "ABI next (#892, set at merge)"),
         ("apply_camera_script_with_role", "Overview script applied as is"),
         ("save_camera_window", "snaps it as Qt does"),
         ("save_camera_window", "revision the profile store remembers"),
@@ -554,7 +557,7 @@ fn egrabber_window_functions_are_described() {
     }
 }
 
-// ABI 45 (#863): the camera script roles. Without a hardware camera both roles are refused cleanly
+// ABI next (#892, set at merge) (#863): the camera script roles. Without a hardware camera both roles are refused cleanly
 // (the Overview role through the new function, the Experiment role through both), and the geometry
 // carries its additive members.
 #[test]
@@ -588,7 +591,7 @@ fn camera_script_roles_without_a_hardware_camera() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
-// ABI 45 (#863): saving the eGrabber window through the bridge. The window is snapped, the Experiment
+// ABI next (#892, set at merge) (#863): saving the eGrabber window through the bridge. The window is snapped, the Experiment
 // script rewritten, the applied profile's config.json follows and the startup restore applies the edited
 // window after a restart.
 #[test]
@@ -650,7 +653,7 @@ fn save_camera_window_end_to_end() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-// ABI 45 (#863, CONNECT-053): the recording capacity through the bridge, with the mock camera. Before
+// ABI next (#892, set at merge) (#863, CONNECT-053): the recording capacity through the bridge, with the mock camera. Before
 // init and before a window is known it says so; with the Overview's planned window it carries the four
 // gates and the numbers the Qt panel shows.
 #[test]

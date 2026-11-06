@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  cameraMatchesExpected,
   DEFAULT_REQUIREMENTS,
   derivePreflight,
+  expectedCameraModel,
   type CheckStatus,
   type DeviceSnapshot,
   type PreflightInput,
@@ -62,6 +64,33 @@ describe("derivePreflight — required checks", () => {
     expect(cam.detail).toContain("EG-Cam SN9");
   });
 
+  it("the profile's camera.window.camera_model is the expected identity (App.tsx:1237)", () => {
+    const doc = (camera: unknown) => JSON.stringify({ pixel_to_micron_factor: 0.5, camera });
+    expect(expectedCameraModel(doc({ window: { camera_vendor: "SVS-Vistek GmbH", camera_model: " MC2066 " } }))).toBe("MC2066");
+    expect(expectedCameraModel(doc({ window: { width: 64 } }))).toBe("");
+    expect(expectedCameraModel(doc({ window: { camera_model: 7 } }))).toBe("");
+    expect(expectedCameraModel(doc(undefined))).toBe("");
+    expect(expectedCameraModel("{broken")).toBe("");
+    expect(expectedCameraModel("null")).toBe("");
+  });
+
+  it("the connected camera matches by its model or by its label, without case; no expectation matches anything", () => {
+    expect(cameraMatchesExpected("", "EGrabber 0", "")).toBe(true);
+    expect(cameraMatchesExpected("MC2066", "Coaxlink Quad 0 MC2066 SN1", "MC2066")).toBe(true);
+    expect(cameraMatchesExpected("mc2066", "x", "MC2066")).toBe(true);
+    expect(cameraMatchesExpected("MC2066", "Coaxlink 0 mc2066 (SVS-Vistek)", "")).toBe(true);
+    expect(cameraMatchesExpected("MC2066", "Coaxlink 0 MC1234", "MC1234")).toBe(false);
+    expect(cameraMatchesExpected("EG-Cam SN9", "EG-Cam SN9", "")).toBe(true);
+  });
+
+  it("the preflight warns when the connected camera's model is not the profile's, and not when it is", () => {
+    const wrong = derivePreflight({ ...READY, cameraIdentity: "Coaxlink 0 MC1234", cameraModel: "MC1234", cameraExpected: "MC2066" }).checks.find((c) => c.id === "camera")!;
+    expect(wrong.status).toBe("warning");
+    expect(wrong.detail).toContain("MC2066");
+    expect(statusOf({ ...READY, cameraIdentity: "Coaxlink 0 MC2066", cameraModel: "MC2066", cameraExpected: "MC2066" }, "camera")).toBe("passed");
+    expect(statusOf({ ...READY, cameraIdentity: "Mock camera", cameraModel: "", cameraExpected: "" }, "camera")).toBe("passed");
+  });
+
   it("core fails and blocks criticality when the pin is not satisfied", () => {
     const r = derivePreflight({ ...READY, corePinSatisfied: false });
     const core = r.checks.find((c) => c.id === "core")!;
@@ -101,10 +130,17 @@ describe("derivePreflight — trigger, storage, capture", () => {
     expect(statusOf({ ...READY, trigger: { valid: true, cameraAttached: true } }, "trigger")).toBe("passed");
   });
 
-  it("storage is an informational Not-required until the backend contract exists", () => {
+  it("storage is an informational Not-required until the data directory's status was read", () => {
     const s = derivePreflight(READY).checks.find((c) => c.id === "storage")!;
     expect(s.status).toBe("not-required");
-    expect(s.detail).toContain("pending");
+    expect(s.detail).toContain("has not been read yet");
+  });
+
+  it("a read data directory on the desktop is checked: writable, free space, RAM-disk warning (preflight.ts:360-363)", () => {
+    const ok = derivePreflight({ ...READY, storageKnown: true, storageWritable: true, storageFreeOk: true, storagePath: "/data" }).checks.find((c) => c.id === "storage")!;
+    expect(ok.status).toBe("passed");
+    expect(ok.detected).toBe("/data");
+    expect(derivePreflight({ ...READY, storageKnown: true, storageWritable: true, storageFreeOk: false }).checks.find((c) => c.id === "storage")!.status).toBe("warning");
   });
 
   it("a known, unwritable storage location Fails", () => {

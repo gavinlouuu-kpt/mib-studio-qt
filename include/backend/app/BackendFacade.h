@@ -76,6 +76,10 @@ namespace backend::bridge
         CameraCommandAction action{CameraCommandAction::StartCapture};
         std::string mockFrameDirectory;
         int mockFrameIntervalMs{33};
+        // > 0: the mock camera's frame rate in fps (Qt's Configure Mock spin box, 1 to 10000; clamped there), which
+        // wins over mockFrameIntervalMs. The interval is whole microseconds, so 5000 fps is 200 us, not the 1 ms
+        // floor the millisecond field has (ABI next (#896, set at merge), #863 CONNECT-016).
+        double mockFramesPerSecond{0};
         bool mockLoopFiles{true};
         int hardwareInterfaceIndex{-1};
         int hardwareDeviceIndex{-1};
@@ -84,7 +88,7 @@ namespace backend::bridge
         std::string mindVisionLabel;
         std::string mindVisionConfigPath;
         std::string cameraScriptPath;
-        // ApplyCameraScript role (ABI 45): false = Experiment (the script, then the profile's
+        // ApplyCameraScript role (ABI next (#892, set at merge)): false = Experiment (the script, then the profile's
         // camera.window), true = Overview (the full-sensor script as is). Default Experiment.
         bool cameraScriptOverview{false};
         bool cameraOverview{false};
@@ -1072,12 +1076,12 @@ namespace backend::bridge
         // Camera & Alignment geometry: mode, sensor size, saved experiment window, steps and
         // the last camera read-back (ABI 20).
         std::string fetchCameraGeometryJson() const;
-        // The eGrabber camera window the operator placed on the Overview (ABI 45, #863): snapped as Qt
+        // The eGrabber camera window the operator placed on the Overview (ABI next (#892, set at merge), #863): snapped as Qt
         // snaps it, written into the Experiment script and, when the applied profile has a
         // camera.window, into the profile (CameraWindowSave.h). JSON {ok, error, requested, window,
         // snapped, sensor_*, script{...}, profile{...}}.
         std::string saveCameraWindowJson(const std::string &scriptPath, int x, int y, int width, int height);
-        // The recording capacity of the next run (ABI 45, #833/#863): ExperimentCoordinator::
+        // The recording capacity of the next run (ABI next (#892, set at merge), #833/#863): ExperimentCoordinator::
         // recordingCapacity as JSON. With `planned`, the window being placed on the Overview instead
         // of the running session's frames. A read; never waits behind a Start (busy: true).
         std::string fetchRecordingCapacityJson(bool planned, int x, int y, int width, int height) const;
@@ -1268,6 +1272,13 @@ namespace backend::bridge
         std::string setStartupDiscoveryPreferenceJson(const std::string& json);
         std::string runStartupDiscoveryJson(const std::string &action);
         std::string fetchStartupDiscoveryStatusJson() const;
+        // Frame delivery mode (#863 CONNECT-019/020, ABI next (#895, set at merge)). Fetch: {valid, mode, active_mode, confirmed,
+        // capturing} with mode "everyFrame"|"latestFrame"; set: {ok, mode, applies_at_next_start, message}.
+        // The capture service applies a new mode at the next capture start (a running capture is never
+        // restarted); the mode is refused while an experiment runs. The applied-config provenance follows
+        // (camera.frame_delivery_mode) so a run's method records it; saved profiles are never rewritten.
+        std::string fetchFrameDeliveryModeJson() const;
+        std::string setFrameDeliveryModeJson(const std::string &mode);
         BackendCommandResult pulseGeneratorCommandJson(const std::string &json);
         std::string fetchPulseGeneratorStatusJson() const;
 

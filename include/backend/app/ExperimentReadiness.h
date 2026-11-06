@@ -286,6 +286,15 @@ inline const char* toString(ExperimentRunState s)
     return "unknown";
 }
 
+// True while the run holds the camera: it is being started, runs, or is saving its data. The camera
+// source, the delivery mode and the camera's Stop are refused then (Qt: the experiment guard and
+// flushInProgress_). A Failed run waits for its fault to be acknowledged but holds nothing.
+inline bool experimentHoldsCamera(ExperimentRunState s)
+{
+    return s == ExperimentRunState::Starting || s == ExperimentRunState::Active ||
+           s == ExperimentRunState::Stopping;
+}
+
 // Typed outcome of requestStop().
 enum class ExperimentStopOutcome {
     Accepted = 0,

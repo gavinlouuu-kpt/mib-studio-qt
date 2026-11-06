@@ -39,6 +39,7 @@ pub const COMMANDS: &[&str] = &[
     "abi_version",
     "is_initialized",
     "configure_mock",
+    "configure_mock_fps",
     "start_capture",
     "stop_capture",
     "seek_latest",
@@ -69,6 +70,8 @@ pub const COMMANDS: &[&str] = &[
     "startup_discovery_set_preference",
     "startup_discovery_run",
     "startup_discovery_status",
+    "fetch_frame_delivery_mode",
+    "set_frame_delivery_mode",
     "pulse_generator_command",
     "pulse_generator_status",
     "autofocus_connect_endpoint",
@@ -222,6 +225,16 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             crate::configure_mock(state, a.frame_dir, a.frame_interval_ms, a.loop_files).and_then(json)
         }
+        "configure_mock_fps" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "frameDir")] frame_dir: String,
+                #[serde(rename = "fps")] fps: f64,
+                #[serde(rename = "loopFiles")] loop_files: bool,
+            }
+            let a: A = args(value)?;
+            crate::configure_mock_fps(state, a.frame_dir, a.fps, a.loop_files).and_then(json)
+        }
         "start_capture" => crate::start_capture(state).and_then(json),
         "stop_capture" => crate::stop_capture(state).and_then(json),
         "seek_latest" => crate::seek_latest(state).and_then(json),
@@ -355,6 +368,15 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::startup_discovery_run(state, a.action).and_then(json)
         }
         "startup_discovery_status" => crate::startup_discovery_status(state).and_then(json),
+        "fetch_frame_delivery_mode" => crate::fetch_frame_delivery_mode(state).and_then(json),
+        "set_frame_delivery_mode" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "mode")] mode: String,
+            }
+            let a: A = args(value)?;
+            crate::set_frame_delivery_mode(state, a.mode).and_then(json)
+        }
         "pulse_generator_command" => {
             #[derive(Deserialize)]
             struct A {
@@ -1099,7 +1121,7 @@ mod tests {
         }
     }
 
-    // The eGrabber camera window commands (ABI 45, #863): strict arguments before the backend is asked, the
+    // The eGrabber camera window commands (ABI next (#892, set at merge), #863): strict arguments before the backend is asked, the
     // Overview role through the same guards as the Experiment one, and the capacity as a read.
     #[test]
     #[serial]
@@ -1610,7 +1632,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,
@@ -1648,6 +1670,70 @@ mod tests {
         assert_eq!(again["runs"][0]["statistics"], run["statistics"]);
         assert!(again["reference"].is_null());
         assert_eq!(std::fs::read(&v3).unwrap(), before, "nothing written");
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // #863 CONNECT-009/013/019: the camera source does not change under a running capture (Rust
+    // guard on select_hardware_camera, backend guard on configure_mock), and the delivery mode is
+    // read and set through dispatch (the WebSocket's path) and the Tauri functions.
+    #[test]
+    #[serial]
+    fn camera_source_guards_and_delivery_mode_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_connect_{}", std::process::id()));
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let frames = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/mock_frames");
+        let json_of = |name: &str, args: Value| match dispatch(&state, &host, name, args) {
+            Ok(Reply::Json(r)) => r,
+            other => panic!("{name}: {other:?}"),
+        };
+        let mock = json!({ "frameDir": frames.to_string_lossy(), "frameIntervalMs": 5, "loopFiles": true });
+        assert_eq!(json_of("configure_mock", mock.clone())["ok"], json!(true));
+
+        // The mock by frame rate (ABI next (#896, set at merge), CONNECT-016): Qt's spin box, 1 to 10000 fps; a rate outside it never reaches the backend.
+        let by_rate = |fps: Value| json!({ "frameDir": frames.to_string_lossy(), "fps": fps, "loopFiles": true });
+        assert_eq!(json_of("configure_mock_fps", by_rate(json!(5000))) ["ok"], json!(true));
+        assert_eq!(json_of("configure_mock_fps", by_rate(json!(1)))["ok"], json!(true));
+        assert_eq!(json_of("configure_mock_fps", by_rate(json!(10000)))["ok"], json!(true));
+        for bad in [json!(0), json!(0.5), json!(10001), json!(-5), json!("fast"), json!(null)] {
+            let e = dispatch(&state, &host, "configure_mock_fps", by_rate(bad.clone())).unwrap_err();
+            assert!(e.starts_with("INVALID_ARGUMENTS") || e.contains("1 to 10000"), "{bad}: {e}");
+        }
+        assert!(dispatch(&state, &host, "configure_mock_fps", json!({ "frameDir": "/x", "loopFiles": true })).unwrap_err().starts_with("INVALID_ARGUMENTS"));
+        assert_eq!(json_of("configure_mock", mock.clone())["ok"], json!(true), "back to the 5 ms mock for the capture below");
+
+        // The delivery mode: Every Frame by default; the setter validates and says when it applies.
+        let mode = json_of("fetch_frame_delivery_mode", Value::Null);
+        assert_eq!((mode["valid"].clone(), mode["mode"].clone(), mode["capturing"].clone()), (json!(true), json!("everyFrame"), json!(false)), "{mode}");
+        let bad = json_of("set_frame_delivery_mode", json!({ "mode": "newest" }));
+        assert_eq!(bad["ok"], json!(false), "{bad}");
+        assert!(dispatch(&state, &host, "set_frame_delivery_mode", json!({})).unwrap_err().starts_with("INVALID_ARGUMENTS"));
+        let set = json_of("set_frame_delivery_mode", json!({ "mode": "latestFrame" }));
+        assert_eq!((set["ok"].clone(), set["applies_at_next_start"].clone(), set["message"].clone()), (json!(true), json!(false), json!("Delivery mode set to Latest Frame.")), "{set}");
+        assert_eq!(json_of("fetch_frame_delivery_mode", Value::Null)["mode"], json!("latestFrame"));
+
+        // A running capture: the source cannot change; the delivery mode may (it applies at the next start).
+        assert_eq!(json_of("start_capture", Value::Null)["ok"], json!(true));
+        let refused = json_of("configure_mock", mock.clone());
+        assert_eq!(refused["ok"], json!(false), "{refused}");
+        assert!(refused["message"].as_str().unwrap().contains("camera is running"), "{refused}");
+        let refused_rate = json_of("configure_mock_fps", by_rate(json!(5000)));
+        assert_eq!(refused_rate["ok"], json!(false), "{refused_rate}");
+        assert!(refused_rate["message"].as_str().unwrap().contains("camera is running"), "{refused_rate}");
+        let Err(err) = crate::select_hardware_camera(&state, 0, 0, "EGrabber 0".into()) else { panic!("selecting a camera under a running capture must be refused") };
+        assert!(err.starts_with("Stop capture and finalize the experiment"), "{err}");
+        let while_running = json_of("set_frame_delivery_mode", json!({ "mode": "everyFrame" }));
+        assert_eq!((while_running["ok"].clone(), while_running["applies_at_next_start"].clone()), (json!(true), json!(true)), "{while_running}");
+        assert_eq!(while_running["message"], json!("Delivery mode set to Every Frame \u{2014} applies at the next capture start."));
+        assert_eq!(json_of("fetch_frame_delivery_mode", Value::Null)["capturing"], json!(true));
+
+        // Stopped again: both work.
+        assert_eq!(json_of("stop_capture", Value::Null)["ok"], json!(true));
+        assert_eq!(json_of("configure_mock", mock)["ok"], json!(true));
+        let selected = crate::select_hardware_camera(&state, 0, 0, "EGrabber 0".into()).expect("selection is allowed once stopped");
+        assert!(selected.ok);
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&data);
     }

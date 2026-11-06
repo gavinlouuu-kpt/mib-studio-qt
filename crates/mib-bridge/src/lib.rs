@@ -854,6 +854,13 @@ pub mod ffi {
             frame_interval_ms: i32,
             loop_files: bool,
         ) -> BridgeCommandResult;
+        /// ABI next (#896, set at merge) (#863): configure the mock camera by frame rate (fps, 1 to 10000; whole-microsecond interval).
+        fn configure_mock_camera_fps(
+            self: Pin<&mut BackendBridge>,
+            frame_dir: &str,
+            frames_per_second: f64,
+            loop_files: bool,
+        ) -> BridgeCommandResult;
         fn start_capture(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         fn stop_capture(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         fn start_frame_recording(self: Pin<&mut BackendBridge>, file_path: &str)
@@ -1076,6 +1083,10 @@ pub mod ffi {
         fn startup_discovery_set_preference(self: Pin<&mut BackendBridge>, json: &str) -> String;
         fn startup_discovery_run(self: Pin<&mut BackendBridge>, action: &str) -> String;
         fn startup_discovery_status(self: Pin<&mut BackendBridge>) -> String;
+        /// ABI next (#895, set at merge) (#863): the capture delivery mode as JSON {valid, mode, active_mode, confirmed, capturing}, and its setter
+        /// ({ok, mode, applies_at_next_start, message}); "everyFrame" or "latestFrame", applied at the next capture start.
+        fn fetch_frame_delivery_mode(self: Pin<&mut BackendBridge>) -> String;
+        fn set_frame_delivery_mode(self: Pin<&mut BackendBridge>, mode: &str) -> String;
         fn pulse_generator_command(self: Pin<&mut BackendBridge>, json: &str) -> BridgeCommandResult;
         fn pulse_generator_status(self: Pin<&mut BackendBridge>) -> String;
 
@@ -1252,7 +1263,7 @@ pub mod ffi {
         fn apply_camera_script(self: Pin<&mut BackendBridge>, script_path: &str)
             -> BridgeCommandResult;
 
-        /// Apply a JS camera script with an explicit role (ABI 45, #863): `overview` true = the
+        /// Apply a JS camera script with an explicit role (ABI next (#892, set at merge), #863): `overview` true = the
         /// Overview script, applied as is (full sensor); false = the Experiment script, followed by
         /// the applied profile's `camera.window`. `apply_camera_script` keeps meaning Experiment.
         fn apply_camera_script_with_role(
@@ -1261,7 +1272,7 @@ pub mod ffi {
             overview: bool,
         ) -> BridgeCommandResult;
 
-        /// Save the eGrabber camera window placed on the Overview (ABI 45, #863): snapped as the Qt
+        /// Save the eGrabber camera window placed on the Overview (ABI next (#892, set at merge), #863): snapped as the Qt
         /// app snaps it, written into the Experiment script and, when the applied profile has a
         /// `camera.window`, into the profile. JSON `{ok, error, requested, window, snapped, script,
         /// profile, ...}` (bridge-contract.json camera_alignment.save_camera_window).
@@ -1274,7 +1285,7 @@ pub mod ffi {
             height: i32,
         ) -> String;
 
-        /// The recording capacity of the next run (ABI 45, #863): window, rate, save stream, buffer,
+        /// The recording capacity of the next run (ABI next (#892, set at merge), #863): window, rate, save stream, buffer,
         /// destination rate and the four capacity gates, as JSON. `planned` describes the window
         /// (x, y, width, height) being placed on the Overview instead of the running session.
         fn fetch_recording_capacity(
