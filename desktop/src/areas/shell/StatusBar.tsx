@@ -3,21 +3,24 @@
 // one-line status (areas/monitoring/statsReadouts: compactStatusLine) and the stop/save progress sentence.
 import { SEG_STATUS_LABEL } from "../../contextBar";
 import { useStudio } from "../../studio/StudioContext";
+import { STAGE_LOCK_REASON, isRunLockedTab } from "../monitoring/runStatus";
 import { compactStatusLine } from "../monitoring/statsReadouts";
 
 export function ContextBar() {
-  const { contextBar, setTab } = useStudio();
+  const { contextBar, setTab, runLocked } = useStudio();
   return (
     <div className="context-bar" role="region" aria-label="Active context">
       {contextBar.segments.map((s) => {
         const label = `${s.label}: ${s.value} (${SEG_STATUS_LABEL[s.status]})`;
-        const clickable = !!s.tab;
+        // MON-013: a segment that leads to a stage the run has shut is not a way in (#877 review).
+        const locked = runLocked && isRunLockedTab(s.tab);
+        const clickable = !!s.tab && !locked;
         return (
           <button
             key={s.id}
             type="button"
             className={`context-seg ${s.status}${clickable ? " clickable" : ""}`}
-            title={s.detail}
+            title={locked ? `${s.detail} ${STAGE_LOCK_REASON}` : s.detail}
             aria-label={label}
             disabled={!clickable}
             onClick={clickable ? () => setTab(s.tab!) : undefined}
