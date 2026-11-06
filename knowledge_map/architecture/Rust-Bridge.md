@@ -374,6 +374,23 @@ Configuration/output-on serialize against experiment Start with `withIdleConfigu
 output-off remains possible while an experiment runs unless coordinated live view owns
 the generator. Status preserves that ownership so manual controls cannot steal it.
 
+Frame delivery mode (ABI next (#895, set at merge), #863 CONNECT-019/020): `fetch_frame_delivery_mode` reads
+`{valid, mode, active_mode, confirmed, capturing}` (open to every client) and
+`set_frame_delivery_mode(mode)` (`everyFrame` | `latestFrame`; controller only) sets the capture service's
+configuration, answering `{ok, mode, applies_at_next_start, message}`. A running capture is never restarted:
+the change applies at the next start, as Qt's Connect combo. Refused during an experiment and for an unknown
+mode. The applied-config provenance (`camera.frame_delivery_mode`) follows, so a run's method records the
+mode and says the profile was modified after apply; the saved profile is never rewritten (its revision pins
+the startup restore). A configuration apply sets the mode from the document (missing = everyFrame).
+`select_hardware_camera` is refused while a capture runs or an experiment is Starting/Active/Stopping, like
+`select_mindvision_camera`; `configure_mock_camera` is refused by the facade under the same rule
+(`experimentHoldsCamera`). `configure_mock_fps(frameDir, fps, loopFiles)` (ABI next (#896, set at merge), #863 CONNECT-016) configures
+the mock by frame rate as Qt's dialog: 1 to 10000 fps, interval `round(1e6 / fps)` whole microseconds (5000 fps =
+200 us), where `configure_mock`'s millisecond field floors at 1 ms; a rate outside the range is refused in the
+command layer and clamped by the facade. `stop_capture` is refused while an experiment is Starting, Active or
+Stopping (CONNECT-038) and answers `ok: false` with the camera's message when the device teardown was not
+confirmed (`ShutdownFailed` of this session, CONNECT-040); the capture is stopped all the same.
+
 `startup_discovery_run(start|camera|nanopositioner)` schedules the shared startup policy;
 `startup_discovery_status` drains its queued completion actions on the serialized bridge
 caller before reporting running flags, selected state and bounded per-job errors. The

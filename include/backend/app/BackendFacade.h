@@ -76,6 +76,10 @@ namespace backend::bridge
         CameraCommandAction action{CameraCommandAction::StartCapture};
         std::string mockFrameDirectory;
         int mockFrameIntervalMs{33};
+        // > 0: the mock camera's frame rate in fps (Qt's Configure Mock spin box, 1 to 10000; clamped there), which
+        // wins over mockFrameIntervalMs. The interval is whole microseconds, so 5000 fps is 200 us, not the 1 ms
+        // floor the millisecond field has (ABI next (#896, set at merge), #863 CONNECT-016).
+        double mockFramesPerSecond{0};
         bool mockLoopFiles{true};
         int hardwareInterfaceIndex{-1};
         int hardwareDeviceIndex{-1};
@@ -1256,6 +1260,13 @@ namespace backend::bridge
         std::string setStartupDiscoveryPreferenceJson(const std::string& json);
         std::string runStartupDiscoveryJson(const std::string &action);
         std::string fetchStartupDiscoveryStatusJson() const;
+        // Frame delivery mode (#863 CONNECT-019/020, ABI next (#895, set at merge)). Fetch: {valid, mode, active_mode, confirmed,
+        // capturing} with mode "everyFrame"|"latestFrame"; set: {ok, mode, applies_at_next_start, message}.
+        // The capture service applies a new mode at the next capture start (a running capture is never
+        // restarted); the mode is refused while an experiment runs. The applied-config provenance follows
+        // (camera.frame_delivery_mode) so a run's method records it; saved profiles are never rewritten.
+        std::string fetchFrameDeliveryModeJson() const;
+        std::string setFrameDeliveryModeJson(const std::string &mode);
         BackendCommandResult pulseGeneratorCommandJson(const std::string &json);
         std::string fetchPulseGeneratorStatusJson() const;
 

@@ -372,7 +372,9 @@ StoreOverwritten, HDF5 reopen round-trip, legacy file → Unknown).
 - `setHardwareCameraSelection(ifIdx, devIdx, label)` — choose device (no start)
 - `setMindVisionCameraSelection(cameraIndex, label)` — choose a MindVision
   device (no start)
-- `configureMockCamera(options)` — choose mock folder instead
+- `configureMockCamera(options)` — choose mock folder instead;
+  `mockFrameIntervalUs()` is the interval it was given in microseconds (`CameraSelection::mockIntervalMs` is
+  whole milliseconds, 0 above 1000 fps)
 - `applyCameraScriptFromFile(path, errorOut, role)` — push a GenICam JS config
   to the selected device (stops capture first, does not restart). #833: with
   `CameraScriptRole::Experiment` (the default) the profile's camera window

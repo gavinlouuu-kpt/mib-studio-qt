@@ -351,6 +351,9 @@ namespace backend
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
 
         void configureMockCamera(const ::camera::mock::MockCameraOptions& options);
+        // The frame interval the mock camera was last configured with, in microseconds (0 = none yet).
+        // CameraSelection::mockIntervalMs is whole milliseconds, which reads 0 above 1000 fps.
+        long long mockFrameIntervalUs() const { return mockIntervalUs_; }
 
         // Select a specific hardware device (does not start capture)
         void setHardwareCameraSelection(int interfaceIndex, int deviceIndex, const std::string &label);
@@ -684,6 +687,7 @@ namespace backend
         std::optional<CameraScriptRole> lastCameraScriptRole_;
         std::string mockFrameDir_;
         int mockIntervalMs_{0};
+        long long mockIntervalUs_{0};
         bool mockLoop_{true};
         // Issue #369: what was asked for vs what the capture factory builds.
         std::string requestedCameraSource_{"unknown"};

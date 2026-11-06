@@ -1,4 +1,5 @@
 import { PanelErrorBoundary } from "./components/PanelErrorBoundary";
+import { CameraDialogs } from "./areas/connect/CameraDialogs";
 import { ConnectTab } from "./areas/connect/ConnectTab";
 import { MockCameraDialog } from "./areas/connect/MockCameraDialog";
 import { OverviewTab } from "./areas/connect/OverviewTab";
@@ -66,6 +67,8 @@ export default function App() {
 
         {/* ---- Configure Mock modal ---- */}
         <MockCameraDialog />
+        {/* ---- No camera found, refused camera commands ---- */}
+        <CameraDialogs />
         {/* ---- Central Methods, offline help, Diagnostics, About ---- */}
         <ShellDialogs />
       </div>

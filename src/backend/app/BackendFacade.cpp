@@ -707,9 +707,26 @@ namespace backend::bridge
         {
         case CameraCommandAction::ConfigureMockCamera:
         {
+            // Qt parity (ConnectTab::onConfigureMock, #863 CONNECT-013): the camera source is not swapped
+            // under a live capture or while an experiment holds the camera.
+            if (const std::string message =
+                    app::cameraSourceChangeRefusal(backend_.capture().isRunning(), backend_.experiment().status());
+                !message.empty())
+            {
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
             ::camera::mock::MockCameraOptions options;
             options.folder = std::filesystem::path(command.mockFrameDirectory);
-            options.frameInterval = std::chrono::milliseconds(std::max(1, command.mockFrameIntervalMs));
+            if (command.mockFramesPerSecond > 0)
+            {
+                const double fps = std::clamp(command.mockFramesPerSecond, 1.0, 10000.0);
+                options.frameInterval = std::chrono::microseconds(static_cast<long long>(std::llround(1'000'000.0 / fps)));
+            }
+            else
+            {
+                options.frameInterval = std::chrono::milliseconds(std::max(1, command.mockFrameIntervalMs));
+            }
             options.loopFiles = command.mockLoopFiles;
             backend_.configureMockCamera(options);
             emitEvent(makeCameraStatus(CameraState::Configured, "mock"));
@@ -846,19 +863,35 @@ namespace backend::bridge
             emitEvent(makeCameraStatus(CameraState::Running));
             return {true, BackendCommandType::Camera, "Capture started"};
         case CameraCommandAction::StopCapture:
-            // Qt-parity precondition: the camera cannot stop underneath an
-            // active experiment — stop the experiment first (BE-4).
-            if (backend_.experiment().state() == app::ExperimentRunState::Active)
+        {
+            // Qt-parity precondition: the camera cannot stop underneath an experiment — stop the
+            // experiment first (BE-4) — nor while its data is still being saved (Qt flushInProgress_,
+            // #863 CONNECT-038): Stopping is the final flush, Starting has not got its camera yet.
+            // A Failed run still flushing after a fatal save error is saving too (cameraStopRefusal).
+            if (const std::string message = app::cameraStopRefusal(backend_.experiment().status()); !message.empty())
             {
-                const std::string message =
-                    "Cannot stop camera while experiment is active. Please stop the experiment first.";
                 emitEvent(BackendErrorEvent{BackendErrorSource::Camera,
                                             BackendCommandType::Camera, message});
                 return {false, BackendCommandType::Camera, message};
             }
+            const bool wasRunning = backend_.capture().isRunning();
             backend_.capture().stop();
             emitEvent(makeCameraStatus(CameraState::Stopped));
+            // #863 CONNECT-040: a teardown the device did not confirm (rig generator / LED / acquisition
+            // stop) is a failed command carrying the camera's message, as Qt's CameraController reports it.
+            const auto stopped = backend_.capture().lifecycleSnapshot();
+            if (wasRunning && stopped.lastFailure == services::CaptureFailureKind::ShutdownFailed &&
+                stopped.lastFailureGeneration == stopped.generation)
+            {
+                const std::string message = stopped.lastFailureMessage.empty()
+                                                ? "Camera shutdown was not confirmed"
+                                                : stopped.lastFailureMessage;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera,
+                                            BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
             return {true, BackendCommandType::Camera, "Capture stopped"};
+        }
         }
 
         emitEvent(BackendErrorEvent{BackendErrorSource::Camera,
@@ -4243,6 +4276,53 @@ std::string BackendFacade::runStartupDiscoveryJson(const std::string& action) {
     else return json{{"accepted", false}, {"message", "Unknown startup action"}}.dump();
     return json{{"accepted", accepted}, {"message", accepted ? "Auto-selection scheduled; completion is reported separately" : "Selection is already configured or action was refused"}}.dump();
 }
+std::string BackendFacade::fetchFrameDeliveryModeJson() const {
+    using nlohmann::json;
+    if (!initialized_) return json{{"valid", false}}.dump();
+    auto& capture = backend_.capture();
+    const auto configured = capture.config().deliveryMode;
+    return json{{"valid", true},
+                {"mode", ::camera::common::toString(configured)},
+                {"active_mode", ::camera::common::toString(capture.activeDeliveryMode())},
+                {"confirmed", capture.stats().deliveryModeConfirmed.load(std::memory_order_acquire)},
+                {"capturing", capture.isRunning()}}
+        .dump();
+}
+
+std::string BackendFacade::setFrameDeliveryModeJson(const std::string& mode) {
+    using nlohmann::json;
+    const auto refused = [](const std::string& message) {
+        return json{{"ok", false}, {"message", message}}.dump();
+    };
+    if (!initialized_) return refused("Backend is not initialized");
+    if (mode != "everyFrame" && mode != "latestFrame") return refused("Unknown frame delivery mode");
+    if (app::experimentHoldsCamera(backend_.experiment().status()))
+        return refused("Cannot change the delivery mode while an experiment is active.");
+    auto& capture = backend_.capture();
+    capture.setDeliveryMode(::camera::common::frameDeliveryModeFromString(mode));
+    // The applied-config provenance follows the runtime (a run's method records what ran). Only an
+    // existing applied document is touched; the saved profile itself is never rewritten (its revision
+    // pins the startup restore).
+    const auto applied = backend_.getLastConfigJson();
+    if (!applied.empty()) {
+        const auto parsed = json::parse(applied, nullptr, /*allow_exceptions=*/false);
+        if (parsed.is_object()) {
+            auto next = parsed;
+            if (!next.contains("camera") || !next.at("camera").is_object()) next["camera"] = json::object();
+            next["camera"]["frame_delivery_mode"] = mode;
+            backend_.setLastConfigJson(next.dump());
+        }
+    }
+    const bool running = capture.isRunning();
+    const std::string label = mode == "latestFrame" ? "Latest Frame" : "Every Frame";
+    return json{{"ok", true},
+                {"mode", mode},
+                {"applies_at_next_start", running},
+                {"message", running ? "Delivery mode set to " + label + " \xE2\x80\x94 applies at the next capture start."
+                                    : "Delivery mode set to " + label + "."}}
+        .dump();
+}
+
 std::string BackendFacade::fetchStartupDiscoveryStatusJson() const {
     using nlohmann::json;
     if (!initialized_) return json{{"valid", false}}.dump();
