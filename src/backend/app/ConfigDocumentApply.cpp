@@ -204,10 +204,14 @@ StagedConfig stageConfigDocument(AppBackend& backend, const std::string& bytes) 
             if (backend.getFrameStore() && backend.getFrameStore()->getLatest(latest))
                 frame = {latest.width, latest.height};
             const auto g = backend.cameraGeometry();
-            if (g.roiWidth > 0 && g.roiHeight > 0)
-                window = {static_cast<uint64_t>(g.roiWidth), static_cast<uint64_t>(g.roiHeight)};
-            else if (g.sensorWidth > 0 && g.sensorHeight > 0)
-                window = {static_cast<uint64_t>(g.sensorWidth), static_cast<uint64_t>(g.sensorHeight)};
+            // An eGrabber camera's geometry (#863) names the window of a script that may not be the one the
+            // run applies: until the document's own window or a frame says otherwise, the ROI stays pending.
+            if (g.camera != "egrabber") {
+                if (g.roiWidth > 0 && g.roiHeight > 0)
+                    window = {static_cast<uint64_t>(g.roiWidth), static_cast<uint64_t>(g.roiHeight)};
+                else if (g.sensorWidth > 0 && g.sensorHeight > 0)
+                    window = {static_cast<uint64_t>(g.sensorWidth), static_cast<uint64_t>(g.sensorHeight)};
+            }
             // #833: the document's own camera window is the bound the ROI must fit;
             // until frames of that size arrive the ROI is pending.
             bool windowPending = false;

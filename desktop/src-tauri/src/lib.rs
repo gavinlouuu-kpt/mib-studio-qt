@@ -215,6 +215,21 @@ fn startup_discovery_status(state: State<AppState>) -> Result<serde_json::Value,
 }
 
 #[tauri::command]
+fn configure_mock_fps(state: State<AppState>, frame_dir: String, fps: f64, loop_files: bool) -> Result<cmds::CmdResult, String> {
+    cmds::configure_mock_fps(&state, frame_dir, fps, loop_files)
+}
+
+#[tauri::command]
+fn fetch_frame_delivery_mode(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::fetch_frame_delivery_mode(&state)
+}
+
+#[tauri::command]
+fn set_frame_delivery_mode(state: State<AppState>, mode: String) -> Result<serde_json::Value, String> {
+    cmds::set_frame_delivery_mode(&state, mode)
+}
+
+#[tauri::command]
 fn pulse_generator_command(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
     cmds::pulse_generator_command(&state, json)
 }
@@ -534,6 +549,25 @@ fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<cm
 }
 
 #[tauri::command]
+fn apply_camera_script_with_role(state: State<AppState>, script_path: String, overview: bool) -> Result<cmds::CmdResult, String> {
+    cmds::apply_camera_script_with_role(&state, script_path, overview)
+}
+
+#[tauri::command]
+fn save_camera_window(state: State<AppState>, script_path: String, x: i32, y: i32, w: i32, h: i32) -> Result<serde_json::Value, String> {
+    cmds::save_camera_window(&state, script_path, x, y, w, h)
+}
+
+#[tauri::command]
+fn fetch_recording_capacity(state: State<AppState>, x: Option<i32>, y: Option<i32>, w: Option<i32>, h: Option<i32>) -> Result<serde_json::Value, String> {
+    let planned = match (x, y, w, h) {
+        (Some(x), Some(y), Some(w), Some(h)) => Some((x, y, w, h)),
+        _ => None,
+    };
+    cmds::fetch_recording_capacity(&state, planned)
+}
+
+#[tauri::command]
 fn set_camera_overview(state: State<AppState>, overview: bool) -> Result<cmds::CmdResult, String> {
     cmds::set_camera_overview(&state, overview)
 }
@@ -816,6 +850,7 @@ pub fn run() {
             is_initialized,
             init,
             configure_mock,
+            configure_mock_fps,
             start_capture,
             stop_capture,
             seek_latest,
@@ -871,6 +906,8 @@ pub fn run() {
             startup_discovery_set_preference,
             startup_discovery_run,
             startup_discovery_status,
+            fetch_frame_delivery_mode,
+            set_frame_delivery_mode,
             pulse_generator_command,
             pulse_generator_status,
             autofocus_connect_endpoint,
@@ -932,6 +969,9 @@ pub fn run() {
             select_hardware_camera,
             select_mindvision_camera,
             apply_camera_script,
+            apply_camera_script_with_role,
+            save_camera_window,
+            fetch_recording_capacity,
             reset_hardware_camera,
             soft_trigger_camera,
             set_camera_overview,

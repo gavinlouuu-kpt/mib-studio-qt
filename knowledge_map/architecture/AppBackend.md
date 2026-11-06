@@ -110,6 +110,25 @@ adapter's `onSession` callback). Test: `backend.aravis_camera_overview`. If Arav
 request records an unavailable effective source and a null factory so capture
 reports the configuration error; it does not silently substitute MockCamera.
 
+**MindVision Overview profile (#863 A2).** `cameraGeometry()` reads the selected MindVision profile through
+`app::readMindVisionOverviewProfile` (`CameraWindowProfile.{h,cpp}`, Qt-free, test `backend.camera_window_profile`):
+the saved ROI, `illuminatedLive`, the ISP mirroring (`flipHorizontal`/`flipVertical`, which the desktop Overview
+compensates in the box and drag direction, as Qt's `SimpleImageCanvas::setRoiTransform`) and the error when the
+file cannot be read. Every geometry also carries `captureFps` (the capture service's measured rate).
+
+**eGrabber camera window (#863, ABI next (#892, set at merge)).** A selected eGrabber hardware camera is `supported` in
+`cameraGeometry()`: the window is the applied profile's `camera.window`, else the Experiment script's
+own (`chooseEgrabberWindow`; the script last applied or saved a window into, else the applied local
+profile's own `egrabberConfig.js`, `appliedProfileScriptPath`), the steps are Qt's (offset X 16 / Y 4, width 16, height 4, min 64x16) and
+the sensor is what the last script apply read from the camera, else 1920x1080. It has no camera preset:
+`setCameraOverview` stays MindVision / Aravis, and the shells change mode by applying the Overview or
+the Experiment script (`CameraScriptRole`). `saveEgrabberWindow` (`CameraWindowSave.cpp`) is the edit:
+snap, rewrite the Experiment script, update the acquisition profile and the applied local profile with the
+revision the profile store remembers (`profileStoreSaveCameraWindow`, `updateStartupProfileRevision`).
+`lastExperimentScriptPath()` is the script the operator last applied or saved a window into. Tests:
+`backend.camera_window_profile`, `backend.camera_window_save` (an eGrabber selection without the SDK is set
+through `CameraGeometryTestAccess`).
+
 ## Explicit hardware shutdown (2026-09-15)
 
 `shutdown()` disconnects autofocus, both syringe pumps and the pulse
@@ -144,6 +163,53 @@ deviceDiscovery_, startupDiscovery_   // #419: declared last, destroyed first
 frameStore_  // shared_ptr<FrameStore>(5000)
 ```
 
+## Data directory (rig check F1, 2026-11-06)
+
+The Qt shell resolves the data dir once, in `main.cpp`, with
+`backend::app::datadir::resolve(currentInputs(exeDir))`
+(`include/backend/app/DataDirectory.h`, Qt-free). The rule, in order:
+
+1. `MIB_DATA_DIR` set and not empty: that folder, on every platform.
+2. Windows, and the exe is under a `Program Files` / `Program Files (x86)`
+   folder (by path, also as `PROGRA~<n>`, so an elevated launch resolves the
+   same folder), or `<exe dir>/data` fails the write probe:
+   `%LOCALAPPDATA%/MIB_Studio_Qt/data`. The legacy `<exe dir>/data` becomes the
+   migration source. `%LOCALAPPDATA%` must have an ASCII form: the backend
+   reads `dataDir` partly as UTF-8 (#762, `storageRoot()`, the crash-state
+   JSON) and partly as `path(std::string)` (ANSI code page on MSVC), which only
+   agree on ASCII. For a non-ASCII account name `localAppDataDir()` uses the
+   8.3 short name; with none, rule 3 applies and the log says so.
+3. Otherwise `<exe dir>/data` (dev builds, portable copies, Linux).
+
+Gotcha: an unwritable exe dir outside Program Files is decided by the write
+probe, so an elevated launch there (writable) and a normal one (not) resolve
+different data dirs. `%LOCALAPPDATA%` is per Windows user, so a second account
+on the same PC gets its own instrument id.
+
+The same layout gives the log dir (`%LOCALAPPDATA%/MIB_Studio_Qt/logs` for the
+user-local data dir, else `<dataDir>/logs`; `logDirFor` is the one rule, used
+by `initialize` too) and the crash dir (`%LOCALAPPDATA%/MIB_Studio_Qt/crashes`
+on Windows, else `<dataDir>/crashes`). The shell also sets
+`setResourceRoot(exeDir)`: the bundled LUT is found under the resource root,
+which is no longer always `dataDir`'s parent.
+
+Everything below `dataDir` follows: `instrument_identity.json`,
+`instrument_calibration.json`, `app.sqlite3`, `profile_registry/`, `methods/`,
+`startup_configuration.json`, `stage_reference.json`,
+`stage_limits_verified.json`, `instrument_run_window.json`, `ssd-state.json`,
+`camera/`, `config/aravis-camera.json`, `pipeline_timing/`. A new state file
+under `dataDir` must be added to `datadir::stateEntries()`, or an upgrade over a
+build that wrote it under `<exe dir>/data` loses it. The migration copies once
+(only into a dir with no state), entry by entry through a staging name, never
+overwrites and never deletes the legacy files; a symbolic link is copied as
+its content. `.legacy-migration-pending` stays in `dataDir` until every entry is
+in place, so a start that failed or was cut off part-way copies the missing
+entries at the next start. `mock_frames/` is not migrated. Tests:
+`backend.data_directory`.
+`config.json` is not in the data dir: [[../frontend/ConfigTabs]]'s
+`ConfigPathManager` already keeps it in `%LOCALAPPDATA%/MIB_Studio_Qt/include`
+for a Program Files install.
+
 ## `initialize(dataDir)` — what it wires
 
 When EGrabber is unavailable but MindVision is enabled, an implicit default
@@ -155,9 +221,13 @@ explicit mock initialization without touching hardware (#413).
 
 See `src/backend/AppBackend.cpp` around lines 79–200.
 
-1. Creates `dataDir` and resolves a user-writable log path (falls back to
-   `%LOCALAPPDATA%/MIB_Studio_Qt/logs/app.log` on Windows when `dataDir`
-   is under `Program Files`).
+1. Migrates first: when the shell passed a legacy dir
+   (`setDataDirOrigin(reason, legacyDataDir)`), `datadir::migrateLegacyState`
+   copies the state an older build left in `<exe dir>/data` into an empty
+   `dataDir`, before the SSD store or the identity can create any (rig check F1,
+   see "Data directory" below). Then creates `dataDir`, puts `app.log` in
+   `datadir::logDirFor(dataDir)` (`logDir()`), and logs the data dir, the
+   reason, and every entry migrated or not.
 2. Instantiates all services + `FrameStore(5000)`.
 3. `sqliteService_->initialize(dataDir/app.sqlite3)`,
    `hdf5Service_->initialize(dataDir)`.
@@ -329,7 +399,9 @@ StoreOverwritten, HDF5 reopen round-trip, legacy file → Unknown).
 - `setHardwareCameraSelection(ifIdx, devIdx, label)` — choose device (no start)
 - `setMindVisionCameraSelection(cameraIndex, label)` — choose a MindVision
   device (no start)
-- `configureMockCamera(options)` — choose mock folder instead
+- `configureMockCamera(options)` — choose mock folder instead;
+  `mockFrameIntervalUs()` is the interval it was given in microseconds (`CameraSelection::mockIntervalMs` is
+  whole milliseconds, 0 above 1000 fps)
 - `applyCameraScriptFromFile(path, errorOut, role)` — push a GenICam JS config
   to the selected device (stops capture first, does not restart). #833: with
   `CameraScriptRole::Experiment` (the default) the profile's camera window

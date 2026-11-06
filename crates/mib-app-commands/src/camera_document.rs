@@ -16,15 +16,19 @@ fn read(path:&Path)->Result<String,String>{
 fn revision(text:&str)->String{hex::encode(Sha256::digest(text.as_bytes()))}
 fn transact(action:&str,path:&str,kind:&str,baseline:&str,text:&str)->Result<CameraDocument,String>{
     let _lock=WRITER.lock().map_err(|e|e.to_string())?;
-    if !["js","json","pz7035"].contains(&kind){return Err("Unsupported camera document kind".into());}
+    if !["js","json","pz7035","overview"].contains(&kind){return Err("Unsupported camera document kind".into());}
     // The PZ7035 camera document is a .json file; the backend validates its content when it is checked and applied.
-    let extension=if kind=="pz7035"{"json"}else{kind};
+    // The Overview script (overviewConfig.js, #863) is an eGrabber script like "js"; its bundled default is the full-sensor script.
+    let extension=match kind {"pz7035"=>"json","overview"=>"js",_=>kind};
+    let script=kind=="js"||kind=="overview";
     if action=="default" {
-        let text=match kind {"js"=>include_str!("../../../resources/defaults/egrabberConfig.js"),"pz7035"=>include_str!("../../../resources/defaults/pz7035Camera.json"),_=>include_str!("../../../resources/defaults/mindvisionConfig.json")};
+        let text=match kind {"js"=>include_str!("../../../resources/defaults/egrabberConfig.js"),"overview"=>include_str!("../../../resources/defaults/overviewConfig.js"),"pz7035"=>include_str!("../../../resources/defaults/pz7035Camera.json"),_=>include_str!("../../../resources/defaults/mindvisionConfig.json")};
         return Ok(CameraDocument{path:String::new(),text:text.into(),revision:String::new()});
     }
     let requested=Path::new(path);
     let creating=action=="create";
+    // Qt's ensureDefaultsFile makes the folder of the default Overview script (mkpath); only that kind, only when creating.
+    if creating && kind=="overview" {if let Some(parent)=requested.parent().filter(|p|!p.as_os_str().is_empty()){fs::create_dir_all(parent).map_err(|e|e.to_string())?;}}
     let path=if creating {
         let parent=fs::canonicalize(requested.parent().ok_or("Missing parent folder")?).map_err(|e|e.to_string())?;
         parent.join(requested.file_name().ok_or("Missing filename")?)
@@ -36,7 +40,7 @@ fn transact(action:&str,path:&str,kind:&str,baseline:&str,text:&str)->Result<Cam
         "save"|"create"=>{
             if !creating && revision(&old)!=baseline{return Err("Camera file changed on disk; reload and reconcile your draft".into());}
             if text.len()>LIMIT{return Err("Camera document exceeds 4 MiB".into());}
-            if kind!="js" && !serde_json::from_str::<serde_json::Value>(text).map_err(|e|e.to_string())?.is_object(){return Err("Camera JSON must be an object".into());}
+            if !script && !serde_json::from_str::<serde_json::Value>(text).map_err(|e|e.to_string())?.is_object(){return Err("Camera JSON must be an object".into());}
             // Staging and destination share a filesystem. RAII removes the staging
             // file on write/sync, revision-check or publication failure.
             let mut temporary=tempfile::NamedTempFile::new_in(path.parent().ok_or("Missing parent folder")?).map_err(|e|e.to_string())?;
@@ -127,7 +131,7 @@ mod tests {
         assert!(camera_document_confined(data.path(),"save".into(),"link.json".into(),"pz7035".into(),String::new(),"{}".into()).is_err());
         assert_eq!(fs::read_to_string(&secret).unwrap(),"{\"secret\":true}","the file behind the link is untouched");
         // The desktop kinds take any path, so the server refuses them outright (read, create, save and default).
-        for kind in ["json","js"] {
+        for kind in ["json","js","overview"] {
             for action in ["read","create","save","default"] {
                 assert!(camera_document_confined(data.path(),action.into(),secret.to_str().unwrap().into(),kind.into(),String::new(),"{}".into()).is_err(),"{kind} {action}");
             }
@@ -204,6 +208,37 @@ mod tests {
         let saved=fs::read_to_string(path).unwrap();
         assert!(saved=="{\"writer\":1}" || saved=="{\"writer\":2}");
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(),1);
+    }
+
+    #[test]
+    fn the_overview_script_is_a_js_document_with_the_bundled_full_sensor_default() {
+        // The default is the bundled resources/defaults/overviewConfig.js (Qt ensureDefaultsFile), not the Experiment script.
+        let defaults=transact("default","","overview","","").unwrap();
+        assert!(defaults.path.is_empty());
+        assert_eq!(defaults.text,include_str!("../../../resources/defaults/overviewConfig.js"));
+        assert!(defaults.text.contains("g.RemotePort.set(\"Width\", 1920);") && defaults.text.contains("g.RemotePort.set(\"Height\", 1080);"),"the Overview script shows the full sensor");
+        assert_ne!(defaults.text,transact("default","","js","","").unwrap().text,"not the Experiment script's default");
+        // Creating the default makes its folder (the app config folder may not exist yet), refuses to replace an existing file and keeps the text byte for byte.
+        let dir=tempfile::tempdir().unwrap();
+        let path=dir.path().join("new").join("folder").join("overviewConfig.js");let target=path.to_str().unwrap();
+        let made=transact("create",target,"overview","",&defaults.text).unwrap();
+        assert_eq!(made.text,defaults.text);assert!(made.path.ends_with("overviewConfig.js"));
+        assert_eq!(fs::read_to_string(&path).unwrap(),defaults.text);
+        assert!(transact("create",target,"overview","","// other").is_err(),"an existing script is never replaced by a create");
+        assert_eq!(fs::read_to_string(&path).unwrap(),defaults.text);
+        // Read and a revision-checked save work as for any script; the text is not parsed as JSON.
+        let read=transact("read",target,"overview","","").unwrap();assert_eq!(read.text,defaults.text);
+        let saved=transact("save",target,"overview",&read.revision,"// edited\r\nvar g = grabbers[0];\r\n").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(),"// edited\r\nvar g = grabbers[0];\r\n","CRLF is kept");
+        assert!(transact("save",target,"overview",&read.revision,"// stale").is_err(),"a stale revision is refused");
+        assert_ne!(saved.revision,read.revision);
+        // Only .js files; other kinds keep their own extensions and do not create folders.
+        let wrong=dir.path().join("overviewConfig.json");fs::write(&wrong,"{}").unwrap();
+        assert!(transact("read",wrong.to_str().unwrap(),"overview","","").is_err(),"the extension must be .js");
+        let other=dir.path().join("missing-folder").join("camera.js");
+        assert!(transact("create",other.to_str().unwrap(),"js","","// x").is_err(),"the other kinds do not create folders");
+        assert!(!dir.path().join("missing-folder").exists());
+        assert!(transact("default","","unknown","","").is_err(),"unknown kinds are still refused");
     }
 
     #[cfg(unix)]

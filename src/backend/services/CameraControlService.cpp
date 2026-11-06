@@ -319,6 +319,31 @@ namespace backend::services
             }
         }
 
+        // The sensor size for the Overview's window box (#846): SFNC SensorWidth/SensorHeight, else
+        // WidthMax/HeightMax. Left untouched when the camera has neither.
+        bool readRemoteSensor(EGrabber<CallbackOnDemand> &g, int &width, int &height)
+        {
+            const char *const features[2][2] = {{"SensorWidth", "SensorHeight"}, {"WidthMax", "HeightMax"}};
+            for (const auto &pair : features)
+            {
+                try
+                {
+                    const int w = static_cast<int>(g.getInteger<RemoteModule>(pair[0]));
+                    const int h = static_cast<int>(g.getInteger<RemoteModule>(pair[1]));
+                    if (w > 0 && h > 0)
+                    {
+                        width = w;
+                        height = h;
+                        return true;
+                    }
+                }
+                catch (const std::exception &)
+                {
+                }
+            }
+            return false;
+        }
+
         // Offsets first to 0 so a wider/taller window fits, then the size, then
         // the offsets (the order the GenICam bounds require).
         void writeRemoteWindow(EGrabber<CallbackOnDemand> &g, const ::camera::common::CameraWindow &w)
@@ -382,6 +407,7 @@ namespace backend::services
                 report->connectedVendor = remoteString(g, "DeviceVendorName");
                 report->connectedModel = remoteString(g, "DeviceModelName");
                 report->scriptWindowKnown = readRemoteWindow(g, report->scriptWindow);
+                readRemoteSensor(g, report->sensorWidth, report->sensorHeight);
             }
             if (window && report)
             {

@@ -374,6 +374,23 @@ Configuration/output-on serialize against experiment Start with `withIdleConfigu
 output-off remains possible while an experiment runs unless coordinated live view owns
 the generator. Status preserves that ownership so manual controls cannot steal it.
 
+Frame delivery mode (ABI next (#895, set at merge), #863 CONNECT-019/020): `fetch_frame_delivery_mode` reads
+`{valid, mode, active_mode, confirmed, capturing}` (open to every client) and
+`set_frame_delivery_mode(mode)` (`everyFrame` | `latestFrame`; controller only) sets the capture service's
+configuration, answering `{ok, mode, applies_at_next_start, message}`. A running capture is never restarted:
+the change applies at the next start, as Qt's Connect combo. Refused during an experiment and for an unknown
+mode. The applied-config provenance (`camera.frame_delivery_mode`) follows, so a run's method records the
+mode and says the profile was modified after apply; the saved profile is never rewritten (its revision pins
+the startup restore). A configuration apply sets the mode from the document (missing = everyFrame).
+`select_hardware_camera` is refused while a capture runs or an experiment is Starting/Active/Stopping, like
+`select_mindvision_camera`; `configure_mock_camera` is refused by the facade under the same rule
+(`experimentHoldsCamera`). `configure_mock_fps(frameDir, fps, loopFiles)` (ABI next (#896, set at merge), #863 CONNECT-016) configures
+the mock by frame rate as Qt's dialog: 1 to 10000 fps, interval `round(1e6 / fps)` whole microseconds (5000 fps =
+200 us), where `configure_mock`'s millisecond field floors at 1 ms; a rate outside the range is refused in the
+command layer and clamped by the facade. `stop_capture` is refused while an experiment is Starting, Active or
+Stopping (CONNECT-038) and answers `ok: false` with the camera's message when the device teardown was not
+confirmed (`ShutdownFailed` of this session, CONNECT-040); the capture is stopped all the same.
+
 `startup_discovery_run(start|camera|nanopositioner)` schedules the shared startup policy;
 `startup_discovery_status` drains its queued completion actions on the serialized bridge
 caller before reporting running flags, selected state and bounded per-job errors. The
@@ -519,6 +536,51 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
+
+## ABI next (#892, set at merge): the eGrabber camera window (#863, #846)
+
+Additive over ABI 44. An eGrabber camera has an Overview like the Qt app's: the full-sensor
+Overview script, then the Experiment script followed by the applied profile's `camera.window`
+([[../services/CameraControlService]], `AppBackend::applyCameraScriptFromFile`'s roles, #833).
+Three functions and additive geometry members; contract `camera_alignment`.
+
+- `apply_camera_script_with_role(script_path, overview)`: `CameraCommand.cameraScriptOverview` ->
+  `AppBackend::CameraScriptRole`. `apply_camera_script` keeps meaning Experiment. Same Rust guards
+  (stopped camera, idle experiment); a CONTROL command on the server.
+- `save_camera_window(script_path, x, y, w, h) -> JSON`: `BackendFacade::saveCameraWindowJson` ->
+  `saveEgrabberWindow` (`CameraWindowSave.cpp`): the window is snapped as Qt snaps it
+  (`snapEgrabberWindow`), the Experiment script's `Width`/`Height`/`OffsetX`/`OffsetY` lines are
+  rewritten in place (`rewriteScriptCameraWindow`, nothing is ever added), and, only when the
+  applied configuration already has a `camera.window`, `profileStoreSaveCameraWindow` takes it
+  into the in-memory acquisition profile and, for a local profile whose files are still the ones it
+  applied, rewrites its `config.json` and moves the revision the store remembers
+  (`.selection.json`, `startup_configuration.json`, the runtime `profile_selection`) so a restart
+  restores the edited window; the revision also follows when only the profile's own script changed
+  (the profile has no `camera.window`), and the recorded configuration text shows the new window. A
+  changed profile, a central method or a hand-applied config keeps its file (`profile.reason`). A CONTROL command; refused during an experiment or raw recording.
+- `fetch_recording_capacity(x?, y?, w?, h?) -> JSON`: `ExperimentCoordinator::recordingCapacity` as
+  JSON (window, rate, save stream, buffer, destination rate, the gates `camera.window`,
+  `camera.rate`, `storage.buffer`, `storage.throughput`, `busy`). A read for every client.
+- `fetch_camera_geometry` for an eGrabber hardware camera: `supported`, `camera: "egrabber"`,
+  `overview` = the last script applied was the Overview one, increments X 16 / Y 4 / W 16 / H 4,
+  min 64x16, the sensor the camera reported (`SensorWidth`/`SensorHeight`, else `WidthMax`/
+  `HeightMax`, read in `CameraControlService::applyScriptToDevice`) else Qt's 1920x1080, `roi` =
+  the profile's window (`window_source` "profile"), else the Experiment script's ("script"), else
+  none; plus `script_role`, `experiment_script_path`, `window_apply` (the last Experiment apply:
+  script window, profile window, result, refusal, error, a sentence) and, for MindVision,
+  `illuminated_live` and `profile_error`. `set_camera_overview` and `save_camera_roi` stay
+  MindVision / Aravis. #863 A2 adds, without an ABI change, `flip_horizontal` / `flip_vertical` (the
+  MindVision profile's ISP mirroring, read by `readMindVisionOverviewProfile`) and `capture_fps`
+  (`CaptureStats::lastFrameRate`, every camera; 0 while stopped).
+- `camera_document` has a fourth kind, `overview` (#863 A2): a `.js` document like `js` whose `default` is the
+  bundled `resources/defaults/overviewConfig.js` (the full-sensor Overview script), and whose `create` also
+  makes a missing folder (Qt `ensureDefaultsFile` does). Like `js` it is desktop only: the server refuses it.
+- **Tests:** `contract.rs` `egrabber_window_functions_are_described`,
+  `camera_script_roles_without_a_hardware_camera`, `save_camera_window_end_to_end` (create and
+  apply a profile, save, files, restart restore), `recording_capacity_through_the_bridge`;
+  `dispatch.rs` `egrabber_window_commands_through_dispatch`; the server's
+  `egrabber_window_edits_are_control_only_but_the_capacity_is_not`; C++ `backend.camera_window_profile`
+  (snap, rewrite, choose) and `backend.camera_window_save` (geometry, save, revision follow, restart).
 
 ## ABI 45: Wafer Grid on the Overview (CONNECT-054)
 
@@ -827,7 +889,7 @@ Run was fixed at 5 kHz / 150 us. It is now set the way a MIB camera is set by it
 `{"schema": "pz7035-camera/1", "run": {"frame_rate_hz": 1000..5000, "exposure_us": "auto" | number}}`: `schema` and `run.frame_rate_hz` are required, the rate is a whole number of frames per second (default 5000, the bundled document); `"auto"` (also the default when `exposure_us` is absent) starts the exposure about 50 us after XVS (SHS 64 at HMAX 58, SHS 32 at HMAX 116): 150 us at 5000 fps exactly, 949.87 us at 1000 fps; a number of us is rounded to whole lines and must start the exposure inside the LED strobe pulse [7, 67] us after XVS. Unknown and duplicate keys are errors; any strobe/LED/delay/width key is refused by name (the strobe is Service-only); the file is at most 64 KiB and an error never echoes the file bytes (a parse error gives only the byte offset).
 - `check_pz_camera_document {text}` (a read, open to every client): JSON `{ok, error?}` and, when valid, the timing the document gives: `fps`, `exposure_mode` (auto | manual), `exposure_us`, `hmax` 58, `vmax`, `shs`, `exposure_lines`, `actual_fps`, `exposure_start_us` / `exposure_end_us` / `strobe_start_us` / `strobe_end_us` (us after XVS), `strobe_overlaps`, `strobe_straddles_exposure_start`, `strobe_warning`, `allowed_exposure_min_us` / `allowed_exposure_max_us`, `qualified`. No side effects; the UI calls it as the document is edited.
 - `apply_pz_camera_document {path, acknowledgeDiscardRing?}` (a control command): the path must be a regular `.json` file (no symlink) directly inside `<data>/camera/` (resolved with `weakly_canonical`) of at most 64 KiB; it validates exactly as the check does, stores the setting in the Aravis profile (`<data>/config/aravis-camera.json`: `experiment.frame_rate_hz`, `exposure_us` (what the producer is told), `hmax` (58 or 116), `exposure_auto`, `exposure_setting`) and, when the instrument is in Run, re-enters Run at the same window so it takes effect at once; otherwise it applies at the next Run entry. When the applied and configured setting already equal the document, nothing restarts ("already applied; the camera was not restarted"). Refused during an experiment or recording (before the file is read), and in a Run stopped to review its ring unless `acknowledgeDiscardRing` (the re-entry discards the buffered frames; the server enforces it like `experiment_start`). Outside Run nothing is discarded and no acknowledgement is needed.
-- `camera_document` is a control command on the remote server, so a read-only client can no longer read or write files through it, and on the server only the `pz7035` kind exists, confined to `<data>/camera/` (`camera_document_confined`: the `js`/`json` kinds are refused, no `..`, parent equals the canonical base, a file symlink is refused; a symlinked `<data>/camera` directory itself is followed). The Tauri desktop command keeps all three kinds and any path. Check-then-use is not atomic (no openat2): a residual race for a client that is already a controller. `apply_pz_camera_document` bounds the read itself to 64 KiB + 1.
+- `camera_document` is a control command on the remote server, so a read-only client can no longer read or write files through it, and on the server only the `pz7035` kind exists, confined to `<data>/camera/` (`camera_document_confined`: the `js`/`json` kinds are refused, no `..`, parent equals the canonical base, a file symlink is refused; a symlinked `<data>/camera` directory itself is followed). The Tauri desktop command keeps all four kinds (`js`, `json`, `pz7035`, `overview`) and any path. Check-then-use is not atomic (no openat2): a residual race for a client that is already a controller. `apply_pz_camera_document` bounds the read itself to 64 KiB + 1.
 - `fetch_run_fps` (a read): the limits (`min_fps` 1000, `max_fps` 5000, `default_fps` 5000, `qualified_fps` 5000), the configured setting's timing (the fields above), `qualified` (5000 fps with the auto exposure only), `in_run`, `applied_fps` / `applied_exposure_us` (the last Run entry; null outside Run), `pending` (the camera runs at another setting than the configured one) and `held`.
 **Timing (`include/backend/pz/PzRunTiming.h`):** the Run line period follows the producer's own rule (`runHmaxFor`, `pz::producerHmax`; the producer is not forced): HMAX 58 only above about 2655.9 fps (clock / (116 x (96 + 145))), HMAX 116 at or below it, so 1000 to 2655 fps run at HMAX 116 and 2656 to 5000 at HMAX 58. The producer computes VMAX = floor(74.25 MHz / (HMAX x fps)), lines = round(exposure x 74.25 / HMAX) and SHS = VMAX - lines (SHS_MIN 4); `experiment.hmax` is staged so the setting and the producer agree (an older producer without `PzHmax` fails with "The GenTL producer has no PzHmax; deploy the producer with PzHmax for this mode"). The strobe is the qualified 7 us delay / 60 us width, XVS-referenced, unchanged: the range starts at 1000 fps because the LED driver strobes reliably only at about 1 kHz or faster (pz7035 `docs/LED_STROBE.md`).
 No PL, firmware or producer change. The only qualified setting is 5000 fps with the auto exposure; the UI keeps "5,000 fps is the qualified rate; others are not yet validated on the board." Receiver line errors (measured by the producer notes on 2026-10-01 *after* the lane-clock fixes: HMAX 58 with a long VMAX gave millions of line errors per second, which is why HMAX 116 is used at low rates) have not been qualified in either regime at a rate other than 5 kHz, and the 1 kHz slot records `PzReceiverLineErrors`.

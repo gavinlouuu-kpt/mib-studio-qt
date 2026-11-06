@@ -243,6 +243,10 @@ export interface CameraDiscovery {
   job_id: string;
   cameras: DiscoveredCamera[];
   framegrabbers: DiscoveredFramegrabber[];
+  /** The job's DISCOVERY_JOB_STATES value (Cancelled and Failed are told apart from an empty result). #863 CONNECT-007 */
+  state: number;
+  /** The coverage gaps the scan reported (provider, DISCOVERY_ERROR_KINDS kind); empty for a clean scan. */
+  errors: DiscoveryError[];
 }
 
 /** Central profile registry (bridge schema v25, #398). Integers are contract
@@ -703,6 +707,25 @@ export interface InstrumentStatus {
   latency?: { last_us: number; max_us: number; over_budget: number; frames: number };
 }
 
+/** A camera window in sensor coordinates. */
+export interface WindowRect {x: number; y: number; width: number; height: number}
+
+/** The last Experiment script apply (ABI next (#892, set at merge)): what the script left in the camera, what the profile
+ *  asked for, what the camera has now, and why the profile's window was refused or rejected. */
+export interface CameraWindowApply {
+  sequence: number;
+  requested: boolean;
+  applied: boolean;
+  script_window: WindowRect | null;
+  profile_window: WindowRect | null;
+  result_window: WindowRect | null;
+  camera: string;
+  refusal: string;
+  error: string;
+  /** One sentence for the operator, e.g. "the profile's camera window 1216x208 at (368, 616) is applied instead of the script's ...". */
+  text: string;
+}
+
 /** Camera & Alignment geometry (ABI 20, `fetch_camera_geometry`). Sensor coordinates. */
 export interface CameraGeometry {
   supported: boolean;
@@ -717,6 +740,24 @@ export interface CameraGeometry {
   offset_y_increment: number;
   min_width: number;
   min_height: number;
+  /** eGrabber (ABI next (#892, set at merge), #863): where `roi` comes from. The applied profile's camera.window wins, else
+   *  the Experiment script's Width/Height/OffsetX/OffsetY, else there is none. Absent before ABI next (#892, set at merge). */
+  window_source?: "profile" | "script" | "none";
+  /** eGrabber: the last camera script applied was the Overview one, the Experiment one, or none. */
+  script_role?: "overview" | "experiment" | "";
+  /** eGrabber: the Experiment script last applied or saved a window into. */
+  experiment_script_path?: string;
+  /** eGrabber: the last Experiment script apply; null when none yet. */
+  window_apply?: CameraWindowApply | null;
+  /** MindVision: the saved profile is illuminated-live (no auto-start on Overview), and why it cannot be read. */
+  illuminated_live?: boolean;
+  profile_error?: string;
+  /** MindVision (#863 A2): the profile's ISP mirroring. The stored `roi` stays in sensor coordinates; the Overview box and
+   *  the drag direction are mirrored to match the delivered image. */
+  flip_horizontal?: boolean;
+  flip_vertical?: boolean;
+  /** The camera's measured frame rate (CaptureStats::lastFrameRate), 0 while stopped. Absent before #863 A2. */
+  capture_fps?: number;
   /** Last camera read-back (Aravis): applied window, sensor rate and the delivered rate. */
   session: {
     overview?: boolean;
@@ -731,6 +772,42 @@ export interface CameraGeometry {
     delivered_limit?: string;
     preview_rate_hz?: number;
   };
+}
+
+/** `save_camera_window` (ABI next (#892, set at merge), #863): the eGrabber window as the backend snapped and saved it. */
+export interface SaveCameraWindowReply {
+  ok: boolean;
+  error: string;
+  requested: WindowRect;
+  window: WindowRect;
+  snapped: boolean;
+  sensor_width: number;
+  sensor_height: number;
+  script: {path: string; updated: boolean; changed: boolean; missing: string[]};
+  profile: {config_has_window: boolean; local_profile: boolean; name: string; memory_updated: boolean; config_updated: boolean; reason: string};
+}
+
+/** One capacity gate (`fetch_recording_capacity`); `status` is a READINESS_GATE_STATUSES value. */
+export interface CapacityGate {id: string; status: number; status_name: string; reason: string; remediation: string; detail: string}
+
+/** `fetch_recording_capacity` (ABI next (#892, set at merge), #863): the next run's window, rate, save stream, buffer, destination rate and gates. */
+export interface RecordingCapacity {
+  busy: boolean;
+  known: boolean;
+  planned: boolean;
+  status: "ok" | "warning" | "blocked" | "unknown";
+  gates: CapacityGate[];
+  window?: {width: number; height: number};
+  images_per_frame?: number;
+  bytes_per_frame?: number;
+  bytes_per_frame_text?: string;
+  requested_fps?: number;
+  requested_fps_source?: string;
+  max_fps?: number;
+  invalid_sampling_rate?: number;
+  save_stream?: {every_frame_bytes_per_second: number; every_frame_text: string; floor_fps: number; floor_bytes_per_second: number; floor_text: string};
+  buffer?: {frames: number; bytes: number; bytes_text: string; seconds: number; source: string; summary: string; clamped_by_ram: boolean};
+  destination?: {bytes_per_second: number; text: string; note: string};
 }
 
 /**
@@ -811,6 +888,9 @@ export const bridge = {
   init: (dataDir: string) => invoke<boolean>("init", { dataDir }),
   configureMock: (frameDir: string, frameIntervalMs: number, loopFiles: boolean) =>
     sourceMutation("configure_mock", { frameDir, frameIntervalMs, loopFiles }),
+  // The mock camera by frame rate (bridge ABI next (#896, set at merge), #863): fps 1 to 10000, as Qt's Configure Mock dialog.
+  configureMockFps: (frameDir: string, fps: number, loopFiles: boolean) =>
+    sourceMutation("configure_mock_fps", { frameDir, fps, loopFiles }),
   startCapture: () => sourceMutation("start_capture"),
   stopCapture: () => sourceMutation("stop_capture"),
   seekLatest: () => invokeCommand("seek_latest"),
@@ -879,6 +959,9 @@ export const bridge = {
   startupDiscoverySetPreference: (preference: StartupPreference) => invoke<{accepted: boolean; message: string; preference?: StartupPreference}>("startup_discovery_set_preference", {json: JSON.stringify(preference)}),
   startupDiscoveryRun: (action: string) => invoke<{accepted: boolean; message: string}>("startup_discovery_run", {action}),
   startupDiscoveryStatus: () => invoke<StartupDiscoveryStatus>("startup_discovery_status"),
+  // Frame delivery mode (bridge ABI next (#895, set at merge), #863): Every Frame / Latest Frame, applied at the next capture start.
+  fetchFrameDeliveryMode: () => invoke<FrameDeliveryModeStatus>("fetch_frame_delivery_mode"),
+  setFrameDeliveryMode: (mode: FrameDeliveryMode) => invoke<FrameDeliveryModeSet>("set_frame_delivery_mode", { mode }),
   pulseGeneratorCommand: (request: Record<string, unknown>) => invokeCommand("pulse_generator_command", {json: JSON.stringify(request)}),
   pulseGeneratorStatus: () => invoke<PulseGeneratorStatus>("pulse_generator_status"),
   autofocusConnectEndpoint: (backend: string, endpoint: string, comPort: number, baudRate: number, deviceAddress: number) =>
@@ -961,6 +1044,13 @@ export const bridge = {
   setCameraOverview: (overview: boolean) => sourceMutation("set_camera_overview", {overview}),
   saveCameraRoi: (x: number, y: number, w: number, h: number) => invokeCommand("save_camera_roi", {x, y, w, h}),
   fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
+  // eGrabber camera window (ABI next (#892, set at merge), #863). The backend snaps the window, rewrites the Experiment script's
+  // Width/Height/OffsetX/OffsetY and updates the applied profile; nothing is sent to the camera.
+  saveCameraWindow: (scriptPath: string, x: number, y: number, w: number, h: number) =>
+    invoke<SaveCameraWindowReply>("save_camera_window", {scriptPath, x, y, w, h}),
+  // The recording capacity of the next run; `planned` is the window being placed on the Overview.
+  fetchRecordingCapacity: (planned?: WindowRect) =>
+    invoke<RecordingCapacity>("fetch_recording_capacity", planned ? {x: planned.x, y: planned.y, w: planned.width, h: planned.height} : {}),
   // Wafer Grid (ABI 45, CONNECT-054): dot-grid localization of the live frame, Overview only. Enabling
   // loads the bundled design registry (`message` is the reason when that fails); the Overview pauses
   // decoding whenever it is not on screen; the pose poll sends the last `sequence` it copied.
@@ -1053,6 +1143,10 @@ export const bridge = {
     sourceMutation("select_mindvision_camera", { cameraIndex, label, configPath }),
   applyCameraScript: (scriptPath: string) =>
     sourceMutation("apply_camera_script", { scriptPath }),
+  // ABI next (#892, set at merge) (#863): `overview` true = the Overview script as is (full sensor); false = the Experiment
+  // script, followed by the applied profile's camera.window. apply_camera_script means Experiment.
+  applyCameraScriptWithRole: (scriptPath: string, overview: boolean) =>
+    sourceMutation("apply_camera_script_with_role", { scriptPath, overview }),
   resetHardwareCamera: () => sourceMutation("reset_hardware_camera"),
   // Monitoring + sorter trigger (bridge schema v6, BE-5). Monitoring is
   // visibility-gated: enable only while the Monitoring view is shown.
@@ -1129,8 +1223,13 @@ export function mono8ToImageData(
 
 export interface PulseGeneratorStatus {valid: boolean; connected: boolean; owned: boolean; error: string; port: string; baud: number; address: number; channels: Array<{frequency_hz: number; duty_percent: number; output_enabled: boolean}>}
 
+export type FrameDeliveryMode = "everyFrame" | "latestFrame";
+/** `mode` is the configuration the next capture start uses; `active_mode` what the camera confirmed while one runs. */
+export interface FrameDeliveryModeStatus {valid: boolean; mode: FrameDeliveryMode; active_mode: FrameDeliveryMode; confirmed: boolean; capturing: boolean}
+export interface FrameDeliveryModeSet {ok: boolean; message: string; mode?: FrameDeliveryMode; applies_at_next_start?: boolean}
+
 export interface StartupDiscoveryStatus {preference?: StartupPreference; valid: boolean; camera_running: boolean; nanopositioner_running: boolean; camera_configured: boolean; nanopositioner_connected: boolean; camera: StartupJob; nanopositioner: StartupJob}
-interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}
+export interface StartupJob {job_id: string; state?: number; complete?: boolean; candidate_count?: number; errors: string[]}
 
 export interface BackgroundCalibrationStatus {valid: boolean; state: string; operation_generation: string; frozen_config_version: string; attempted: number; accepted: number; rejected_non_empty: number; rejected_processing_failed: number; published_background_generation: string; published_sha256: string; message: string}
 

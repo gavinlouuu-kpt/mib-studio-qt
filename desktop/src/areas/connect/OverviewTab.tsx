@@ -1,19 +1,25 @@
 // Connect and Overview (epic #863): the Overview (Camera & Alignment) stage: the camera window on the
-// full sensor, the live canvas and the UX-4 quality gates. Moved from App.tsx without change (#869 wave 0).
-import { rateSummary, RUN_WINDOW } from "../../cameraAlignment";
-import { CameraScriptControls } from "../../cameraScript";
+// full sensor, the live canvas, the UX-4 quality gates and the Overview's own camera script (overviewConfig.js).
+// Moved from App.tsx (#869 wave 0).
+import { egrabberWindowLine, rateSummary, RUN_WINDOW, windowInputLimits } from "../../cameraAlignment";
 import { RunWindowNotice } from "../../components/RunWindowNotice";
 import { ViewerGate, viewerReason } from "../../components/ViewerGate";
 import { GATE_STATUS_LABEL } from "../../quality";
 import { useStudio } from "../../studio/StudioContext";
+import { CameraStageNotice } from "./CameraStageNotice";
+import { cameraModeLead, mindVisionModeLabel } from "./overviewInfo";
+import { OverviewScriptEditor } from "./OverviewScriptEditor";
+import { RecordingCapacityPanel } from "./RecordingCapacityPanel";
+import { ROI_OVERLAY_TITLE, roiOverlayLabel } from "./roiOverlay";
 import { WaferGridNotice, WaferGridToggle } from "./WaferGridControls";
 
 export function OverviewTab() {
   const {
     instrumentModes, cameraWin, modeError, setTab, setModeRetry, runFrozen, ring, resumeFromBanner, experimentRequestBusy,
-    viewerOnly, setFitWindow, fitWindow, cameraGeometry, cameraWindow, expActive, setCameraWindow, saveCameraWindow, ready,
+    viewerOnly, setFitWindow, fitWindow, cameraGeometry, cameraWindow, expActive, saveCameraWindow, ready, capacity,
     hostProcessing, roiFields, setRoiFields, onApplyRoi, lastMeta, liveCanvasRef, onWindowPointerDown, onWindowPointerMove,
-    onWindowPointerUp, quality, qualityInput, alignBestRef, setAlignImage, caps, cameraScript,
+    onWindowPointerUp, quality, qualityInput, alignBestRef, setAlignImage, caps, overviewScript, roiOverlay, toggleRoiOverlay,
+    previewFpsLimit,
   } = useStudio();
   return (
     <>
@@ -29,6 +35,10 @@ export function OverviewTab() {
       )}
       <div className="toolbar">
         <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
+        {/* Qt's ROI Overlay toggle: off until a camera is connected; the PZ7035 always shows its Run window. */}
+        {cameraGeometry?.supported && !instrumentModes && (
+          <button onClick={toggleRoiOverlay} aria-pressed={roiOverlay} title={ROI_OVERLAY_TITLE}>{roiOverlayLabel(roiOverlay)}</button>
+        )}
 
         <ViewerGate>{cameraGeometry?.supported ? (
           <>
@@ -40,8 +50,11 @@ export function OverviewTab() {
                   type="number"
                   aria-label={`Camera window ${key}`}
                   value={cameraWindow ? cameraWindow[key] : 0}
+                  {...windowInputLimits(cameraGeometry, key, cameraWindow)}
                   disabled={!cameraWindow || expActive}
-                  onChange={(e) => setCameraWindow((w) => (w ? {...w, [key]: Number(e.target.value) || 0} : w))}
+                  onChange={(e) => cameraWin.edit(key, Number(e.target.value) || 0)}
+                  onBlur={cameraWin.flush}
+                  onKeyDown={(e) => { if (e.key === "Enter") cameraWin.flush(); }}
                 />
                 {key === "width" || key === "height" ? " px" : ""}
               </label>
@@ -50,7 +63,7 @@ export function OverviewTab() {
               className="btn"
               onClick={() => cameraWindow && void saveCameraWindow(cameraWindow)}
               disabled={!ready || expActive || !cameraWindow || cameraGeometry.sensor_width === 0}
-              title="Save the experiment window; Experiment uses it"
+              title={cameraGeometry.camera === "egrabber" ? "Save the window now (it is also saved a moment after each change)" : "Save the experiment window; Experiment uses it"}
             >
               Save camera ROI
             </button>
@@ -76,17 +89,28 @@ export function OverviewTab() {
         ) : null}</ViewerGate>
         <WaferGridToggle />
       </div>
+      <CameraStageNotice stage="overview" />
       <WaferGridNotice />
       {cameraGeometry?.supported && (
         <div className="camera-alignment-status" aria-label="Camera mode">
-          <strong>
-            {cameraGeometry.overview
-              ? `Full sensor ${cameraGeometry.sensor_width || "?"}×${cameraGeometry.sensor_height || "?"}`
-              : "Experiment window"}
-          </strong>
-          {cameraGeometry.overview && " — drag the yellow box or edit X/Y/W/H, then save; Experiment uses it."}
-          {cameraGeometry.overview && instrumentModes && ` The run window is ${RUN_WINDOW.width}×${RUN_WINDOW.height}: x a multiple of ${RUN_WINDOW.xStep}, y a multiple of ${RUN_WINDOW.yStep} (the producer's offset check).`}
-          {rateSummary(cameraGeometry) && <span> {rateSummary(cameraGeometry)}</span>}
+          {cameraGeometry.camera === "mindvision" ? (
+            // Qt's MindVision mode label (CONNECT-055): the mode, the camera's measured rate, the display limit.
+            <>
+              <strong data-testid="mindvision-mode-label">{mindVisionModeLabel(cameraGeometry, previewFpsLimit)}</strong>
+              {cameraGeometry.sensor_width > 0 && ` Sensor ${cameraGeometry.sensor_width}×${cameraGeometry.sensor_height}.`}
+            </>
+          ) : (
+            <>
+              <strong>{cameraModeLead(cameraGeometry)}</strong>
+              {cameraGeometry.overview && cameraGeometry.camera !== "egrabber" && " — drag the yellow box or edit X/Y/W/H, then save; Experiment uses it."}
+              {cameraGeometry.camera === "egrabber" && (
+                <span>{cameraGeometry.overview ? " — drag the yellow box or edit W/H: each change is snapped and saved to the Experiment script (and to the profile's camera.window when it has one). " : " — "}{egrabberWindowLine(cameraGeometry)}</span>
+              )}
+              {cameraGeometry.overview && instrumentModes && ` The run window is ${RUN_WINDOW.width}×${RUN_WINDOW.height}: x a multiple of ${RUN_WINDOW.xStep}, y a multiple of ${RUN_WINDOW.yStep} (the producer's offset check).`}
+              {rateSummary(cameraGeometry) && <span> {rateSummary(cameraGeometry)}</span>}
+            </>
+          )}
+          {cameraGeometry.overview && !roiOverlay && !instrumentModes && <span data-testid="roi-overlay-hint"> The ROI box is hidden: switch ROI Overlay on to see and drag it.</span>}
         </div>
       )}
       <div className="canvas-wrap">
@@ -100,6 +124,9 @@ export function OverviewTab() {
           onPointerCancel={onWindowPointerUp}
         />
       </div>
+
+      {/* ---- Recording capacity of the next run (#833): the backend's gates, polled once a second ---- */}
+      {hostProcessing && !instrumentModes && <RecordingCapacityPanel view={capacity} />}
 
       {/* ---- UX-4 image quality gates ---- */}
       <div className="quality-panel" aria-label="Image quality gates">
@@ -135,7 +162,8 @@ export function OverviewTab() {
         </div>
       </div>
 
-      {caps.egrabber_script && <ViewerGate><CameraScriptControls model={cameraScript} /></ViewerGate>}
+      {/* The Overview's own full-sensor camera script (Qt's script area under the canvas); hidden for a MindVision camera. */}
+      {caps.egrabber_script && <ViewerGate><OverviewScriptEditor model={overviewScript} /></ViewerGate>}
       <p className="mono">
         {lastMeta
           ? `#${lastMeta.frame_index} ${lastMeta.width}×${lastMeta.height} stride=${lastMeta.stride_bytes} bytes=${lastMeta.byte_len}`

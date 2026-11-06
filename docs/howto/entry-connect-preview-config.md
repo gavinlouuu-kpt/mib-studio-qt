@@ -23,6 +23,7 @@ Usage
 
 - App config (config.json): edit and Save.
 - Camera script (egrabberConfig.js): edit, Save, and Apply to Camera. The backend stops capture if running, applies the script, issues `AcquisitionStop`, and remains stopped.
+- Overview camera script (overviewConfig.js, the full-sensor script the Overview applies): edited on the Overview tab itself, under the live image (Reset, Save, Apply to Camera, Browse..., Clear). It is hidden for a MindVision camera. In the desktop (Tauri) app its default file is `overviewConfig.js` beside the active profile's `config.json`, else in the app config folder, and "Saved." / "Applied to camera. Capture remains stopped." appear as a line under the editor.
 
 Notes
 

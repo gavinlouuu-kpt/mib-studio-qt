@@ -35,6 +35,9 @@ std::string cellName(std::uint64_t frameIndex, int objectId)
 // The plain reasons a cell has no image (bridge-contract.json monitoring_cells.no_image_reasons).
 constexpr const char* kNoImageResultsOnly =
     "no image: this instrument reports cell measurements without images";
+constexpr const char* kNoImageReleased =
+    "no image: the monitoring buffer keeps images for its newest rows only (memory budget); "
+    "the measurements are kept";
 constexpr const char* kNoImageFormat = "no image: the frame's pixel format is not 8- or 16-bit";
 // The capture change of a run start (beginRun).
 constexpr const char* kRunStarted = "a run started";
@@ -125,7 +128,7 @@ MonitoringCellStore::Entry MonitoringCellStore::copyCandidate(const MonitoringCe
     e.info.key = c.key;
     e.info.metrics = c.metrics;
     if (c.image.empty()) {
-        e.info.noImageReason = noImageReason;
+        e.info.noImageReason = c.imageReleased ? kNoImageReleased : noImageReason;
         return e;
     }
     const cv::Mat gray = toMono8(c.image);
@@ -733,7 +736,7 @@ private:
         return MonitoringCellCandidate{
             {tag.runGeneration, f.index, f.validation.objectId, tag.captureEpoch},
             monitoringCellMetrics(f.validation, f.timestampNs, {tag.geometryOriginX, tag.geometryOriginY}),
-            f.originalImage, f.processedImage};
+            f.originalImage, f.processedImage, tag.imagesReleased};
     }
 
     ProcessingService& processing_;
