@@ -8,8 +8,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -30,6 +32,20 @@ public:
     std::atomic<uint64_t> maskCalls{0};
     std::atomic<uint64_t> injectedFailures{0};
 
+    // Gate (#857): the empty check numbered holdCall (1-based) blocks until release(n) with
+    // n >= that number, so a test can stop the realtime loop on a chosen frame while it pushes
+    // more. heldCall is the number of the call waiting at the gate (0 = none). 0 = no gate.
+    std::atomic<uint64_t> holdCall{0};
+    std::atomic<uint64_t> heldCall{0};
+    void release(uint64_t throughCall)
+    {
+        {
+            std::scoped_lock lk(gateMutex_);
+            releasedThrough_ = throughCall;
+        }
+        gateCv_.notify_all();
+    }
+
     const backend::processing::ProcessingCoreIdentity& identity() const noexcept override
     {
         return inner_->identity();
@@ -41,6 +57,12 @@ public:
                  std::string* error) override
     {
         const uint64_t n = emptyCalls.fetch_add(1) + 1;
+        if (n == holdCall.load()) {
+            std::unique_lock lk(gateMutex_);
+            heldCall.store(n);
+            gateCv_.wait(lk, [&] { return releasedThrough_ >= n; });
+            heldCall.store(0);
+        }
         if (delayMs.load() > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delayMs.load()));
         const int period = failPeriod.load();
         const auto m = static_cast<Mode>(mode.load());
@@ -79,6 +101,9 @@ public:
 
 private:
     std::shared_ptr<backend::processing::IProcessingKernel> inner_;
+    std::mutex gateMutex_;
+    std::condition_variable gateCv_;
+    uint64_t releasedThrough_{0};
 };
 
 } // namespace mib::test
