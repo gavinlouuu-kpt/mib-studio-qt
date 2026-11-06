@@ -1,9 +1,9 @@
 import {useEffect, useRef, useState} from 'react';
 import {bridge, type StartupDiscoveryStatus} from '../bridge';
-import {loadStartupPreference, readAutoSelect, resolveAutoSelect, saveAutoSelect, saveStartupPreference, validateStartupPreference, type StartupPreference} from '../startupPreference';
+import {loadStartupPreference, saveStartupPreference, validateStartupPreference, type StartupPreference} from '../startupPreference';
+const preferenceKey = 'mib.startup.auto-select-hardware';
 export function StartupDiscoveryControls({ready, experimentActive, append, onSelectionChanged}: {ready: boolean; experimentActive: boolean; append: (message: string) => void; onSelectionChanged?: () => void}) {
-  // On unless the operator opted out (#852): Qt always selects the unique identified camera at startup.
-  const [auto, setAuto] = useState(() => resolveAutoSelect(readAutoSelect(localStorage)));
+  const [auto, setAuto] = useState(() => {try {return localStorage.getItem(preferenceKey) !== 'false';} catch {return true;}}); // on unless the operator opted out (HW-037, D8: Qt starts discovery unconditionally)
   const [remembered, setRemembered] = useState(() => loadStartupPreference(localStorage));
   const [backend, setBackend] = useState(remembered.preference.backend), [endpoint, setEndpoint] = useState(remembered.preference.endpoint);
   const [port, setPort] = useState(String(remembered.preference.com_port)), [baud, setBaud] = useState(String(remembered.preference.baud)), [address, setAddress] = useState(String(remembered.preference.address));
@@ -79,7 +79,7 @@ export function StartupDiscoveryControls({ready, experimentActive, append, onSel
       <button disabled={disabled} onClick={() => void save()}>Save startup preference</button>
       <p>Save before auto-selection. Editing fields alone never connects or changes the active scan.</p>
     </details>
-    <label><input type="checkbox" checked={auto} onChange={e => {setAuto(e.target.checked); if (!saveAutoSelect(localStorage, e.target.checked)) setMessage('Startup preference could not be saved.');}} />Auto-select hardware on next startup</label>
+    <label><input type="checkbox" checked={auto} onChange={e => {setAuto(e.target.checked); try {localStorage.setItem(preferenceKey, String(e.target.checked));} catch {setMessage('Startup preference could not be saved.');}}} />Auto-select hardware on next startup</label>
     <button disabled={disabled || !preferenceReady} onClick={() => void run('start')}>Auto-select hardware now</button>
     <button disabled={disabled || !preferenceReady} onClick={() => void run('camera')}>Retry camera selection</button>
     <button disabled={disabled || !preferenceReady} onClick={() => void run('nanopositioner')}>Retry nanopositioner selection</button>

@@ -128,7 +128,7 @@ fn abi_version_is_stable() {
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
     // v45 (#863) fetch_frame_delivery_mode / set_frame_delivery_mode: the Connect stage's delivery mode
     // (Every Frame / Latest Frame), applied at the next capture start.
-    assert_eq!(ffi::bridge_abi_version(), 45);
+    assert_eq!(ffi::bridge_abi_version(), 44);
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.
