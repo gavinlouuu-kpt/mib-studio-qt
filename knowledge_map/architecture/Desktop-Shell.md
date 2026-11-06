@@ -1215,8 +1215,11 @@ stage stays hidden on the PZ7035.
   `hardwarePanelHiddenForSpace`, `hardwarePanelWidth`, `hardwarePanelBounds`, `hardwarePanelNotice` and the actions
   `toggleHardwarePanel` (the shell's menu item and Ctrl+Shift+H, SHELL-012 #862, call this), `setHardwarePanelVisible`,
   `resizeHardwarePanel(width, commit)` and `resetHardwarePanelWidth`. The geometry is pure
-  (`areas/hardware/hardwarePanelLayout.ts`): default 360 px, preferred width 280-720 px, compact 240 px, the main
-  area keeps 560 px (Qt: 300 / 200-1000 / 160 / 640).
+  (`areas/hardware/hardwarePanelLayout.ts`): default 360 px, preferred width 280-720 px, compact 240 px (Qt: 300 /
+  200-1000 / 160), and the main area keeps Qt's own 640 px (`kWorkspaceMinWidth`), which fits the stage tab bar (584 px
+  with the usual labels, 616 px with "Needs attention" under Experiment and Review; measured in Chromium). With the
+  telemetry sidebar open the panel has its default width from a 1292 px window, narrows down to 240 px at 1172 px and
+  hides below that. (560 px, the first value, cut the Review tab off at about 1101-1300 px; #872 review.)
 - **Persistence.** Collapsed flag and preferred width go to localStorage (`mib.hardwarePanel.collapsed`, `mib.hardwarePanel.width`)
   and to the shell preferences file (`hardwarePanelCollapsed`, `hardwarePanelWidth`, BE-9; read at boot, the file wins, as for the
   left sidebar). A missing, non-numeric, non-positive or absurd width is the default; others are clamped. Preference writes

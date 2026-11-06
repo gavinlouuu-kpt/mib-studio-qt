@@ -30,7 +30,8 @@ let host: HTMLDivElement, root: Root;
 async function resizeWindow(width: number) {
   await act(async () => { Object.assign(window, { innerWidth: width }); window.dispatchEvent(new Event("resize")); });
 }
-async function mount(width = 1600) {
+// 1700 px leaves the panel its 720 px maximum (1700 - 264 - 28 - 640 = 768).
+async function mount(width = 1700) {
   Object.assign(window, { innerWidth: width });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   await act(async () => root.render(<App />));
@@ -224,13 +225,13 @@ describe("width", () => {
   });
 
   it("stops at the minimum and the maximum, and at what the main area leaves", async () => {
-    await mount(1600);
+    await mount(1700);
     const handle = $(".hw-dock-handle")!;
     await drag(handle, 1200, 100);
     expect(widthPx()).toBe(720);
     await drag(handle, 1200, 2200);
     expect(widthPx()).toBe(280);
-    await resizeWindow(1100); // 1100 - 264 (sidebar) - 28 (edge) - 560 (main) = 248 left
+    await resizeWindow(1180); // 1180 - 264 (sidebar) - 28 (edge) - 640 (main) = 248 left
     expect(widthPx()).toBe(248);
     expect(handle.getAttribute("aria-valuemax")).toBe("248");
   });
@@ -264,8 +265,8 @@ describe("narrow window (HW-042)", () => {
     await mount(1600);
     expect(widthPx()).toBe(360);
     expect(notice()).toBe("");
-    await resizeWindow(1180); // 1180 - 264 - 28 - 560 = 328
-    expect(widthPx()).toBe(328);
+    await resizeWindow(1250); // 1250 - 264 - 28 - 640 = 318
+    expect(widthPx()).toBe(318);
     expect(body().hidden).toBe(false);
     expect(notice()).toBe("");
   });
@@ -288,6 +289,16 @@ describe("narrow window (HW-042)", () => {
     expect(portField()).toBe(field);
     expect(stopPump()).toBe(stopButton);
     expect(field.value).toBe("COM42"); // the typed draft survived the hide for space
+  });
+
+  it("hides rather than leave the main area less than Qt's 640 px, which the stage tab bar needs", async () => {
+    await mount(1700);
+    await resizeWindow(1150); // 1150 - 264 - 28 - 640 = 218, below the compact 240: hidden (at 560 it squeezed the tabs)
+    expect(body().hidden).toBe(true);
+    expect(notice()).toBe(NOTICE);
+    await resizeWindow(1172); // exactly the compact width left
+    expect(body().hidden).toBe(false);
+    expect(widthPx()).toBe(240);
   });
 
   it("does not store the automatic hide as the operator's choice", async () => {
@@ -330,8 +341,8 @@ describe("narrow window (HW-042)", () => {
     await mount(1000);
     expect(body().hidden).toBe(true);
     await click($(".sidebar-toggle")!);
-    expect(body().hidden).toBe(false); // 1000 - 14 - 28 - 560 = 398 left
-    expect(widthPx()).toBe(360);
+    expect(body().hidden).toBe(false); // 1000 - 14 - 28 - 640 = 318 left
+    expect(widthPx()).toBe(318);
     expect(notice()).toBe("");
   });
 });

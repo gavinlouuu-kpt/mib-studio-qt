@@ -52,19 +52,32 @@ describe("fit beside the main area", () => {
     expect(fit(1366)).toMatchObject({ fits: true, compact: false, width: 360 });
   });
   it("narrows to what is left, down to the compact width", () => {
-    const f = fit(1180); // 1180 - 264 (telemetry sidebar + strip) - 28 (own edge) - 560 (main) = 328
-    expect(f).toMatchObject({ fits: true, compact: true, width: 328, available: 328 });
-    expect(fit(1092)).toMatchObject({ fits: true, compact: true, width: HW_PANEL_COMPACT_WIDTH });
+    const f = fit(1250); // 1250 - 264 (telemetry sidebar + strip) - 28 (own edge) - 640 (main) = 318
+    expect(f).toMatchObject({ fits: true, compact: true, width: 318, available: 318 });
+    expect(fit(1172)).toMatchObject({ fits: true, compact: true, width: HW_PANEL_COMPACT_WIDTH });
   });
   it("does not fit when even the compact width would push the main area below its minimum", () => {
-    expect(fit(1091)).toMatchObject({ fits: false, width: 0 });
+    expect(fit(1171)).toMatchObject({ fits: false, width: 0 });
     expect(fit(1024)).toMatchObject({ fits: false, width: 0, available: 1024 - 264 - 28 - WORKSPACE_MIN_WIDTH });
   });
   it("gets the telemetry sidebar's room back when that is collapsed", () => {
-    expect(fit(1024, true)).toMatchObject({ fits: true, compact: false, width: 360 }); // 1024 - 14 - 28 - 560 = 422
-    expect(availablePanelWidth(1000, true)).toBe(398);
-    expect(availablePanelWidth(1000, false)).toBe(148);
+    expect(fit(1024, true)).toMatchObject({ fits: true, compact: true, width: 342 }); // 1024 - 14 - 28 - 640 = 342
+    expect(fit(1100, true)).toMatchObject({ fits: true, compact: false, width: 360 }); // 418 left
+    expect(availablePanelWidth(1000, true)).toBe(318);
+    expect(availablePanelWidth(1000, false)).toBe(68);
     expect(availablePanelWidth(100, false)).toBe(0);
+  });
+  it("never leaves the main area narrower than Qt's workspace minimum (640 px), which fits the stage tab bar", () => {
+    expect(WORKSPACE_MIN_WIDTH).toBe(640); // Qt: frontend::geometry::kWorkspaceMinWidth
+    for (const telemetryCollapsed of [false, true]) {
+      const left = telemetryCollapsed ? 14 : 264;
+      for (let viewportWidth = 900; viewportWidth <= 1700; viewportWidth++) {
+        const f = fit(viewportWidth, telemetryCollapsed);
+        if (f.fits) expect(viewportWidth - left - 28 - f.width, `${viewportWidth} px`).toBeGreaterThanOrEqual(640);
+      }
+    }
+    // The window widths where the Review tab was cut off at 560 px: the panel now hides instead.
+    for (const viewportWidth of [1101, 1150, 1171]) expect(fit(viewportWidth).fits).toBe(false);
   });
   it("clamps an unsanitised preference before fitting", () => {
     expect(fit(2000, false, 5000).width).toBe(HW_PANEL_MAX_WIDTH);

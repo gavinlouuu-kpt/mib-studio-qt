@@ -12,8 +12,11 @@ export const HW_PANEL_MIN_WIDTH = 280;
 export const HW_PANEL_COMPACT_WIDTH = 240;
 /** Ceiling of the preferred width (Qt: 1000 px). */
 export const HW_PANEL_MAX_WIDTH = 720;
-/** The main area (tabs and stage content) keeps at least this width (Qt: kWorkspaceMinWidth, 640 px). */
-export const WORKSPACE_MIN_WIDTH = 560;
+/** The main area (tabs and stage content) keeps at least this width: Qt's kWorkspaceMinWidth (640 px), which also
+ * fits the stage tab bar (measured in Chromium: 584 px with the usual labels, 616 px with "Needs attention" under
+ * Experiment and Review; the main area's 8 px padding on each side leaves 624 px). At 560 px the Review tab was cut
+ * off at the panel's edge in windows of about 1101-1300 px (#872 review). */
+export const WORKSPACE_MIN_WIDTH = 640;
 /** Telemetry sidebar (layout.css `.sidebar`) and its toggle strip, which sit left of the main area. */
 export const TELEMETRY_SIDEBAR_WIDTH = 250;
 export const TELEMETRY_TOGGLE_WIDTH = 14;

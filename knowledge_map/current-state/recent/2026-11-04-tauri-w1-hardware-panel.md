@@ -9,4 +9,7 @@ width the panel narrows, then hides with Qt's status-bar notice, and returns by 
 panel contents (`HardwareControls`, `StageControls`, PR1/PR2 files) are unchanged. See [[architecture/Desktop-Shell]].
 Review (2026-11-06): `hardwarePanel.app.test.tsx` now pins that the panel stays mounted while collapsed and while hidden for
 space (the same Stop pump and serial-port nodes, a typed port draft kept); both tests fail if `HardwareDock` renders
-`HardwarePanel` only while the panel is visible.
+`HardwarePanel` only while the panel is visible. The main area's minimum is now Qt's 640 px (was 560 px, which cut the
+Review tab off at the panel's edge in windows of about 1101-1300 px); the panel hides with the notice below 1172 px when the
+telemetry sidebar is open. Tests: `hardwarePanelLayout.test.ts` (main area never below 640 px at 900-1700 px) and the app
+test at 1150 px.
