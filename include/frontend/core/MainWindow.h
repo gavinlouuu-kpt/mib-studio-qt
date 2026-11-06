@@ -121,6 +121,15 @@ private:
     // Stops the realtime processing kept for a run once the run is over, if the Experiment and
     // Overview tabs are still not shown.
     void releaseRealtimeHeldForRun();
+    // #905: the camera part of onTabChanged (the Overview auto-start and the camera script for
+    // Overview/Experiment). Both open the camera device, which a camera discovery probe holds for
+    // its length ("operation not allowed" on the MIB rig's first launch). While a camera or
+    // framegrabber job is in flight the step waits: a 100 ms timer runs it once no such job is
+    // left, or after kTabCameraDiscoveryWait, and drops it if the tab changed meanwhile.
+    void applyTabCamera(int index);
+    bool deferTabCameraForDiscovery(int index);
+    void onTabCameraDeferTick();
+    void cancelDeferredTabCamera();
     void setupCornerWidgets();
     void setupSidebar();
     void restoreWindowGeometry();
@@ -153,6 +162,10 @@ private:
     // #899: the tab was left during a run, so only the view paused; realtime processing still
     // runs for the run and is stopped by releaseRealtimeHeldForRun() when the run is over.
     bool realtimeHeldForRun_{false};
+    // #905: a tab's camera step waiting for camera discovery (-1: none).
+    QTimer* tabCameraDeferTimer_ = nullptr;
+    int deferredCameraTab_{-1};
+    std::chrono::steady_clock::time_point deferredCameraDeadline_{};
     bool flushInProgress_{false}; // mirrors ExperimentStatus::flushing
     QAction* startExperimentAct_ = nullptr;
     QAction* stopExperimentAct_ = nullptr;

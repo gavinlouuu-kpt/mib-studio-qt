@@ -21,7 +21,9 @@
 - **Jobs.** `startDiscovery(request) -> StartResult{jobId | rejection}`,
   `cancelDiscovery(jobId)` (idempotent, non-blocking, scoped to that job),
   `discoverySnapshot(jobId)` (value copy, never probes or waits),
-  `waitForTerminal` (tests / worker-only wrappers), observers
+  `waitForTerminal` (tests / worker-only wrappers),
+  `hasActiveJob(kinds)` (a job naming one of the kinds has not reached a
+  terminal state; never probes or waits; #905), observers
   (`addObserver`/`removeObserver`; removal blocks until an in-flight call
   returns), `shutdownDiscovery()` (terminal: refuse jobs, cancel, join every
   worker). States `Queued -> Running -> Completed | Cancelled | Failed`.
@@ -133,7 +135,8 @@ shared serial port closes.
 `backend.startup_discovery_policy`, `backend.device_discovery_providers`,
 `backend.device_discovery_stress`, `backend.discovery_facade`,
 `frontend.device_discovery` (Qt adapter/tabs, offscreen),
-`integration.e2e_device_discovery_lifecycle`, Rust `contract.rs`
+`integration.e2e_device_discovery_lifecycle`,
+`frontend.camera_autostart_discovery` (#905), Rust `contract.rs`
 (`camera_discovery_and_selection_contract`), `desktop/src/discovery.test.ts`.
 Fakes: `tests/support/fake_discovery_providers.h`,
 `tests/support/fake_modbus_bench.h`.
@@ -185,6 +188,14 @@ in `backend.device_discovery_providers`, and the chip matrix in
   widgets reading them: the Qt adapter's executor keeps policy actions on the
   UI thread. Headless consumers that start the coordinator with the inline
   executor run hooks on the discovery worker.
+- A camera probe holds the device for the length of the provider call: the
+  eGrabber providers' own second open inside the call (`probe open failed ...
+  operation not allowed`) fails on every launch while probes are serialized,
+  so the `EGrabberDiscovery` in scope evidently keeps the grabber open. The resource-class lock serializes probes with each other, not with
+  a capture open: a camera open while a `camera-sdk` provider runs fails with
+  "operation not allowed". Openers that can race a probe wait on
+  `hasActiveJob({Camera, Framegrabber})`; the window's tab camera step does
+  (#905, [[../frontend/MainWindow]]).
 - The facade's `fetchCameraDiscovery` is a documented **blocking**
   compatibility wrapper (starts a job and waits) for worker-thread C++
   callers only; the bridge/Tauri/TS use the asynchronous trio.
