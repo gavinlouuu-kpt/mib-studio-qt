@@ -9,3 +9,6 @@ no ABI step. Before, only the Qt tab registered a callback, so the Tauri app nev
 a jog was refused. See [[services/AutofocusService]] and [[architecture/Rust-Bridge]]. Test:
 `tests/backend/autofocus_failure_events_test.cpp` (facade over a fake nanopositioner) and a failure-callback block in
 `tests/backend/autofocus_backend_safety_test.cpp`.
+
+Fix (2026-11-06, CI TSan lane on #883): `detachAutofocusFailures()` reset the gate inside the guard of
+the gate's own mutex (heap-use-after-free at unlock); the gate is now dropped after the guard.

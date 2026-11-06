@@ -269,8 +269,12 @@ namespace backend::bridge
         if (!autofocusFailures_) return;
         backend_.autofocus().setFailureCallback({});
         // Waits out a call in progress; a call that already took its copy of the callback finds no target.
-        std::scoped_lock lock(autofocusFailures_->mutex);
-        autofocusFailures_->target = nullptr;
+        {
+            std::scoped_lock lock(autofocusFailures_->mutex);
+            autofocusFailures_->target = nullptr;
+        }
+        // Dropped after the guard: the gate owns the mutex the guard unlocks (TSan: heap-use-after-free when it was
+        // reset inside the scope, the last reference once the callback is cleared).
         autofocusFailures_.reset();
     }
 
