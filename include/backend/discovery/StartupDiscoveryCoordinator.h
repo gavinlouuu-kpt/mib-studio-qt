@@ -14,6 +14,13 @@
 // thread is waited for (bounded, 5 s) so no hook or listener runs after
 // stop() returns (issue #431). Vault:
 // knowledge_map/services/DeviceDiscoveryService.md.
+//
+// Hot-plug: with Hooks::listSerialPorts set, start() also watches the serial
+// ports. Once a nanopositioner step has ended without a connection (not
+// found, incomplete, connect failed), a port that appears later runs the
+// step again, so a controller plugged in after the startup retries is still
+// connected. Never while one is connected, a step is running, or the last
+// step found several (the operator chooses then).
 #pragma once
 
 #include "backend/discovery/DeviceDiscoveryService.h"
@@ -25,6 +32,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace backend::discovery {
 
@@ -43,6 +51,9 @@ public:
         std::function<bool(const nanopositioner::Endpoint&)> connectNanopositioner;
         // Saved preference (vendor filter, baud/address, remembered port).
         std::function<std::optional<nanopositioner::Endpoint>()> preferredNanopositioner;
+        // Present serial port names (enumerateSerialPorts). Called on the
+        // watcher thread. Unset: no hot-plug watch.
+        std::function<std::vector<std::string>()> listSerialPorts;
     };
 
     struct Timing {
@@ -51,6 +62,11 @@ public:
         std::chrono::milliseconds nanopositionerRetryDelay{4000};
         std::chrono::milliseconds cameraDeadline{60000};
         std::chrono::milliseconds nanopositionerDeadline{60000};
+        // Hot-plug watch: poll interval, the wait before probing a port that
+        // appeared (driver and controller boot), retries of that step.
+        std::chrono::milliseconds hotplugPoll{2000};
+        std::chrono::milliseconds hotplugSettle{1000};
+        int hotplugRetries{1};
     };
 
     struct CameraOutcome {

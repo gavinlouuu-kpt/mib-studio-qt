@@ -2,6 +2,8 @@
 
 #include <QWidget>
 
+#include <string>
+
 namespace backend { class AppBackend; }
 class QTimer;
 namespace Ui { class SyringePumpTab; }
@@ -29,6 +31,11 @@ private slots:
 
 private:
     void updatePumpUI(int pumpIndex);
+    // Connect pump 0 (Sample) or 1 (Sheath) from config.json, following a
+    // renumbered adapter (SerialAdapterIdentity.h).
+    void connectPump(int pumpIndex);
+    // After a connect: remember the adapter on `port`, and the port if it moved.
+    void rememberPumpAdapter(int pumpIndex, const std::string& port);
     void loadConfig();
     void saveConfig();
     QString configPath() const;

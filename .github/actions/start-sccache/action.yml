@@ -1,0 +1,24 @@
+name: Start sccache
+description: >
+  Start the sccache server after mozilla-actions/sccache-action. sccache
+  checks its GitHub Actions cache when the server starts and exits if the
+  cache refuses (503 ServerBusy, "Egress is over the account limit"), which
+  fails the first compile and the build. On that refusal the server is
+  started on a local disk cache instead: the build runs uncached rather than
+  failing.
+runs:
+  using: composite
+  steps:
+    - name: Start sccache (local cache if the Actions cache refuses)
+      shell: bash
+      run: |
+        command -v sccache >/dev/null 2>&1 || { echo "sccache not on PATH; nothing to start"; exit 0; }
+        if sccache --start-server; then
+          exit 0
+        fi
+        echo "::warning::sccache could not use the GitHub Actions cache; this build uses a local disk cache"
+        sccache --stop-server >/dev/null 2>&1 || true
+        # Later steps, and a server restarted after an idle stop, stay local.
+        echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
+        echo "SCCACHE_IDLE_TIMEOUT=0" >> "$GITHUB_ENV"
+        SCCACHE_GHA_ENABLED=false SCCACHE_IDLE_TIMEOUT=0 sccache --start-server

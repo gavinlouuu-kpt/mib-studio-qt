@@ -29,7 +29,10 @@
 //     probe: startup keeps retrying and connects once it is released;
 //  4. a stale process holds the pump bus: Connect fails fast as "busy", never
 //     hangs, and succeeds once the port is released;
-//  5. chip matrix: every chip as the pump, the generator and the
+//  5. hot-plug: the controller is plugged in only after startup gave up
+//     (NotFound); the coordinator's port watcher sees the port appear and
+//     connects it, on a listed chip and on an unlisted one;
+//  6. chip matrix: every chip as the pump, the generator and the
 //     nanopositioner adapter, with the generator "auto" sweep running, with
 //     and without the pump port in config.json. The controller's bridge chip
 //     is not known for every unit, so it must be found on any chip; when it
@@ -62,6 +65,7 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace serialsim = backend::services::serialsim;
 using backend::discovery::StartupDiscoveryCoordinator;
@@ -71,7 +75,14 @@ using namespace std::chrono_literals;
 
 namespace {
 
-enum class Scenario { ConfiguredPumpPort, NoPumpConfig, StaleNanopositionerHolder, StalePumpBusHolder, ChipMatrix };
+enum class Scenario {
+    ConfiguredPumpPort,
+    NoPumpConfig,
+    StaleNanopositionerHolder,
+    StalePumpBusHolder,
+    HotPlug,
+    ChipMatrix
+};
 
 const char* name(Scenario s)
 {
@@ -80,6 +91,7 @@ const char* name(Scenario s)
     case Scenario::NoPumpConfig: return "no pump config";
     case Scenario::StaleNanopositionerHolder: return "stale holder on the nanopositioner port";
     case Scenario::StalePumpBusHolder: return "stale holder on the pump bus";
+    case Scenario::HotPlug: return "plugged in after startup gave up";
     case Scenario::ChipMatrix: return "chip matrix";
     }
     return "?";
@@ -97,6 +109,7 @@ struct Spec {
 std::string label(const Spec& spec)
 {
     std::string out = name(spec.scenario);
+    if (spec.scenario == Scenario::HotPlug) out += std::string(": nanopositioner ") + spec.nanoChip->id;
     if (spec.scenario == Scenario::ChipMatrix) {
         out += std::string(": pump ") + spec.pumpChip->id + ", generator " + spec.generatorChip->id +
                ", nanopositioner " + spec.nanoChip->id + (spec.pumpPortInConfig ? "" : ", no pump config");
@@ -169,6 +182,7 @@ struct Result {
     bool pumpRefusedWhileStale{false};
     std::chrono::milliseconds staleRefusalTook{0};
     std::optional<NanoOutcome::Kind> nano;
+    std::vector<NanoOutcome::Kind> nanoHistory; // every terminal outcome, in order
     std::string nanoPath;
     bool sweepFound{false};
     std::string sweepPort;
@@ -205,6 +219,9 @@ bool run(uint64_t seed, const Spec& spec, mib::test::Watchdog& watchdog)
         timing.nanopositionerRetries = scenario == Scenario::StaleNanopositionerHolder ? 10 : 6; // request limit is 10
         timing.nanopositionerRetryDelay = 200ms;
         timing.nanopositionerDeadline = 15000ms;
+        timing.hotplugPoll = 50ms;
+        timing.hotplugSettle = 100ms;
+        if (scenario == Scenario::HotPlug) timing.nanopositionerRetries = 1; // give up early
         auto& coordinator = backend.startupDiscovery();
         coordinator.setTiming(timing);
 
@@ -214,6 +231,7 @@ bool run(uint64_t seed, const Spec& spec, mib::test::Watchdog& watchdog)
             if (o.kind == NanoOutcome::Kind::Started || o.kind == NanoOutcome::Kind::Searching) return;
             std::lock_guard<std::mutex> lock(m);
             result.nano = o.kind;
+            result.nanoHistory.push_back(o.kind);
             if (o.endpoint) result.nanoPath = o.endpoint->systemPath;
             cv.notify_all();
         });
@@ -231,6 +249,19 @@ bool run(uint64_t seed, const Spec& spec, mib::test::Watchdog& watchdog)
                     std::this_thread::sleep_for(10ms);
                 }
                 rig->releaseStaleHolder("COM5");
+            });
+        }
+
+        // The controller is plugged in once startup has reported NotFound.
+        std::thread plugIn;
+        if (scenario == Scenario::HotPlug) {
+            rig->unplug("COM5");
+            plugIn = std::thread([&] {
+                {
+                    std::unique_lock<std::mutex> lock(m);
+                    cv.wait_for(lock, 30s, [&] { return result.nano.has_value(); });
+                }
+                rig->replug("COM5");
             });
         }
 
@@ -269,10 +300,14 @@ bool run(uint64_t seed, const Spec& spec, mib::test::Watchdog& watchdog)
         operatorThread.join();
         if (staleProcess.joinable()) staleProcess.join();
         if (sweep.joinable()) sweep.join();
+        if (plugIn.joinable()) plugIn.join();
         watchdog.mark("operator connected");
         {
             std::unique_lock<std::mutex> lock(m);
-            cv.wait_for(lock, 30s, [&] { return result.nano.has_value(); });
+            cv.wait_for(lock, 30s, [&] {
+                return result.nano.has_value() &&
+                       (scenario != Scenario::HotPlug || *result.nano == NanoOutcome::Kind::Connected);
+            });
         }
         watchdog.mark("startup outcome");
         // No explicit shutdown(): the destructor must release the ports too,
@@ -290,7 +325,12 @@ bool run(uint64_t seed, const Spec& spec, mib::test::Watchdog& watchdog)
     check(result.generator, "pulse generator connects on COM4");
     check(result.nano == NanoOutcome::Kind::Connected, "startup connects the nanopositioner, whatever its chip");
     check(serialsim::Rig::key(result.nanoPath) == "COM5", "the nanopositioner is the one on COM5");
-    if (nanoListed && !generatorListed) {
+    if (scenario == Scenario::HotPlug) {
+        check(!result.nanoHistory.empty() && result.nanoHistory.front() == NanoOutcome::Kind::NotFound,
+              "startup reports NotFound while the controller is unplugged");
+    }
+    // Without a controller the last attempt widens to every adapter, as it should.
+    if (nanoListed && !generatorListed && scenario != Scenario::HotPlug) {
         // The probe runs at 115200; everything else talks to the generator at
         // 9600. An OEABT probe there means the fallback stage ran needlessly.
         int probedGenerator = 0;
@@ -370,6 +410,13 @@ int main(int argc, char** argv)
     for (const auto scenario : {Scenario::StaleNanopositionerHolder, Scenario::StalePumpBusHolder}) {
         Spec spec;
         spec.scenario = scenario;
+        once(firstSeed, spec);
+    }
+    // Plugged in after startup gave up, on a listed chip and an unlisted one.
+    for (const char* chip : {"ch340", "cp2102"}) {
+        Spec spec;
+        spec.scenario = Scenario::HotPlug;
+        spec.nanoChip = serialsim::findUsbSerialChip(chip);
         once(firstSeed, spec);
     }
     // Every chip as the pump, the generator and the nanopositioner adapter

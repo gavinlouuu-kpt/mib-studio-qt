@@ -264,6 +264,8 @@ jobs:
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Start sccache
+        uses: ./.github/actions/start-sccache
 
       - name: CMake configure
         env:

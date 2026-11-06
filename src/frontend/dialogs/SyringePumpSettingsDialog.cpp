@@ -22,6 +22,8 @@
 #include "backend/app/Tools.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/AutofocusService.h"
+#include "backend/services/ISerialPort.h"
+#include "backend/services/SerialPortClaims.h"
 #include "backend/services/SimulatedSerial.h"
 
 using json = nlohmann::json;
@@ -166,9 +168,16 @@ void SyringePumpSettingsDialog::populateComPorts() {
         autofocusPort = backend_.autofocus().getComPort();
     }
 
+    // The adapter on each port, so a renumbered pump dongle is recognisable.
+    const auto present = backend::services::enumerateSerialPorts();
     for (int port : ports) {
         if (port == autofocusPort) continue;
         QString label = QString("COM%1").arg(port);
+        const std::string name = "com" + std::to_string(port);
+        for (const auto& info : present) {
+            if (backend::services::portclaims::key(info.systemName) != name || info.description.empty()) continue;
+            label += QString(" - %1").arg(QString::fromStdString(info.description));
+        }
         ui->sampleComPortCombo->addItem(label, port);
         ui->sheathComPortCombo->addItem(label, port);
     }
@@ -242,15 +251,21 @@ void SyringePumpSettingsDialog::saveConfig() {
         if (!data.isEmpty())
             config = json::parse(data.constData(), data.constData() + data.size());
 
+        // A port chosen here is the operator's: the adapter remembered for the
+        // old one no longer applies (SerialAdapterIdentity.h).
+        const auto choose = [&config](const std::string& prefix, int port) {
+            if (config.value(prefix + "com_port", -1) != port) config.erase(prefix + "adapter");
+            config[prefix + "com_port"] = port;
+        };
         if (ui->sampleComPortCombo->currentIndex() >= 0)
-            config["pump_sample_com_port"] = ui->sampleComPortCombo->currentData().toInt();
+            choose("pump_sample_", ui->sampleComPortCombo->currentData().toInt());
         config["pump_sample_baud_rate"] = ui->sampleBaudRateSpinBox->value();
         config["pump_sample_address"] = ui->sampleAddressSpinBox->value();
         config["pump_sample_syringe_vol"] = ui->sampleSyringeVolSpinBox->value();
         config["pump_sample_syringe_unit"] = ui->sampleSyringeUnitCombo->currentData().toUInt();
 
         if (ui->sheathComPortCombo->currentIndex() >= 0)
-            config["pump_sheath_com_port"] = ui->sheathComPortCombo->currentData().toInt();
+            choose("pump_sheath_", ui->sheathComPortCombo->currentData().toInt());
         config["pump_sheath_baud_rate"] = ui->sheathBaudRateSpinBox->value();
         config["pump_sheath_address"] = ui->sheathAddressSpinBox->value();
         config["pump_sheath_syringe_vol"] = ui->sheathSyringeVolSpinBox->value();

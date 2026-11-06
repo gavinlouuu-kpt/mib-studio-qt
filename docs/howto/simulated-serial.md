@@ -162,3 +162,15 @@ Both are fixed by in-process port claims (`SerialPortClaims.h`):
   it.
 
 See [the vault note](../../knowledge_map/services/SerialPortClaims.md).
+
+Also handled since (2026-10-21):
+
+- **Controller plugged in after startup gave up.** The startup coordinator
+  watches the port list. A port that appears after the nanopositioner step
+  ended without a connection runs the step again (`backend.serial_startup_race`
+  hot-plug scenario; the rig's `unplug`/`replug` drive it).
+- **Pump adapter renumbered by Windows.** The pump tab remembers the
+  adapter's USB identity after a connect. One with a serial number is
+  followed to its new COM port; a port that now carries another adapter is
+  refused; one without a serial number (CH340) is never guessed
+  (`backend.serial_adapter_identity`).
