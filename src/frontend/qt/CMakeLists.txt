@@ -216,6 +216,13 @@ if(BUILD_TESTING)
         LABELS "frontend;camera;safety"
         TIMEOUT 120
     )
+    # Issue #899: leaving the Experiment tab mid-run keeps the run's realtime processing running.
+    mib_test_runner_add(mib_frontend_tests experiment_tab_switch_test ${PROJECT_SOURCE_DIR}/tests/frontend/experiment_tab_switch_test.cpp)
+    add_test(NAME frontend.experiment_tab_switch COMMAND $<TARGET_FILE:mib_frontend_tests> experiment_tab_switch_test)
+    set_tests_properties(frontend.experiment_tab_switch PROPERTIES
+        LABELS "frontend;lifecycle;recording;safety"
+        TIMEOUT 180
+    )
 
     # Issues #358/#359: full-widget layout harness (viewport matrix, sidebar
     # single-owner geometry, window restoration). Offscreen; the available
@@ -293,6 +300,13 @@ if(BUILD_TESTING)
     add_test(NAME frontend.hdf_review_scatter COMMAND $<TARGET_FILE:mib_frontend_tests> hdf_review_scatter_test
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.hdf_review_scatter PROPERTIES LABELS "frontend;recording;safety" TIMEOUT 180)
+
+    # Issue #859: the Review tab's teardown after a UI Automation client visited every
+    # metrics-table cell stays linear (it spun for minutes at exit).
+    mib_test_runner_add(mib_frontend_tests hdf_review_a11y_teardown_test ${PROJECT_SOURCE_DIR}/tests/frontend/hdf_review_a11y_teardown_test.cpp)
+    add_test(NAME frontend.hdf_review_a11y_teardown COMMAND $<TARGET_FILE:mib_frontend_tests> hdf_review_a11y_teardown_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.hdf_review_a11y_teardown PROPERTIES LABELS "frontend;recording;safety" TIMEOUT 180)
 
     # End-to-end: real MainWindow on the mock-camera pipeline with synthetic
     # cells; KDE off / on / off phases gated on ratios (capture, processing,

@@ -27,7 +27,7 @@
 #include "backend/recording/HdfWriteQueue.h"
 #include "backend/recording/TriggerEventRecord.h"
 
-namespace backend { namespace playback { class FrameStore; struct Frame; } }
+namespace backend { namespace playback { class FrameStore; struct Frame; enum class FrameReadOutcome; } }
 namespace backend::processing { struct ProviderFrame; }
 
 namespace backend::services {
@@ -298,6 +298,11 @@ public:
     // can hold a frame between its entry and its completion. One relaxed load
     // per append while unset.
     void setMonitoringAppendHookForTests(std::function<void(uint64_t frameIndex)> hook);
+    // Test seam (#857): called on the async-batch realtime loop with the write index of each
+    // frame it has read, right before it admits and enqueues it, outside every lock, so a test
+    // can hold the loop inside a pass while the producer evicts frames it has yet to reach. One
+    // relaxed load per frame while unset.
+    void setRealtimeFrameHookForTests(std::function<void(uint64_t frameIndex)> hook);
     // What every ring slot carries besides the frame (written at append, under
     // the ring's lock): the run tag, the capture epoch, and where the row's
     // image sits in the coordinate space of its geometry. Inline rows are
@@ -309,6 +314,9 @@ public:
         uint64_t captureEpoch{0};
         int32_t geometryOriginX{0};
         int32_t geometryOriginY{0};
+        // The ring released this row's images to stay within its byte budget (#857); the
+        // measurements stay. False for a row that never had images (PL results).
+        bool imagesReleased{false};
     };
     // Read the ring without copying ProcessedFrames: under the ring's lock,
     // visit the newest `maxRows` rows (valid rows first, then invalid ones
@@ -358,6 +366,18 @@ public:
     uint64_t getMonitoringValidAppended() const { return monitoringValidAppended_.load(std::memory_order_relaxed); }
     uint64_t getMonitoringInvalidAppended() const { return monitoringInvalidAppended_.load(std::memory_order_relaxed); }
     static constexpr size_t getMonitoringCapacity() { return MAX_MONITORING_FRAMES; }
+    // Row images each monitoring ring (valid, invalid) keeps alive, in bytes (#857). A row is
+    // metrics plus the ROI crop of its frame and mask; the count cap alone let 1000 rows of a
+    // large or whole-frame ROI pin about 0.5 GB per ring (0.5 MB per row at 1216x208). Past the
+    // budget the oldest rows give their images up and keep their measurements, so the scatter
+    // and the density estimate still see all 1000. 32 MiB holds 66 whole 1216x208 rows, against
+    // the 25 thumbnails and 24 strip cells the Monitoring tab shows from the newest rows; the
+    // tab's own rolling copies are held to the same figure (releaseImagesBeyondBudget). The
+    // newest row always keeps its images, so one frame larger than the budget is still shown.
+    static constexpr uint64_t kMonitoringImageBytesPerRing = 32ull * 1024 * 1024;
+    // The tab's rolling copy of ring rows (oldest -> newest): releases the images of the oldest
+    // rows beyond `maxBytes`, keeping the newest row's. Returns the rows released.
+    static size_t releaseImagesBeyondBudget(std::vector<ProcessedFrame>& oldestFirst, uint64_t maxBytes);
     // Enable/disable monitoring accumulation. When false, appendRealtimeMonitoringFrame
     // returns immediately with no clones. Wire to tab show/hide in the UI.
     void setMonitoringActive(bool active);
@@ -832,6 +852,9 @@ private:
     void realtimeLoop();
     void realtimeInlineLoop();
     void realtimeBatchLoop();
+    // The write index a (re)started realtime loop treats as already consumed (#899): the run's last
+    // admitted frame when a run is being read, else the frame before the ring's oldest one.
+    uint64_t realtimeResumePointer() const;
     BatchPipelineConfig makeRealtimeBatchPipelineConfig() const;
     void refreshRealtimeBatchPipelineConfig();
     void publishRealtimeBatchFrame(ProcessedFrame&& frame);
@@ -869,6 +892,14 @@ private:
     MonitoringEntry monitoringEntryFor(const MonitoringEntryCache& cache, uint64_t storeGeneration,
                                        uint64_t captureSession) const;
     void runMonitoringAppendHook(uint64_t frameIndex);
+    void runRealtimeFrameHook(uint64_t frameIndex);
+    // The ROI crop a monitoring row keeps: own copies of the gray image and mask, never views of the
+    // frame (#857); one clone per frame, shared by that frame's rows.
+    struct MonitoringCrop {
+        cv::Mat original;
+        cv::Mat mask;
+    };
+    static MonitoringCrop monitoringCrop(const cv::Mat& gray, const cv::Mat& mask, const cv::Rect& roi);
     void appendRealtimeMonitoringFrame(uint64_t index,
                                        uint64_t timestampNs,
                                        const FilterResult& validation,
@@ -1051,17 +1082,23 @@ private:
     void bgCalObserve(backend::recording::FrameOutcome outcome, const backend::playback::Frame* frame);
     void bgCalFinishLocked(BackgroundCalibrationState state, const std::string& message);
     void noteRealtimeAdmitted(uint64_t idx);
-    void noteRealtimeLost(uint64_t count);
+    // `count` frames from write index `firstIdx` on, evicted before the loop reached them.
+    void noteRealtimeLost(uint64_t firstIdx, uint64_t count);
+    // A frame of the current pass that could not be read (evicted or malformed): admitted and
+    // booked as a store loss, never skipped silently (#857).
+    void noteRealtimeUnreadable(uint64_t idx, backend::playback::FrameReadOutcome readOutcome);
     void noteRealtimeValidation(uint64_t idx, const std::vector<FilterResult>& validations);
     
     // Monitoring frames (always accumulated, separate from experiment)
     mutable std::mutex monitoringFramesMutex_;
 
-    // Simple circular buffer for ProcessedFrame (fixed capacity, keeps the most recent frames)
+    // Simple circular buffer for ProcessedFrame (fixed capacity, keeps the most recent frames).
+    // `imageBudgetBytes` (0 = none) bounds the image bytes the rows keep alive (#857): past it the
+    // oldest rows release their images and keep their measurements, never the newest row.
     class FrameRingBuffer {
     public:
-        explicit FrameRingBuffer(size_t capacity = 1000)
-            : capacity_(capacity), data_(capacity), tags_(capacity) {}
+        explicit FrameRingBuffer(size_t capacity = 1000, uint64_t imageBudgetBytes = 0)
+            : capacity_(capacity), imageBudgetBytes_(imageBudgetBytes), data_(capacity), tags_(capacity) {}
 
         void clear() {
             for (auto& f : data_) f = ProcessedFrame{}; // release retained images
@@ -1069,14 +1106,18 @@ private:
             size_ = 0;
             head_ = 0;
             bytes_ = 0;
+            imagelessOldest_ = 0;
         }
 
         size_t size() const { return size_; }
         size_t capacity() const { return capacity_; }
-        // Image bytes the ring keeps alive (issue #370); bounded by capacity.
+        // Image bytes the ring keeps alive (issue #370); bounded by the image budget (#857).
         uint64_t bytes() const { return bytes_; }
         uint64_t peakBytes() const { return peakBytes_; }
+        uint64_t imageBudgetBytes() const { return imageBudgetBytes_; }
         uint64_t replaced() const { return replaced_; }
+        // Rows that gave their images up to the budget (their measurements stayed).
+        uint64_t imagesReleased() const { return imagesReleased_; }
 
         // `tag`: the slot's MonitoringRowTag (#716 A6a); a 24-byte store in
         // the preallocated parallel array, under the caller's lock.
@@ -1085,15 +1126,18 @@ private:
             if (size_ == capacity_) {
                 bytes_ -= std::min(bytes_, processedFrameBytes(data_[head_]));
                 ++replaced_;
+                // The slot about to be reused is the oldest row; it was one of the imageless.
+                if (imagelessOldest_ > 0) --imagelessOldest_;
             }
             data_[head_] = std::move(frame);
             tags_[head_] = tag;
             bytes_ += incoming;
-            if (bytes_ > peakBytes_) peakBytes_ = bytes_;
             head_ = (head_ + 1) % capacity_;
             if (size_ < capacity_) {
                 ++size_;
             }
+            releaseImagesBeyondBudget();
+            if (bytes_ > peakBytes_) peakBytes_ = bytes_;
         }
 
         // Visit oldest -> newest without copying frames.
@@ -1128,18 +1172,41 @@ private:
         }
 
     private:
+        // Amortised O(1): each push releases about one row once the ring is at its budget.
+        void releaseImagesBeyondBudget() {
+            if (imageBudgetBytes_ == 0) return;
+            while (bytes_ > imageBudgetBytes_ && imagelessOldest_ + 1 < size_) {
+                const size_t start = (head_ + capacity_ - size_) % capacity_;
+                const size_t at = (start + imagelessOldest_) % capacity_;
+                ProcessedFrame& row = data_[at];
+                const uint64_t held = processedFrameBytes(row);
+                if (held > 0) {
+                    bytes_ -= std::min(bytes_, held);
+                    row.originalImage = cv::Mat();
+                    row.processedImage = cv::Mat();
+                    row.seriesImages.clear();
+                    tags_[at].imagesReleased = true;
+                    ++imagesReleased_;
+                }
+                ++imagelessOldest_;
+            }
+        }
+
         size_t capacity_{0};
+        uint64_t imageBudgetBytes_{0};
         std::vector<ProcessedFrame> data_;
         std::vector<MonitoringRowTag> tags_; // per slot, parallel to data_
         size_t size_{0};
         size_t head_{0}; // next write position
+        size_t imagelessOldest_{0}; // the oldest this many rows hold no images (released or never had)
         uint64_t bytes_{0};
         uint64_t peakBytes_{0};
         uint64_t replaced_{0}; // entries overwritten by the bounded ring
+        uint64_t imagesReleased_{0};
     };
 
-    FrameRingBuffer monitoringValidFrames_{1000};
-    FrameRingBuffer monitoringInvalidFrames_{1000};
+    FrameRingBuffer monitoringValidFrames_{1000, kMonitoringImageBytesPerRing};
+    FrameRingBuffer monitoringInvalidFrames_{1000, kMonitoringImageBytesPerRing};
     static constexpr size_t MAX_MONITORING_FRAMES = 1000; // Keep last 1000 frames for monitoring
     std::atomic<bool> monitoringActive_{false}; // gating: no clones when no consumer is active
     std::atomic<uint64_t> monitoringRunGeneration_{0}; // read at a frame's entry (#716 A6a)
@@ -1150,6 +1217,9 @@ private:
     std::atomic<bool> monitoringAppendHookArmed_{false};
     std::mutex monitoringAppendHookMutex_;
     std::function<void(uint64_t)> monitoringAppendHook_;
+    std::atomic<bool> rtFrameHookArmed_{false};
+    std::mutex rtFrameHookMutex_;
+    std::function<void(uint64_t)> rtFrameHook_;
     // Totals appended to the monitoring ring buffers since start/clear (BE-5)
     std::atomic<uint64_t> monitoringValidAppended_{0};
     std::atomic<uint64_t> monitoringInvalidAppended_{0};

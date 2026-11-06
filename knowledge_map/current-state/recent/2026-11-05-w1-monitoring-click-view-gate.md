@@ -1,6 +1,6 @@
 ## 2026-11-05 — Monitoring click to view, target-group gate on the scatter, E-modulus table, camera telemetry (#866 PR E1, MON-043/044/046..048/064..068/077/095/098)
 
-The Tauri Monitoring sub-tab gets the Qt tab's last interactive parts, on the bridge ABI 46 the backend half
+The Tauri Monitoring sub-tab gets the Qt tab's last interactive parts, on the bridge ABI next (#886, set at merge) the backend half
 of this PR added (no backend change here). See [[architecture/Desktop-Shell]] ("Monitoring click to view, gate
 overlay and E table") and [[frontend/ExperimentMonitoringTab]] (the Qt behaviour).
 

@@ -159,7 +159,7 @@ export interface ProcessingStats {
    *  (epic #866 MON-095). Optional: the bridge's processing stats carry rates only until it adds `algo_avg_us` and
    *  `algo_avg_age_ms`; a backend without them leaves both undefined and the side panel hides the row. */
   algo_avg_us?:number|null; algo_avg_age_ms?:number|null;
-  /** Bridge ABI 46 (#866 PR E1, MON-098): the realtime mode and the camera telemetry of the same `fetch_processing_stats` reply
+  /** Bridge ABI next (#886, set at merge) (#866 PR E1, MON-098): the realtime mode and the camera telemetry of the same `fetch_processing_stats` reply
    *  (bridge.fetchProcessingStats decodes both from it). Absent from a stats object built elsewhere. */
   telemetry?:ProcessingTelemetry;
   /** Why `telemetry` is missing when the reply carried it but broke the contract; the sidebar says so. */

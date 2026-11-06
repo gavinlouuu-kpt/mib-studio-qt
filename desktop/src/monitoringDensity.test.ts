@@ -1,4 +1,4 @@
-// Bridge ABI 46 (#866 PR E): the live Monitoring density, the reference contour from a file, the
+// Bridge ABI next (#886, set at merge) (#866 PR E): the live Monitoring density, the reference contour from a file, the
 // E-modulus table and the processing / camera telemetry against a mocked transport. Arguments are
 // checked before anything is sent, replies are checked against the contract, and a point is matched
 // to a snapshot row by its whole identity (start generation, capture epoch, frame index, object id),
@@ -44,7 +44,7 @@ const reply = (extra: Record<string, unknown> = {}) => ({
 });
 
 it("pins the contract: the ABI, the density bounds, the metric states and the realtime modes", () => {
-  expect(BRIDGE_ABI_VERSION).toBe(46);
+  expect(BRIDGE_ABI_VERSION).toBe(44);
   expect(MONITORING_DENSITY).toMatchObject({
     interval_ms_min: 500, interval_ms_max: 60000, interval_ms_default: 2000, bandwidth_factor_min: 0.2, bandwidth_factor_max: 5,
     bandwidth_factor_default: 1, core_fraction_min: 0.05, core_fraction_max: 1, core_fraction_default: 0.9, grid_nx: 128, grid_ny: 64,

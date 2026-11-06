@@ -11,7 +11,7 @@
 //     clearing when full;
 //   - a run switcher: setMonitoringRunGeneration + beginRun, as the
 //     coordinator does at Start and at the end of accumulation;
-//   - a config switcher (ABI 45, #866): live tuning toggles an area gate no
+//   - a config switcher (ABI next (#880, set at merge), #866): live tuning toggles an area gate no
 //     blob passes, so the ring's invalid half fills too and the refreshes
 //     admit invalid cells, deriving their reasons from the config read
 //     (MonitoringCellSource::reasonContext) while it is being replaced.

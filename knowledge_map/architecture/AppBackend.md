@@ -136,6 +136,53 @@ deviceDiscovery_, startupDiscovery_   // #419: declared last, destroyed first
 frameStore_  // shared_ptr<FrameStore>(5000)
 ```
 
+## Data directory (rig check F1, 2026-11-06)
+
+The Qt shell resolves the data dir once, in `main.cpp`, with
+`backend::app::datadir::resolve(currentInputs(exeDir))`
+(`include/backend/app/DataDirectory.h`, Qt-free). The rule, in order:
+
+1. `MIB_DATA_DIR` set and not empty: that folder, on every platform.
+2. Windows, and the exe is under a `Program Files` / `Program Files (x86)`
+   folder (by path, also as `PROGRA~<n>`, so an elevated launch resolves the
+   same folder), or `<exe dir>/data` fails the write probe:
+   `%LOCALAPPDATA%/MIB_Studio_Qt/data`. The legacy `<exe dir>/data` becomes the
+   migration source. `%LOCALAPPDATA%` must have an ASCII form: the backend
+   reads `dataDir` partly as UTF-8 (#762, `storageRoot()`, the crash-state
+   JSON) and partly as `path(std::string)` (ANSI code page on MSVC), which only
+   agree on ASCII. For a non-ASCII account name `localAppDataDir()` uses the
+   8.3 short name; with none, rule 3 applies and the log says so.
+3. Otherwise `<exe dir>/data` (dev builds, portable copies, Linux).
+
+Gotcha: an unwritable exe dir outside Program Files is decided by the write
+probe, so an elevated launch there (writable) and a normal one (not) resolve
+different data dirs. `%LOCALAPPDATA%` is per Windows user, so a second account
+on the same PC gets its own instrument id.
+
+The same layout gives the log dir (`%LOCALAPPDATA%/MIB_Studio_Qt/logs` for the
+user-local data dir, else `<dataDir>/logs`; `logDirFor` is the one rule, used
+by `initialize` too) and the crash dir (`%LOCALAPPDATA%/MIB_Studio_Qt/crashes`
+on Windows, else `<dataDir>/crashes`). The shell also sets
+`setResourceRoot(exeDir)`: the bundled LUT is found under the resource root,
+which is no longer always `dataDir`'s parent.
+
+Everything below `dataDir` follows: `instrument_identity.json`,
+`instrument_calibration.json`, `app.sqlite3`, `profile_registry/`, `methods/`,
+`startup_configuration.json`, `stage_reference.json`,
+`stage_limits_verified.json`, `instrument_run_window.json`, `ssd-state.json`,
+`camera/`, `config/aravis-camera.json`, `pipeline_timing/`. A new state file
+under `dataDir` must be added to `datadir::stateEntries()`, or an upgrade over a
+build that wrote it under `<exe dir>/data` loses it. The migration copies once
+(only into a dir with no state), entry by entry through a staging name, never
+overwrites and never deletes the legacy files; a symbolic link is copied as
+its content. `.legacy-migration-pending` stays in `dataDir` until every entry is
+in place, so a start that failed or was cut off part-way copies the missing
+entries at the next start. `mock_frames/` is not migrated. Tests:
+`backend.data_directory`.
+`config.json` is not in the data dir: [[../frontend/ConfigTabs]]'s
+`ConfigPathManager` already keeps it in `%LOCALAPPDATA%/MIB_Studio_Qt/include`
+for a Program Files install.
+
 ## `initialize(dataDir)` — what it wires
 
 When EGrabber is unavailable but MindVision is enabled, an implicit default
@@ -147,9 +194,13 @@ explicit mock initialization without touching hardware (#413).
 
 See `src/backend/AppBackend.cpp` around lines 79–200.
 
-1. Creates `dataDir` and resolves a user-writable log path (falls back to
-   `%LOCALAPPDATA%/MIB_Studio_Qt/logs/app.log` on Windows when `dataDir`
-   is under `Program Files`).
+1. Migrates first: when the shell passed a legacy dir
+   (`setDataDirOrigin(reason, legacyDataDir)`), `datadir::migrateLegacyState`
+   copies the state an older build left in `<exe dir>/data` into an empty
+   `dataDir`, before the SSD store or the identity can create any (rig check F1,
+   see "Data directory" below). Then creates `dataDir`, puts `app.log` in
+   `datadir::logDirFor(dataDir)` (`logDir()`), and logs the data dir, the
+   reason, and every entry migrated or not.
 2. Instantiates all services + `FrameStore(5000)`.
 3. `sqliteService_->initialize(dataDir/app.sqlite3)`,
    `hdf5Service_->initialize(dataDir)`.
@@ -502,7 +553,7 @@ inside the coordinator's idle transaction). See [[../services/CalibrationRecords
 fills it at close (finalization step 6b); `BackendFacade::runQuickLookJson` reads it and fills it on
 an idle miss. See [[../services/RunQuickLook]].
 
-## Density, reference contour and E-modulus table (bridge ABI 46, #866 PR E)
+## Density, reference contour and E-modulus table (bridge ABI next (#886, set at merge), #866 PR E)
 
 `BackendFacade` serves the [[../services/MonitoringDensityService]] to the bridge:
 `setMonitoringDensitySettingsJson` / `requestMonitoringDensityUpdate` (control),
@@ -513,7 +564,7 @@ contour from an experiment file, inside the coordinator's non-waiting idle trans
 `ReviewJobs::readKdeReference`, refused while a run is active or a raw recording writes HDF5) and
 `fetchEModulusLutJson(knownIdentity)` (the table loaded at bootstrap, once per identity).
 `fetchProcessingStats` adds the algorithm time, the realtime mode and the camera's frame/data rate with
-a validity state (`CaptureService::telemetrySnapshot`). Shapes in [[Rust-Bridge]] (ABI 46).
+a validity state (`CaptureService::telemetrySnapshot`). Shapes in [[Rust-Bridge]] (ABI next (#886, set at merge)).
 
 ## Live cell store (bridge ABI 41, #716 A6a)
 
@@ -526,7 +577,7 @@ the store is destroyed before the ring it reads. [[ExperimentCoordinator]]
 calls `beginRun` when a run reaches Active; the facade serves
 `fetchMonitoringCellsJson` / `pinMonitoringCellJson` / `unpinMonitoringCell` /
 `clearMonitoringCellPins` / `fetchMonitoringCellImage` and feeds the rows
-`fetchMonitoringSnapshot` served into the store's bounded row index. Since ABI 45
+`fetchMonitoringSnapshot` served into the store's bounded row index. Since ABI next (#880, set at merge)
 (#866) the listing also carries the invalid strip with each cell's rejection
 reasons (`monitoringCellJson`).
 
