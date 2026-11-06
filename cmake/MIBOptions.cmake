@@ -126,6 +126,12 @@ if(_mib_processing_core_app_min_version VERSION_GREATER
     message(FATAL_ERROR
         "Processing-core app minimum version must not exceed its maximum version")
 endif()
+if(MIB_REQUIRE_PROCESSING_CORE_APP_COMPAT AND
+   (PROJECT_VERSION VERSION_LESS _mib_processing_core_app_min_version OR
+    PROJECT_VERSION VERSION_GREATER _mib_processing_core_app_max_version))
+    message(FATAL_ERROR
+        "Processing-core release compatibility bounds must include the current desktop version ${PROJECT_VERSION}")
+endif()
 set(MIB_PROCESSING_CORE_APP_MIN_VERSION
     "${_mib_processing_core_app_min_version}" CACHE STRING
     "Oldest desktop app version allowed to load a released native processing core" FORCE)

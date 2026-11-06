@@ -3,6 +3,14 @@ name: Promote or roll back processing core
 on:
   workflow_dispatch:
     inputs:
+      line:
+        description: Processing contract line to activate
+        required: true
+        default: subtract-ring
+        type: choice
+        options:
+          - subtract-ring
+          - absdiff-laplacian
       version:
         description: Existing immutable processing-core version to activate
         required: true
@@ -20,7 +28,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: processing-core-registry-${{ inputs.channel }}
+  group: processing-core${{ inputs.line == 'absdiff-laplacian' && '-absdiff-laplacian' || '' }}-registry-${{ inputs.channel }}
   cancel-in-progress: false
 
 jobs:
@@ -44,6 +52,7 @@ jobs:
           MIB_STUDIO_R2_ENDPOINT: ${{ secrets.MIB_STUDIO_R2_ENDPOINT }}
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          LINE: ${{ inputs.line }}
         run: |
           set -euo pipefail
           if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] || [ -z "${MIB_STUDIO_R2_ENDPOINT:-}" ]; then
@@ -53,6 +62,7 @@ jobs:
           python -m pip install --upgrade pip boto3
           published_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           python scripts/release/publish-processing-core.py \
+            --line "$LINE" \
             --promote-version "$VERSION" \
             --channel "$CHANNEL" \
             --published-at "$published_at" \
@@ -62,9 +72,14 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          LINE: ${{ inputs.line }}
         run: |
           set -euo pipefail
-          url="https://updates.yofo.bio/${CHANNEL}/processing-core/latest.json?promotion=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          registry_dir=processing-core
+          if [ "$LINE" = absdiff-laplacian ]; then
+            registry_dir=processing-core-absdiff-laplacian
+          fi
+          url="https://updates.yofo.bio/${CHANNEL}/${registry_dir}/latest.json?promotion=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           python scripts/release/verify-processing-core-manifest.py --manifest-url "$url"
           python - "$url" "$VERSION" <<'PY'
           import json

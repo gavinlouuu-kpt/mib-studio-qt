@@ -28,6 +28,7 @@ class ProcessingCoreSignerCMakeTest(unittest.TestCase):
         app_min: str = "",
         app_max: str = "",
         require_app_compat: bool = False,
+        project_version: str = "1.0.0",
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temporary_directory:
             script = Path(temporary_directory) / "check.cmake"
@@ -45,7 +46,7 @@ endif()
             return subprocess.run(
                 [
                     "cmake",
-                    "-DPROJECT_VERSION=1.0.0",
+                    f"-DPROJECT_VERSION={project_version}",
                     f"-D{PIN_NAME}={pin}",
                     f"-D{REQUIRE_NAME}={'ON' if required else 'OFF'}",
                     f"-D{APP_MIN_NAME}={app_min}",
@@ -90,6 +91,22 @@ endif()
 
         valid = self.run_options(
             app_min="1.0.6", app_max="1.0.99", require_app_compat=True,
+            project_version="1.0.6",
+        )
+        self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+
+    def test_release_bounds_include_current_desktop(self) -> None:
+        for minimum, maximum in (("1.0.6", "1.0.99"), ("1.3.0", "1.3.99")):
+            with self.subTest(minimum=minimum, maximum=maximum):
+                result = self.run_options(
+                    app_min=minimum, app_max=maximum, require_app_compat=True,
+                    project_version="1.2.0",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("must include the current desktop version", " ".join((result.stdout + result.stderr).split()))
+        valid = self.run_options(
+            app_min="1.2.0", app_max="1.2.0", require_app_compat=True,
+            project_version="1.2.0",
         )
         self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
 
@@ -194,7 +211,9 @@ class ProcessingCoreSignerReleaseWiringTest(unittest.TestCase):
         self.assertIn("--upload-method s3", content)
         self.assertIn("verify-processing-core-manifest.py", content)
         self.assertIn("resolved version", content)
-        self.assertIn("processing-core-registry-${{ inputs.channel }}", content)
+        self.assertIn("inputs.line == 'absdiff-laplacian' && '-absdiff-laplacian' || ''", content)
+        self.assertIn('--line "$LINE"', content)
+        self.assertIn("registry_dir=processing-core-absdiff-laplacian", content)
 
 
 class DesktopReleaseSafetyWiringTest(unittest.TestCase):
