@@ -6,7 +6,7 @@ sends nothing), the camera's phase beside the buttons ("Camera starting...", "ru
 experiment is Starting, Active or saving its data (backend and buttons), a device teardown that was not
 confirmed is a failed Stop with the camera's message, and the space bar toggles the camera through the same
 guarded commands. Configure Mock Camera takes the frame rate in fps (1 to 10000, 5000 by default) through the new
-`configure_mock_fps` (whole-microsecond interval; bridge ABI stays 45) and starts from the last folder used, else
+`configure_mock_fps` (whole-microsecond interval; bridge ABI next (#896, set at merge)) and starts from the last folder used, else
 the backend's mock folder, else Documents. The preflight now warns when the connected camera is not the active
 profile's `camera.window.camera_model` and checks the data directory's storage. The focus gate's staleness
 (`ring_ratio_stale_ms`) is #883's (HW-034, `afStaleMs`); this PR leaves it. Decisions (raw recording on Stop, display rate, `experimentCompleted`) are in

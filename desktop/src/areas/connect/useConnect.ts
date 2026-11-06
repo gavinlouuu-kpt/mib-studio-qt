@@ -243,7 +243,7 @@ export function useCameraConnection({
   }, [showMockConfig]);
 
   // The frame rate is Qt's spin box: fps, 1 to 10000, default 5000; the backend turns it into a whole-microsecond
-  // interval (ABI 45), so the mock is no longer capped at 1000 fps (CONNECT-016). The folder is trimmed.
+  // interval (ABI next (#896, set at merge)), so the mock is no longer capped at 1000 fps (CONNECT-016). The folder is trimmed.
   const onConfigureMock = useCallback(async () => {
     const dir = frameDir.trim();
     const fps = parseMockFps(mockFps);

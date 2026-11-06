@@ -636,7 +636,7 @@ BridgeCommandResult BackendBridge::configure_mock_camera(rust::Str frame_dir,
     }
 }
 
-// ABI 45 (#863 CONNECT-016): the mock camera's rate in fps (1 to 10000), whole-microsecond interval.
+// ABI next (#896, set at merge) (#863 CONNECT-016): the mock camera's rate in fps (1 to 10000), whole-microsecond interval.
 BridgeCommandResult BackendBridge::configure_mock_camera_fps(rust::Str frame_dir, double frames_per_second,
                                                              bool loop_files) {
     try {

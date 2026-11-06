@@ -127,7 +127,7 @@ pub fn init(state: &AppState, data_dir: &str, resource_dir: &str) -> Result<bool
     Ok(guard.pin_mut().initialize_with_resources(data_dir, resource_dir))
 }
 
-/// Configure the mock camera by frame rate (ABI 45, #863): `fps` is Qt's spin box, 1 to 10000; the
+/// Configure the mock camera by frame rate (ABI next (#896, set at merge), #863): `fps` is Qt's spin box, 1 to 10000; the
 /// interval is whole microseconds, so 5000 fps is 200 us (the millisecond field of `configure_mock`
 /// cannot go below 1 ms). A rate outside the range is refused here.
 pub fn configure_mock_fps(

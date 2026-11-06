@@ -384,7 +384,7 @@ mode and says the profile was modified after apply; the saved profile is never r
 the startup restore). A configuration apply sets the mode from the document (missing = everyFrame).
 `select_hardware_camera` is refused while a capture runs or an experiment is Starting/Active/Stopping, like
 `select_mindvision_camera`; `configure_mock_camera` is refused by the facade under the same rule
-(`experimentHoldsCamera`). `configure_mock_fps(frameDir, fps, loopFiles)` (ABI 45, #863 CONNECT-016) configures
+(`experimentHoldsCamera`). `configure_mock_fps(frameDir, fps, loopFiles)` (ABI next (#896, set at merge), #863 CONNECT-016) configures
 the mock by frame rate as Qt's dialog: 1 to 10000 fps, interval `round(1e6 / fps)` whole microseconds (5000 fps =
 200 us), where `configure_mock`'s millisecond field floors at 1 ms; a rate outside the range is refused in the
 command layer and clamped by the facade. `stop_capture` is refused while an experiment is Starting, Active or

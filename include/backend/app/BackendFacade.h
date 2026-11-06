@@ -78,7 +78,7 @@ namespace backend::bridge
         int mockFrameIntervalMs{33};
         // > 0: the mock camera's frame rate in fps (Qt's Configure Mock spin box, 1 to 10000; clamped there), which
         // wins over mockFrameIntervalMs. The interval is whole microseconds, so 5000 fps is 200 us, not the 1 ms
-        // floor the millisecond field has (ABI 45, #863 CONNECT-016).
+        // floor the millisecond field has (ABI next (#896, set at merge), #863 CONNECT-016).
         double mockFramesPerSecond{0};
         bool mockLoopFiles{true};
         int hardwareInterfaceIndex{-1};

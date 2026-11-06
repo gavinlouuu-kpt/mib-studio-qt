@@ -772,7 +772,7 @@ export const bridge = {
   init: (dataDir: string) => invoke<boolean>("init", { dataDir }),
   configureMock: (frameDir: string, frameIntervalMs: number, loopFiles: boolean) =>
     sourceMutation("configure_mock", { frameDir, frameIntervalMs, loopFiles }),
-  // The mock camera by frame rate (bridge ABI 45, #863): fps 1 to 10000, as Qt's Configure Mock dialog.
+  // The mock camera by frame rate (bridge ABI next (#896, set at merge), #863): fps 1 to 10000, as Qt's Configure Mock dialog.
   configureMockFps: (frameDir: string, fps: number, loopFiles: boolean) =>
     sourceMutation("configure_mock_fps", { frameDir, fps, loopFiles }),
   startCapture: () => sourceMutation("start_capture"),

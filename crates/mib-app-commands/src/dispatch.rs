@@ -1611,7 +1611,7 @@ mod tests {
         let mock = json!({ "frameDir": frames.to_string_lossy(), "frameIntervalMs": 5, "loopFiles": true });
         assert_eq!(json_of("configure_mock", mock.clone())["ok"], json!(true));
 
-        // The mock by frame rate (ABI 45, CONNECT-016): Qt's spin box, 1 to 10000 fps; a rate outside it never reaches the backend.
+        // The mock by frame rate (ABI next (#896, set at merge), CONNECT-016): Qt's spin box, 1 to 10000 fps; a rate outside it never reaches the backend.
         let by_rate = |fps: Value| json!({ "frameDir": frames.to_string_lossy(), "fps": fps, "loopFiles": true });
         assert_eq!(json_of("configure_mock_fps", by_rate(json!(5000))) ["ok"], json!(true));
         assert_eq!(json_of("configure_mock_fps", by_rate(json!(1)))["ok"], json!(true));

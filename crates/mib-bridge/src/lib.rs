@@ -854,7 +854,7 @@ pub mod ffi {
             frame_interval_ms: i32,
             loop_files: bool,
         ) -> BridgeCommandResult;
-        /// ABI 45 (#863): configure the mock camera by frame rate (fps, 1 to 10000; whole-microsecond interval).
+        /// ABI next (#896, set at merge) (#863): configure the mock camera by frame rate (fps, 1 to 10000; whole-microsecond interval).
         fn configure_mock_camera_fps(
             self: Pin<&mut BackendBridge>,
             frame_dir: &str,
