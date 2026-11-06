@@ -43,6 +43,14 @@ const stageTabs = () => Array.from(host.querySelectorAll<HTMLButtonElement>(".st
 const widthPx = () => Number.parseInt(body().style.width, 10);
 async function click(el: Element) { await act(async () => (el as HTMLElement).click()); }
 const mouse = (type: string, x: number) => new MouseEvent(type, { bubbles: true, clientX: x, button: 0 });
+// The panel's own controls, to check they stay mounted (same nodes, drafts kept) while the panel is collapsed or
+// hidden for space: an unmount would drop an in-flight Stop's command owner and the operator's typed values.
+const portField = () => body().querySelector<HTMLInputElement>('input[type="text"]')!; // the Sample pump's serial port
+const stopPump = () => Array.from(body().querySelectorAll("button")).find((b) => b.textContent === "Stop pump")!;
+async function typeInto(input: HTMLInputElement, value: string) {
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => { setValue.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
+}
 async function drag(handle: Element, fromX: number, toX: number) {
   await act(async () => { handle.dispatchEvent(mouse("pointerdown", fromX)); });
   await act(async () => { handle.dispatchEvent(mouse("pointermove", toX)); });
@@ -99,9 +107,14 @@ describe("collapse and expand", () => {
     expect(toggle.getAttribute("aria-label")).toBe("Hide hardware panel");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     const instance = body();
+    const field = portField(), stopButton = stopPump();
+    await typeInto(field, "COM42");
+    expect(field.value).toBe("COM42");
     await click(toggle);
     expect(body().hidden).toBe(true);
     expect(body()).toBe(instance);
+    expect(portField()).toBe(field); // the controls stay mounted while collapsed
+    expect(stopPump()).toBe(stopButton);
     expect(dock().dataset.state).toBe("collapsed");
     expect(toggle.getAttribute("aria-label")).toBe("Show hardware panel");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
@@ -111,6 +124,9 @@ describe("collapse and expand", () => {
     await click(toggle);
     expect(body().hidden).toBe(false);
     expect(dock().dataset.state).toBe("open");
+    expect(portField()).toBe(field);
+    expect(stopPump()).toBe(stopButton);
+    expect(field.value).toBe("COM42"); // the typed draft survived collapse and expand
   });
 
   it("collapsing is stored in localStorage and in the shell preferences", async () => {
@@ -256,8 +272,12 @@ describe("narrow window (HW-042)", () => {
 
   it("hides with the status-bar notice when even the compact panel does not fit, and comes back by itself", async () => {
     await mount(1600);
+    const field = portField(), stopButton = stopPump();
+    await typeInto(field, "COM42");
     await resizeWindow(1000);
     expect(body().hidden).toBe(true);
+    expect(portField()).toBe(field); // the controls stay mounted while hidden for space
+    expect(stopPump()).toBe(stopButton);
     expect(dock().dataset.state).toBe("hidden-for-space");
     expect(notice()).toBe(NOTICE);
     expect($(".statusbar .hw-panel-notice")!.getAttribute("role")).toBe("status");
@@ -265,6 +285,9 @@ describe("narrow window (HW-042)", () => {
     expect(body().hidden).toBe(false);
     expect(widthPx()).toBe(360); // the preference was kept
     expect(notice()).toBe("");
+    expect(portField()).toBe(field);
+    expect(stopPump()).toBe(stopButton);
+    expect(field.value).toBe("COM42"); // the typed draft survived the hide for space
   });
 
   it("does not store the automatic hide as the operator's choice", async () => {

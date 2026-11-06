@@ -7,3 +7,6 @@ shown with Connect, Overview, Experiment and Review, as Qt's hardware sidebar. I
 width the panel narrows, then hides with Qt's status-bar notice, and returns by itself (never stored as the operator's choice).
 `toggleHardwarePanel` is in the studio context for the shell's menu item and Ctrl+Shift+H (SHELL-012, #862). Frontend only; the
 panel contents (`HardwareControls`, `StageControls`, PR1/PR2 files) are unchanged. See [[architecture/Desktop-Shell]].
+Review (2026-11-06): `hardwarePanel.app.test.tsx` now pins that the panel stays mounted while collapsed and while hidden for
+space (the same Stop pump and serial-port nodes, a typed port draft kept); both tests fail if `HardwareDock` renders
+`HardwarePanel` only while the panel is visible.

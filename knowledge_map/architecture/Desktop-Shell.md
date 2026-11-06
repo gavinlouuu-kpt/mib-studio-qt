@@ -1120,8 +1120,8 @@ Camera editors stage bounded validated content in a randomized `tempfile::NamedT
 ## Z stage panel (#464, slice 5)
 
 `StageControls` (`desktop/src/components/StageControls.tsx`, pure rules in
-`stageControlModel.ts`) sits under the pump and autofocus panel on the
-Connect tab. It uses only the `stage_*` commands and `fetch_stage_status` from
+`stageControlModel.ts`) sits under the pump and autofocus panel in the
+hardware panel beside every stage tab (since 2026-11-04, HW-018). It uses only the `stage_*` commands and `fetch_stage_status` from
 [[Rust-Bridge]] (ABI 30). It is hidden on the
 PZ7035 until that board has a serial path for the stage. The service rules are
 in [[../services/StageService]].
