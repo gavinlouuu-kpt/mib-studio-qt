@@ -356,7 +356,7 @@ add_test(NAME e2e.monitoring_cells_facade COMMAND $<TARGET_FILE:mib_backend_test
 set_tests_properties(e2e.monitoring_cells_facade PROPERTIES LABELS "backend;bridge;e2e;monitoring;safety" TIMEOUT 180)
 
 # The live Monitoring density, the reference contour from a file, the E-modulus table and the stats telemetry
-# through the facade the bridge calls (#866 PR E, bridge ABI 46).
+# through the facade the bridge calls (#866 PR E, bridge ABI next (#886, set at merge)).
 mib_add_backend_test_executable(monitoring_density_facade_test backend/monitoring_density_facade_test.cpp)
 add_test(NAME e2e.monitoring_density_facade COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_facade_test)
 set_tests_properties(e2e.monitoring_density_facade PROPERTIES LABELS "backend;bridge;e2e;monitoring" TIMEOUT 240)
@@ -381,6 +381,13 @@ mib_add_backend_test_executable(monitoring_cell_hot_path_test performance/monito
 mib_backend_test_link(monitoring_cell_hot_path_test PRIVATE Threads::Threads)
 add_test(NAME performance.monitoring_cell_hot_path COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_hot_path_test)
 set_tests_properties(performance.monitoring_cell_hot_path PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 180)
+
+# #857: the per-frame Monitoring row (crop copy, ring append, byte-budget release) against the frame's
+# own cost, at the bench geometry. Ratio gates only; sanitizer lanes skip `performance`.
+mib_add_backend_test_executable(monitoring_row_latency_test performance/monitoring_row_latency_test.cpp)
+mib_backend_test_link(monitoring_row_latency_test PRIVATE Threads::Threads)
+add_test(NAME performance.monitoring_row_latency COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_row_latency_test)
+set_tests_properties(performance.monitoring_row_latency PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 180)
 
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:mib_backend_tests> pr4_monitoring_snapshot_test)
@@ -900,6 +907,11 @@ mib_add_backend_test_executable(experiment_accounting_test processing/experiment
 mib_backend_test_link(experiment_accounting_test PRIVATE Threads::Threads)
 add_test(NAME processing.experiment_accounting COMMAND $<TARGET_FILE:mib_backend_tests> experiment_accounting_test)
 set_tests_properties(processing.experiment_accounting PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 240)
+
+mib_add_backend_test_executable(realtime_ring_loss_test processing/realtime_ring_loss_test.cpp)
+mib_backend_test_link(realtime_ring_loss_test PRIVATE Threads::Threads)
+add_test(NAME processing.realtime_ring_loss COMMAND $<TARGET_FILE:mib_backend_tests> realtime_ring_loss_test)
+set_tests_properties(processing.realtime_ring_loss PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 120)
 
 mib_add_backend_test_executable(experiment_flush_backpressure_test processing/experiment_flush_backpressure_test.cpp)
 mib_backend_test_link(experiment_flush_backpressure_test PRIVATE Threads::Threads)
@@ -1824,6 +1836,11 @@ set_tests_properties(profiles.registry_facade PROPERTIES LABELS "backend;profile
 mib_add_backend_test_executable(instrument_identity_test profiles/instrument_identity_test.cpp)
 add_test(NAME profiles.instrument_identity COMMAND $<TARGET_FILE:mib_backend_tests> instrument_identity_test)
 set_tests_properties(profiles.instrument_identity PROPERTIES LABELS "backend;profiles;fault-injection" TIMEOUT 30)
+# Rig check F1: the data dir resolver (Program Files -> %LOCALAPPDATA%) and the
+# one-time migration of <exe dir>/data state.
+mib_add_backend_test_executable(data_directory_test backend/data_directory_test.cpp)
+add_test(NAME backend.data_directory COMMAND $<TARGET_FILE:mib_backend_tests> data_directory_test)
+set_tests_properties(backend.data_directory PROPERTIES LABELS "backend;regression;roundtrip;fault-injection" TIMEOUT 60)
 
 mib_add_backend_test_executable(registry_method_test profiles/registry_method_test.cpp)
 mib_backend_test_link(registry_method_test PRIVATE Threads::Threads)
@@ -1905,6 +1922,8 @@ endif()
 if(Python3_Interpreter_FOUND)
     add_test(NAME installers.vc_runtime_check COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/installers/vc_runtime_check_test.py)
     set_tests_properties(installers.vc_runtime_check PROPERTIES LABELS "installer;regression" TIMEOUT 10)
+    add_test(NAME installers.data_dir_and_egrabber COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/installers/data_dir_and_egrabber_test.py)
+    set_tests_properties(installers.data_dir_and_egrabber PROPERTIES LABELS "installer;regression" TIMEOUT 10)
 endif()
 # Issue 403: persistent regressions backed by the mock-camera lifecycle harness.
 foreach(scenario IN ITEMS byte_pressure partial_series partial_series_no_frames partial_series_restart)

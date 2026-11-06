@@ -17,7 +17,7 @@
 //  - stop() joins promptly while a long interval is pending;
 //  - concurrent setSettings/requestUpdate/latest/stats from four threads
 //    while the input changes (TSan lane);
-//  - row identities (#866 PR E, bridge ABI 46): a result carries each row's
+//  - row identities (#866 PR E, bridge ABI next (#886, set at merge)): a result carries each row's
 //    whole key (run, capture, frame index, object id), all or nothing, and a
 //    new capture or run that restarts the frame numbering is never mistaken
 //    for unchanged input (the fingerprint covers the ends' whole keys).

@@ -534,7 +534,7 @@ namespace backend::bridge
 
     // Pollable snapshot of the realtime processing pipeline (pulled on demand by
     // the shell, symmetric with fetchLatestFrame — no callback wiring).
-    // One acquisition telemetry sample as the Statistics panel shows it (#866 PR E, ABI 46): `state` is
+    // One acquisition telemetry sample as the Statistics panel shows it (#866 PR E, ABI next (#886, set at merge)): `state` is
     // a TelemetrySample.h MetricValidity name ("valid", "stale", "unavailable", "unsupported",
     // "error"); a value and an age exist only for valid and stale samples (an unknown rate is never a 0).
     struct BackendMetricSample
@@ -551,7 +551,7 @@ namespace backend::bridge
         double validFps1s{0.0};
         double invalidFps1s{0.0};
         double pixelToMicronFactor{0.0};
-        // ABI 46 (#866 PR E; MON-095, MON-098, MON-008). The last published algorithm time per frame
+        // ABI next (#886, set at merge) (#866 PR E; MON-095, MON-098, MON-008). The last published algorithm time per frame
         // (1 s window, µs) and its age; unpublished (nothing processed since the realtime metrics were
         // reset) leaves algoAvgPublished false and the two zero.
         bool algoAvgPublished{false};
@@ -1166,7 +1166,7 @@ namespace backend::bridge
         bool fetchMonitoringCellImage(std::uint64_t startGeneration, std::uint64_t captureEpoch,
                                       std::uint64_t frameIndex, int objectId, bool mask, BackendFrame &out,
                                       bool *captureMismatch = nullptr, std::string *why = nullptr) const;
-        // Live density (KDE) of the Monitoring scatter (#866 PR E, bridge ABI 46; bridge-contract.json
+        // Live density (KDE) of the Monitoring scatter (#866 PR E, bridge ABI next (#886, set at merge); bridge-contract.json
         // monitoring_density). Settings go to MonitoringDensityService (clamped by its
         // MonitoringDensitySettings::clamped()); the reply echoes what applies. Nothing computes here: the
         // service's own worker does (lowest priority, load back-off, compute budget), and a request only

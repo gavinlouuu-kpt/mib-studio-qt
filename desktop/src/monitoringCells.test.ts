@@ -1,4 +1,4 @@
-// Bridge ABI 41 (#716 A6a), ABI 45 (#866: the invalid strip and the rejection reasons): the live
+// Bridge ABI 41 (#716 A6a), ABI next (#880, set at merge) (#866: the invalid strip and the rejection reasons): the live
 // cell client against a mocked transport. Identities travel as
 // canonical decimal strings, malformed ones never reach the transport, the listing and pin replies
 // are checked against the contract, and the pixels come back as frame packets of kind 5 / 6. An

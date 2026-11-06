@@ -126,13 +126,13 @@ fn abi_version_is_stable() {
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
     // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
     // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
-    // v45 (#866 MON-052/053) monitoring_cells: the invalid strip (invalid_strip) and per-cell
+    // ABI next (#880, set at merge): #866 MON-052/053 monitoring_cells: the invalid strip (invalid_strip) and per-cell
     // rejection reasons from the shared classifier; the strip cap 24 -> 25.
-    // v46 (#866 PR E) the live Monitoring density (monitoring_density_set_settings,
+    // ABI next (#886, set at merge): #866 PR E the live Monitoring density (monitoring_density_set_settings,
     // monitoring_density_request_update, fetch_monitoring_density), a reference contour from a file
     // (fetch_kde_reference_from_file), the E-modulus table (fetch_emodulus_lut) and the processing
     // stats' algorithm time, realtime mode and camera telemetry.
-    assert_eq!(ffi::bridge_abi_version(), 46);
+    assert_eq!(ffi::bridge_abi_version(), 44);
 }
 
 // ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.
@@ -345,7 +345,7 @@ fn monitoring_cells_are_described() {
     for (key, value) in [("strip_max_cells", 25), ("strip_max_bytes", 4194304), ("max_pins", 16),
                          ("pin_max_bytes", 4194304), ("crop_max_side", 256), ("crop_min_margin", 8),
                          ("row_index_max", 4096),
-                         // ABI 45 (#866 MON-052/053): the invalid strip's own bounds.
+                         // ABI next (#880, set at merge) (#866 MON-052/053): the invalid strip's own bounds.
                          ("invalid_strip_max_cells", 25), ("invalid_strip_max_bytes", 4194304)] {
         assert_eq!(cells[key], serde_json::json!(value), "monitoring_cells.{key} (pinned in shim.cpp)");
     }
@@ -359,14 +359,14 @@ fn monitoring_cells_are_described() {
                           ("capture_rules", "a realtime stop"), ("capture_rules", "Tag at entry"),
                           ("capture_rules", "One authority"), ("listing", "pins_ended"),
                           ("geometry", "ROI"), ("threading", "24-byte tag"),
-                          // ABI 45: the invalid strip and its reasons.
+                          // ABI next (#880, set at merge): the invalid strip and its reasons.
                           ("listing", "invalid_strip"), ("cell", "reasons"), ("invalid_strip", "oldest evicted first"),
                           ("invalid_strip", "every rule of the strip"), ("invalid_strip", "monitoring_clear"),
                           ("reasons", "classifyInvalidReasons"), ("reasons", "no_contour"), ("reasons", "wall"),
                           ("reasons", "histogram"), ("commands", "then the invalid strip")] {
         assert!(cells[key].as_str().is_some_and(|d| d.contains(needle)), "monitoring_cells.{key} mentions {needle}");
     }
-    // ABI 45: the reason codes, in the classifier's InvalidReasonCode order (pinned in the C++ store test).
+    // ABI next (#880, set at merge): the reason codes, in the classifier's InvalidReasonCode order (pinned in the C++ store test).
     assert_eq!(cells["reason_codes"],
                serde_json::json!(["no_contour", "border", "area", "ring", "deform", "area_ratio", "focus", "wall"]));
     // Review round 2: the error an image pull of another capture is refused with.
@@ -1291,7 +1291,7 @@ fn monitoring_cells_end_to_end() {
     let _ = std::fs::remove_dir_all(&data_dir);
 }
 
-// ABI 46 (#866 PR E): the contract describes the live Monitoring density, the reference contour
+// ABI next (#886, set at merge) (#866 PR E): the contract describes the live Monitoring density, the reference contour
 // from a file, the E-modulus table and the processing-stats additions.
 #[test]
 fn monitoring_density_is_described() {
@@ -1336,7 +1336,7 @@ fn monitoring_density_is_described() {
     }
 }
 
-// ABI 46 (#866 PR E): the density, the reference contour, the E-modulus table and the stats
+// ABI next (#886, set at merge) (#866 PR E): the density, the reference contour, the E-modulus table and the stats
 // telemetry end to end through the cxx bridge: the mock camera's blob frames, the real realtime
 // path into the monitoring ring, the service worker's estimate, and the replies in their JSON shapes.
 #[test]
@@ -1461,7 +1461,7 @@ fn monitoring_density_end_to_end() {
 
 // A config under which the blob frames fail validation: the area gate (60..70 um^2) is far below
 // a blob's area at the calibration the test applies, so every detection is invalid with an Area
-// reason (the other gates are off). ABI 45 (#866 MON-053).
+// reason (the other gates are off). ABI next (#880, set at merge) (#866 MON-053).
 const AREA_REJECTING_CONFIG: &str = r#"{"image_processing": {"gaussian_blur_size": 3, "bg_subtract_threshold": 8,
     "morph_kernel_size": 3, "morph_iterations": 1, "empty_frame_pixel_threshold": 1, "auto_background_enabled": false,
     "area_threshold_min": 60, "area_threshold_max": 70,
@@ -1469,7 +1469,7 @@ const AREA_REJECTING_CONFIG: &str = r#"{"image_processing": {"gaussian_blur_size
                 "enable_area_ratio_check": false, "enable_ring_ratio_check": false,
                 "enable_laplacian_variance_check": false, "require_single_inner_contour": false}}}"#;
 
-// ABI 45 (#866 MON-052/053): the invalid-cell strip end to end through the cxx bridge: blob frames
+// ABI next (#880, set at merge) (#866 MON-052/053): the invalid-cell strip end to end through the cxx bridge: blob frames
 // that fail the area gate reach the monitoring ring's invalid half, the store keeps their crops in
 // its own strip (never in the valid one) with the shared classifier's reasons (measured value and
 // the configured range), the pixels come out as frame packets, and monitoring_clear and a capture

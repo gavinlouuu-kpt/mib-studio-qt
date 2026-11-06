@@ -1,5 +1,5 @@
 #pragma once
-// A reference core contour read from an experiment file (#866 PR E, bridge ABI 46 command
+// A reference core contour read from an experiment file (#866 PR E, bridge ABI next (#886, set at merge) command
 // `fetch_kde_reference_from_file`; Qt: ExperimentMonitoringTab::loadKdeReferenceFromFile). Read only:
 // a short-lived Hdf5Service reader of its own opens the file, reads the stored KDE core record (the
 // full-run analysis one first, the live one as the fallback), and closes it. It never opens the file

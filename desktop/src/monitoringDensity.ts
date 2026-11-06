@@ -1,5 +1,5 @@
 // The live Monitoring density (KDE), its reference contour, the E-modulus table and the stats telemetry
-// (bridge ABI 46, #866 PR E; bridge-contract.json `monitoring_density`, `kde_reference_from_file`,
+// (bridge ABI next (#886, set at merge), #866 PR E; bridge-contract.json `monitoring_density`, `kde_reference_from_file`,
 // `emodulus_lut`, `processing_stats`).
 //
 // The backend owns all of it: MonitoringDensityService computes the estimate on its own lowest-priority
@@ -505,8 +505,8 @@ export interface CameraTelemetry {
   data_rate_mbps: MetricSample;
 }
 
-/** The ABI 46 additions to the processing stats that this module owns: the realtime mode and the
- *  camera telemetry. `algo_avg_us` and `algo_avg_age_ms`, also new in ABI 46, are decoded by PR #877's
+/** The ABI next (#886, set at merge) additions to the processing stats that this module owns: the realtime mode and the
+ *  camera telemetry. `algo_avg_us` and `algo_avg_age_ms`, also new in ABI next (#886, set at merge), are decoded by PR #877's
  *  `decodeProcessingStats` under those names (not here, to leave that decoder to that PR). */
 export interface ProcessingTelemetry {
   /** null when the backend is not initialized or too old to report it. */

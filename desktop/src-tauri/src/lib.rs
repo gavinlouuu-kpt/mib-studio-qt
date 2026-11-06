@@ -635,7 +635,7 @@ fn fetch_monitoring_cell_packet(state: State<AppState>, start_generation: String
     cmds::fetch_monitoring_cell_packet(&state, start_generation, capture_epoch, frame_index, object_id, layer).map(Response::new)
 }
 
-// ABI 46 (#866 PR E): the live Monitoring density (KDE), the reference contour from a file and the
+// ABI next (#886, set at merge) (#866 PR E): the live Monitoring density (KDE), the reference contour from a file and the
 // E-modulus table. A u64 generation travels as a canonical decimal string. Omitted settings take the
 // backend defaults (interval 2000 ms, bandwidth factor 1, core fraction 0.9, axes 0 = the data range).
 #[tauri::command]

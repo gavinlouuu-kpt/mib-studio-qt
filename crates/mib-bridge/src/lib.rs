@@ -123,14 +123,14 @@ pub mod ffi {
         pub valid_fps1s: f64,
         pub invalid_fps1s: f64,
         pub pixel_to_micron: f64,
-        /// ABI 46 (#866 PR E; MON-095): the last published algorithm time per frame (1 s window, µs)
+        /// ABI next (#886, set at merge) (#866 PR E; MON-095): the last published algorithm time per frame (1 s window, µs)
         /// and its age in ms; `algo_avg_published` is false until the realtime metrics publish one.
         pub algo_avg_published: bool,
         pub algo_avg_us: f64,
         pub algo_avg_age_ms: f64,
-        /// ABI 46 (MON-008): the realtime processing mode, "inline" or "async_batch".
+        /// ABI next (#886, set at merge) (MON-008): the realtime processing mode, "inline" or "async_batch".
         pub realtime_mode: String,
-        /// ABI 46 (MON-098): the capture session is running, and the device/SDK frame rate and data
+        /// ABI next (#886, set at merge) (MON-098): the capture session is running, and the device/SDK frame rate and data
         /// rate (MB/s) as Qt's Statistics panel shows them. `*_state` is a TelemetrySample.h
         /// MetricValidity name ("valid", "stale", "unavailable", "unsupported", "error"); the value and
         /// age (ms) are meaningful only when `*_has_value` (valid or stale).
@@ -1356,7 +1356,7 @@ pub mod ffi {
         /// ABI 41 (#716 A6a): the live cell strip and pins as JSON (bridge-contract.json
         /// `monitoring_cells`): brings the strip up to date with the monitoring ring first (at
         /// most the strip caps of new crops, off the hot path), then lists the strip, the invalid
-        /// strip (ABI 45: each invalid cell with its rejection `reasons`) and the pins, metadata
+        /// strip (ABI next (#880, set at merge): each invalid cell with its rejection `reasons`) and the pins, metadata
         /// only. `{"valid": false}` before init.
         fn fetch_monitoring_cells(self: Pin<&mut BackendBridge>) -> String;
         /// Pin the row `(expected_start_generation, capture_epoch, frame_index, object_id)`: an
@@ -1409,7 +1409,7 @@ pub mod ffi {
         /// otherwise deferred. `{"ok": false, ...}` before init and for a refused request.
         fn run_quick_look(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
 
-        /// ABI 46 (#866 PR E; bridge-contract.json `monitoring_density`): the live Monitoring density
+        /// ABI next (#886, set at merge) (#866 PR E; bridge-contract.json `monitoring_density`): the live Monitoring density
         /// (KDE). Settings go to the backend's MonitoringDensityService (clamped there); the reply is
         /// JSON `{ok, message, settings}` with the clamped settings applied. Nothing is computed in the
         /// call: the service's own lowest-priority worker does.

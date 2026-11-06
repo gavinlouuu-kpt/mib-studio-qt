@@ -796,7 +796,7 @@ export const bridge = {
   fetchProcessingStats: async () => {
     const raw = await invoke<unknown>("fetch_processing_stats");
     const stats = decodeProcessingStats(raw);
-    // ABI 46: the realtime mode and the camera telemetry come out of this same reply (one invoke per poll). A reply that
+    // ABI next (#886, set at merge): the realtime mode and the camera telemetry come out of this same reply (one invoke per poll). A reply that
     // breaks the contract costs those rows only, not the rates; the sidebar then shows the rate measured here and says why.
     try { stats.telemetry = decodeProcessingTelemetry(raw); } catch (e) { stats.telemetry_error = e instanceof Error ? e.message : String(e); }
     return stats;
@@ -1052,7 +1052,7 @@ export const bridge = {
     const kind = layer === "mask" ? FRAME_PACKET.pull_kinds.monitoring_cell_mask : FRAME_PACKET.pull_kinds.monitoring_cell_image;
     return decodeFramePacket(await invoke<ArrayBuffer>("fetch_monitoring_cell_packet", { ...cellKeyArgs(key), layer }), kind);
   },
-  // Live density (KDE) of the Monitoring scatter (bridge ABI 46, #866 PR E; bridge-contract.json
+  // Live density (KDE) of the Monitoring scatter (bridge ABI next (#886, set at merge), #866 PR E; bridge-contract.json
   // monitoring_density, kde_reference_from_file, emodulus_lut, processing_stats). The backend's
   // MonitoringDensityService computes on its own lowest-priority worker; a shell pushes the settings
   // (enabled only while the Monitoring sub-tab is shown) and polls the generation. Settings and the
@@ -1069,7 +1069,7 @@ export const bridge = {
   /** Pass the identity of the table you hold: the grid comes back only when it differs. */
   fetchEmodulusLut: async (knownIdentity?: string | null) =>
     decodeEmodulusLut(await invoke<unknown>("fetch_emodulus_lut", emodulusLutArgs(knownIdentity))),
-  /** The ABI 46 additions to `fetch_processing_stats` (algorithm time, realtime mode, camera telemetry):
+  /** The ABI next (#886, set at merge) additions to `fetch_processing_stats` (algorithm time, realtime mode, camera telemetry):
    *  the same command as `fetchProcessingStats`, decoded for those members. */
   fetchProcessingTelemetry: async () => decodeProcessingTelemetry(await invoke<unknown>("fetch_processing_stats")),
   // Calibration records (bridge ABI 42, #716 A4a; bridge-contract.json calibration_records). The

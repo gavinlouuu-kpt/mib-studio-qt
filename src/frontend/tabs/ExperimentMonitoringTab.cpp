@@ -1224,6 +1224,15 @@ namespace frontend
             recentInvalidFrames_.erase(recentInvalidFrames_.begin(), recentInvalidFrames_.begin() + excess);
         }
 
+        // These rows share the ring's images, and keep them after the ring released them: hold the
+        // copy to the same byte budget as each ring (#857). The numbers stay; only the oldest
+        // rows lose their pictures (the thumbnails show the newest 25).
+        using backend::services::ProcessingService;
+        ProcessingService::releaseImagesBeyondBudget(recentValidFrames_,
+                                                     ProcessingService::kMonitoringImageBytesPerRing);
+        ProcessingService::releaseImagesBeyondBudget(recentInvalidFrames_,
+                                                     ProcessingService::kMonitoringImageBytesPerRing);
+
         // Update all panels using rolling buffers
         updateScatterplot(recentValidFrames_);
         updateHistogram(recentValidFrames_);

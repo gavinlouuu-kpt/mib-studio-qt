@@ -495,6 +495,18 @@ HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
 }
 
 HdfReviewTab::~HdfReviewTab() {
+    // #859: empty the metrics tables first, while their models, views and frame vectors are all
+    // alive. A UI Automation client (a screen reader, the IME, a test driver) makes Qt keep one
+    // accessible interface per table cell it visited, each holding a QPersistentModelIndex; up to
+    // 24 x 3,300 for a 3,000-cell file. Released by the dying QTableView, one by one, they kept
+    // the main thread at 100% for minutes after "shutdown complete", and the process never
+    // exited. A model reset invalidates every persistent index in one pass and lets the views
+    // drop their cell interfaces cheaply; then the views let go of the models.
+    for (HdfMetricsModel* model : {validMetricsModel_, invalidMetricsModel_}) {
+        if (model) model->setSource(nullptr);
+    }
+    ui->validMetricsTable->setModel(nullptr);
+    ui->invalidMetricsTable->setModel(nullptr);
     if (chartsSplitter_ && chartsRightSplitter_) {
         QSettings settings;
         settings.setValue(QStringLiteral("Review/ChartsSplitter"), chartsSplitter_->saveState());

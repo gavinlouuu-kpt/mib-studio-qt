@@ -110,7 +110,7 @@ text file I/O (`open`, `read_text`, `write_text`).
 - Headers mirror source layout under `include/`.
 - Review existing `Tools` ([`src/backend/app/Tools.cpp`](src/backend/app/Tools.cpp)) before writing new utilities.
 - Prefer ready-made EGrabber SDK patterns over hand-rolled camera code.
-- Runtime data (logs, sqlite, HDF5, mock frames) lives under `data/`.
+- Runtime state lives in `AppBackend::dataDir()`, never the exe dir ([rule](knowledge_map/architecture/AppBackend.md#data-directory-rig-check-f1-2026-11-06)).
 - Test performance metrics go to MLflow at `mlflow.yofo.bio` via
   `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` env vars (never hardcode).
 - **Bench-test camera, capture and eGrabber PRs before merging.** A PR touching `src/backend/camera*`,

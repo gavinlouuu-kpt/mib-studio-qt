@@ -25,10 +25,12 @@
 
 ## Runtime data
 
-- All runtime artifacts live under `data/`: `data/logs/app.log`,
-  `data/*.sqlite3`, HDF5 files, `data/mock_frames/`. On Windows, logs may
-  redirect to `%LOCALAPPDATA%/MIB_Studio_Qt/logs/` if `dataDir` is inside
-  Program Files (see [[../architecture/AppBackend]]).
+- Runtime state lives in the data dir: `<exe dir>/data` in dev builds and on
+  Linux, `%LOCALAPPDATA%/MIB_Studio_Qt/data` in a Windows install under Program
+  Files (logs then in `%LOCALAPPDATA%/MIB_Studio_Qt/logs/`), or `MIB_DATA_DIR`.
+  Resolve paths from `AppBackend::dataDir()`, never from the exe dir; a new state
+  file is added to `datadir::stateEntries()` (see "Data directory" in
+  [[../architecture/AppBackend]]).
 - Do not check experiment HDF5 files into git.
 
 ## Task / docs housekeeping

@@ -1,12 +1,12 @@
-## 2026-11-05 — Monitoring cell strips: valid and invalid thumbnails with rejection reasons (#866 MON-052 .. MON-055, bridge ABI 45)
+## 2026-11-05 — Monitoring cell strips: valid and invalid thumbnails with rejection reasons (#866 MON-052 .. MON-055, bridge ABI next (#880, set at merge))
 
 The Tauri Monitoring sub-tab shows the Qt tab's two strips: the last 25 valid and the last 25 invalid
 detections as 100 px thumbnails, five per row, the invalid ones with the short reasons under the image
 and a tooltip with the measured value and range, and a "Show Overlay" checkbox per strip (mask tint and
 outline: blue target, green valid, red invalid). See [[architecture/Desktop-Shell]] (frontend) and
-[[services/MonitoringCellStore]] (backend), [[architecture/Rust-Bridge]] (ABI 45).
+[[services/MonitoringCellStore]] (backend), [[architecture/Rust-Bridge]] (ABI next (#880, set at merge)).
 
-**Backend (ABI 44 -> 45, additive, no new command).** `MonitoringCellStore` keeps an invalid strip
+**Backend (ABI 44 -> next, set at merge, additive, no new command).** `MonitoringCellStore` keeps an invalid strip
 beside the valid one (own 25-cell and 4 MiB caps, the strip's run and capture rules, cleared by
 `monitoring_clear` and by a capture change) and the strip cap goes from 24 to 25 (25 worst-case crops
 are 3.1 MiB, inside the byte cap). Each invalid cell carries `reasons: [{code, value, min, max}]` from

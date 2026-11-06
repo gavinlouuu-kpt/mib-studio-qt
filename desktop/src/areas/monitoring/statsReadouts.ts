@@ -55,7 +55,7 @@ export function cameraStatusReadout(running: boolean): Readout {
 
 const MEASURED_HERE = "Measured from the frames this window received. The backend sent no capture rate.";
 
-/** Camera FPS and Data Rate rows. The backend's capture sample (processing_stats.camera, bridge ABI 46) is shown as
+/** Camera FPS and Data Rate rows. The backend's capture sample (processing_stats.camera, bridge ABI next (#886, set at merge)) is shown as
  *  text with its validity, whole numbers as Qt's formatMetric writes them ("n/a", "unsupported", "error", "<n>
  *  (stale 3.0 s)"); only when the backend sends no camera telemetry does the rate measured from the frames this
  *  window received stand in (and say so). A stopped camera reads zero, as in Qt. */

@@ -238,7 +238,7 @@ public:
     rust::String calibration_apply(rust::Str record_id, double expected_current_factor);
     // ABI 44 (#716 A7a): the run quick look (bridge-contract.json run_quick_look).
     rust::String run_quick_look(rust::Str request_json);
-    // ABI 46 (#866 PR E): the live Monitoring density, the reference contour from a file and the
+    // ABI next (#886, set at merge) (#866 PR E): the live Monitoring density, the reference contour from a file and the
     // E-modulus table (bridge-contract.json monitoring_density, emodulus_lut).
     rust::String monitoring_density_set_settings(bool enabled, std::int32_t interval_ms, double bandwidth_factor,
                                                  double core_fraction, double x0, double x1, double y0, double y1);
