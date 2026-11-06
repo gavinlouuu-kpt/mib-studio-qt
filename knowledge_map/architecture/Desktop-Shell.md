@@ -825,7 +825,7 @@ reads the settings from the studio state when mounted in the classic view):
   whenever the config's range changes. The Density (KDE) fields are the first group in that
   list (see the next bullet).
 - *Density (KDE) colouring, core contour and reference (PR E2, MON-058..063, 083..086;
-  ABI 46).* `areas/monitoring/density/`. The backend's `MonitoringDensityService`
+  ABI next (#886, set at merge)).* `areas/monitoring/density/`. The backend's `MonitoringDensityService`
   ([[services/MonitoringDensityService]]) computes the estimate on its own lowest-priority
   worker; the shell pushes settings and polls. `useMonitoringDensity` (called after
   `useTunePanel` in `useStudioController`; its state is the `PR E2: density (KDE)` block of

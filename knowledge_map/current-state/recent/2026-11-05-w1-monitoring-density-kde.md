@@ -1,6 +1,6 @@
 ## 2026-11-05 — Tauri Monitoring scatter: density (KDE) colouring, core contour, reference contour (#866 PR E2, MON-058..063, 083..086)
 
-The Monitoring scatter of the React/Tauri app now has Qt's "Density (KDE)" mode on the bridge ABI 46
+The Monitoring scatter of the React/Tauri app now has Qt's "Density (KDE)" mode on the bridge ABI next (#886, set at merge)
 density surface (see [[current-state/recent/2026-11-05-w1-monitoring-density-bridge]]). Behaviour
 reference: [[frontend/ExperimentMonitoringTab]] (Scatter density (KDE) colouring, Core contour);
 architecture: [[architecture/Desktop-Shell]] (Monitoring charts and settings, density bullet).
