@@ -626,7 +626,9 @@ selection, duplicate commands, errors and disabled setup states.
 
 `HardwareControls` stays mounted across tabs so pending command ownership and
 hardware form drafts survive navigation. Connect exposes existing numeric-COM
-pump/autofocus APIs; manual actuation requires the shared service-mode arm,
+pump/autofocus APIs. Since 2026-11-04 the pump and autofocus controls are
+operator controls as in Qt (see "Pump and autofocus operator controls" below);
+only the trigger tests and the pulse generator still use the Service-mode arm,
 which clears on one action. Typed endpoints remain follow-up work.
 
 `configDocument.tsx` owns a saved processing-document draft in App. Open/reload
@@ -1023,13 +1025,54 @@ pure and unit tested):
 
 ## Pump model per slot (2026-10-04)
 
-The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:
+The Pumps panel (`PumpControls.tsx`, composed by `HardwareControls.tsx`) has a **Pump model** select per slot:
 Syringe (Longer dLSP) or Peristaltic (Tushui). Peristaltic adds a calibration
 field (µL per revolution, default 25), pre-fills the instrument endpoint
 `/dev/ttyPS1` address 3 when the fields are untouched, hides the syringe
 volume controls and shows head rpm and the estimated delivered volume.
 Connect goes through `pump_connect_model` (ABI 22, [[Rust-Bridge]]), which the
 WebSocket server allows for the controlling client.
+
+## Pump and autofocus operator controls (2026-11-04, #868 parity wave 1, #855)
+
+`HardwareControls.tsx` only composes `StartupDiscoveryControls`, `PumpControls`,
+`AutofocusControls` and `PulseGeneratorControls`; the pure rules live in
+`pumpControlModel.ts` and `hardwareControlModel.ts`.
+
+- **Gating (D1, D2).** Pump connect/disconnect, flow rate, unit, direction, syringe volume, Start and Purge,
+  and autofocus Enable and Jog need a ready backend and a connected device; Service mode, the arm and a running
+  experiment do not matter, and the backend stays ungated as in Qt (`operatorGate`). Command serialisation
+  stays: non-stop pump commands run one at a time through `PumpCommandQueue` (a `HardwareCommandOwner` per pump),
+  waiting for their turn. Autofocus connection and the tuning editor are still locked during an experiment.
+- **Stop (D3, #855).** Stop pump, the purge release and Disable autofocus are disabled only when the backend is
+  not ready. They bypass the queue and the `busy` flag. Stop (and Disconnect, a pump found disconnected, closing
+  the panel) first calls `PumpCommandQueue.invalidate()`: every command still waiting for its turn is dropped
+  (`CommandCancelled`, shown as "Start pump: cancelled by Stop"), checked right before the command reaches the
+  bridge, so a Start/Purge/rate/direction queued behind a slow command cannot run after Stop. A queued command also
+  re-checks that its pump is still connected when its turn comes. A command already sent cannot be taken back. Stop pump also sends `pump_stop_purge`: the dLSP's
+  full-speed purge is a separate register that `pump_stop` does not clear.
+- **Polling (HW-015).** Every 500 ms each connected pump gets `pump_poll_status` (a Modbus read of run state,
+  stall and volume), then `fetch_pump_status`. No lock, no `busy`, no overlap. The backend still serialises the
+  serial bus and the bridge's command mutex, and the WebSocket server handles one request per client at a time
+  (`mib-bridge-server/src/lib.rs`, the `spawn_blocking` awaited in the read loop), so a stop waits for a command or
+  poll already in flight, as it does behind Qt's GUI-thread poll (a few tens of ms on a healthy bus, up to five
+  1 s transaction timeouts on a dead one). Follow-up: a fail-fast `pollStatus`.
+- **Rate, unit, direction (HW-007/008/009).** 0-100000, 4 decimals, filled from the pump's configured values when
+  it connects. Trigger as in Qt (`SyringePumpTab.cpp:107-116`): Enter in the rate field (or leaving it after a
+  change) and a unit or direction change each start a 300 ms timer, then rate before direction is sent, also while
+  running. No keystroke sends anything.
+  Peristaltic pumps keep the rpm unit (head speed x µL/rev); a syringe pump never does.
+- **Exact syringe numbers (D9).** The dLSP holds flow rate and syringe volume as whole numbers 1-9999 and the
+  backend clamps anything else without a message. The panel sends an exact whole number in the chosen unit or
+  the other one (0.5 mL -> 500 µL, 12000 µL/min -> 12 mL/min), or refuses with a message.
+- **Hold-to-purge (HW-012).** `PurgeHold`: press (pointer, Space or Enter) sends `pump_purge` in the selected
+  direction; release, pointer leave/cancel, blur, window blur, hidden page, unmount send `pump_stop_purge`. A
+  release before the start left the queue sends nothing; during the start it is sent as soon as the start
+  returned; a start that reached the device and then reported a failure keeps the hold, so the release still sends
+  `pump_stop_purge` (a lost reply may leave the pump purging; Qt stops on every release); a disconnect forgets the hold.
+- **Connect.** Baud 1200-921600 (standard rates offered, default 115200); Sample address 1, Sheath 2 (peristaltic
+  endpoints 3 and 4); a syringe pump connects with `pump_connect_endpoint`, a peristaltic one with
+  `pump_connect_model` and its calibration.
 
 ## Remembered discovery and named pump endpoints (2026-09-23)
 
