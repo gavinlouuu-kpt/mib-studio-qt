@@ -101,6 +101,17 @@ public:
     using CameraReadyCallback = std::function<void(::camera::common::ICamera*, uint64_t generation)>;
     void setCameraReadyCallback(CameraReadyCallback cb);
 
+    struct FirstFrameObservedEvent {
+        uint64_t generation{0};
+        uint64_t hostTimeUs{0};
+        // FrameStore's absolute committed index of the frame when a store is
+        // configured (the store outlives restarts, so a later generation's
+        // index is larger); otherwise this session's zero-based frame count.
+        uint64_t frameIndex{0};
+    };
+    using FirstFrameObservedCallback = std::function<void(const FirstFrameObservedEvent&)>;
+    void setFirstFrameObservedCallback(FirstFrameObservedCallback cb);
+
     // Backwards-compatible request API. `start()` returns true when a session
     // is scheduled or already active — it is NOT hardware readiness; consult
     // lifecycleSnapshot().cameraReady / state for that.
@@ -171,6 +182,8 @@ private:
 
     CameraFactory cameraFactory_{};
     CameraReadyCallback cameraReadyCallback_;
+    FirstFrameObservedCallback firstFrameObservedCallback_;
+    mutable std::mutex callbackMutex_;
     ::camera::common::ICamera* activeCamera_{nullptr};
     std::mutex cameraMutex_;
 

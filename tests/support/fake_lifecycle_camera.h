@@ -30,6 +30,11 @@ public:
         // After this many frames the camera reports "stream ended" on its own
         // (isRunning() false, grabFrame false). 0 = never.
         uint64_t endStreamAfterFrames = 0;
+        bool endStreamBeforeFirstFrame = false;
+        // Malformed output: frames report zero width/height, or carry no
+        // payload bytes. grabFrame still returns true (the SDK call worked).
+        bool zeroDimensionFrames = false;
+        bool emptyPayloadFrames = false;
         // Delay injected inside stop() to model slow SDK teardown.
         std::chrono::milliseconds stopDelay{0};
         // Delay injected inside start() before it reports success/failure.
@@ -117,6 +122,7 @@ public:
             }
         }
         cv_.notify_all();
+        blockedCv_.notify_all(); // a pending releaseGrab() also stops waiting
         if (script_.stopDelay.count() > 0) std::this_thread::sleep_for(script_.stopDelay);
     }
 
@@ -132,6 +138,12 @@ public:
         obs_->grabCalls.fetch_add(1);
         std::unique_lock<std::mutex> lk(mutex_);
         if (!running_) return false;
+        if (script_.endStreamBeforeFirstFrame) {
+            running_ = false;
+            failure_.code = "fake.stream_ended";
+            failure_.message = "fake camera ended before its first frame";
+            return false;
+        }
         if (script_.blockGrab) {
             grabBlocked_ = true;
             blockedCv_.notify_all();
@@ -139,6 +151,10 @@ public:
             grabBlocked_ = false;
             if (!running_) return false;
             released_ = false;
+            // Tell releaseGrab() the release was consumed. The waiter cannot
+            // run until this call returns (mutex_ is held to the end), so by
+            // then the frame is in the caller's hands.
+            blockedCv_.notify_all();
         } else {
             lk.unlock();
             std::this_thread::sleep_for(script_.produceInterval);
@@ -152,12 +168,16 @@ public:
             failure_.message = "fake camera ended its stream";
             return false;
         }
-        out.width = 8;
-        out.height = 4;
+        out.width = script_.zeroDimensionFrames ? 0 : 8;
+        out.height = script_.zeroDimensionFrames ? 0 : 4;
         out.linePitch = 8;
         out.pixelFormat = 0x01080001;
         out.timestamp = ++seq_;
-        out.data.assign(32, static_cast<uint8_t>(seq_ & 0xFF));
+        if (script_.emptyPayloadFrames) {
+            out.data.clear();
+        } else {
+            out.data.assign(32, static_cast<uint8_t>(seq_ & 0xFF));
+        }
         obs_->framesDelivered.fetch_add(1);
         return true;
     }
@@ -203,14 +223,17 @@ public:
         std::unique_lock<std::mutex> lk(mutex_);
         return blockedCv_.wait_for(lk, timeout, [&] { return grabBlocked_; });
     }
-    // Let one blocked grab through (produces one frame).
-    void releaseGrab()
+    // Let one blocked grab through (produces one frame) and wait until that
+    // grabFrame call has consumed the release and returned. Returns false on
+    // timeout. Because the grab thread processes a frame before it calls
+    // grabFrame again, a following waitUntilGrabBlocked() only succeeds once
+    // the released frame has been fully handled by the caller.
+    bool releaseGrab(std::chrono::milliseconds timeout = std::chrono::seconds(5))
     {
-        {
-            std::lock_guard<std::mutex> lk(mutex_);
-            released_ = true;
-        }
+        std::unique_lock<std::mutex> lk(mutex_);
+        released_ = true;
         cv_.notify_all();
+        return blockedCv_.wait_for(lk, timeout, [&] { return !released_ || !running_; });
     }
 
 private:

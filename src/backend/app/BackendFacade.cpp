@@ -4443,7 +4443,10 @@ std::string BackendFacade::fetchCaptureLifecycleJson() const {
                           {"camera_ready", value.cameraReady},
                           {"failure", services::toString(value.lastFailure)},
                           {"message", value.lastFailureMessage},
-                          {"failure_generation", std::to_string(value.lastFailureGeneration)}}
+                          {"failure_generation", std::to_string(value.lastFailureGeneration)},
+                          {"first_frame_observed", value.firstFrameObserved},
+                          {"first_frame_host_time_us", std::to_string(value.firstFrameHostTimeUs)},
+                          {"first_frame_index", std::to_string(value.firstFrameIndex)}}
         .dump();
 }
 } // namespace backend::bridge

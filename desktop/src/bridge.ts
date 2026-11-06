@@ -1085,4 +1085,4 @@ interface StartupJob {job_id: string; state?: number; complete?: boolean; candid
 
 export interface BackgroundCalibrationStatus {valid: boolean; state: string; operation_generation: string; frozen_config_version: string; attempted: number; accepted: number; rejected_non_empty: number; rejected_processing_failed: number; published_background_generation: string; published_sha256: string; message: string}
 
-export interface CaptureLifecycle {valid: boolean; state: string; generation: string; camera_ready: boolean; failure: string; message: string; failure_generation: string}
+export interface CaptureLifecycle {valid: boolean; state: string; generation: string; camera_ready: boolean; failure: string; message: string; failure_generation: string; first_frame_observed: boolean; first_frame_host_time_us: string; first_frame_index: string}
