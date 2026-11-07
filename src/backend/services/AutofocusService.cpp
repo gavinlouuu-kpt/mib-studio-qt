@@ -82,7 +82,7 @@ bool AutofocusService::connect(const backend::nanopositioner::Endpoint& requeste
 
     auto device = backendFactory_ ? backendFactory_(selectedKind) : nullptr;
     if (!device) {
-        notifyStatus("No nanopositioner backend is available for the selected endpoint");
+        notifyFailure("No nanopositioner backend is available for the selected endpoint");
         return false;
     }
 
@@ -95,14 +95,14 @@ bool AutofocusService::connect(const backend::nanopositioner::Endpoint& requeste
                      backend::nanopositioner::backendKindName(selectedKind),
                      endpoint.displayName.empty() ? endpoint.systemPath : endpoint.displayName,
                      error);
-        notifyStatus(error);
+        notifyFailure(error);
         return false;
     }
 
     double voltage = 0.0;
     if (!device->readVoltage(voltage, error)) {
         device->disconnect();
-        notifyStatus(error);
+        notifyFailure(error);
         return false;
     }
     currentVoltage_.store(voltage);
@@ -167,7 +167,7 @@ void AutofocusService::disconnect() {
         std::string error;
         if (!writeDeviceVoltage(safeVoltage, error)) {
             SPDLOG_ERROR("AutofocusService: Failed to apply safe shutdown voltage: {}", error);
-            notifyStatus("Failed to apply safe shutdown voltage: " + error);
+            notifyFailure("Failed to apply safe shutdown voltage: " + error);
         }
     }
 
@@ -393,6 +393,23 @@ void AutofocusService::setStatusCallback(StatusCallback callback) {
     statusCallback_ = std::move(callback);
 }
 
+void AutofocusService::setFailureCallback(StatusCallback callback) {
+    std::scoped_lock lock(callbackMutex_);
+    failureCallback_ = std::move(callback);
+}
+
+void AutofocusService::notifyFailure(const std::string& message) const {
+    notifyStatus(message);
+    StatusCallback callback;
+    {
+        std::scoped_lock lock(callbackMutex_);
+        callback = failureCallback_;
+    }
+    if (callback) {
+        callback(message);
+    }
+}
+
 void AutofocusService::notifyStatus(const std::string& message) const {
     StatusCallback callback;
     {
@@ -496,7 +513,7 @@ void AutofocusService::controlLoop() {
                     notifyStatus("Voltage: " + std::to_string(newVoltage) + "V");
                 } else {
                     SPDLOG_ERROR("AutofocusService: Manual voltage increase failed: {}", error);
-                    notifyStatus("Voltage change failed: " + error);
+                    notifyFailure("Voltage change failed: " + error);
                 }
             }
 
@@ -509,7 +526,7 @@ void AutofocusService::controlLoop() {
                     notifyStatus("Voltage: " + std::to_string(newVoltage) + "V");
                 } else {
                     SPDLOG_ERROR("AutofocusService: Manual voltage decrease failed: {}", error);
-                    notifyStatus("Voltage change failed: " + error);
+                    notifyFailure("Voltage change failed: " + error);
                 }
             }
         }
@@ -577,7 +594,7 @@ void AutofocusService::controlLoop() {
                     std::string error;
                     if (!writeDeviceVoltage(newVoltage, error)) {
                         SPDLOG_ERROR("AutofocusService: Autofocus voltage step failed: {}", error);
-                        notifyStatus("Autofocus voltage step failed: " + error);
+                        notifyFailure("Autofocus voltage step failed: " + error);
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         continue;
                     }
@@ -653,7 +670,7 @@ void AutofocusService::stepFocusScore(const Config& cfg) {
         std::string error;
         if (!writeDeviceVoltage(next, error)) {
             SPDLOG_ERROR("AutofocusService: Focus-score voltage step failed: {}", error);
-            notifyStatus("Autofocus voltage step failed: " + error);
+            notifyFailure("Autofocus voltage step failed: " + error);
             return;
         }
         SPDLOG_DEBUG("AutofocusService: Adjusted voltage to {}V (focus score {:.3f})", next, score);

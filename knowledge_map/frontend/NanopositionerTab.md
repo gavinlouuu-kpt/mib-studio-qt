@@ -20,6 +20,12 @@
 - Config editor for the `AutofocusService::Config` struct (focus setpoint,
   range, step sizes, direction).
 
+## Tauri counterpart
+
+The desktop app's `AutofocusControls.tsx` follows this tab since 2026-11-05 (parity wave 1, #868): same ranges and
+labels, the same persisted keys in the startup preference record, runtime failures through bridge error events. See
+[[../architecture/Desktop-Shell]] ("Nanopositioner / autofocus panel as Qt's tab").
+
 ## Gotchas
 
 - This tab moved into the Config area recently — see task

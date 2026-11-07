@@ -7,7 +7,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import desktopPackage from "../../../package.json";
 import { useCloseGuard } from "../../closeGuard";
 import { bridge, type BridgeEvent, type InstrumentStatus, type PlatformInfo } from "../../bridge";
-import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES } from "../../bridgeContract";
+import { BRIDGE_ABI_VERSION, COMMAND_TYPES, EXPERIMENT_STATES } from "../../bridgeContract";
+import { publishAutofocusMessage } from "../../components/autofocusMessages";
 import { productName } from "../../brand";
 import { isString, isStringArray, usePersistedState } from "../../persistedState";
 import { capabilitiesOf, isPz7035 } from "../../platformCapabilities";
@@ -161,11 +162,11 @@ export function useShellStartup({
 
 type PollingDeps = Pick<ShellState, "append" | "ready" | "tickBusy"> & Pick<ConnectState, "setCamStatus" | "setRunning">
   & Pick<ReviewState, "setRange"> & Pick<PreviewState, "setRecording"> & Pick<ConfigState, "setStats">
-  & Pick<MonitoringState, "setExpStatus"> & Pick<HardwareState, "setAfStatus">;
+  & Pick<MonitoringState, "setExpStatus"> & Pick<HardwareState, "setAfStatus" | "setAfStaleMs">;
 
 // Backend notifications and the 500 ms state reconciliation tick.
 export function useStatePolling({
-  append, ready, tickBusy, setCamStatus, setRunning, setRange, setRecording, setStats, setExpStatus, setAfStatus,
+  append, ready, tickBusy, setCamStatus, setRunning, setRange, setRecording, setStats, setExpStatus, setAfStatus, setAfStaleMs,
 }: PollingDeps) {
   const applyEvents = useCallback((events: BridgeEvent[]) => {
     for (const e of events) {
@@ -175,6 +176,8 @@ export function useStatePolling({
         setRange({earliest:e.earliest,latest:e.latest,count:e.available});
       } else if (e.kind === "BackendError") {
         append(`backend error: ${e.message}${e.textTruncated ? " (details truncated)" : ""}`);
+        // HW-033 (#868): the nanopositioner panel shows the autofocus failures as its status line.
+        if (e.command === COMMAND_TYPES.Autofocus) publishAutofocusMessage(e.message);
       } else if (e.kind === "OperationStatus") {
         if (e.state === 2) append(`operation ${e.operationId} completed: ${e.message}`);
         else if (e.state >= 3) append(`operation ${e.operationId} ${e.state === 3 ? "failed" : e.state === 4 ? "cancelled" : "timed out"}: ${e.message}`);
@@ -190,6 +193,7 @@ export function useStatePolling({
     }
   },[append]);
 
+  const configTicks = useRef(0);
   const tick = useCallback(async () => {
     if (tickBusy.current) return;
     tickBusy.current = true;
@@ -201,6 +205,13 @@ export function useStatePolling({
       setStats(await bridge.fetchProcessingStats());
       setExpStatus(await bridge.fetchExperimentStatus());
       setAfStatus(await bridge.fetchAutofocusStatus());
+      // HW-034 (#868): the sidebar dims the ring width at the configured staleness limit (read every 10th tick).
+      if (configTicks.current++ % 10 === 0) {
+        try {
+          const af = await bridge.fetchAutofocusConfig();
+          if (af.valid && af.ring_ratio_stale_ms > 0) setAfStaleMs(af.ring_ratio_stale_ms);
+        } catch { /* keep the last known limit; the status read above is what the tick reports */ }
+      }
     } catch (e) {
       append(`tick error: ${e}`);
     } finally { tickBusy.current = false; }

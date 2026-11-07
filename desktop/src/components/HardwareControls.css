@@ -1,6 +1,13 @@
-.hardware-controls { display: grid; gap: 1rem; }
+.hardware-controls, .hardware-pumps { display: grid; gap: 1rem; }
 .hardware-controls fieldset { min-width: 0; border: 1px solid #64748b; border-radius: .4rem; padding: 1rem; }
 .hardware-fields, .hardware-actions { display: flex; flex-wrap: wrap; gap: .7rem; align-items: end; margin: .7rem 0; }
 .hardware-fields label { display: flex; flex-direction: column; gap: .25rem; }
 .hardware-fields input, .hardware-fields select { max-width: 12rem; }
 .hardware-controls [role="alert"] { color: #fca5a5; }
+/* Hold-to-purge (Qt pressed/released): no text selection, no touch scrolling or callout while the control is held. */
+.hardware-controls .purge-button { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.hardware-controls .hardware-hint { margin: .2rem 0 .6rem; font-size: .85rem; color: #94a3b8; }
+.hardware-controls .hardware-hint-problem { color: #fcd34d; }
+/* Nanopositioner panel (PR3): the device list shows Qt's full endpoint names. */
+.hardware-controls .autofocus-controls .hardware-fields select[data-tour="autofocus-device"] { min-width: 16rem; max-width: 100%; }
+.hardware-controls .autofocus-controls [aria-label="Manual control"] { align-items: center; }

@@ -37,3 +37,11 @@ Verification:
   experiment lock and stop escape, backend errors, invalid status, blank inputs.
 - 134 frontend tests pass; TypeScript and Vite production build pass. jsdom is
   added by the integration branch (no dependency files owned by this change).
+
+Update 2026-11-04: the Service-mode/arm/experiment gating described above for pump and autofocus controls was
+a wiring choice, not a product decision, and is removed (Tauri parity wave 1, #868, #855). Pump connect, rate,
+direction, volume, Start, Purge and autofocus Enable/Jog are operator controls as in Qt; Stop and Disable are
+available whenever the backend is ready. See [[architecture/Desktop-Shell]].
+
+Update 2026-11-05: the autofocus panel now also follows Qt's NanopositionerTab for the target ring width, jog step,
+device list, runtime messages and remembered selection (PR3 of the same stream). See [[architecture/Desktop-Shell]].

@@ -33,6 +33,7 @@
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/RfGeneratorService.h"
+#include "backend/services/AutofocusService.h"
 #include "backend/camera/mock/MockCamera.h"
 
 #include "support/assert.h"
@@ -63,6 +64,22 @@ using backend::services::ProcessingService;
 namespace fs = std::filesystem;
 
 namespace {
+// A nanopositioner that answers in memory, so that a run records a connected piezo (#883).
+class FakeNanopositioner final : public backend::nanopositioner::INanopositionerBackend {
+public:
+    backend::nanopositioner::BackendKind kind() const override { return backend::nanopositioner::BackendKind::Oeabt; }
+    bool connect(const backend::nanopositioner::Endpoint&, std::string&) override { connected_ = true; return true; }
+    void disconnect() override { connected_ = false; }
+    bool isConnected() const override { return connected_; }
+    bool readVoltage(double& volts, std::string&) override { volts = 12.5; return true; }
+    bool setVoltage(double, std::string&) override { return true; }
+    std::optional<double> maximumVoltage() const override { return 100.0; }
+    std::string connectedEndpoint() const override { return "/dev/fake-oeabt"; }
+
+private:
+    std::atomic<bool> connected_{false};
+};
+
 bool waitFor(const std::function<bool()>& pred, std::chrono::milliseconds timeout)
 {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -483,6 +500,20 @@ int main()
     backend::app::RunConfigurationSnapshot frozen;
     {
         wd.mark("concurrent start");
+        // #883 (MIBQT-45): the run records the target ring width the autofocus service holds at Start
+        // (the operator's latest, which can differ from the applied document's), with a fake piezo.
+        MIB_REQUIRE(backend.autofocus().setBackendFactory([](backend::nanopositioner::BackendKind) {
+            return std::make_unique<FakeNanopositioner>();
+        }), "fake nanopositioner factory");
+        backend::nanopositioner::Endpoint piezoEndpoint;
+        piezoEndpoint.backend = backend::nanopositioner::BackendKind::Oeabt;
+        piezoEndpoint.persistentId = "fake-oeabt";
+        piezoEndpoint.systemPath = "/dev/fake-oeabt";
+        piezoEndpoint.knownOeabtCandidate = true;
+        MIB_REQUIRE(backend.autofocus().connect(piezoEndpoint), "fake nanopositioner connects");
+        auto focus = backend.autofocus().getConfig();
+        focus.focusSetpoint = 24.5;
+        backend.autofocus().setConfig(focus);
         // The preflight must be evaluated for the same profile the Start
         // presents: profile identity is an invalidation input.
         const auto r = coord.evaluateReadiness(out1, "profile-A");
@@ -596,7 +627,7 @@ int main()
                    "an inline run with an ROI records object_coordinates = roi_local");
 
         // Snapshot v3 (#712), read back typed: the run's own id, the LUT the processing service
-        // loaded, and the devices as this host has them (none connected: written as absent).
+        // loaded, and the devices as this host has them (the fake piezo; nothing else connected: written as absent).
         backend::recording::RecordedRunProvenance prov;
         std::string why;
         MIB_REQUIRE(backend::recording::readRecordedRunProvenance(reader, prov, &why), "typed provenance: " + why);
@@ -625,7 +656,10 @@ int main()
         }
         MIB_EXPECT(!prov.v3.led, "no LED readback on this host (unknown)");
         MIB_EXPECT(prov.v3.stage && !prov.v3.stage->connected && !prov.v3.stage->readback, "stage absent");
-        MIB_EXPECT(prov.v3.piezo && !prov.v3.piezo->connected && !prov.v3.piezo->voltageV, "piezo absent");
+        MIB_EXPECT(prov.v3.piezo && prov.v3.piezo->connected && prov.v3.piezo->autofocusEnabled == std::optional<bool>(false) &&
+                       prov.v3.piezo->focusSetpoint == std::optional<double>(24.5),
+                   "the connected piezo records the target ring width in force at Start");
+        backend.autofocus().disconnect(); // the later sections run without a piezo, as before
         MIB_EXPECT(!prov.v3.plRunId, "a host run arms no PL run id");
         MIB_EXPECT(runJson.find("\"led\":null") != std::string::npos &&
                        runJson.find("\"pl_run_id\":null") != std::string::npos,

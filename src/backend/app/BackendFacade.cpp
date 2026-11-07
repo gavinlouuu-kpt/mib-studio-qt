@@ -238,6 +238,46 @@ namespace backend::bridge
         return *facade.reviewJobs_;
     }
 
+    struct BackendFacade::AutofocusFailureGate
+    {
+        std::mutex mutex;
+        BackendFacade *target{nullptr};
+        std::string lastMessage;
+        std::chrono::steady_clock::time_point lastAt{};
+    };
+
+    void BackendFacade::attachAutofocusFailures()
+    {
+        // The same message is passed on at most once in this window; a different message always is.
+        constexpr auto kRepeatWindow = std::chrono::seconds(5);
+        auto gate = std::make_shared<AutofocusFailureGate>();
+        gate->target = this;
+        autofocusFailures_ = gate;
+        backend_.autofocus().setFailureCallback([gate, kRepeatWindow](const std::string &message) {
+            std::scoped_lock lock(gate->mutex);
+            if (!gate->target) return;
+            const auto now = std::chrono::steady_clock::now();
+            if (message == gate->lastMessage && now - gate->lastAt < kRepeatWindow) return;
+            gate->lastMessage = message;
+            gate->lastAt = now;
+            gate->target->emitEvent(BackendErrorEvent{BackendErrorSource::Hardware, BackendCommandType::Autofocus, message});
+        });
+    }
+
+    void BackendFacade::detachAutofocusFailures()
+    {
+        if (!autofocusFailures_) return;
+        backend_.autofocus().setFailureCallback({});
+        // Waits out a call in progress; a call that already took its copy of the callback finds no target.
+        {
+            std::scoped_lock lock(autofocusFailures_->mutex);
+            autofocusFailures_->target = nullptr;
+        }
+        // Dropped after the guard: the gate owns the mutex the guard unlocks (TSan: heap-use-after-free when it was
+        // reset inside the scope, the last reference once the callback is cleared).
+        autofocusFailures_.reset();
+    }
+
     BackendFacade::~BackendFacade()
     {
         // Review jobs left running without shutdown(): cancelled and joined
@@ -253,6 +293,7 @@ namespace backend::bridge
         // AppBackend::initialize); shutdown() already cleared it.
         if (initialized_)
         {
+            detachAutofocusFailures();
             backend_.experiment().setStatusCallback({});
             // The quick-look reader captures the review lanes: detached (waiting out a call in
             // progress) before they go.
@@ -335,6 +376,8 @@ namespace backend::bridge
                                         message});
         });
 
+        attachAutofocusFailures();
+
         emitEvent(makeCameraStatus(backend_.isCameraConfigured()
                                        ? CameraState::Configured
                                        : CameraState::Unconfigured));
@@ -361,6 +404,7 @@ namespace backend::bridge
         backend_.experiment().shutdown();
         backend_.experiment().setStatusCallback({});
         backend_.experiment().setClosedRunStatisticsReader({});
+        detachAutofocusFailures();
         cancelAllOperations("Backend shutdown");
         // The review lanes (#512 S7): their jobs observe the (now set) cancel
         // flags, clean partial outputs and report; joined so no callback

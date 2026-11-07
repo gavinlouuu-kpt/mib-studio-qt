@@ -626,7 +626,9 @@ selection, duplicate commands, errors and disabled setup states.
 
 `HardwareControls` stays mounted across tabs so pending command ownership and
 hardware form drafts survive navigation. Connect exposes existing numeric-COM
-pump/autofocus APIs; manual actuation requires the shared service-mode arm,
+pump/autofocus APIs. Since 2026-11-04 the pump and autofocus controls are
+operator controls as in Qt (see "Pump and autofocus operator controls" below);
+only the trigger tests and the pulse generator still use the Service-mode arm,
 which clears on one action. Typed endpoints remain follow-up work.
 
 `configDocument.tsx` owns a saved processing-document draft in App. Open/reload
@@ -1023,13 +1025,115 @@ pure and unit tested):
 
 ## Pump model per slot (2026-10-04)
 
-The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:
+The Pumps panel (`PumpControls.tsx`, composed by `HardwareControls.tsx`) has a **Pump model** select per slot:
 Syringe (Longer dLSP) or Peristaltic (Tushui). Peristaltic adds a calibration
 field (µL per revolution, default 25), pre-fills the instrument endpoint
 `/dev/ttyPS1` address 3 when the fields are untouched, hides the syringe
 volume controls and shows head rpm and the estimated delivered volume.
 Connect goes through `pump_connect_model` (ABI 22, [[Rust-Bridge]]), which the
 WebSocket server allows for the controlling client.
+
+## Pump and autofocus operator controls (2026-11-04, #868 parity wave 1, #855)
+
+`HardwareControls.tsx` only composes `StartupDiscoveryControls`, `PumpControls`,
+`AutofocusControls` and `PulseGeneratorControls`; the pure rules live in
+`pumpControlModel.ts` and `hardwareControlModel.ts`.
+
+- **Gating (D1, D2).** Pump connect/disconnect, flow rate, unit, direction, syringe volume, Start and Purge,
+  and autofocus Enable and Jog need a ready backend and a connected device; Service mode, the arm and a running
+  experiment do not matter, and the backend stays ungated as in Qt (`operatorGate`). Command serialisation
+  stays: non-stop pump commands run one at a time through `PumpCommandQueue` (a `HardwareCommandOwner` per pump),
+  waiting for their turn. Autofocus connection and the tuning editor are still locked during an experiment.
+- **Stop (D3, #855).** Stop pump, the purge release and Disable autofocus are disabled only when the backend is
+  not ready. They bypass the queue and the `busy` flag. Stop (and Disconnect, a pump found disconnected, closing
+  the panel) first calls `PumpCommandQueue.invalidate()`: every command still waiting for its turn is dropped
+  (`CommandCancelled`, shown as "Start pump: cancelled by Stop"), checked right before the command reaches the
+  bridge, so a Start/Purge/rate/direction queued behind a slow command cannot run after Stop. A queued command also
+  re-checks that its pump is still connected when its turn comes. A command already sent cannot be taken back. Stop pump also sends `pump_stop_purge`: the dLSP's
+  full-speed purge is a separate register that `pump_stop` does not clear.
+- **Polling (HW-015).** Every 500 ms each connected pump gets `pump_poll_status` (a Modbus read of run state,
+  stall and volume), then `fetch_pump_status`. No lock, no `busy`, no overlap. The backend still serialises the
+  serial bus and the bridge's command mutex, and the WebSocket server handles one request per client at a time
+  (`mib-bridge-server/src/lib.rs`, the `spawn_blocking` awaited in the read loop), so a stop waits for a command or
+  poll already in flight, as it does behind Qt's GUI-thread poll (a few tens of ms on a healthy bus, up to five
+  1 s transaction timeouts on a dead one). Follow-up: a fail-fast `pollStatus`.
+- **Rate, unit, direction (HW-007/008/009).** 0-100000, 4 decimals, filled from the pump's configured values when
+  it connects. Trigger as in Qt (`SyringePumpTab.cpp:107-116`): Enter in the rate field (or leaving it after a
+  change) and a unit or direction change each start a 300 ms timer, then rate before direction is sent, also while
+  running. No keystroke sends anything.
+  Peristaltic pumps keep the rpm unit (head speed x µL/rev); a syringe pump never does.
+- **Exact syringe numbers (D9).** The dLSP holds flow rate and syringe volume as whole numbers 1-9999 and the
+  backend clamps anything else without a message. The panel sends an exact whole number in the chosen unit or
+  the other one (0.5 mL -> 500 µL, 12000 µL/min -> 12 mL/min), or refuses with a message.
+- **Hold-to-purge (HW-012).** `PurgeHold`: press (pointer, Space or Enter) sends `pump_purge` in the selected
+  direction; release, pointer leave/cancel, blur, window blur, hidden page, unmount send `pump_stop_purge`. A
+  release before the start left the queue sends nothing; during the start it is sent as soon as the start
+  returned; a start that reached the device and then reported a failure keeps the hold, so the release still sends
+  `pump_stop_purge` (a lost reply may leave the pump purging; Qt stops on every release); a disconnect forgets the hold.
+- **Connect.** Baud 1200-921600 (standard rates offered, default 115200); Sample address 1, Sheath 2 (peristaltic
+  endpoints 3 and 4); a syringe pump connects with `pump_connect_endpoint`, a peristaltic one with
+  `pump_connect_model` and its calibration.
+
+## Nanopositioner / autofocus panel as Qt's tab (2026-11-05, #868 parity wave 1, PR3)
+
+`AutofocusControls.tsx` follows Qt's `NanopositionerTab`; its rules are in `autofocusControlModel.ts` (ranges, device
+list, connect target, command queue, remembered values) and `autofocusMessages.ts` (runtime messages).
+
+- **Operator controls (D2).** Enable autofocus is a check box (enabled when connected, it flips at once and then follows
+  the backend); the target ring width (1-100, 2 decimals, default 20) applies 500 ms after the last edit (Enter or
+  leaving the field at once) with a read-modify-write of the live configuration, also while autofocus runs and an
+  experiment is active; Jog is `-`/`+` with a Step of 1-100 whole volts, written into the configuration before every
+  jog as Qt does, usable while autofocus is enabled. None needs Service mode or the arm. A refused value says why and
+  sends nothing. Disable stays available whenever the backend is ready (D3) and calls `cancelActuation()` on the
+  panel's `AutofocusCommandQueue`: an Enable or Jog still queued, or between its own steps, is never sent afterwards
+  (Disconnect cancels too). The tuning editor (HW-035) no longer shows the setpoint and the jog step and applies only
+  its own fields on top of the live configuration, so it cannot overwrite them with a stale copy.
+- **Device list (HW-024/025/026).** Backend (Auto-detect | OEABT serial | CoreMOR) filters the list; Refresh runs the
+  nanopositioner discovery job (kinds `[2]`) and fills a device combo with Qt's labels ('OEABT candidate — name'), also
+  for endpoints not identified: identity is verified at connect. The backend of a row is the `vendor:` capability of
+  the discovered device. The backend refuses an Auto connect, so Auto resolves to the row's own backend before
+  `autofocus_connect_endpoint`; the baud (9600-115200, default 115200) and address (0-255, default 1) fields are sent
+  for every backend and enabled only for CoreMOR. Refresh, Backend, device, baud, address, Connect and Disconnect are
+  disabled while connected or scanning, and locked during an experiment. With no remembered choice the first
+  *identified* row is selected (Qt takes the first row, which may be the pumps' adapter).
+- **Runtime messages (HW-033).** `BackendError` events of command type Autofocus (see [[Rust-Bridge]]: a refused
+  connect's reason, a failed voltage write, a failed safe shutdown voltage) go to the event log as before and, through
+  `publishAutofocusMessage` in `useShell.applyEvents`, to the panel's status lines (the last three; a successful
+  connect clears them). Information and progress messages (`Connected to ...`, `Voltage: ...`) are not events: the
+  state line and the live voltage show them.
+- **Ring width (HW-034).** The shell reads `ring_ratio_stale_ms` with the autofocus status (every 10th tick,
+  `afStaleMs` in `useHardwareState`); the sidebar value dims with a 'Stale: last update N ms ago' tooltip past it
+  (Qt: a fixed 1000 ms), the status bar carries Qt's `Ring width=` value, and the Connect-stage focus quality gate
+  uses the same limit instead of the fixed 1000 ms.
+- **Remembered values (HW-036).** The manual selection (backend choice, endpoint identity, COM number for CoreMOR,
+  baud, address) is written on connect, on disconnect and on `pagehide` into the startup preference record
+  (`mib.startup.nanopositioner.v1`, the one the startup discovery reads; `StartupDiscoveryControls` follows through
+  `mib:nanopositioner-selection-saved`) and pushed to the backend's startup policy; it pre-fills the panel, and a
+  saved device not in the scan is offered as 'saved selection, not scanned'. The target ring width is kept in
+  `mib.autofocus.setpoint.v1` on every edit and written back into a fresh backend once, after the startup
+  configuration restore settled (below), with a log line (not into a resumed session, not during an experiment).
+- **Latest wins over the profile, and Home (2026-11-07, Gavin, MIBQT-45).** At a backend start the startup
+  configuration restore (`useProfiles`, #398 M2c) re-applies the last profile or method, whose
+  `autofocus_focus_setpoint` used to race the remembered value. Now the panel waits for it through
+  `startupRestoreGate.ts` (`useProfiles` settles the gate when its restore answered, failed or was not run, and resets it
+  when its `ready` goes false; the studio does not drop `ready` today, so that path is tested but not reached) and writes
+  the remembered value after it, so the operator's latest value always wins and the restore never overwrites it. While it
+  waits, the panel reads no configuration (the profile landing then is not the operator's change); after 10 s it says in
+  the log that it waits. A setpoint the panel did not write itself, seen later by its periodic configuration
+  read (a profile, method or configuration document applied in the session), is the newest value: it is remembered
+  for the next start, and the field follows it. The periodic read runs in the panel's command queue, so it never
+  mistakes the panel's own write for someone else's. **Home (N)**, beside the field, sets the target ring width to the
+  value the applied profile or method set: the backend's value once the startup restore settled, taken once per
+  backend session (`takeStartupSetpointCapture`; a panel mounted again keeps it) and kept in `mib.autofocus.home.v1`
+  for a reloaded page, else the default 20; a profile or method applied later becomes the new Home. The number is in
+  the button, so it reads as a value. Home goes through the setpoint's rules (the queue, remembered as the latest, a
+  pending typed value dropped: the button keeps the focus on press so the field does not blur and apply it first; the
+  field stays marked edited until the write returns, so a read already queued cannot show the old value) but, unlike
+  the field, is off during an experiment and while a Start request is in flight (`experimentRequestBusy`, passed as
+  `startPending`), also when the run started while Home waited in the queue, and off with a reason when the value is
+  outside 1-100 (a document may set 0-1e9). The periodic read waits in the queue behind a slow command (Disable does
+  not: it bypasses the queue). The run records the value in force at Start as `piezo.focus_setpoint`
+  ([[data-model/HDF5-Storage]]); the `config_json` document keeps the applied document's value.
 
 ## Remembered discovery and named pump endpoints (2026-09-23)
 

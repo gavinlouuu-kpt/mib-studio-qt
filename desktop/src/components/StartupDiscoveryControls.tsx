@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
 import {bridge, type StartupDiscoveryStatus} from '../bridge';
 import {loadStartupPreference, saveStartupPreference, validateStartupPreference, type StartupPreference} from '../startupPreference';
+import {SELECTION_SAVED_EVENT} from './autofocusControlModel';
 const preferenceKey = 'mib.startup.auto-select-hardware';
 export function StartupDiscoveryControls({ready, experimentActive, append, onSelectionChanged}: {ready: boolean; experimentActive: boolean; append: (message: string) => void; onSelectionChanged?: () => void}) {
   const [auto, setAuto] = useState(() => {try {return localStorage.getItem(preferenceKey) === 'true';} catch {return false;}});
@@ -56,6 +57,17 @@ export function StartupDiscoveryControls({ready, experimentActive, append, onSel
     // never retargets a running job; explicit Save installs the next preference.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
+  // The nanopositioner panel remembers the manual selection on connect and disconnect (HW-036): show it here too.
+  useEffect(() => {
+    const onSaved = (event: Event) => {
+      const preference = (event as CustomEvent<StartupPreference>).detail;
+      if (!preference) return;
+      setRemembered({preference}); setBackend(preference.backend); setEndpoint(preference.endpoint);
+      setPort(String(preference.com_port)); setBaud(String(preference.baud)); setAddress(String(preference.address));
+    };
+    window.addEventListener(SELECTION_SAVED_EVENT, onSaved);
+    return () => window.removeEventListener(SELECTION_SAVED_EVENT, onSaved);
+  }, []);
   useEffect(() => {
     let alive = true, polling = false;
     const poll = async () => {if (!ready || polling) return; polling = true; try {const value = await bridge.startupDiscoveryStatus(); if (alive) {

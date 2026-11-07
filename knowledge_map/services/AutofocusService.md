@@ -9,7 +9,8 @@
 `include/backend/services/AutofocusFocusScore.h` (Contract-2 focus-score peak-seeker)
 **Tests:** `tests/backend/autofocus_math_test.cpp`,
 `tests/backend/autofocus_focus_score_test.cpp`,
-`tests/backend/autofocus_focus_feed_test.cpp`
+`tests/backend/autofocus_focus_feed_test.cpp`,
+`tests/backend/autofocus_failure_events_test.cpp`
 `src/backend/nanopositioner/NanopositionerBackends.cpp`,
 `src/backend/nanopositioner/oeabt/OeabtProtocol.cpp`,
 `include/backend/services/AutofocusMath.h` (pure control math)
@@ -69,7 +70,15 @@ untouched for legacy execution.
   (`increaseVoltage` / `decreaseVoltage`) too.
 - Expose running statistics to the UI: `getAverageRingRatio`,
   `getMedianRingRatio`, `getLastRingRatioUpdateUs`.
-- Emit human-readable status via `StatusCallback`.
+- Emit human-readable status via `StatusCallback` (every message; the Qt tab shows the last one).
+- Report **failures** a second time through `setFailureCallback` (HW-033, #868): a connect that did not succeed
+  (with the device's own reason), a voltage write that failed (manual jog or control step, both on the control
+  thread), the safe shutdown voltage that could not be applied. `notifyFailure` calls the status callback first,
+  then the failure callback; information (`Connected to ...`, `Autofocus enabled`) and progress
+  (`Voltage: ...`) never reach it. [[../architecture/Rust-Bridge]]'s `BackendFacade` installs it and turns each
+  failure into a `BackendErrorEvent` (source `Hardware`, command `Autofocus`), dropping a repeat of the same text
+  within 5 s because a failing control step retries every 50 ms. The Tauri nanopositioner panel shows them; the
+  Qt tab is unchanged.
 
 ## Config — `AutofocusService::Config`
 

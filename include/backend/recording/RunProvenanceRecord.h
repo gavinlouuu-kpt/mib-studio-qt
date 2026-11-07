@@ -118,10 +118,14 @@ struct StageRecord {
 
 // The nanopositioner (piezo). `voltageV` is the service's last value: read at connect or by the
 // autofocus loop, or the last voltage written. No fresh read is taken at Start.
+// `focusSetpoint` is the autofocus target ring width the service holds at Start (#883, MIBQT-45:
+// the operator's latest value wins over the applied profile's `autofocus_focus_setpoint`, so the
+// config_json document can name another value). A change during the run is not recorded.
 struct PiezoRecord {
     bool connected{false};
     std::optional<double> voltageV;
     std::optional<bool> autofocusEnabled;
+    std::optional<double> focusSetpoint;
 };
 
 // The members snapshot v3 adds to run_snapshot_json.

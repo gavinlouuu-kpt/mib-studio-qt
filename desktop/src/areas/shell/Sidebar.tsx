@@ -6,11 +6,11 @@ import { metricNumber } from "../../metricFormat";
 import { useStudio } from "../../studio/StudioContext";
 import { EXPERIMENT_STATE_NAMES } from "../monitoring/useMonitoring";
 
-function SideRow(props: { k: string; v: string; cls?: string }) {
+function SideRow(props: { k: string; v: string; cls?: string; title?: string }) {
   return (
     <div className="side-row">
       <span className="k">{props.k}</span>
-      <span className={`v ${props.cls ?? ""}`}>{props.v}</span>
+      <span className={`v ${props.cls ?? ""}`} title={props.title}>{props.v}</span>
     </div>
   );
 }
@@ -18,9 +18,11 @@ function SideRow(props: { k: string; v: string; cls?: string }) {
 export function TelemetrySidebar() {
   const {
     sidebarCollapsed, caps, backgroundSet, displayFps, hostProcessing, stats, algoFps, validFps, invalidFps, running,
-    camStatus, dataRate, pz7035, instrument, afStatus, expState, expActive, runOutcome, expStatus, elapsedWallSeconds,
+    camStatus, dataRate, pz7035, instrument, afStatus, afStaleMs, expState, expActive, runOutcome, expStatus, elapsedWallSeconds,
     toggleSidebar,
   } = useStudio();
+  // HW-034 (#868): as Qt's Statistics panel, a ring width older than the configured limit is dimmed and says so.
+  const ringStale = !!afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 && afStatus.ring_ratio_age_us / 1000 > afStaleMs;
   return (
     <>
       <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`} aria-label="Telemetry sidebar">
@@ -65,7 +67,8 @@ export function TelemetrySidebar() {
           <SideRow
             k="Ring width:"
             v={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? metricNumber(afStatus.median_ring_ratio, 3) : "—"}
-            cls={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? "" : "dim"}
+            cls={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 && !ringStale ? "" : "dim"}
+            title={ringStale && afStatus ? `Stale: last update ${Math.round(afStatus.ring_ratio_age_us / 1000)} ms ago` : undefined}
           />
           <SideRow
             k="Controller:"
@@ -96,7 +99,7 @@ export function TelemetrySidebar() {
             v={elapsedWallSeconds === null || elapsedWallSeconds < 0 ? "—" : `${elapsedWallSeconds}s`}
           />
         </div>
-        {caps.autofocus && <div className="side-section" title="Nanopositioner control panel lands with UI-3 (#268); values are the live backend state">
+        {caps.autofocus && <div className="side-section" title="Live nanopositioner state; the controls are in the Pumps and autofocus panel">
           <h4>Nanopositioner Autofocus</h4>
           <SideRow
             k="Endpoint:"

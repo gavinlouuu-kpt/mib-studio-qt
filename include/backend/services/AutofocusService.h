@@ -113,6 +113,14 @@ public:
     // Status callbacks for UI
     using StatusCallback = std::function<void(const std::string& message)>;
     void setStatusCallback(StatusCallback callback);
+    // Failures only, delivered in addition to the status callback: a connect
+    // that did not succeed (with the device's reason), a voltage write that
+    // failed (manual jog or control step), the safe shutdown voltage that
+    // could not be applied. The Qt tab keeps showing every message through the
+    // status callback; the bridge facade turns these into error events so the
+    // Tauri app can show them too (HW-033, #868). May be called from the
+    // control thread: the receiver must be quick and must not call back in.
+    void setFailureCallback(StatusCallback callback);
 
 private:
     friend struct AutofocusCallbackTestAccess;
@@ -126,6 +134,8 @@ private:
     void updateStatistics();
     double calculateMedian(const std::vector<double>& sorted) const;
     void notifyStatus(const std::string& message) const;
+    // A failure message: the status callback, then the failure callback.
+    void notifyFailure(const std::string& message) const;
     bool readDeviceVoltage(double& voltage, std::string& error);
     bool writeDeviceVoltage(double voltage, std::string& error);
 
@@ -203,6 +213,7 @@ private:
     // Status callback
     mutable std::mutex callbackMutex_;
     StatusCallback statusCallback_;
+    StatusCallback failureCallback_;
 
     // Last applied sequence for freshness tracking
     uint64_t lastAppliedSequence_{0};

@@ -5,6 +5,7 @@ import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import {invoke} from "@tauri-apps/api/core";
 import {open} from "@tauri-apps/plugin-dialog";
 import {ProfilesPanel,useProfiles} from "./profiles";
+import {resetStartupRestore,startupRestoreSettled} from "./startupRestoreGate";
 vi.mock("@tauri-apps/api/core",()=>({invoke:vi.fn()}));
 vi.mock("@tauri-apps/plugin-dialog",()=>({open:vi.fn()}));
 Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true});
@@ -106,6 +107,34 @@ it("startup re-applies the startup configuration once, even without a profiles f
  expect(restores[0][1]).toEqual({profileBase:""});
  expect(vi.mocked(invoke).mock.calls.some(([c])=>c==="profile_command")).toBe(false);
  expect(model.message).toBe("Startup method r7 re-applied. The ROI is applied on the first captured frame; Start waits for it.");
+});
+
+it("settles the startup restore gate only once the restore answered, failed or not, and at once for a resumed session (MIBQT-45)",async()=>{
+ vi.mocked(invoke).mockClear();
+ for(const reply of [{ok:true,restored:true,kind:"profile"},{ok:false,restored:false,kind:"central",error:"not cached",notice:"Startup configuration not restored"}]){
+  await act(async()=>root.unmount());resetStartupRestore();
+  let answer!:(r:unknown)=>void;
+  vi.mocked(invoke).mockImplementation((c)=>c==="restore_startup_configuration"?new Promise(r=>{answer=r;}):Promise.resolve({ok:true,profiles:[]}));
+  let settled=false;void startupRestoreSettled().then(()=>{settled=true;});
+  root=createRoot(host);await act(async()=>root.render(<App/>));
+  expect(settled).toBe(false);
+  await act(async()=>{answer(reply);});
+  expect(settled).toBe(true);
+ }
+ await act(async()=>root.unmount());resetStartupRestore();ctx.resume=true;
+ let resumed=false;void startupRestoreSettled().then(()=>{resumed=true;});
+ root=createRoot(host);await act(async()=>root.render(<App/>));
+ expect(resumed).toBe(true);
+ expect(vi.mocked(invoke).mock.calls.filter(([c])=>c==="restore_startup_configuration")).toHaveLength(2);
+});
+
+it("a backend that went away resets the gate; the next session's restore settles it again (MIBQT-45)",async()=>{
+ ctx.ready=false;await act(async()=>root.render(<App/>));
+ let settled=false;void startupRestoreSettled().then(()=>{settled=true;});
+ await act(async()=>{});
+ expect(settled).toBe(false);
+ ctx.ready=true;await act(async()=>root.render(<App/>));
+ expect(settled).toBe(true);
 });
 
 it("a failed startup restore shows its notice instead of failing silently",async()=>{

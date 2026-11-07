@@ -106,6 +106,7 @@ rec::RunProvenanceV3 fullRecord()
     piezo.connected = true;
     piezo.voltageV = 61.5;
     piezo.autofocusEnabled = false;
+    piezo.focusSetpoint = 24.5;
     v.piezo = piezo;
     v.plRunId = 1760850000123ull;
     return v;
@@ -161,7 +162,8 @@ void expectEqual(const rec::RunProvenanceV3& a, const rec::RunProvenanceV3& b, c
                where + ": stage members");
     MIB_REQUIRE(a.piezo && b.piezo, where + ": piezo");
     MIB_EXPECT(a.piezo->connected == b.piezo->connected && a.piezo->voltageV == b.piezo->voltageV &&
-                   a.piezo->autofocusEnabled == b.piezo->autofocusEnabled,
+                   a.piezo->autofocusEnabled == b.piezo->autofocusEnabled &&
+                   a.piezo->focusSetpoint == b.piezo->focusSetpoint,
                where + ": piezo members");
     MIB_EXPECT(a.plRunId == b.plRunId, where + ": PL run id");
 }
@@ -268,6 +270,15 @@ int main()
                        back.v3.led->error == std::optional<std::string>("the PL is not configured"),
                    "an unreadable LED keeps the reason and no values");
         MIB_EXPECT(back.v3.piezo && back.v3.piezo->connected && !back.v3.piezo->voltageV, "NaN voltage reads as unknown");
+        MIB_EXPECT(members.find("\"focus_setpoint\":null") != std::string::npos && !back.v3.piezo->focusSetpoint,
+                   "an unknown target ring width is written as null and reads as unknown");
+        rec::RecordedRunProvenance older;
+        MIB_REQUIRE(rec::parseRunProvenance("{\"schema_version\":3,\"piezo\":{\"connected\":true,\"voltage_v\":5,"
+                                            "\"voltage_basis\":\"last_read_or_written\",\"autofocus_enabled\":true}}",
+                                            older),
+                    "parse a piezo record written before #883");
+        MIB_EXPECT(older.v3.piezo && older.v3.piezo->voltageV == 5.0 && !older.v3.piezo->focusSetpoint,
+                   "a file from before #883 has no target ring width: unknown, not 0");
         MIB_EXPECT(back.v3.stage && !back.v3.stage->connected && !back.v3.stage->readback, "absent stage");
         MIB_EXPECT(!back.v3.pumps && !back.v3.plRunId, "null members read as unknown");
     }

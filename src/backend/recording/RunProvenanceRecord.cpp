@@ -137,6 +137,7 @@ OJson piezoJson(const PiezoRecord& p)
     j["voltage_v"] = opt(p.voltageV);
     j["voltage_basis"] = "last_read_or_written";
     j["autofocus_enabled"] = opt(p.autofocusEnabled);
+    j["focus_setpoint"] = opt(p.focusSetpoint);
     return j;
 }
 
@@ -304,6 +305,7 @@ std::optional<PiezoRecord> parsePiezo(const Json& root)
     p.connected = *connected;
     p.voltageV = num(*j, "voltage_v");
     p.autofocusEnabled = flag(*j, "autofocus_enabled");
+    p.focusSetpoint = num(*j, "focus_setpoint"); // absent before #883: unknown
     return p;
 }
 
