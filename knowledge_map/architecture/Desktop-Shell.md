@@ -1111,8 +1111,23 @@ list, connect target, command queue, remembered values) and `autofocusMessages.t
   `mib:nanopositioner-selection-saved`) and pushed to the backend's startup policy; it pre-fills the panel, and a
   saved device not in the scan is offered as 'saved selection, not scanned'. The target ring width is kept in
   `mib.autofocus.setpoint.v1` on every edit and written back into a fresh backend once at ready, with a log line (not
-  into a resumed session, not during an experiment). It is last-writer-wins like Qt's `config.json`: a profile or
-  method applied afterwards replaces it, and the field follows the backend.
+  into a resumed session, not during an experiment).
+- **Latest wins over the profile, and Home (2026-11-07, Gavin, MIBQT-45).** At a backend start the startup
+  configuration restore (`useProfiles`, #398 M2c) re-applies the last profile or method, whose
+  `autofocus_focus_setpoint` used to race the remembered value. Now the panel waits for it through
+  `startupRestoreGate.ts` (`useProfiles` settles the gate when its restore answered, failed or was not run, and resets it
+  when the backend goes away) and writes the remembered value after it, so the operator's latest value always wins and
+  the restore never overwrites it. A setpoint the panel did not write itself, seen later by its periodic configuration
+  read (a profile, method or configuration document applied in the session), is the newest value: it is remembered
+  for the next start, and the field follows it. The periodic read runs in the panel's command queue, so it never
+  mistakes the panel's own write for someone else's. **Home (N)**, beside the field, sets the target ring width to the
+  value the applied profile or method set: the backend's value once the startup restore settled, taken once per
+  backend session (`takeStartupSetpointCapture`; a panel mounted again keeps it) and kept in `mib.autofocus.home.v1`
+  for a reloaded page, else the default 20; a profile or method applied later becomes the new Home. The number is in
+  the button, so it reads as a value. Home goes through the setpoint's rules (1-100, the queue, remembered as the
+  latest, a pending typed value dropped) but, unlike the field, is refused during an experiment, also when the run
+  started while Home waited in the queue. The run records the value in force at Start as `piezo.focus_setpoint`
+  ([[data-model/HDF5-Storage]]); the `config_json` document keeps the applied document's value.
 
 ## Remembered discovery and named pump endpoints (2026-09-23)
 

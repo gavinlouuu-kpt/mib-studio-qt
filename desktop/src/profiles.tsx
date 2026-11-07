@@ -3,6 +3,7 @@ import {open, confirm} from "./transport/dialogs";
 import { useEffect, useRef, useState } from "react";
 import { ProfileCatalogPanel, useProfileCatalog } from "./profileCatalog";
 import { configDocument } from "./configDocument";
+import { resetStartupRestore, settleStartupRestore } from "./startupRestoreGate";
 export interface Profile { name:string; path:string; revision:string; document_json?:string; script?:string|null; profile_id?:string;display_fps?:number }
 export interface ProfileReply { ok:boolean; error?:string; profiles?:Profile[]; profile?:Profile; destination?:string; warnings?:string[]; applied?:boolean; message?:string; display_fps?:number; profile_id?:string; active_profile?:Profile|null; selection?:Profile|null; restored?:boolean }
 export const profileCommand = (base:string, request:object) => invoke<ProfileReply>("profile_command",{base,request:JSON.stringify(request)});
@@ -52,7 +53,7 @@ export function useProfiles({ready,active,resume=false,currentConfig,append,onOp
       if(operation==="open") {if(selected)await onOpen(selected.path);return;}
       if(operation==="restore") {
         const r=await restoreStartupConfiguration(directory);
-        if(r.restored&&onApplied){try{await onApplied();}catch(e){throw new Error(`Startup configuration re-applied, but UI refresh failed: ${String(e)}`);}}
+                if(r.restored&&onApplied){try{await onApplied();}catch(e){throw new Error(`Startup configuration re-applied, but UI refresh failed: ${String(e)}`);}}
         if(directory){
           const list=await profileCommand(directory,{operation:"list"});if(list.ok)setProfiles(list.profiles??[]);
           const selection=await profileCommand(directory,{operation:"selection"});if(selection.ok)setActiveProfile(selection.active_profile??null);
@@ -78,7 +79,9 @@ export function useProfiles({ready,active,resume=false,currentConfig,append,onOp
       setMessage(text);if(text)append(text);
     }catch(e){setMessage(String(e));append(`Profiles: ${String(e)}`);}finally{pending.current=false;setBusy(false);}
   };
-  useEffect(()=>{if(!ready){restored.current=false;setActiveProfile(null);return;}if(!restored.current){restored.current=true;if(active||resume){if(base)void profileCommand(base,{operation:"selection"}).then(r=>{if(r.ok)setActiveProfile(r.active_profile??null);else setMessage(r.error??"Cannot read runtime profile");}).catch(e=>setMessage(String(e)));}else void run("restore");}},[ready,resume,active]);
+  // The nanopositioner panel applies the operator's remembered target ring width only after this restore settled
+  // (startupRestoreGate.ts, MIBQT-45), so the restored profile or method never overwrites it.
+  useEffect(()=>{if(!ready){restored.current=false;resetStartupRestore();setActiveProfile(null);return;}if(!restored.current){restored.current=true;if(active||resume){settleStartupRestore();if(base)void profileCommand(base,{operation:"selection"}).then(r=>{if(r.ok)setActiveProfile(r.active_profile??null);else setMessage(r.error??"Cannot read runtime profile");}).catch(e=>setMessage(String(e)));}else void run("restore").finally(settleStartupRestore);}},[ready,resume,active]);
   const remote=useProfileCatalog({base,selected,blocked:!ready||active||busy,dirty,onInstalled:(p)=>run("read",p),append});
   return {base,profiles,selected,activeProfile,remote,name,setName,document,edit:(v:string)=>{setDocument(v);setDirty(true);},script,editScript:(v:string|null)=>{setScript(v);setDirty(true);},dirty,busy,blocked:!ready||active||busy||remote.busy,message,newDraftError:currentConfig===null?noCurrentConfig:"",saveError:draftError(document),run};
 }

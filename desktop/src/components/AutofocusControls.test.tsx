@@ -6,7 +6,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AutofocusControls } from './AutofocusControls';
 import { publishAutofocusMessage, resetAutofocusMessages } from './autofocusMessages';
-import { setpointKey } from './autofocusControlModel';
+import { homeKey, setpointKey } from './autofocusControlModel';
+import { resetStartupRestore, settleStartupRestore } from '../startupRestoreGate';
 import { startupPreferenceKey } from '../startupPreference';
 import { bridge } from '../bridge';
 import type { AutofocusConfig, AutofocusStatus, CmdResult, DiscoveredDevice, DiscoverySnapshot } from '../bridge';
@@ -51,6 +52,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   resetAutofocusMessages();
+  resetStartupRestore(); settleStartupRestore();      // no profiles panel here: the startup restore has settled
   stored = new Map();
   vi.stubGlobal('localStorage', {getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); }});
   status = {...baseStatus}; config = {...baseConfig}; found = [usb, com3];
@@ -173,6 +175,92 @@ describe('target ring width (HW-030)', () => {
     await act(async () => root.unmount()); root = createRoot(host);
     await render({experimentActive: true});
     expect(bridge.autofocusSetConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe('latest wins over the profile, and Home (MIBQT-45)', () => {
+  /** A backend start: the startup restore re-applies a profile whose target ring width is `profile`, then settles. */
+  const startBackend = async (profile: number, props: {experimentActive?: boolean} = {}) => {
+    resetStartupRestore();
+    config = {...baseConfig};
+    await render(props);
+    config = {...config, focus_setpoint: profile};                    // the profile restore lands while the panel waits
+    await act(async () => settleStartupRestore()); await tick(0);
+  };
+  const restart = async () => { await act(async () => root.unmount()); root = createRoot(host); vi.mocked(bridge.autofocusSetConfig).mockClear(); append.mockClear(); };
+  const home = () => button(/^Home \(/);
+
+  it('the operator\'s latest value wins across a restart over a profile with another value, and the restore never overwrites it', async () => {
+    await startBackend(31);
+    await type(field('Target ring width'), '24'); await press(field('Target ring width'), 'Enter'); await tick(0);
+    expect(JSON.parse(stored.get(setpointKey)!)).toBe(24);
+    await restart();
+    resetStartupRestore();
+    config = {...baseConfig};
+    await render();
+    expect(bridge.autofocusSetConfig).not.toHaveBeenCalled();         // waits for the startup restore
+    config = {...config, focus_setpoint: 31};
+    await act(async () => settleStartupRestore()); await tick(0);
+    expect(config.focus_setpoint).toBe(24);
+    expect(field('Target ring width').value).toBe('24');
+    expect(append).toHaveBeenCalledWith('Autofocus target ring width restored to 24 (remembered from the last session)');
+    await tick(5000);                                                  // later polls do not bring the profile's value back
+    expect(config.focus_setpoint).toBe(24); expect(bridge.autofocusSetConfig).toHaveBeenCalledTimes(1);
+    expect(home().textContent).toBe('Home (31)');                      // the profile's value is the Home value
+    expect(JSON.parse(stored.get(homeKey)!)).toBe(31);
+  });
+  it('a profile or method applied later in the session is the newest value: remembered for the next start and taken as Home', async () => {
+    stored.set(setpointKey, '22.5');
+    await startBackend(31);
+    expect(config.focus_setpoint).toBe(22.5);
+    config = {...config, focus_setpoint: 27};                          // Apply Saved Profile Settings, a method, a config document
+    await tick(2600);
+    expect(field('Target ring width').value).toBe('27');
+    expect(JSON.parse(stored.get(setpointKey)!)).toBe(27);
+    expect(home().textContent).toBe('Home (27)');
+  });
+  it('Home moves to the value it shows, through the queue, and is remembered as the latest; a pending typed value is dropped', async () => {
+    stored.set(setpointKey, '22.5');
+    await startBackend(31);
+    expect(home().textContent).toBe('Home (31)'); expect(home().disabled).toBe(false);
+    await type(field('Target ring width'), '40');                      // not applied yet (500 ms)
+    await click(home()); await tick(1000);
+    expect(bridge.autofocusSetConfig).toHaveBeenLastCalledWith({...baseConfig, focus_setpoint: 31});
+    expect(config.focus_setpoint).toBe(31);
+    expect(field('Target ring width').value).toBe('31');
+    expect(JSON.parse(stored.get(setpointKey)!)).toBe(31);
+    expect(append).toHaveBeenCalledWith('Target ring width set to the Home value 31');
+    expect(bridge.autofocusSetConfig).not.toHaveBeenCalledWith(expect.objectContaining({focus_setpoint: 40}));
+  });
+  it('Home is refused while a run is active, also when the run started while Home waited in the queue', async () => {
+    await startBackend(31, {experimentActive: true});
+    expect(home().disabled).toBe(true); expect(home().title).toBe('Not available during an experiment');
+    expect(field('Target ring width').disabled).toBe(false);           // the typed setpoint stays an operator control (D2)
+    await restart();
+    await startBackend(31);
+    const slow = deferred<CmdResult>();
+    vi.mocked(bridge.autofocusSetConfig).mockImplementationOnce(async next => { await slow.promise; config = {...next}; return ok(); });
+    await type(field('Target ring width'), '25'); await press(field('Target ring width'), 'Enter');
+    await click(home());                                               // queued behind the typed value
+    await render({experimentActive: true});
+    await act(async () => slow.resolve(ok())); await tick(0);
+    expect(bridge.autofocusSetConfig).toHaveBeenCalledTimes(1);
+    expect(config.focus_setpoint).toBe(25);
+    expect(alerts().some(text => text.includes('Home: an experiment started; nothing was changed.'))).toBe(true);
+  });
+  it('a Home value outside 1-100 is refused like a typed one', async () => {
+    await startBackend(150);
+    await click(home()); await tick(0);
+    expect(bridge.autofocusSetConfig).not.toHaveBeenCalled();
+    expect(alerts().some(text => text.startsWith('Home: Target ring width must be from 1 to 100'))).toBe(true);
+  });
+  it('a panel mounted again in the same backend session keeps the session\'s Home, not the live value', async () => {
+    await startBackend(31);
+    await type(field('Target ring width'), '24'); await press(field('Target ring width'), 'Enter'); await tick(0);
+    await restart();
+    await render();                                                    // same backend: the startup restore settled long ago
+    expect(home().textContent).toBe('Home (31)');
+    expect(config.focus_setpoint).toBe(24);
   });
 });
 

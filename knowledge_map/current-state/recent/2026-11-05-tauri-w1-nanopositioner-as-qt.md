@@ -18,5 +18,12 @@ Rules in `autofocusControlModel.ts` and `autofocusMessages.ts`; see [[architectu
 - **Remembered values (HW-036).** The manual selection is stored in the startup preference record on connect,
   disconnect and page hide, and pre-fills the panel; the target ring width is stored on every edit and restored once
   into a fresh backend.
+- **Latest wins, and Home (2026-11-07, Gavin, MIBQT-45: "Latest should win, profile setting of the nanopositioner
+  doesn't make sense ... Sometimes user wants to go back to 'home' a fixed value").** The remembered target ring width
+  is written after the startup profile or method restore has settled (`startupRestoreGate.ts`), never before it, so the
+  restore cannot overwrite it; a profile or method applied later in the session is the newest value and is remembered.
+  A **Home (N)** button returns to the value the applied profile or method set (the default 20 when none did), shows
+  that number, and is refused during an experiment. Run provenance records the live value at Start as
+  `piezo.focus_setpoint` (snapshot v3; files from before read it as unknown), see [[data-model/HDF5-Storage]].
 - The OEABT connect now sends the baud and address fields instead of the literals -1/115200/1; the stale 'lands with
   UI-3 (#268)' sidebar tooltip is gone.

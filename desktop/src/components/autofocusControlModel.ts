@@ -181,6 +181,9 @@ export class AutofocusCommandQueue {
 // ---- Remembered values (Qt: config.json autofocus_backend / _endpoint / _com_port / _baud_rate / _device_address / _focus_setpoint) ----
 export const SELECTION_SAVED_EVENT = 'mib:nanopositioner-selection-saved';
 export const setpointKey = 'mib.autofocus.setpoint.v1';
+/** The Home value (MIBQT-45): the target ring width the applied profile or method set, else the backend's default. Kept so
+ *  that a reloaded page (the backend kept running) shows the same Home as before. */
+export const homeKey = 'mib.autofocus.home.v1';
 
 export function rememberedSelection(storage: Pick<Storage, 'getItem'> | undefined = safeStorage()): StartupPreference {
   if (!storage) return {...defaultStartupPreference};
@@ -195,17 +198,22 @@ export function rememberSelection(preference: StartupPreference, storage: Pick<S
     return {saved: true, preference: saved};
   } catch (failure) { return {saved: false, error: errorText(failure)}; }
 }
-export function rememberedSetpoint(storage: Pick<Storage, 'getItem'> | undefined = safeStorage()): number | null {
+export function rememberedSetpoint(storage: Pick<Storage, 'getItem'> | undefined = safeStorage(), key = setpointKey): number | null {
   try {
-    const text = storage?.getItem(setpointKey);
+    const text = storage?.getItem(key);
     if (!text) return null;
     const value = Number(JSON.parse(text));
     return Number.isFinite(value) && value >= SETPOINT_MIN && value <= SETPOINT_MAX ? Number(value.toFixed(SETPOINT_DECIMALS)) : null;
   } catch { return null; }
 }
-export function rememberSetpoint(value: number, storage: Pick<Storage, 'setItem'> | undefined = safeStorage()): boolean {
-  try { if (!storage) return false; storage.setItem(setpointKey, JSON.stringify(Number(value.toFixed(SETPOINT_DECIMALS)))); return true; } catch { return false; }
+export function rememberSetpoint(value: number, storage: Pick<Storage, 'setItem'> | undefined = safeStorage(), key = setpointKey): boolean {
+  try { if (!storage) return false; storage.setItem(key, JSON.stringify(Number(value.toFixed(SETPOINT_DECIMALS)))); return true; } catch { return false; }
 }
+/** The stored Home value, or the backend's default target ring width (20) when none is stored or it is out of range. */
+export const rememberedHome = (storage: Pick<Storage, 'getItem'> | undefined = safeStorage()) => rememberedSetpoint(storage, homeKey) ?? DEFAULT_SETPOINT;
+export const rememberHome = (value: number, storage: Pick<Storage, 'setItem'> | undefined = safeStorage()) => rememberSetpoint(value, storage, homeKey);
+/** Two setpoints are the same when they agree to the spin box's two decimals. */
+export const sameSetpoint = (a: number, b: number) => Math.abs(a - b) < 0.005;
 function safeStorage(): Storage | undefined { try { return typeof localStorage === 'undefined' ? undefined : localStorage; } catch { return undefined; } }
 export { startupPreferenceKey };
 

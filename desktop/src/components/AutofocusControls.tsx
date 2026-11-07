@@ -10,9 +10,10 @@ import {
   ADDRESS_MAX, ADDRESS_MIN, AutofocusCommandQueue, BACKEND_CHOICES, COREMOR_BAUD_RATES, CONFIG_POLL_EVERY, DEFAULT_BAUD, JOG_STEP_MAX, JOG_STEP_MIN,
   NO_DEVICE_HINT, OPERATOR_CONFIG_KEYS, SELECTION_SAVED_EVENT, SETPOINT_APPLY_MS, SETPOINT_MAX, SETPOINT_MIN, SKIPPED,
   STATUS_POLL_MS, candidateFromDevice, candidateFromPreference, connectTarget, errorText, formatSetpoint, listCandidates, parseJogStep,
-  parseSetpoint, rememberSelection, rememberSetpoint, rememberedSelection, rememberedSetpoint, selectionPreference, stepFromConfig,
-  usesCoremorSettings, type BackendChoice, type Candidate, type CommandContext, type CommandKind,
+  parseSetpoint, rememberHome, rememberSelection, rememberSetpoint, rememberedHome, rememberedSelection, rememberedSetpoint, sameSetpoint,
+  selectionPreference, stepFromConfig, usesCoremorSettings, type BackendChoice, type Candidate, type CommandContext, type CommandKind,
 } from './autofocusControlModel';
+import { startupRestoreSettled, takeStartupSetpointCapture } from '../startupRestoreGate';
 import type { StartupPreference } from '../startupPreference';
 import './HardwareControls.css';
 
@@ -49,6 +50,8 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
   const [tuning, setTuning] = useState<AutofocusConfig | null>(null);
   const [setpointText, setSetpointText] = useState('');
   const [setpointProblem, setSetpointProblem] = useState('');
+  // Home (MIBQT-45): the target ring width the applied profile or method set, shown in the button so it reads as a value.
+  const [home, setHome] = useState(() => rememberedHome());
   const [stepText, setStepText] = useState(String(1));
   const [messages, setMessages] = useState<AutofocusMessage[]>(() => recentAutofocusMessages());
   const [busy, setBusy] = useState(false);
@@ -64,6 +67,10 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
   const setpointDirty = useRef(false);
   const setpointTimer = useRef<number | undefined>(undefined);
   const alive = useRef(true);
+  /** The backend's setpoint as this panel last read or wrote it, inside the command queue: a different value read later was
+   *  written by something else (a profile, method or configuration document applied). */
+  const knownSetpoint = useRef<number | null>(null);
+  const configReading = useRef(false);
 
   const candidates = listCandidates(scanned, choice, candidateFromPreference(savedPreference));
   // The remembered device, else (unlike Qt, which takes the first row) the first one the scan identified: the first row may be the
@@ -77,8 +84,8 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
   const coremorSettings = usesCoremorSettings(choice, selected);
 
   // The newest values, for timers and handlers that outlive a render.
-  const latest = useRef({ready, experimentActive, append, resumedSession, choice, selected, baud, address, savedPreference, setpointText, stepText, connected, focus, tuning});
-  latest.current = {ready, experimentActive, append, resumedSession, choice, selected, baud, address, savedPreference, setpointText, stepText, connected, focus, tuning};
+  const latest = useRef({ready, experimentActive, append, resumedSession, choice, selected, baud, address, savedPreference, setpointText, stepText, connected, focus, tuning, home});
+  latest.current = {ready, experimentActive, append, resumedSession, choice, selected, baud, address, savedPreference, setpointText, stepText, connected, focus, tuning, home};
 
   useEffect(() => { alive.current = true; return () => { alive.current = false; window.clearTimeout(setpointTimer.current); }; }, []);
   useEffect(() => subscribeAutofocusMessages(message => setMessages(old => [...old.slice(-4), message])), []);
@@ -115,6 +122,24 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
     adoptConfig(value);
     return value;
   }, [adoptConfig]);
+  /** A periodic read, in the command queue so that it never sees the backend between a write of this panel and its
+   *  bookkeeping. A setpoint this panel did not write came from a profile, method or configuration applied meanwhile: it is
+   *  the newest value, so it is remembered for the next start (latest wins, MIBQT-45) and becomes the Home value. */
+  const pollConfig = useCallback((current: number) => {
+    if (configReading.current) return;
+    configReading.current = true;
+    void queue.current.run('config', async () => {
+      const value = await bridge.fetchAutofocusConfig();
+      if (current !== generation.current || !value.valid) return;
+      const known = knownSetpoint.current;
+      if (known !== null && !sameSetpoint(known, value.focus_setpoint)) {
+        rememberSetpoint(value.focus_setpoint); rememberHome(value.focus_setpoint);
+        if (alive.current) setHome(value.focus_setpoint);
+      }
+      knownSetpoint.current = value.focus_setpoint;
+      adoptConfig(value);
+    }).catch(() => undefined).finally(() => { configReading.current = false; });
+  }, [adoptConfig]);
   const refresh = useCallback(async () => {
     if (polling.current || !ready) return;
     polling.current = true;
@@ -124,11 +149,11 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
       if (current !== generation.current) return;
       if (!autofocus.valid) throw new Error('Hardware status is unavailable.');
       setFocus(autofocus); setStatusError('');
-      if (settled.current && pollCount.current++ % CONFIG_POLL_EVERY === 0) await readConfig(current).catch(() => undefined);
+      if (settled.current && pollCount.current++ % CONFIG_POLL_EVERY === 0) pollConfig(current);
     } catch (failure) {
       if (current === generation.current) { setFocus(null); setStatusError(String(failure)); }
     } finally { polling.current = false; }
-  }, [ready, readConfig]);
+  }, [ready, pollConfig]);
 
   useEffect(() => {
     const current = ++generation.current;
@@ -140,14 +165,30 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
         const value = await readConfig(current);
         if (!value || current !== generation.current) return;
         setStepText(stepFromConfig(value.manual_voltage_step));
+        knownSetpoint.current = value.focus_setpoint;
         // Qt reads the saved target ring width at startup (loadConfig). The settings of a running backend are not replayed.
-        const wanted = rememberedSetpoint();
-        if (wanted !== null && !latest.current.resumedSession && !latest.current.experimentActive && Math.abs(wanted - value.focus_setpoint) >= 0.005) {
+        if (!latest.current.resumedSession && !latest.current.experimentActive) {
+          // Latest wins (MIBQT-45): the startup profile or method restore goes first, the remembered value after it.
+          await startupRestoreSettled();
+          if (current !== generation.current) return;
           try {
-            const applied = await queue.current.run('config', () => patchConfig({focus_setpoint: wanted}));
-            if (applied !== SKIPPED && current === generation.current) {
-              adoptConfig(applied);
-              latest.current.append(`Autofocus target ring width restored to ${formatSetpoint(wanted)} (remembered from the last session)`);
+            const restored = await queue.current.run('config', async () => {
+              const fresh = await bridge.fetchAutofocusConfig();
+              if (current !== generation.current) return null;
+              if (!fresh.valid) throw new Error('Autofocus configuration unavailable.');
+              knownSetpoint.current = fresh.focus_setpoint;
+              // The value the restored profile or method set (the backend's own when none was) is this session's Home.
+              if (takeStartupSetpointCapture()) { rememberHome(fresh.focus_setpoint); if (alive.current) setHome(fresh.focus_setpoint); }
+              adoptConfig(fresh);
+              const wanted = rememberedSetpoint();
+              if (wanted === null || latest.current.experimentActive || sameSetpoint(wanted, fresh.focus_setpoint)) return null;
+              const applied = await patchConfig({focus_setpoint: wanted});
+              knownSetpoint.current = applied.focus_setpoint;
+              return applied;
+            });
+            if (restored && restored !== SKIPPED && current === generation.current) {
+              adoptConfig(restored);
+              latest.current.append(`Autofocus target ring width restored to ${formatSetpoint(restored.focus_setpoint)} (remembered from the last session)`);
             }
           } catch (failure) { if (current === generation.current) { const message = `Restore target ring width: ${errorText(failure)}`; setError(message); latest.current.append(message); } }
         }
@@ -160,6 +201,12 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
   }, [ready, refresh]);
 
   // ---- commands ----
+  /** Writes the target ring width (inside the command queue) and notes it as this panel's own write. */
+  async function writeSetpoint(value: number): Promise<AutofocusConfig> {
+    const applied = await patchConfig({focus_setpoint: value});
+    knownSetpoint.current = applied.focus_setpoint;
+    return applied;
+  }
   /** Read the live configuration, change only `patch`, write it back (nothing is written when nothing changed). */
   async function patchConfig(patch: Partial<AutofocusConfig>, validate?: (merged: AutofocusConfig) => void): Promise<AutofocusConfig> {
     const fresh = await bridge.fetchAutofocusConfig();
@@ -251,7 +298,7 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
     setSetpointText(formatSetpoint(value));
     void (async () => {
       try {
-        const applied = await queue.current.run('config', () => patchConfig({focus_setpoint: value}));
+        const applied = await queue.current.run('config', () => writeSetpoint(value));
         if (applied === SKIPPED) return;
         setpointDirty.current = false;
         rememberSetpoint(value);
@@ -261,6 +308,30 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  /** Home (MIBQT-45): the target ring width goes back to the Home value, through the same rules as a typed one (1-100, the
+   *  command queue, remembered as the latest). Unlike the field, it is refused during an experiment, also if one started while
+   *  it waited in the queue: one click must not move the focus in the middle of a run. */
+  const goHome = () => {
+    const now = latest.current;
+    if (!now.ready) return;
+    if (now.experimentActive) { fail('Home', 'not available during an experiment; type a target ring width instead.'); return; }
+    let value: number;
+    try { value = parseSetpoint(String(now.home)); } catch (failure) { fail('Home', failure); return; }
+    window.clearTimeout(setpointTimer.current); setpointTimer.current = undefined;
+    setpointDirty.current = false; setSetpointProblem(''); setSetpointText(formatSetpoint(value));
+    void (async () => {
+      try {
+        const applied = await queue.current.run('config', async () => {
+          if (latest.current.experimentActive) throw new Error('an experiment started; nothing was changed.');
+          return writeSetpoint(value);
+        });
+        if (applied === SKIPPED) return;
+        rememberSetpoint(value);
+        if (alive.current) { setConfig(applied); setError(''); }
+        latest.current.append(`Target ring width set to the Home value ${formatSetpoint(value)}`);
+      } catch (failure) { if (alive.current) { fail('Home', failure); if (config) setSetpointText(formatSetpoint(config.focus_setpoint)); } }
+    })();
+  };
   const setpointEdited = (text: string) => {
     setSetpointText(text); latest.current.setpointText = text; setpointDirty.current = true;
     window.clearTimeout(setpointTimer.current);
@@ -322,6 +393,9 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
           value={setpointText} disabled={!ready || !config} aria-invalid={!!setpointProblem}
           onChange={e => setpointEdited(e.target.value)} onBlur={() => { if (setpointDirty.current) applySetpoint(); }}
           onKeyDown={e => { if (e.key === 'Enter') applySetpoint(); }} /></label>
+        <button data-tour="autofocus-home" disabled={!ready || !config || experimentActive}
+          title={experimentActive ? 'Not available during an experiment' : `Set the target ring width to ${formatSetpoint(home)}: the value the applied profile or method set (the starting value when none was applied)`}
+          onClick={goHome}>Home ({formatSetpoint(home)})</button>
       </div>
       {setpointProblem && <p role="alert" className="hardware-hint hardware-hint-problem">{setpointProblem}</p>}
       <p data-tour="autofocus-voltage">Voltage: {connected && focus ? `${focus.current_voltage.toFixed(2)} V` : '-- V'}</p>

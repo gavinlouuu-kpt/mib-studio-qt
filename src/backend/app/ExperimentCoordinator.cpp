@@ -420,7 +420,8 @@ static void captureRunFacts(AppBackend& backend, recording::RunProvenanceV3& v3)
         v3.stage = st;
     }
 
-    // Piezo (nanopositioner): connected, the last voltage read or written, autofocus on/off.
+    // Piezo (nanopositioner): connected, the last voltage read or written, autofocus on/off, and the
+    // target ring width in force (the live one, not the applied document's: #883, MIBQT-45).
     {
         auto& af = backend.autofocus();
         recording::PiezoRecord p;
@@ -428,6 +429,7 @@ static void captureRunFacts(AppBackend& backend, recording::RunProvenanceV3& v3)
         if (p.connected) {
             p.voltageV = af.getCurrentVoltage();
             p.autofocusEnabled = af.isEnabled();
+            p.focusSetpoint = af.getConfig().focusSetpoint;
         }
         v3.piezo = p;
     }
