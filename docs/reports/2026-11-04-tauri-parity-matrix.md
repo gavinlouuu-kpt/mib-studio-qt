@@ -1,8 +1,11 @@
 # Qt vs React/Tauri parity matrix (MIB Studio)
 
 Baseline: origin/develop `5f906ac2` (2026-11-04, PR #834). Worktree `/home/gavin/Developer/.worktrees/parity-20261104`, read-only.
+
+> **Snapshot.** This describes develop `5f906ac2` (2026-11-04). File:line references apply to that commit (#871 has since split `desktop/src/App.tsx`), and the open Tauri parity PRs of program #869 (#870, #872–#898) may close gaps listed here.
+
 Qt side: `src/frontend/**`, `include/frontend/**`, `resources/ui/*.ui`. Tauri side: `desktop/src/**`, `desktop/src-tauri/src/**`, `crates/mib-app-commands`, `crates/mib-bridge*`.
-Machine-readable copy: `parity-matrix.json` (same rows, extra keys `id`, `area`, `dup_of`); suspicious Tauri code: `suspicious-tauri-code.json`.
+Machine-readable copy: `parity-matrix.json` (same rows, extra keys `id`, `area`, `dup_of`); suspicious Tauri code: `suspicious-tauri-code.json`. Both are on P5 under `/mnt/hdd/developer-data/mib-studio-qt/parity-20261104/inventory/`, not in the repo.
 
 ## How this was produced, and its limits
 

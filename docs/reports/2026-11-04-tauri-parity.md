@@ -2,6 +2,8 @@
 
 Status: complete. Commit tested: origin/develop `5f906ac2`. Mock camera only; no hardware.
 
+> **Snapshot.** This describes develop `5f906ac2` (2026-11-04). File:line references apply to that commit (#871 has since split `desktop/src/App.tsx`), and the open Tauri parity PRs of program #869 (#870, #872–#898) may close gaps listed here.
+
 Comparison page (screenshots side by side): https://claude.ai/artifact/AqMayU6NpF7d9TK51fzLQm
 Feature matrix: [2026-11-04-tauri-parity-matrix.md](2026-11-04-tauri-parity-matrix.md)
 Raw outputs on P5: `/mnt/hdd/developer-data/mib-studio-qt/parity-20261104/` (`qt/`, `tauri/`, `inventory/`)
@@ -11,7 +13,7 @@ Raw outputs on P5: `/mnt/hdd/developer-data/mib-studio-qt/parity-20261104/` (`qt
 The Tauri app is not ready to replace Qt yet. It is stable on the mock path but well short of feature parity.
 
 - **Stable:** all of these pass: 764 frontend tests, 147 Rust tests (mib-bridge 42, mib-app-commands 31, mib-bridge-server 59, src-tauri 15) and `native-workflow.py` against the release binary. The browser tour (Playwright, about 66 captures) logged no console errors and no uncaught exceptions. Connect → preview → run → finalize → Review → export → regenerate masks works natively and in the browser. A page reload mid-run recovers in about 100 ms, and six camera start/stop cycles were clean.
-- **Not at parity:** of 589 Qt behaviours, 104 match, 283 are partial and 112 are missing (90 more are Tauri-only). By severity: 1 blocker, 88 major, 306 minor. Most Qt work since 2026-10-01 is not ported: #831, #833/#834, #705, #576, #492, #472, #589. The last desktop change on develop was on 2026-10-22.
+- **Not at parity:** of the matrix's 589 rows, 499 are Qt behaviours: 104 match, 283 are partial and 112 are missing. The other 90 are Tauri-only. By severity: 1 blocker, 88 major, 306 minor. Most Qt work since 2026-10-01 is not ported: #831, #833/#834, #705, #576, #492, #472, #589. At the snapshot, the last desktop change on develop was on 2026-10-22.
 - **Release gates still open:** packaging and update feed, real-hardware acceptance, and performance under real load (`docs/exec-plans/active/2026-09-23-tauri-replacement.md`).
 
 ## Must close before migrating
