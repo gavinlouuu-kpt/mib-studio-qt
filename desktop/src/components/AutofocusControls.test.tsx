@@ -42,8 +42,8 @@ const click = async (node: HTMLElement) => act(async () => node.click());
 const tick = async (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const press = async (input: HTMLElement, key: string) => act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', {key, bubbles: true})); });
 const alerts = () => Array.from(host.querySelectorAll('[role="alert"]')).map(node => node.textContent ?? '');
-async function render(props: {ready?: boolean; experimentActive?: boolean; resumedSession?: boolean} = {}) {
-  await act(async () => root.render(<AutofocusControls ready={props.ready ?? true} experimentActive={props.experimentActive ?? false} append={append} resumedSession={props.resumedSession} />));
+async function render(props: {ready?: boolean; experimentActive?: boolean; resumedSession?: boolean; startPending?: boolean} = {}) {
+  await act(async () => root.render(<AutofocusControls ready={props.ready ?? true} experimentActive={props.experimentActive ?? false} append={append} resumedSession={props.resumedSession} startPending={props.startPending} />));
   await tick(0);
 }
 const connectDevice = async () => { status = {...status, connected: true, current_voltage: 50.126, endpoint_id: usb.persistent_id}; };
@@ -223,6 +223,9 @@ describe('latest wins over the profile, and Home (MIBQT-45)', () => {
     stored.set(setpointKey, '22.5');
     await startBackend(31);
     expect(home().textContent).toBe('Home (31)'); expect(home().disabled).toBe(false);
+    const press = new MouseEvent('mousedown', {bubbles: true, cancelable: true});
+    home().dispatchEvent(press);
+    expect(press.defaultPrevented).toBe(true);                         // the field keeps the focus: no blur applies the typed value first
     await type(field('Target ring width'), '40');                      // not applied yet (500 ms)
     await click(home()); await tick(1000);
     expect(bridge.autofocusSetConfig).toHaveBeenLastCalledWith({...baseConfig, focus_setpoint: 31});
@@ -248,11 +251,66 @@ describe('latest wins over the profile, and Home (MIBQT-45)', () => {
     expect(config.focus_setpoint).toBe(25);
     expect(alerts().some(text => text.includes('Home: an experiment started; nothing was changed.'))).toBe(true);
   });
-  it('a Home value outside 1-100 is refused like a typed one', async () => {
+  it('a Home value outside 1-100 is not offered: the button is off and says why', async () => {
     await startBackend(150);
-    await click(home()); await tick(0);
+    expect(home().textContent).toBe('Home (150)'); expect(home().disabled).toBe(true);
+    expect(home().title).toBe('The Home value 150 is outside 1-100; type a target ring width instead');
     expect(bridge.autofocusSetConfig).not.toHaveBeenCalled();
-    expect(alerts().some(text => text.startsWith('Home: Target ring width must be from 1 to 100'))).toBe(true);
+  });
+  it('Home is off while an experiment Start request is in flight', async () => {
+    await startBackend(31);
+    await render({startPending: true});
+    expect(home().disabled).toBe(true); expect(home().title).toBe('Not available during an experiment');
+  });
+  it('reads no configuration while it waits for the startup restore, so the profile landing then is not taken as the newest value', async () => {
+    stored.set(setpointKey, '22.5');
+    resetStartupRestore();
+    await render();
+    config = {...config, focus_setpoint: 31};                          // the profile restore lands; the cores take their time
+    await tick(6000);
+    expect(JSON.parse(stored.get(setpointKey)!)).toBe(22.5);
+    await act(async () => settleStartupRestore()); await tick(0);
+    expect(config.focus_setpoint).toBe(22.5);
+    expect(home().textContent).toBe('Home (31)');
+  });
+  it('says in the log when the startup restore takes long, and restores after it', async () => {
+    stored.set(setpointKey, '22.5');
+    resetStartupRestore();
+    await render();
+    await tick(10000);
+    expect(append).toHaveBeenCalledWith('Target ring width: waiting for the startup configuration restore; the remembered value is applied after it');
+    await act(async () => settleStartupRestore()); await tick(0);
+    expect(config.focus_setpoint).toBe(22.5);
+  });
+  it('restores nothing when a run started while it waited for the startup restore', async () => {
+    stored.set(setpointKey, '22.5');
+    resetStartupRestore();
+    await render();
+    await render({experimentActive: true});
+    await act(async () => settleStartupRestore()); await tick(0);
+    expect(bridge.autofocusSetConfig).not.toHaveBeenCalled();
+  });
+  it('never takes its own write for someone else\'s, also when the backend holds it before the write returns', async () => {
+    await startBackend(31);
+    const slow = deferred<void>();
+    vi.mocked(bridge.autofocusSetConfig).mockImplementationOnce(async next => { config = {...next}; await slow.promise; return ok(); });
+    await type(field('Target ring width'), '40'); await press(field('Target ring width'), 'Enter');
+    await tick(2600);                                                  // periodic reads come due while the write is in flight
+    await act(async () => slow.resolve()); await tick(2600);
+    expect(config.focus_setpoint).toBe(40);
+    expect(home().textContent).toBe('Home (31)'); expect(JSON.parse(stored.get(homeKey)!)).toBe(31);
+    expect(JSON.parse(stored.get(setpointKey)!)).toBe(40);
+  });
+  it('after Home the field shows the Home value, also when a periodic read was already queued with the old one', async () => {
+    stored.set(setpointKey, '22.5');
+    await startBackend(31);
+    const read = deferred<AutofocusConfig>();
+    vi.mocked(bridge.fetchAutofocusConfig).mockImplementationOnce(() => read.promise);
+    await tick(600);                                                   // a periodic read is in flight, holding the queue
+    await click(home());
+    await act(async () => read.resolve({...config})); await tick(0);   // it answers the old 22.5
+    expect(config.focus_setpoint).toBe(31);
+    expect(field('Target ring width').value).toBe('31');
   });
   it('a panel mounted again in the same backend session keeps the session\'s Home, not the live value', async () => {
     await startBackend(31);

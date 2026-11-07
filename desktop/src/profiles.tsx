@@ -53,7 +53,7 @@ export function useProfiles({ready,active,resume=false,currentConfig,append,onOp
       if(operation==="open") {if(selected)await onOpen(selected.path);return;}
       if(operation==="restore") {
         const r=await restoreStartupConfiguration(directory);
-                if(r.restored&&onApplied){try{await onApplied();}catch(e){throw new Error(`Startup configuration re-applied, but UI refresh failed: ${String(e)}`);}}
+        if(r.restored&&onApplied){try{await onApplied();}catch(e){throw new Error(`Startup configuration re-applied, but UI refresh failed: ${String(e)}`);}}
         if(directory){
           const list=await profileCommand(directory,{operation:"list"});if(list.ok)setProfiles(list.profiles??[]);
           const selection=await profileCommand(directory,{operation:"selection"});if(selection.ok)setActiveProfile(selection.active_profile??null);

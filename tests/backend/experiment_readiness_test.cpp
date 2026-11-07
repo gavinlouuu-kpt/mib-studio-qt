@@ -500,8 +500,8 @@ int main()
     backend::app::RunConfigurationSnapshot frozen;
     {
         wd.mark("concurrent start");
-        // #883 (MIBQT-45): the applied document names one target ring width, the operator's latest
-        // another; the run records the one the autofocus service holds, beside the document.
+        // #883 (MIBQT-45): the run records the target ring width the autofocus service holds at Start
+        // (the operator's latest, which can differ from the applied document's), with a fake piezo.
         MIB_REQUIRE(backend.autofocus().setBackendFactory([](backend::nanopositioner::BackendKind) {
             return std::make_unique<FakeNanopositioner>();
         }), "fake nanopositioner factory");

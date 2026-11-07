@@ -128,6 +128,15 @@ it("settles the startup restore gate only once the restore answered, failed or n
  expect(vi.mocked(invoke).mock.calls.filter(([c])=>c==="restore_startup_configuration")).toHaveLength(2);
 });
 
+it("a backend that went away resets the gate; the next session's restore settles it again (MIBQT-45)",async()=>{
+ ctx.ready=false;await act(async()=>root.render(<App/>));
+ let settled=false;void startupRestoreSettled().then(()=>{settled=true;});
+ await act(async()=>{});
+ expect(settled).toBe(false);
+ ctx.ready=true;await act(async()=>root.render(<App/>));
+ expect(settled).toBe(true);
+});
+
 it("a failed startup restore shows its notice instead of failing silently",async()=>{
  await act(async()=>root.unmount());vi.mocked(invoke).mockClear();
  const notice="Startup configuration not restored: Startup method r9 cannot be re-applied: not cached. The instrument runs on its default settings until a method or profile is applied.";

@@ -8,7 +8,7 @@ import { hardwareGate, operatorGate, validateFocusConfig } from './hardwareContr
 import { recentAutofocusMessages, resetAutofocusMessages, subscribeAutofocusMessages, type AutofocusMessage } from './autofocusMessages';
 import {
   ADDRESS_MAX, ADDRESS_MIN, AutofocusCommandQueue, BACKEND_CHOICES, COREMOR_BAUD_RATES, CONFIG_POLL_EVERY, DEFAULT_BAUD, JOG_STEP_MAX, JOG_STEP_MIN,
-  NO_DEVICE_HINT, OPERATOR_CONFIG_KEYS, SELECTION_SAVED_EVENT, SETPOINT_APPLY_MS, SETPOINT_MAX, SETPOINT_MIN, SKIPPED,
+  NO_DEVICE_HINT, OPERATOR_CONFIG_KEYS, SELECTION_SAVED_EVENT, SETPOINT_APPLY_MS, SETPOINT_MAX, SETPOINT_MIN, SKIPPED, STARTUP_RESTORE_NOTE_MS,
   STATUS_POLL_MS, candidateFromDevice, candidateFromPreference, connectTarget, errorText, formatSetpoint, listCandidates, parseJogStep,
   parseSetpoint, rememberHome, rememberSelection, rememberSetpoint, rememberedHome, rememberedSelection, rememberedSetpoint, sameSetpoint,
   selectionPreference, stepFromConfig, usesCoremorSettings, type BackendChoice, type Candidate, type CommandContext, type CommandKind,
@@ -18,6 +18,8 @@ import type { StartupPreference } from '../startupPreference';
 import './HardwareControls.css';
 
 type Props = { ready: boolean; experimentActive: boolean; append: (message: string) => void;
+  /** True while an experiment Start request is in flight (the studio's `experimentRequestBusy`): Home is refused then too. */
+  startPending?: boolean;
   /** True when the backend was already running before this page loaded: its settings are not replayed (as the profile restore). */
   resumedSession?: boolean };
 /** The tuning editor (HW-035, Tauri only). The target ring width and the jog step are operator controls now (below). */
@@ -33,7 +35,7 @@ const focusFields: Array<[keyof AutofocusConfig, string]> = [
  *  remembered selection. Rendered only with `capabilities.autofocus`. Enable, Disable, the setpoint and Jog are operator controls
  *  (D2): no Service mode, no arm, no experiment lock; Disable is available whenever the backend is ready (D3) and a queued Enable
  *  or Jog is never sent after it. Connection fields and the tuning editor stay locked during an experiment. */
-export function AutofocusControls({ready, experimentActive, append, resumedSession = false}: Props) {
+export function AutofocusControls({ready, experimentActive, append, resumedSession = false, startPending = false}: Props) {
   const remembered = useRef<StartupPreference | null>(null);
   if (!remembered.current) remembered.current = rememberedSelection();
   const initial = remembered.current;
@@ -84,8 +86,12 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
   const coremorSettings = usesCoremorSettings(choice, selected);
 
   // The newest values, for timers and handlers that outlive a render.
-  const latest = useRef({ready, experimentActive, append, resumedSession, choice, selected, baud, address, savedPreference, setpointText, stepText, connected, focus, tuning, home});
-  latest.current = {ready, experimentActive, append, resumedSession, choice, selected, baud, address, savedPreference, setpointText, stepText, connected, focus, tuning, home};
+  const latest = useRef({ready, experimentActive, startPending, append, resumedSession, choice, selected, baud, address, savedPreference, setpointText, stepText, connected, focus, tuning, home});
+  latest.current = {ready, experimentActive, startPending, append, resumedSession, choice, selected, baud, address, savedPreference, setpointText, stepText, connected, focus, tuning, home};
+  // Home stays off while a run is active or being started, and for a value the field would refuse (MIBQT-45).
+  const homeInRange = home >= SETPOINT_MIN && home <= SETPOINT_MAX;
+  const homeReason = experimentActive || startPending ? 'Not available during an experiment'
+    : !homeInRange ? `The Home value ${formatSetpoint(home)} is outside ${SETPOINT_MIN}-${SETPOINT_MAX}; type a target ring width instead` : '';
 
   useEffect(() => { alive.current = true; return () => { alive.current = false; window.clearTimeout(setpointTimer.current); }; }, []);
   useEffect(() => subscribeAutofocusMessages(message => setMessages(old => [...old.slice(-4), message])), []);
@@ -169,7 +175,11 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
         // Qt reads the saved target ring width at startup (loadConfig). The settings of a running backend are not replayed.
         if (!latest.current.resumedSession && !latest.current.experimentActive) {
           // Latest wins (MIBQT-45): the startup profile or method restore goes first, the remembered value after it.
-          await startupRestoreSettled();
+          // A restore that takes long is said in the log, so a remembered value that is not back yet is explained.
+          const note = window.setTimeout(() => {
+            if (current === generation.current) latest.current.append('Target ring width: waiting for the startup configuration restore; the remembered value is applied after it');
+          }, STARTUP_RESTORE_NOTE_MS);
+          try { await startupRestoreSettled(); } finally { window.clearTimeout(note); }
           if (current !== generation.current) return;
           try {
             const restored = await queue.current.run('config', async () => {
@@ -177,6 +187,7 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
               if (current !== generation.current) return null;
               if (!fresh.valid) throw new Error('Autofocus configuration unavailable.');
               knownSetpoint.current = fresh.focus_setpoint;
+              if (alive.current) setStepText(stepFromConfig(fresh.manual_voltage_step));
               // The value the restored profile or method set (the backend's own when none was) is this session's Home.
               if (takeStartupSetpointCapture()) { rememberHome(fresh.focus_setpoint); if (alive.current) setHome(fresh.focus_setpoint); }
               adoptConfig(fresh);
@@ -309,27 +320,33 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   /** Home (MIBQT-45): the target ring width goes back to the Home value, through the same rules as a typed one (1-100, the
-   *  command queue, remembered as the latest). Unlike the field, it is refused during an experiment, also if one started while
-   *  it waited in the queue: one click must not move the focus in the middle of a run. */
+   *  command queue, remembered as the latest). Unlike the field, it is refused during an experiment or while one is being
+   *  started, also if the run started while Home waited in the queue: one click must not move the focus in a run. A typed
+   *  value still waiting for its 500 ms is dropped (the button keeps the focus on press, so the field does not blur and apply
+   *  it first). The field stays marked as edited until the write returns, so a read already queued cannot show the old value. */
   const goHome = () => {
     const now = latest.current;
     if (!now.ready) return;
-    if (now.experimentActive) { fail('Home', 'not available during an experiment; type a target ring width instead.'); return; }
+    if (now.experimentActive || now.startPending) { fail('Home', 'not available during an experiment; type a target ring width instead.'); return; }
     let value: number;
     try { value = parseSetpoint(String(now.home)); } catch (failure) { fail('Home', failure); return; }
     window.clearTimeout(setpointTimer.current); setpointTimer.current = undefined;
-    setpointDirty.current = false; setSetpointProblem(''); setSetpointText(formatSetpoint(value));
+    setpointDirty.current = true; setSetpointProblem(''); setSetpointText(formatSetpoint(value));
     void (async () => {
       try {
         const applied = await queue.current.run('config', async () => {
-          if (latest.current.experimentActive) throw new Error('an experiment started; nothing was changed.');
+          if (latest.current.experimentActive || latest.current.startPending) throw new Error('an experiment started; nothing was changed.');
           return writeSetpoint(value);
         });
         if (applied === SKIPPED) return;
         rememberSetpoint(value);
-        if (alive.current) { setConfig(applied); setError(''); }
+        setpointDirty.current = false;
+        if (alive.current) { adoptConfig(applied); setError(''); }
         latest.current.append(`Target ring width set to the Home value ${formatSetpoint(value)}`);
-      } catch (failure) { if (alive.current) { fail('Home', failure); if (config) setSetpointText(formatSetpoint(config.focus_setpoint)); } }
+      } catch (failure) {
+        setpointDirty.current = false;
+        if (alive.current) { fail('Home', failure); pollConfig(generation.current); }   // the field shows the backend's value again
+      }
     })();
   };
   const setpointEdited = (text: string) => {
@@ -393,9 +410,9 @@ export function AutofocusControls({ready, experimentActive, append, resumedSessi
           value={setpointText} disabled={!ready || !config} aria-invalid={!!setpointProblem}
           onChange={e => setpointEdited(e.target.value)} onBlur={() => { if (setpointDirty.current) applySetpoint(); }}
           onKeyDown={e => { if (e.key === 'Enter') applySetpoint(); }} /></label>
-        <button data-tour="autofocus-home" disabled={!ready || !config || experimentActive}
-          title={experimentActive ? 'Not available during an experiment' : `Set the target ring width to ${formatSetpoint(home)}: the value the applied profile or method set (the starting value when none was applied)`}
-          onClick={goHome}>Home ({formatSetpoint(home)})</button>
+        <button data-tour="autofocus-home" disabled={!ready || !config || !!homeReason}
+          title={homeReason || `Set the target ring width to ${formatSetpoint(home)}: the value the applied profile or method set (the starting value when none was applied)`}
+          onMouseDown={e => e.preventDefault()} onClick={goHome}>Home ({formatSetpoint(home)})</button>
       </div>
       {setpointProblem && <p role="alert" className="hardware-hint hardware-hint-problem">{setpointProblem}</p>}
       <p data-tour="autofocus-voltage">Voltage: {connected && focus ? `${focus.current_voltage.toFixed(2)} V` : '-- V'}</p>

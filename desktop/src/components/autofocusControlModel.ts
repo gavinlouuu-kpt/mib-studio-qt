@@ -30,6 +30,8 @@ export const DEFAULT_JOG_STEP = 1;
 /** Qt applies the setpoint on every keystroke; the Tauri field waits for the operator to stop typing so that "25" never
  *  sends 2 to a running autofocus. Enter and leaving the field apply at once. */
 export const SETPOINT_APPLY_MS = 500;
+/** How long the panel waits for the startup configuration restore before it says so in the log (MIBQT-45). */
+export const STARTUP_RESTORE_NOTE_MS = 10000;
 /** Qt refreshes the voltage label and the checkbox every 500 ms (NanopositionerTab.cpp:150-155). */
 export const STATUS_POLL_MS = 500;
 /** The configuration (stale limit, setpoint set by a profile) is read every Nth status poll. */
